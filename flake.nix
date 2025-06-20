@@ -20,7 +20,6 @@
         specialArgs = { inherit inputs; };
         modules = [
           ./hosts/nixos/luna/configuration.nix
-          ./hosts/nixos/luna/hardware-configuration.nix
           # ./nixosModules
         ];
       };
