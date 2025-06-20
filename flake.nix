@@ -16,7 +16,7 @@
         nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.05";
         nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
       };
-      nixosConfigurations.default = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
         specialArgs = { inherit inputs; };
         modules = [
           ./hosts/nixos/luna/configuration.nix
