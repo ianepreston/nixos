@@ -4,7 +4,15 @@
   inputs,
   ...
 }:
+let
+  platform = "nixos"; # Can be extended later to handle darwin or other linux when I need it
+in
 {
+  imports = lib.flatten [
+    (map lib.custom.relativeToRoot [
+      "hosts/common/core/${platform}.nix"
+    ])
+  ];
   #
   # ========== Nix Nix Nix ==========
   #
