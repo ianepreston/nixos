@@ -14,7 +14,7 @@ let
 in
 {
   imports = lib.flatten [
-    inputs.home-manager.${platformModules}.home-manager
+    # inputs.home-manager.${platformModules}.home-manager
     inputs.sops-nix.${platformModules}.sops
 
     (map lib.custom.relativeToRoot [
@@ -50,9 +50,9 @@ in
   environment.systemPackages = [ pkgs.openssh ];
 
   # Force home-manager to use global packages
-  home-manager.useGlobalPkgs = true;
+  # home-manager.useGlobalPkgs = true;
   # If there is a conflict file that is backed up, use this extension
-  home-manager.backupFileExtension = "bk";
+  # home-manager.backupFileExtension = "bk";
   # home-manager.useUserPackages = true;
 
   #

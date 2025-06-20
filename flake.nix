@@ -21,8 +21,8 @@
       # ========== Extend lib with lib.custom ==========
       # NOTE: This approach allows lib.custom to propagate into hm
       # see: https://github.com/nix-community/home-manager/pull/3454
-      # lib = nixpkgs.lib.extend (self: super: { custom = import ./lib { inherit (nixpkgs) lib; }; });
-      lib = nixpkgs.lib;
+      lib = nixpkgs.lib.extend (self: super: { custom = import ./lib { inherit (nixpkgs) lib; }; });
+      # lib = nixpkgs.lib;
 
     in
     {
@@ -168,8 +168,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # Theming
-    # stylix.url = "github:danth/stylix/release-25.05";
-    # rose-pine-hyprcursor.url = "github:ndom91/rose-pine-hyprcursor";
+    stylix.url = "github:danth/stylix/release-25.05";
+    rose-pine-hyprcursor.url = "github:ndom91/rose-pine-hyprcursor";
 
     #
     # ========= Personal Repositories =========
