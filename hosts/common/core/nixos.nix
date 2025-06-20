@@ -19,13 +19,14 @@
   # ========== Nix Helper ==========
   #
   # Provide better build output and will also handle garbage collection in place of standard nix gc (garbage collection)
-  programs.nh = {
-    enable = true;
-    clean.enable = true;
-    clean.extraArgs = "--keep-since 20d --keep 20";
-    flake = "/home/user/${config.hostSpec.home}/nixos";
-  };
-
+  # Add this back in once you have hostSpec sorted out
+  # programs.nh = {
+  #   enable = true;
+  #   clean.enable = true;
+  #   clean.extraArgs = "--keep-since 20d --keep 20";
+  #   flake = "/home/user/${config.hostSpec.home}/nixos";
+  # };
+  #
   #
   # ========== Localization ==========
   #
