@@ -27,7 +27,7 @@
 
     in
     {
-      nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
+      nixosConfigurations.luna = nixpkgs.lib.nixosSystem {
         specialArgs = { inherit inputs outputs lib; };
         modules = [
           ./hosts/nixos/luna/default.nix
