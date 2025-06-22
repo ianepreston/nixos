@@ -27,13 +27,18 @@
 
     in
     {
-      nixosConfigurations.luna = nixpkgs.lib.nixosSystem {
-        specialArgs = { inherit inputs outputs lib; };
-        modules = [
-          ./hosts/nixos/luna/default.nix
-          # ./nixosModules
-        ];
-      };
+      nixosConfigurations = builtins.listToAttrs (
+        map (host: {
+          name = host;
+          value = nixpkgs.lib.nixosSystem {
+            specialArgs = {
+              inherit inputs outputs lib;
+              isDarwin = false;
+            };
+            modules = [ ./hosts/nixos/${host} ];
+          };
+        }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
+      );
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
