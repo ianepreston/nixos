@@ -11,9 +11,22 @@
 }:
 
 {
+  # GTX 1060 is too old to use the open source drivers
+  hardware.nvidia.open = false;
+  # PRIME offloading means most stuff renders on integrated GPU
+  hardware.nvidia.prime.offload.enable = true; # Enable PRIME offloading to integrated GPU
+  # Might help with screen tearing
+  # hardware.nvidia.prime.sync.enable = true; # Always use nvidia GPU
+  hardware.nvidia.prime.intelBusId = "PCI:00:02:0";
+  hardware.nvidia.prime.nvidiaBusId = "PCI:01:00:0";
   imports = lib.flatten [
-    # Include the results of the hardware scan.
+    #
+    # ========== Hardware ==========
+    #
     ./hardware-configuration.nix
+    inputs.hardware.nixosModules.common-cpu-intel
+    inputs.hardware.nixosModules.common-gpu-intel
+    inputs.hardware.nixosModules.common-gpu-nvidia
 
     (map lib.custom.relativeToRoot [
       #

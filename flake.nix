@@ -44,6 +44,7 @@
     # See also 'stable-packages' and 'unstable-packages' overlays at 'overlays/default.nix"
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    hardware.url = "github:nixos/nixos-hardware";
     stylix.url = "github:danth/stylix/release-25.05";
     #
     # ========= Personal Repositories =========
