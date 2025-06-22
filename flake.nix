@@ -45,5 +45,14 @@
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     stylix.url = "github:danth/stylix/release-25.05";
+    #
+    # ========= Personal Repositories =========
+    #
+    # Private secrets repo.  See ./docs/secretsmgmt.md
+    # Authenticate via ssh and use shallow clone
+    nix-secrets = {
+      url = "git+ssh://git@github.com/ianepreston/nix-secrets.git?ref=main&shallow=1";
+      inputs = { };
+    };
   };
 }

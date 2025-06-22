@@ -222,6 +222,23 @@
         "type": "github"
       }
     },
+    "nix-secrets": {
+      "locked": {
+        "lastModified": 1750593686,
+        "narHash": "sha256-uqCitEuQ3qZRUvAqYZEXWYHEtbUfRS7CP2WbF0uQmRY=",
+        "ref": "main",
+        "rev": "32e9e1b622f8a390998754c2eeeff1ef4ac17ac4",
+        "shallow": true,
+        "type": "git",
+        "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
+      },
+      "original": {
+        "ref": "main",
+        "shallow": true,
+        "type": "git",
+        "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1750259320,
@@ -314,6 +331,7 @@
     },
     "root": {
       "inputs": {
+        "nix-secrets": "nix-secrets",
         "nixpkgs": "nixpkgs",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixpkgs-unstable": "nixpkgs-unstable",

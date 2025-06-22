@@ -15,6 +15,8 @@
     Defaults env_keep+=SSH_AUTH_SOCK
   '';
 
+  # Allow unfree packages
+  nixpkgs.config.allowUnfree = true;
   #
   # ========== Nix Helper ==========
   #

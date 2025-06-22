@@ -14,6 +14,8 @@ in
       "modules/common"
       "hosts/common/core/${platform}.nix"
       "hosts/common/core/ssh.nix"
+      "hosts/common/users/primary"
+      "hosts/common/users/primary/${platform}.nix"
     ])
   ];
   #
@@ -22,10 +24,10 @@ in
   hostSpec = {
     username = "ipreston";
     handle = "ianepreston";
-    # inherit (inputs.nix-secrets)
-    #   email
-    #   userFullName
-    #   ;
+    inherit (inputs.nix-secrets)
+      email
+      userFullName
+      ;
   };
   # System-wide packages, in case we log in as root
   environment.systemPackages = [ pkgs.openssh ];
