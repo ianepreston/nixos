@@ -11,17 +11,17 @@ let
   ifTheyExist = groups: builtins.filter (group: builtins.hasAttr group config.users.groups) groups;
 
   # Decrypt password to /run/secrets-for-users/ so it can be used to create the user
-  # sopsHashedPasswordFile = lib.optionalString (
-  #   !config.hostSpec.isMinimal
-  # ) config.sops.secrets."passwords/${hostSpec.username}".path;
+  sopsHashedPasswordFile = lib.optionalString (
+    !config.hostSpec.isMinimal
+  ) config.sops.secrets."passwords/${hostSpec.username}".path;
 in
 {
   users.mutableUsers = false; # Only allow declarative credentials; Required for password to be set via sops during system activation!
   users.users.${hostSpec.username} = {
     home = "/home/${hostSpec.username}";
     isNormalUser = true;
-    # hashedPasswordFile = sopsHashedPasswordFile; # Blank if sops is not working.
-    hashedPassword = "$y$j9T$btcmX70EFVuOykqTAJW5f1$VBwwrnrLIMRQu1TN6DBjiVm.WeJr/PuKaujc4xVoD.1";
+    hashedPasswordFile = sopsHashedPasswordFile; # Blank if sops is not working.
+    # hashedPassword = "$y$j9T$btcmX70EFVuOykqTAJW5f1$VBwwrnrLIMRQu1TN6DBjiVm.WeJr/PuKaujc4xVoD.1";
     description = "${hostSpec.userFullName}";
     extraGroups = lib.flatten [
       "wheel"

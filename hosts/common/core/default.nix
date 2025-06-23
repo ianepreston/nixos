@@ -7,13 +7,16 @@
 }:
 let
   platform = "nixos"; # Can be extended later to handle darwin or other linux when I need it
+  platformModules = "${platform}Modules";
 in
 {
   imports = lib.flatten [
+    inputs.sops-nix.${platformModules}.sops
     (map lib.custom.relativeToRoot [
       "modules/common"
       "hosts/common/core/${platform}.nix"
       "hosts/common/core/ssh.nix"
+      "hosts/common/core/sops.nix"
       "hosts/common/users/primary"
       "hosts/common/users/primary/${platform}.nix"
     ])
