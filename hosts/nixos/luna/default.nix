@@ -61,22 +61,6 @@
   # Enable networking
   networking.networkmanager.enable = true;
 
-  # # Define a user account. Don't forget to set a password with ‘passwd’.
-  # users.mutableUsers = false;
-  # users.users.ipreston = {
-  #   isNormalUser = true;
-  #   hashedPassword = "$y$j9T$btcmX70EFVuOykqTAJW5f1$VBwwrnrLIMRQu1TN6DBjiVm.WeJr/PuKaujc4xVoD.1";
-  #   description = "Ian Preston";
-  #   extraGroups = [
-  #     "networkmanager"
-  #     "wheel"
-  #   ];
-  #   packages = with pkgs; [
-  #     #  thunderbird
-  #     git
-  #   ];
-  # };
-
   # Enable automatic login for the user.
   services.displayManager.autoLogin.enable = true;
   services.displayManager.autoLogin.user = "ipreston";
