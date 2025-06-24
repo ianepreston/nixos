@@ -75,6 +75,11 @@
 
   # Install firefox.
   programs.firefox.enable = true;
+  # Install neovim - just while I'm getting dotfiles sorted out
+  programs.neovim = {
+    enable = true;
+    defaultEditor = true;
+  };
 
   # This value determines the NixOS release from which the default
   # settings for stateful data, like file locations and database versions
