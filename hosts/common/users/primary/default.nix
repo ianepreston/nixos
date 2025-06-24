@@ -1,9 +1,9 @@
 # User config applicable to both nixos and darwin
 {
-  # inputs,
+  inputs,
   pkgs,
   config,
-  # lib,
+  lib,
   ...
 }:
 let
@@ -39,27 +39,27 @@ in
   # ];
 }
 # Import the user's personal/home configurations, unless the environment is minimal
-# // lib.optionalAttrs (inputs ? "home-manager") {
-#   home-manager = {
-#     extraSpecialArgs = {
-#       inherit pkgs inputs;
-#       hostSpec = config.hostSpec;
-#     };
-#     users.${hostSpec.username}.imports = lib.flatten (
-#       lib.optional (!hostSpec.isMinimal) [
-#         (
-#           { config, ... }:
-#           import (lib.custom.relativeToRoot "home/${hostSpec.username}/${hostSpec.hostName}.nix") {
-#             inherit
-#               pkgs
-#               inputs
-#               config
-#               lib
-#               hostSpec
-#               ;
-#           }
-#         )
-#       ]
-#     );
-#   };
-# }
+// lib.optionalAttrs (inputs ? "home-manager") {
+  home-manager = {
+    extraSpecialArgs = {
+      inherit pkgs inputs;
+      hostSpec = config.hostSpec;
+    };
+    users.${hostSpec.username}.imports = lib.flatten (
+      lib.optional (!hostSpec.isMinimal) [
+        (
+          { config, ... }:
+          import (lib.custom.relativeToRoot "home/${hostSpec.username}/${hostSpec.hostName}.nix") {
+            inherit
+              pkgs
+              inputs
+              config
+              lib
+              hostSpec
+              ;
+          }
+        )
+      ]
+    );
+  };
+}
