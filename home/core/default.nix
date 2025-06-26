@@ -13,7 +13,7 @@
     ./zsh.nix
   ];
   inherit hostSpec;
-  service.ssh-agent.enable = true;
+  services.ssh-agent.enable = true;
   programs.home-manager.enable = true;
   home = {
     username = lib.mkDefault config.hostSpec.username;

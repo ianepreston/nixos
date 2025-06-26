@@ -11,6 +11,9 @@
 }:
 
 {
+  hostSpec = {
+    hostName = "luna";
+  };
   hardware.nvidia = {
     # GTX 1060 is too old to use the open source drivers
     open = false;
