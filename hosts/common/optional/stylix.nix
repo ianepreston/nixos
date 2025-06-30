@@ -10,19 +10,23 @@
   stylix.image = lib.custom.relativeToRoot "assets/wallpaper_oil_landscape.jpg";
   stylix.polarity = "light";
 
-  # stylix.fonts = {
-  #   monospace = {
-  #     package = pkgs.nerd-fonts.fira-mono;
-  #     name = "Firacode Nerd Font";
-  #   };
-  #   sansSerif = {
-  #     package = pkgs.dejavu_fonts;
-  #     name = "DejaVu Sans";
-  #   };
-  #   serif = {
-  #     package = pkgs.dejavu_fonts;
-  #     name = "DejaVu Serif";
-  #   };
-  # };
-  #
+  stylix.fonts = {
+    monospace = {
+      package = pkgs.nerd-fonts.fira-code;
+      name = "Firacode Nerd Font Mono";
+    };
+    emoji = {
+      package = pkgs.nerd-fonts.fira-code;
+      name = "Firacode Nerd Font Mono";
+    };
+    sansSerif = {
+      package = pkgs.source-serif;
+      name = "SourceSerif4";
+    };
+    serif = {
+      package = pkgs.source-sans;
+      name = "SourceSans3";
+    };
+  };
+
 }
