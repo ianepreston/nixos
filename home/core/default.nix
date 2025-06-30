@@ -8,6 +8,7 @@
   imports = [
     ./direnv.nix
     ./git.nix
+    ./neovim.nix
     ./packages.nix
     ./starship.nix
     ./zsh.nix

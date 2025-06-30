@@ -5,6 +5,7 @@
   ...
 }:
 {
+  stylix.targets.neovim.enable = false;
   programs.neovim = {
     enable = true;
 
@@ -56,7 +57,7 @@
 
   # Symlink your Neovim configuration (or delete the line to manage .config/nvim directly)
   xdg.configFile."nvim".source =
-    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos/home/core/neovim";
+  config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/nixos/home/core/neovim";
 
   # Tools available during activation
   home.extraActivationPath = with pkgs; [
@@ -68,8 +69,13 @@
     # neovim
   ];
 
+
+  # Add a dummy file to satisfy the module but avoid using it
   # Activation script to set up Neovim plugins
   home.activation.updateNeovimState = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    # if [ ! -e "$HOME/.config/nvim" ]; then
+    #   ln -s "$HOME/nixos/home/core/neovim" "$HOME/.config/nvim"
+    # fi
     args=""
     if [[ -z "''${VERBOSE+x}" ]]; then
       args="--quiet"
