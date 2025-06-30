@@ -1,5 +1,5 @@
 {
-  config,
+  # config,
   lib,
   hostSpec,
   ...
@@ -12,12 +12,12 @@
     ./starship.nix
     ./zsh.nix
   ];
-  inherit hostSpec;
+  # inherit hostSpec;
   services.ssh-agent.enable = true;
   programs.home-manager.enable = true;
   home = {
-    username = lib.mkDefault config.hostSpec.username;
-    homeDirectory = lib.mkDefault config.hostSpec.home;
+    username = lib.mkDefault hostSpec.username;
+    homeDirectory = lib.mkDefault hostSpec.home;
     stateVersion = lib.mkDefault "23.05";
     # sessionPath = [
     #   "$HOME/.local/bin"

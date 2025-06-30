@@ -2,12 +2,13 @@
   pkgs,
   # lib,
   config,
+  hostSpec,
   # inputs,
   ...
 }:
 let
-  publicGitEmail = config.hostSpec.email.gitHub;
-  workGitEmail = config.hostSpec.email.work;
+  publicGitEmail = hostSpec.email.gitHub;
+  workGitEmail = hostSpec.email.work;
   # privateGitConfig = "${config.home.homeDirectory}/.config/git/gitconfig.private";
   workGitConfig = "${config.home.homeDirectory}/.config/git/gitconfig.work";
 in
@@ -15,7 +16,7 @@ in
   programs.git = {
     enable = true;
     package = pkgs.gitAndTools.gitFull;
-    userName = config.hostSpec.handle;
+    userName = hostSpec.handle;
     userEmail = "${publicGitEmail}";
     extraConfig = {
       init.defaultBranch = "main";
@@ -33,7 +34,7 @@ in
   # '';
   home.file."${workGitConfig}".text = ''
     [user]
-      name = "${config.hostSpec.userFullName}"
+      name = "${hostSpec.userFullName}"
       email = "${workGitEmail}"
   '';
 }
