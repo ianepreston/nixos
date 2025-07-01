@@ -2,11 +2,12 @@
   pkgs,
   # lib,
   config,
-  hostSpec,
+  # hostSpec,
   # inputs,
   ...
 }:
 let
+  hostSpec = config.hostSpec;
   publicGitEmail = hostSpec.email.gitHub;
   workGitEmail = hostSpec.email.work;
   # privateGitConfig = "${config.home.homeDirectory}/.config/git/gitconfig.private";

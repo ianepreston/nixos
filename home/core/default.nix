@@ -1,9 +1,11 @@
 {
-  # config,
+  config,
   lib,
-  hostSpec,
   ...
 }:
+let
+  hostSpec = config.hostSpec;
+in
 {
   imports = [
     ./direnv.nix

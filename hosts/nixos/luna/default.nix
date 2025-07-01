@@ -5,6 +5,7 @@
 {
   config,
   lib,
+  customLib,
   pkgs,
   inputs,
   ...
@@ -35,7 +36,7 @@
     inputs.hardware.nixosModules.common-gpu-intel
     inputs.hardware.nixosModules.common-gpu-nvidia
 
-    (map lib.custom.relativeToRoot [
+    (map customLib.relativeToRoot [
       #
       # ========== Required Configs ==========
       #

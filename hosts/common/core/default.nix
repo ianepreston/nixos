@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  customLib,
   inputs,
   pkgs,
   ...
@@ -13,7 +14,7 @@ in
   imports = lib.flatten [
     inputs.home-manager.${platformModules}.home-manager
     inputs.sops-nix.${platformModules}.sops
-    (map lib.custom.relativeToRoot [
+    (map customLib.relativeToRoot [
       "modules/common"
       "hosts/common/core/${platform}.nix"
       "hosts/common/core/ssh.nix"
