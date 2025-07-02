@@ -44,7 +44,6 @@ in
   home-manager = {
     extraSpecialArgs = {
       inherit pkgs inputs;
-      hostSpec = config.hostSpec;
     };
     users.${hostSpec.username}.imports = lib.flatten (
       lib.optional (!hostSpec.isMinimal) [
