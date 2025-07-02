@@ -2,6 +2,12 @@
 
 I have so much stuff to fill in here.
 
+# NixOS install
+
+```bash
+sudo nixos-rebuild switch --flake .
+```
+
 # Getting home manager working
 
 ```bash
