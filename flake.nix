@@ -20,10 +20,8 @@
         #"aarch64-darwin"
       ];
 
-      # ========== Extend lib with lib.custom ==========
-      # NOTE: This approach allows lib.custom to propagate into hm
-      # see: https://github.com/nix-community/home-manager/pull/3454
-      lib = nixpkgs.lib.extend (self: super: { custom = import ./lib { inherit (nixpkgs) lib; }; });
+      lib = nixpkgs.lib;
+      customLib = import ./lib { inherit lib; };
 
     in
     {
@@ -32,7 +30,12 @@
           name = host;
           value = nixpkgs.lib.nixosSystem {
             specialArgs = {
-              inherit inputs outputs lib;
+              inherit
+                inputs
+                outputs
+                lib
+                customLib
+                ;
               isDarwin = false;
             };
             modules = [ ./hosts/nixos/${host} ];

@@ -1,4 +1,4 @@
-{ pkgs, lib, ... }:
+{ pkgs, customLib, ... }:
 
 {
 
@@ -7,7 +7,7 @@
 
   # Don't forget to apply wallpaper
 
-  stylix.image = lib.custom.relativeToRoot "assets/wallpaper_oil_landscape.jpg";
+  stylix.image = customLib.relativeToRoot "assets/wallpaper_oil_landscape.jpg";
   stylix.polarity = "light";
 
   stylix.fonts = {

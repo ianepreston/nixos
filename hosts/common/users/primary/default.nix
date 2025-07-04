@@ -3,6 +3,7 @@
   inputs,
   pkgs,
   config,
+  customLib,
   lib,
   ...
 }:
@@ -49,12 +50,13 @@ in
       lib.optional (!hostSpec.isMinimal) [
         (
           { config, ... }:
-          import (lib.custom.relativeToRoot "home/${hostSpec.username}/${hostSpec.hostName}.nix") {
+          import (customLib.relativeToRoot "home/${hostSpec.username}/${hostSpec.hostName}.nix") {
             inherit
               pkgs
               inputs
               config
               lib
+              customLib
               hostSpec
               ;
           }

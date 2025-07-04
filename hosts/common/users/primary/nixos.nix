@@ -3,6 +3,7 @@
   inputs,
   config,
   lib,
+  customLib,
   pkgs,
   ...
 }:
@@ -60,7 +61,7 @@ in
 #       plugins = [
 #         {
 #           name = "powerlevel10k-config";
-#           src = lib.custom.relativeToRoot "home/${hostSpec.username}/common/core/zsh/p10k";
+#           src = customLib.relativeToRoot "home/${hostSpec.username}/common/core/zsh/p10k";
 #           file = "p10k.zsh";
 #         }
 #       ];
