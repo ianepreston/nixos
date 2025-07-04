@@ -42,6 +42,11 @@
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
       );
+     homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
+       pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+       extraSpecialArgs = {inherit customLib inputs;};
+       modules = [ ./home/ipreston/wsl.nix ];
+     };
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
