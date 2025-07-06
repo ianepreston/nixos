@@ -1,7 +1,9 @@
-{ ... }:
+{
+  ...
+}:
 {
   imports = [
     ../core/default.nix
-    ../optional/nixos.nix
+    ../optional/wsl.nix
   ];
 }

@@ -5,15 +5,13 @@
 {
   config,
   lib,
+  customLib,
   pkgs,
   inputs,
   ...
 }:
 
 {
-  hostSpec = {
-    hostName = "luna";
-  };
   hardware.nvidia = {
     # GTX 1060 is too old to use the open source drivers
     open = false;
@@ -35,7 +33,7 @@
     inputs.hardware.nixosModules.common-gpu-intel
     inputs.hardware.nixosModules.common-gpu-nvidia
 
-    (map lib.custom.relativeToRoot [
+    (map customLib.relativeToRoot [
       #
       # ========== Required Configs ==========
       #

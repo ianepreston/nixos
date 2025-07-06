@@ -28,4 +28,20 @@
       fi
     '';
   };
+  home.file.".bashrc".text = ''
+    # Added just so zsh will launch from non NixOS setups
+    # If not running interactively, don't do anything
+    [[ $- != *i* ]] && return
+    if [ -z "''${NOZSH}" ] && [ $TERM = "xterm" -o $TERM = "xterm-256color" -o $TERM = "screen" ] && type zsh &> /dev/null
+    then
+      export SHELL=$(which zsh)
+      if [[ -o login ]]
+      then
+        exec zsh -l
+      else
+        exec zsh
+      fi
+    fi
+
+  '';
 }

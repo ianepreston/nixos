@@ -20,10 +20,13 @@
         #"aarch64-darwin"
       ];
 
-      # ========== Extend lib with lib.custom ==========
-      # NOTE: This approach allows lib.custom to propagate into hm
-      # see: https://github.com/nix-community/home-manager/pull/3454
-      lib = nixpkgs.lib.extend (self: super: { custom = import ./lib { inherit (nixpkgs) lib; }; });
+      lib = nixpkgs.lib;
+      customLib = import ./lib { inherit lib; };
+      evaluatedHostSpecs = lib.evalModules {
+        specialArgs = { inherit inputs lib customLib; };
+        modules = [ ./hostSpecs ];
+      };
+      hostSpecs = evaluatedHostSpecs.config.hostSpecs;
 
     in
     {
@@ -32,13 +35,23 @@
           name = host;
           value = nixpkgs.lib.nixosSystem {
             specialArgs = {
-              inherit inputs outputs lib;
-              isDarwin = false;
+              inherit
+                inputs
+                outputs
+                lib
+                customLib
+                ;
+              hostSpec = hostSpecs.${host};
             };
             modules = [ ./hosts/nixos/${host} ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
       );
+      homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
+        pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+        extraSpecialArgs = { inherit customLib inputs; hostSpec = hostSpecs.wsl; };
+        modules = [ ./home/ipreston/wsl.nix ];
+      };
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";

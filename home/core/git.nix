@@ -16,7 +16,7 @@ in
   programs.git = {
     enable = true;
     package = pkgs.gitAndTools.gitFull;
-    userName = hostSpec.handle;
+    userName = hostSpec.gh_user;
     userEmail = "${publicGitEmail}";
     extraConfig = {
       init.defaultBranch = "main";

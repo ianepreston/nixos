@@ -1,5 +1,6 @@
 {
   config,
+  customLib,
   lib,
   inputs,
   pkgs,
@@ -13,8 +14,7 @@ in
   imports = lib.flatten [
     inputs.home-manager.${platformModules}.home-manager
     inputs.sops-nix.${platformModules}.sops
-    (map lib.custom.relativeToRoot [
-      "modules/common"
+    (map customLib.relativeToRoot [
       "hosts/common/core/${platform}.nix"
       "hosts/common/core/ssh.nix"
       "hosts/common/core/sops.nix"
@@ -25,14 +25,6 @@ in
   #
   # ========== Core Host Specifications ==========
   #
-  hostSpec = {
-    username = "ipreston";
-    handle = "ianepreston";
-    inherit (inputs.nix-secrets)
-      email
-      userFullName
-      ;
-  };
   # System-wide packages, in case we log in as root
   environment.systemPackages = [ pkgs.openssh ];
 
