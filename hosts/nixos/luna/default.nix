@@ -66,8 +66,6 @@
   # Enable networking
   networking.networkmanager.enable = true;
 
-  # Install firefox.
-  programs.firefox.enable = true;
   # Install neovim - just while I'm getting dotfiles sorted out
   # programs.neovim = {
   #   enable = true;
