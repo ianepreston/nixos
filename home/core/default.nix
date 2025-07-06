@@ -27,8 +27,8 @@
     sessionVariables = {
       FLAKE = "$HOME/nixos";
       SHELL = "zsh";
-      TERM = "kitty";
-      TERMINAL = "kitty";
+      # TERM = "kitty";
+      # TERMINAL = "kitty";
       VISUAL = "nvim";
       EDITOR = "nvim";
       # MANPAGER = "batman"; # see ./cli/bat.nix
