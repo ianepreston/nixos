@@ -44,6 +44,11 @@
             default = false;
             description = "Used to indicate a minimal host";
           };
+          isMobile = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Used to indicate a laptop or similar host";
+          };
           isWork = lib.mkOption {
             type = lib.types.bool;
             default = false;

@@ -46,6 +46,9 @@
       "hosts/common/optional/audio.nix" # WM
       "hosts/common/optional/gnome.nix" # WM
       "hosts/common/optional/stylix.nix" # themes
+      "hosts/common/optional/hyprland.nix"
+      "hosts/common/optional/wayland.nix"
+      "hosts/common/optional/zsa-keeb.nix"
     ])
     inputs.stylix.nixosModules.stylix
   ];
