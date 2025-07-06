@@ -5,7 +5,6 @@
     ../optional/nixos.nix
     ../optional/browser.nix
     ../optional/comms.nix
-    ../optional/desktops
     ../optional/media.nix
   ];
 }
