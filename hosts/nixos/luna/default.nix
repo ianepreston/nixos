@@ -16,7 +16,7 @@
     # GTX 1060 is too old to use the open source drivers
     open = false;
     powerManagement.enable = true; # See if this helps with sleep/wake issues
-    powerManagement.finegrained = true; # Also trying this for sleep/wake. Should toggle this if the issue persists
+    powerManagement.finegrained = false; # Also trying this for sleep/wake. Should toggle this if the issue persists
     # PRIME offloading means most stuff renders on integrated GPU
     prime.offload.enable = true; # Enable PRIME offloading to integrated GPU
     # prime.sync.enable = true; # Always use nvidia GPU
