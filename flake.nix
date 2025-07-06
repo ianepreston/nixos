@@ -22,6 +22,11 @@
 
       lib = nixpkgs.lib;
       customLib = import ./lib { inherit lib; };
+      evaluatedHostSpecs = lib.evalModules {
+        specialArgs = { inherit inputs lib customLib; };
+        modules = [ ./hostSpecs ];
+      };
+      hostSpecs = evaluatedHostSpecs.config.hostSpecs;
 
     in
     {
@@ -36,17 +41,17 @@
                 lib
                 customLib
                 ;
-              isDarwin = false;
+              hostSpec = hostSpecs.${host};
             };
             modules = [ ./hosts/nixos/${host} ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
       );
-     homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
-       pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
-       extraSpecialArgs = {inherit customLib inputs;};
-       modules = [ ./home/ipreston/wsl.nix ];
-     };
+      homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
+        pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+        extraSpecialArgs = { inherit customLib inputs; };
+        modules = [ ./home/ipreston/wsl.nix ];
+      };
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";

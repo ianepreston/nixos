@@ -5,6 +5,7 @@
   lib,
   inputs,
   config,
+  hostSpec,
   ...
 }:
 let
@@ -16,7 +17,7 @@ in
 
   sops = {
     defaultSopsFile = "${sopsFile}";
-    # defaultSopsFile = "${sopsFolder}/${config.hostSpec.hostName}.yaml";
+    # defaultSopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
     validateSopsFiles = false;
     # age = {
     #   # automatically import host SSH keys as age keys
@@ -39,13 +40,13 @@ in
       # from an ssh key).
 
       "keys/age" = {
-        owner = config.users.users.${config.hostSpec.username}.name;
-        inherit (config.users.users.${config.hostSpec.username}) group;
+        owner = config.users.users.${hostSpec.username}.name;
+        inherit (config.users.users.${hostSpec.username}) group;
         # We need to ensure the entire directory structure is that of the user...
-        path = "${config.hostSpec.home}/.config/sops/age/keys.txt";
+        path = "${hostSpec.home}/.config/sops/age/keys.txt";
       };
       # extract password/username to /run/secrets-for-users/ so it can be used to create the user
-      "passwords/${config.hostSpec.username}" = {
+      "passwords/${hostSpec.username}" = {
         sopsFile = "${sopsFile}";
         neededForUsers = true;
       };
@@ -56,12 +57,12 @@ in
   # FIXME(sops): We might not need this depending on how https://github.com/Mic92/sops-nix/issues/381 is fixed
   system.activationScripts.sopsSetAgeKeyOwnership =
     let
-      ageFolder = "${config.hostSpec.home}/.config/sops/age";
-      user = config.users.users.${config.hostSpec.username}.name;
-      group = config.users.users.${config.hostSpec.username}.group;
+      ageFolder = "${hostSpec.home}/.config/sops/age";
+      user = config.users.users.${hostSpec.username}.name;
+      group = config.users.users.${hostSpec.username}.group;
     in
     ''
       mkdir -p ${ageFolder} || true
-      chown -R ${user}:${group} ${config.hostSpec.home}/.config
+      chown -R ${user}:${group} ${hostSpec.home}/.config
     '';
 }

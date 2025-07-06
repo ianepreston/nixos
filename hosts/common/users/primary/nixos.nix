@@ -3,17 +3,17 @@
   inputs,
   config,
   lib,
+  hostSpec,
   customLib,
   pkgs,
   ...
 }:
 let
-  hostSpec = config.hostSpec;
   ifTheyExist = groups: builtins.filter (group: builtins.hasAttr group config.users.groups) groups;
 
   # Decrypt password to /run/secrets-for-users/ so it can be used to create the user
   sopsHashedPasswordFile = lib.optionalString (
-    !config.hostSpec.isMinimal
+    !hostSpec.isMinimal
   ) config.sops.secrets."passwords/${hostSpec.username}".path;
 in
 {

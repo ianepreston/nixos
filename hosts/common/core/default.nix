@@ -15,7 +15,6 @@ in
     inputs.home-manager.${platformModules}.home-manager
     inputs.sops-nix.${platformModules}.sops
     (map customLib.relativeToRoot [
-      "modules/common"
       "hosts/common/core/${platform}.nix"
       "hosts/common/core/ssh.nix"
       "hosts/common/core/sops.nix"
@@ -26,14 +25,6 @@ in
   #
   # ========== Core Host Specifications ==========
   #
-  hostSpec = {
-    username = "ipreston";
-    handle = "ianepreston";
-    inherit (inputs.nix-secrets)
-      email
-      userFullName
-      ;
-  };
   # System-wide packages, in case we log in as root
   environment.systemPackages = [ pkgs.openssh ];
 

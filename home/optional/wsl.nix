@@ -1,16 +1,8 @@
 {
-  lib,
-  inputs,
-  outputs,
-  config,
-  pkgs,
   ...
 }:
 
 {
-  imports = [
-    ../../modules/common
-  ];
   # Whether to enable settings that make Home Manager work better on GNU/Linux distributions other than NixOS
   targets.genericLinux.enable = true;
 
