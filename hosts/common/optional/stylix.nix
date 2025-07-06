@@ -16,16 +16,16 @@
       name = "Firacode Nerd Font Mono";
     };
     emoji = {
-      package = pkgs.nerd-fonts.fira-code;
-      name = "Firacode Nerd Font Mono";
+      package = pkgs.noto-fonts-emoji;
+      name = "Noto Color Emoji";
     };
     sansSerif = {
-      package = pkgs.source-serif;
-      name = "SourceSerif4";
+      package = pkgs.source-sans;
+      name = "Source Sans 3";
     };
     serif = {
-      package = pkgs.source-sans;
-      name = "SourceSans3";
+      package = pkgs.source-serif;
+      name = "Source Serif 4";
     };
   };
 
