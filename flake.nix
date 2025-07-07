@@ -49,8 +49,19 @@
       );
       homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
         pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
-        extraSpecialArgs = { inherit customLib inputs; hostSpec = hostSpecs.wsl; };
+        extraSpecialArgs = {
+          inherit customLib inputs;
+          hostSpec = hostSpecs.wsl;
+        };
         modules = [ ./home/ipreston/wsl.nix ];
+      };
+      homeConfigurations."vm@work" = inputs.home-manager.lib.homeManagerConfiguration {
+        pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+        extraSpecialArgs = {
+          inherit customLib inputs;
+          hostSpec = hostSpecs.workvm;
+        };
+        modules = [ ./home/work/workvm.nix ];
       };
     };
   inputs = {
