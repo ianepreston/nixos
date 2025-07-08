@@ -45,7 +45,7 @@
       "hosts/common/optional/services/printing.nix" # Do I need this to print to PDF? Otherwise disable
       "hosts/common/optional/audio.nix" # WM
       "hosts/common/optional/gnome.nix" # WM
-      "hosts/common/optional/stylix.nix" # themes
+      "hosts/common/optional/themes.nix"
     ])
     inputs.stylix.nixosModules.stylix
   ];

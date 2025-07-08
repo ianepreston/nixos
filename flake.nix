@@ -7,6 +7,7 @@
     {
       self,
       nixpkgs,
+      catppuccin,
       ...
     }@inputs:
     let
@@ -43,14 +44,31 @@
                 ;
               hostSpec = hostSpecs.${host};
             };
-            modules = [ ./hosts/nixos/${host} ];
+            modules = [
+              ./hosts/nixos/${host}
+              catppuccin.nixosModules.catppuccin
+            ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
       );
       homeConfigurations."ipreston@wsl" = inputs.home-manager.lib.homeManagerConfiguration {
         pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
-        extraSpecialArgs = { inherit customLib inputs; hostSpec = hostSpecs.wsl; };
+        extraSpecialArgs = {
+          inherit customLib inputs;
+          hostSpec = hostSpecs.wsl;
+        };
         modules = [ ./home/ipreston/wsl.nix ];
+      };
+      homeConfigurations."vm@work" = inputs.home-manager.lib.homeManagerConfiguration {
+        pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+        extraSpecialArgs = {
+          inherit customLib inputs;
+          hostSpec = hostSpecs.workvm;
+        };
+        modules = [
+          ./home/work/workvm.nix
+          catppuccin.homeModules.catppuccin
+        ];
       };
     };
   inputs = {
@@ -68,6 +86,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     stylix.url = "github:danth/stylix/release-25.05";
+    catppuccin.url = "github:catppuccin/nix";
     # Secrets management. See ./docs/secretsmgmt.md
     sops-nix = {
       url = "github:mic92/sops-nix";
