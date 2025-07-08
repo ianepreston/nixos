@@ -3,6 +3,7 @@
   inputs,
   pkgs,
   config,
+  catppuccin,
   hostSpec,
   customLib,
   lib,
@@ -40,7 +41,12 @@
 // lib.optionalAttrs (inputs ? "home-manager") {
   home-manager = {
     extraSpecialArgs = {
-      inherit pkgs inputs hostSpec;
+      inherit
+        pkgs
+        inputs
+        hostSpec
+        customLib
+        ;
     };
     users.${hostSpec.username}.imports = lib.flatten (
       lib.optional (!hostSpec.isMinimal) [
@@ -57,6 +63,7 @@
               ;
           }
         )
+        # catppuccin.homeModules.catppuccin
       ]
     );
   };

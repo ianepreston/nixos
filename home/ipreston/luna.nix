@@ -2,8 +2,8 @@
 {
   imports = [
     ../core/default.nix
-    ../optional/nixos.nix
     ../optional/browser.nix
+    ../optional/gnome
     ../optional/comms.nix
     ../optional/media.nix
   ];
