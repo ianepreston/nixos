@@ -73,6 +73,17 @@
           catppuccin.homeModules.catppuccin
         ];
       };
+      homeConfigurations."wsl@work" = inputs.home-manager.lib.homeManagerConfiguration {
+        pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+        extraSpecialArgs = {
+          inherit customLib inputs;
+          hostSpec = hostSpecs.workwsl;
+        };
+        modules = [
+          ./home/work/workwsl.nix
+          catppuccin.homeModules.catppuccin
+        ];
+      };
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
