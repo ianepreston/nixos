@@ -14,4 +14,6 @@
     # no need to redefine it in your config for now)
     #media-session.enable = true;
   };
+  # Creates a virtual mic with noise suppression enabled
+  programs.noisetorch.enable = true;
 }
