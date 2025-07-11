@@ -2,7 +2,7 @@
 {
   home.packages = builtins.attrValues {
     inherit (pkgs)
-      discord
+      # discord
       signal-desktop
       ;
   };
