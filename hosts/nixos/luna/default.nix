@@ -44,6 +44,7 @@
       #
       "hosts/common/optional/services/printing.nix" # Do I need this to print to PDF? Otherwise disable
       "hosts/common/optional/audio.nix" # WM
+      "hosts/common/optional/discordflatpak.nix"
       "hosts/common/optional/gnome.nix" # WM
       "hosts/common/optional/themes.nix"
       "hosts/common/optional/zsa-keeb.nix"

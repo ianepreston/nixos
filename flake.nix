@@ -8,6 +8,7 @@
       self,
       nixpkgs,
       catppuccin,
+      nix-flatpak,
       ...
     }@inputs:
     let
@@ -47,6 +48,7 @@
             modules = [
               ./hosts/nixos/${host}
               catppuccin.nixosModules.catppuccin
+              nix-flatpak.nixosModules.nix-flatpak
             ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
@@ -101,6 +103,7 @@
     };
     stylix.url = "github:danth/stylix/release-25.05";
     catppuccin.url = "github:catppuccin/nix";
+    nix-flatpak.url = "github:gmodena/nix-flatpak/?ref=latest";
     # Secrets management. See ./docs/secretsmgmt.md
     sops-nix = {
       url = "github:mic92/sops-nix";

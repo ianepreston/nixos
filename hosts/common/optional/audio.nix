@@ -15,5 +15,5 @@
     #media-session.enable = true;
   };
   # Creates a virtual mic with noise suppression enabled
-  programs.noisetorch.enable = true;
+  # programs.noisetorch.enable = true;
 }
