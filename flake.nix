@@ -16,13 +16,21 @@
 
       #
       # ========= Architectures =========
-      #
-      forAllSystems = nixpkgs.lib.genAttrs [
-        "x86_64-linux"
-        #"aarch64-darwin"
-      ];
-
       lib = nixpkgs.lib;
+      supportedSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      forEachSupportedSystem =
+        f:
+        nixpkgs.lib.genAttrs supportedSystems (
+          system:
+          f {
+            pkgs = import nixpkgs { inherit system; };
+          }
+        );
       customLib = import ./lib { inherit lib; };
       evaluatedHostSpecs = lib.evalModules {
         specialArgs = { inherit inputs lib customLib; };
@@ -32,6 +40,18 @@
 
     in
     {
+      devShells = forEachSupportedSystem (
+        { pkgs }:
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              nixos-rebuild
+              pciutils
+              go-task
+            ];
+          };
+        }
+      );
       nixosConfigurations = builtins.listToAttrs (
         map (host: {
           name = host;
