@@ -1,6 +1,6 @@
 { config, ... }:
 {
-  # Hopefully will help with display artifacts when gaming on external monitor
+  # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
   boot.kernelParams = [ "nvidia-drm.modeset=1" ];
   powerManagement.enable = true;
   services.xserver.videoDrivers = [ "nvidia" ];
