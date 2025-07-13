@@ -1,11 +1,14 @@
 { config, ... }:
 {
+  # Hopefully will help with display artifacts when gaming on external monitor
+  boot.kernelParams = [ "nvidia-drm.modeset=1" ];
   powerManagement.enable = true;
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.graphics.enable = true;
   hardware.nvidia = {
     # GTX 1060 is too old to use the open source drivers
     open = false;
+    modesetting.enable = true;
     package = config.boot.kernelPackages.nvidiaPackages.latest;
     powerManagement = {
       enable = true; # See if this helps with sleep/wake issues
