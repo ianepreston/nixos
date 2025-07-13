@@ -12,18 +12,6 @@
 }:
 
 {
-  hardware.nvidia = {
-    # GTX 1060 is too old to use the open source drivers
-    open = false;
-    powerManagement.enable = true; # See if this helps with sleep/wake issues
-    powerManagement.finegrained = false; # Also trying this for sleep/wake. Should toggle this if the issue persists
-    # PRIME offloading means most stuff renders on integrated GPU
-    prime.offload.enable = true; # Enable PRIME offloading to integrated GPU
-    # prime.sync.enable = true; # Always use nvidia GPU
-    prime.intelBusId = "PCI:00:02:0";
-    prime.nvidiaBusId = "PCI:01:00:0";
-
-  };
   imports = lib.flatten [
     #
     # ========== Hardware ==========
@@ -47,6 +35,7 @@
       "hosts/common/optional/discordflatpak.nix"
       "hosts/common/optional/gaming.nix"
       "hosts/common/optional/gnome.nix" # WM
+      "hosts/common/optional/nvidia-gtx1060.nix"
       "hosts/common/optional/themes.nix"
       "hosts/common/optional/zsa-keeb.nix"
     ])
