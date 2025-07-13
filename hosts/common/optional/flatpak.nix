@@ -40,6 +40,7 @@
   # Add here the flatpaks you want to install
   services.flatpak.packages = [
     "com.discordapp.Discord"
+    "com.bambulab.BambuStudio"
     #{ appId = "com.brave.Browser"; origin = "flathub"; }
     #"com.obsproject.Studio"
     #"im.riot.Riot"
