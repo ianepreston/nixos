@@ -2,7 +2,7 @@
 {
   # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
   boot.kernelParams = [ "nvidia-drm.modeset=1" ];
-  powerManagement.enable = false;
+  powerManagement.enable = true;
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.graphics.enable = true;
   hardware.nvidia = {
@@ -11,8 +11,8 @@
     modesetting.enable = true;
     package = config.boot.kernelPackages.nvidiaPackages.latest;
     powerManagement = {
-      enable = false; # See if this helps with sleep/wake issues
-      finegrained = false; # Also trying this for sleep/wake. Should toggle this if the issue persists
+      enable = true; # See if this helps with sleep/wake issues
+      finegrained = true; # Also trying this for sleep/wake. Should toggle this if the issue persists
     };
     prime = {
       offload.enable = false; # Enable PRIME offloading to integrated GPU
