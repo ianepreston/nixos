@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+  default:
+    cmd: task --list
+    silent: true
+  rebuild:
+    desc: rebuild nixos config
+    cmd: sudo nixos-rebuild switch --flake .
+  update:
+    desc: patch the flake and commit it
+    cmd: nix flake update && git add flake.lock && git commit -m "patch flake"
