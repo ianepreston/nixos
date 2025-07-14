@@ -11,8 +11,8 @@
     modesetting.enable = true;
     package = config.boot.kernelPackages.nvidiaPackages.latest;
     powerManagement = {
-      enable = true; # See if this helps with sleep/wake issues
-      finegrained = true; # Also trying this for sleep/wake. Should toggle this if the issue persists
+      enable = false; # See if this helps with sleep/wake issues
+      finegrained = false; # Also trying this for sleep/wake. Should toggle this if the issue persists
     };
     prime = {
       offload = {
