@@ -48,6 +48,7 @@
               nixos-rebuild
               pciutils
               go-task
+              dconf2nix
             ];
           };
         }
