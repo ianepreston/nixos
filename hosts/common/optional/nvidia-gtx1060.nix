@@ -1,4 +1,4 @@
-{ config, ... }:
+{ config, lib, ... }:
 {
   # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
   boot.kernelParams = [ "nvidia-drm.modeset=1" ];
@@ -15,8 +15,11 @@
       finegrained = true; # Also trying this for sleep/wake. Should toggle this if the issue persists
     };
     prime = {
-      offload.enable = false; # Enable PRIME offloading to integrated GPU
-      sync.enable = true; # Always use nvidia GPU - supposed to be better for clamshell
+      offload = {
+        enable = true; # Enable PRIME offloading to integrated GPU
+        enableOffloadCmd = lib.mkIf config.hardware.nvidia.prime.offload.enable true; # Provides `nvidia-offload` command.
+      };
+      sync.enable = false; # Always use nvidia GPU - supposed to be better for clamshell
       intelBusId = "PCI:00:02:0";
       nvidiaBusId = "PCI:01:00:0";
     };
