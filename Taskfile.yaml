@@ -12,3 +12,6 @@ tasks:
   update:
     desc: patch the flake and commit it
     cmd: nix flake update && git add flake.lock && git commit -m "patch flake"
+  update_dconf:
+    desc: Grab dconf config and pull it into your files, remember to select the key
+    cmd: ./scripts/dconf.sh
