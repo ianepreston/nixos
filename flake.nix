@@ -49,6 +49,8 @@
               pciutils
               go-task
               dconf2nix
+              alejandra
+              nushell
             ];
           };
         }
