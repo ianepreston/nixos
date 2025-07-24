@@ -1,7 +1,21 @@
 { config, lib, ... }:
 {
-  # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
-  boot.kernelParams = [ "nvidia-drm.modeset=1" ];
+  # https://discourse.nixos.org/t/black-screen-after-suspend-hibernate-with-nvidia/54341/6
+  # Tried this, didn't seem to fix things
+  # systemd.services."systemd-suspend" = {
+  #   serviceConfig = {
+  #     Environment = ''"SYSTEMD_SLEEP_FREEZE_USER_SESSIONS=false"'';
+  #   };
+  # };
+  boot = {
+    # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
+    kernelParams = [ "nvidia-drm.modeset=1" ];
+    # https://discourse.nixos.org/t/psa-for-those-with-hibernation-issues-on-nvidia/61834
+    extraModprobeConfig = ''
+      options nvidia_modeset vblank_sem_control=0
+    '';
+  };
+
   powerManagement.enable = true;
   services.xserver.videoDrivers = [ "nvidia" ];
   hardware.graphics.enable = true;
@@ -11,8 +25,11 @@
     modesetting.enable = true;
     package = config.boot.kernelPackages.nvidiaPackages.latest;
     powerManagement = {
-      enable = false; # See if this helps with sleep/wake issues
-      finegrained = false; # Also trying this for sleep/wake. Should toggle this if the issue persists
+      # https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver
+      # Use systemd to persist video memory to disk
+      enable = true;
+      # Requires 9th gen intel processor or greater, I have 6th in the MSI laptop
+      finegrained = false;
     };
     prime = {
       offload = {
