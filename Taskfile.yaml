@@ -9,9 +9,18 @@ tasks:
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake .
+  rebuild:*:
+    desc: Rebuild a particular config, pass :[hostname] for the target
+    cmd: sudo nixos-rebuild switch --flake .#{{ index .MATCH 0 }}
+  build_home:*:
+    desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
+    cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}
   update:
     desc: patch the flake and commit it
     cmd: nix flake update && git add flake.lock && git commit -m "patch flake"
   update_dconf:
     desc: Grab dconf config and pull it into your files, remember to select the key
     cmd: ./scripts/dconf.sh
+  garbage_collect:
+    desc: remove unreachable store objects and any generations older than a week
+    cmd: nix-collect-garbage --delete-older-than 7d
