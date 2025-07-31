@@ -3,6 +3,7 @@
   inputs,
   config,
   lib,
+  hostSpec,
   ...
 }:
 let
@@ -17,10 +18,10 @@ in
     validateSopsFiles = false;
     secrets = lib.mkMerge [
       {
-        "keys/ssh/luna/ed25519" = {
+        "keys/ssh/${hostSpec.hostName}/ed25519" = {
           path = "${homeDirectory}/.ssh/id_ed25519";
         };
-        "keys/ssh/luna/rsa" = {
+        "keys/ssh/${hostSpec.hostName}/rsa" = {
           path = "${homeDirectory}/.ssh/id_rsa";
         };
       }
