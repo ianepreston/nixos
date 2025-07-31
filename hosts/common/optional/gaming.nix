@@ -1,6 +1,6 @@
 { pkgs, ... }:
 {
-  hardware.xone.enable = true; # Gamepad
+  # hardware.xone.enable = true; # Gamepad
   programs = {
     steam = {
       enable = true;
