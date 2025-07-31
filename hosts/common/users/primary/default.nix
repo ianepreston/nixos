@@ -9,13 +9,16 @@
   lib,
   ...
 }:
+let
+  pubKeys = lib.filesystem.listFilesRecursive ./keys;
+in
 {
   users.users.${hostSpec.username} = {
     name = hostSpec.username;
     shell = pkgs.zsh; # default shell
 
     # These get placed into /etc/ssh/authorized_keys.d/<name> on nixos
-    # openssh.authorizedKeys.keys = lib.lists.forEach pubKeys (key: builtins.readFile key);
+    openssh.authorizedKeys.keys = lib.lists.forEach pubKeys (key: builtins.readFile key);
   };
 
   # Create ssh sockets directory for controlpaths when homemanager not loaded (i.e. isMinimal)
