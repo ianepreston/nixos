@@ -3,7 +3,7 @@
   imports = [
     ../core/default.nix
     ../optional/browser.nix
-    ../optional/gnome
+    # ../optional/gnome
     ../optional/comms.nix
     ../optional/media.nix
     ../optional/sops.nix
