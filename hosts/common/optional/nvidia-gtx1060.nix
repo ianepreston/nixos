@@ -9,7 +9,10 @@
   # };
   boot = {
     # Combined with modesetting.enabled in nvidia this fixes artifact issues with external monitor
-    kernelParams = [ "nvidia-drm.modeset=1" ];
+    kernelParams = [
+      "nvidia-drm.modeset=1"
+      "nvidia-drm.fbdev=1"
+    ];
     # https://discourse.nixos.org/t/psa-for-those-with-hibernation-issues-on-nvidia/61834
     extraModprobeConfig = ''
       options nvidia_modeset vblank_sem_control=0
