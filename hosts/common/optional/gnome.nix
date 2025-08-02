@@ -1,10 +1,7 @@
 { pkgs, ... }:
 {
-  # TODO: Break out X11 piece, maybe switch to Wayland
-  # Enable the X11 windowing system.
-  # services.xserver.enable = true;
-
   services.xserver = {
+    enable = true;
     xkb = {
       layout = "us";
       variant = "";
