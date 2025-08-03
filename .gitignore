@@ -4,6 +4,3 @@ result-*
 
 # Ignore automatically generated direnv output
 .direnv
-
-# dconf full output is just for figuring out what else to parse
-dconf_full.nix
