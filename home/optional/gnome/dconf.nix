@@ -57,6 +57,7 @@ with lib.hm.gvariant; {
 
     "org/gnome/desktop/notifications" = {
       application-children = ["firefox" "gnome-power-panel" "org-gnome-console" "discord" "spotify" "org-gnome-nautilus" "com-discordapp-discord" "org-gnome-software" "bambustudio" "signal"];
+      show-in-lock-screen = false;
     };
 
     "org/gnome/desktop/notifications/application/bambustudio" = {
@@ -111,6 +112,17 @@ with lib.hm.gvariant; {
       theme-name = "ocean";
     };
 
+    "org/gnome/desktop/wm/keybindings" = {
+      move-to-monitor-down = [];
+      move-to-monitor-left = [];
+      move-to-monitor-right = [];
+      move-to-monitor-up = [];
+      move-to-workspace-left = ["<Shift><Super>Left"];
+      move-to-workspace-right = ["<Shift><Super>Right"];
+      switch-to-workspace-left = ["<Super>Left"];
+      switch-to-workspace-right = ["<Super>Right"];
+    };
+
     "org/gnome/desktop/wm/preferences" = {
       button-layout = "icon:minimize,maximize,close";
     };
@@ -148,8 +160,8 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/mutter/keybindings" = {
-      toggle-tiled-left = ["<Super>Left"];
-      toggle-tiled-right = ["<Super>Right"];
+      toggle-tiled-left = [];
+      toggle-tiled-right = [];
     };
 
     "org/gnome/nautilus/preferences" = {
@@ -167,6 +179,10 @@ with lib.hm.gvariant; {
     "org/gnome/settings-daemon/plugins/media-keys" = {
       custom-keybindings = ["/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"];
       home = ["<Super>e"];
+      magnifier = [];
+      magnifier-zoom-in = [];
+      magnifier-zoom-out = [];
+      screenreader = [];
       www = ["<Super>f"];
     };
 
@@ -181,6 +197,10 @@ with lib.hm.gvariant; {
       favorite-apps = ["org.gnome.Nautilus.desktop" "firefox.desktop" "org.gnome.Console.desktop"];
       last-selected-power-profile = "performance";
       welcome-dialog-last-shown-version = "48.1";
+    };
+
+    "org/gnome/shell/app-switcher" = {
+      current-workspace-only = true;
     };
 
     "org/gnome/shell/extensions/paperwm" = {
