@@ -24,12 +24,17 @@ dconf dump /
 	| parse_dump
 	# filter out state & automatically inferred stuff.
 	| (reject
-		# 'org/gnome/desktop/a11y/applications'
     'apps/seahorse/windows/key-manager'
     'apps/seahorse/listing'
     'org/gnome/Console'
     'org/gnome/TextEditor'
     'org/gnome/control-center'
+    "org/gnome/desktop/background"
+    "org/gnome/desktop/input-sources"
+    "org/gnome/eog/view"
+    "org/gnome/mutter"
+    "org/gnome/nautilus/window-state"
+    "org/gnome/shell/extensions/paperwm/workspaces"
     'org/gnome/shell/extensions/quicksettings-audio-devices-renamer'
     'org/gnome/shell/extensions/quicksettings-audio-devices-hider'
 		'org/gnome/desktop/interface'
@@ -39,14 +44,6 @@ dconf dump /
 	)
 	| upsert 'com/github/wwmm/easyeffects/streamoutputs' { default {} | reject --ignore-errors 'output-device' }
 	| upsert 'com/github/wwmm/easyeffects/streaminputs'  { default {} | reject --ignore-errors 'input-device' }
-  # I don't think I want most things tracked in nix, let's try being selective
-  | (select
-  'org/gnome/mutter/keybindings'
-  'org/gnome/settings-daemon/plugins/media-keys'
-  'org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0'
-  'org/gnome/shell/extensions/paperwm'
-  'org/gnome/shell/keybindings'
-  )
 	| format_dump
 	| dconf2nix
 	| alejandra
