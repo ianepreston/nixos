@@ -7,18 +7,18 @@
   ...
 }:
 let
-  sopsFile = builtins.toString inputs.nix-secrets + "/sops.secret.yaml";
+  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
   homeDirectory = config.home.homeDirectory;
 in
 {
   imports = [ inputs.sops-nix.homeManagerModules.sops ];
   sops = {
     age.keyFile = "${homeDirectory}/.config/sops/age/keys.txt";
-    defaultSopsFile = "${sopsFile}";
+    defaultSopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
     validateSopsFiles = false;
     secrets = lib.mkMerge [
       {
-        "keys/ssh/${hostSpec.hostName}/ed25519" = {
+        "ssh/ed25519" = {
           path = "${homeDirectory}/.ssh/id_ed25519";
         };
       }

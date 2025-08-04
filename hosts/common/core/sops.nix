@@ -9,8 +9,7 @@
   ...
 }:
 let
-  # sopsFolder = builtins.toString inputs.nix-secrets + "/sops";
-  sopsFile = builtins.toString inputs.nix-secrets + "/sops.secret.yaml";
+  sopsFile = builtins.toString inputs.nix-secrets + "/sops/shared.yaml";
 in
 {
   #the import for inputs.sops-nix.nixosModules.sops is handled in hosts/common/core/default.nix so that it can be dynamically input according to the platform
@@ -19,10 +18,10 @@ in
     defaultSopsFile = "${sopsFile}";
     # defaultSopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
     validateSopsFiles = false;
-    # age = {
-    #   # automatically import host SSH keys as age keys
-    #   sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-    # };
+    age = {
+      # automatically import host SSH keys as age keys
+      sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+    };
 
     # secrets will be output to /run/secrets
     # e.g. /run/secrets/msmtp-password
