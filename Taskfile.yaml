@@ -16,8 +16,8 @@ tasks:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}
   update:
-    desc: patch the flake and commit it
-    cmd: nix flake update && git add flake.lock && git commit -m "patch flake"
+    desc: patch the flake
+    cmd: nix flake update
   update_dconf:
     desc: Grab dconf config and pull it into your files, remember to select the key
     cmd: ./scripts/dconf.sh
