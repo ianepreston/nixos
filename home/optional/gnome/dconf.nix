@@ -113,14 +113,15 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/desktop/wm/keybindings" = {
+      minimize = [];
       move-to-monitor-down = [];
       move-to-monitor-left = [];
       move-to-monitor-right = [];
       move-to-monitor-up = [];
-      move-to-workspace-left = ["<Shift><Super>Left"];
-      move-to-workspace-right = ["<Shift><Super>Right"];
-      switch-to-workspace-left = ["<Super>Left"];
-      switch-to-workspace-right = ["<Super>Right"];
+      move-to-workspace-left = ["<Shift><Super>h"];
+      move-to-workspace-right = ["<Shift><Super>l"];
+      switch-to-workspace-left = ["<Super>h"];
+      switch-to-workspace-right = ["<Super>l"];
     };
 
     "org/gnome/desktop/wm/preferences" = {
@@ -138,7 +139,7 @@ with lib.hm.gvariant; {
       sidebar-page = "thumbnails";
       sidebar-size = 586;
       sizing-mode = "fit-page";
-      window-ratio = mkTuple [1.5117919774239066 1.0084093500570126];
+      window-ratio = mkTuple [1.511792 1.008409];
     };
 
     "org/gnome/evolution-data-server" = {
@@ -160,8 +161,8 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/mutter/keybindings" = {
-      toggle-tiled-left = [];
-      toggle-tiled-right = [];
+      toggle-tiled-left = ["<Super>Left"];
+      toggle-tiled-right = ["<Super>Right"];
     };
 
     "org/gnome/nautilus/preferences" = {
@@ -183,6 +184,7 @@ with lib.hm.gvariant; {
       magnifier-zoom-in = [];
       magnifier-zoom-out = [];
       screenreader = [];
+      screensaver = [];
       www = ["<Super>f"];
     };
 
@@ -205,7 +207,7 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/extensions/paperwm" = {
       restore-keybinds = ''
-        {"toggle-tiled-left":{"bind":"[\\\\"<Super>Left\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\"<Super>Right\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\n
+        {"toggle-tiled-left":{"bind":"[\\\\\\\\"<Super>Left\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\"<Super>Right\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\n\n
       '';
     };
 
@@ -226,7 +228,7 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/software" = {
-      check-timestamp = mkInt64 1754161386;
+      check-timestamp = mkInt64 1754782280;
       first-run = false;
       flatpak-purge-timestamp = mkInt64 1754178371;
     };
