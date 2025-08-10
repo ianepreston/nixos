@@ -3,7 +3,6 @@
   inputs,
   pkgs,
   config,
-  catppuccin,
   hostSpec,
   customLib,
   lib,
@@ -66,7 +65,6 @@ in
               ;
           }
         )
-        # catppuccin.homeModules.catppuccin
       ]
     );
   };

@@ -14,6 +14,12 @@
       enable = true;
     };
   };
+  environment.systemPackages = with pkgs; [
+    gnomeExtensions.user-themes
+    gnomeExtensions.appindicator
+    gnomeExtensions.dash-in-panel
+
+  ];
   environment.gnome.excludePackages = (
     with pkgs;
     [
