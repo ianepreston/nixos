@@ -1,6 +1,6 @@
 # NixOS Installer for Nix-Config
 
-This flake is separate from the main nix-config flake and prepares a Nix environment for bootstrapping a nix-config host on a new machine. Most of the process is automated with the [`nixos-bootstrap.sh`](../scripts/nixos-bootstraph.sh) script that is run on a "source" host to install NixOS on a "target" machine. There are a couple of small manual steps that are typical of any OS installation procedure, such defining information about the target host and adding host-specific secrets to the relevant sops secrets file. This document explains some of the reasoning behind the use of a separate flake and then provides installation steps. For a more indepth look at some of the concepts, reasoning, and automation process, see the blog post [Remotely Installing NixOS and nix-config with Secrets](https://unmovedcentre.com/posts/remote-install-nixos-config/) on my website. Note that the blog post was written during the first iteration of the bootstrap script and there have been significant enhancements to the code since that time. The general idea and flow still stand and may provide useful insight to understanding the script itself, for those who want to learn more about what it does.
+This flake is separate from the main nix-config flake and prepares a Nix environment for bootstrapping a nix-config host on a new machine. Most of the process is automated with the [`nixos-bootstrap.sh`](../scripts/nixos-bootstraph.sh) script that is run on a "source" host to install NixOS on a "target" machine. There are a couple of small manual steps that are typical of any OS installation procedure, such defining information about the target host and adding host-specific secrets to the relevant sops secrets file. This document explains some of the reasoning behind the use of a separate flake and then provides installation steps. For a more indepth look at some of the concepts, reasoning, and automation process, see the blog post [Remotely Installing NixOS and nix-config with Secrets](https://unmovedcentre.com/posts/remote-install-nixos-config/) on EmergentMind's website. Note that the blog post was written during the first iteration of the bootstrap script and there have been significant enhancements to the code since that time. The general idea and flow still stand and may provide useful insight to understanding the script itself, for those who want to learn more about what it does.
 
 - [Why an extra flake?](#why-an-extra-flake)
 - [Assumptions](#assumptions)
@@ -9,6 +9,33 @@ This flake is separate from the main nix-config flake and prepares a Nix environ
 - [Requirements for installing an existing nix-config host on a new machine](requirements-for-installing-an-existing-nix-config-host-on-a-new-machine)
 - [Installation Steps](#installation-steps)
 - [Troubleshooting](#Troubleshooting)
+
+## Setting Wifi for install
+
+### In the live environment
+
+Thanks [Arch wiki](https://wiki.archlinux.org/title/Wpa_supplicant), I still love you even if I'm running nix now.
+
+```bash
+# Start wpa_supplicant
+sudo systemctl start wpa_supplicant
+wpa_cli
+scan # If you want to confirm your network is visible
+scan_results # to list the identified networks
+add_network
+set_network 0 ssid "MYSSID"
+set_network 0 psk "passphrase"
+enable_network 0
+# Don't run save config like in the Arch wiki since this is nix, it will still work for this session
+quit
+```
+
+### After the minimal install
+
+```bash
+# Can't put the password inline since we don't have a keyring
+nmcli --ask device wifi connect "MYSSID"
+```
 
 ## Why an extra flake?
 
