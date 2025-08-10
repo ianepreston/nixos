@@ -34,6 +34,7 @@
       "hosts/common/optional/gnome.nix" # WM
       "hosts/common/optional/nvidia-gtx1060.nix"
       "hosts/common/optional/obsidian.nix"
+      "hosts/common/optional/smbclient.nix"
       "hosts/common/optional/themes.nix"
       "hosts/common/optional/xreal-headset.nix"
       "hosts/common/optional/zsa-keeb.nix"
