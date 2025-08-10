@@ -37,6 +37,7 @@ dconf dump /
     "org/gnome/shell/extensions/paperwm/workspaces"
     'org/gnome/shell/extensions/quicksettings-audio-devices-renamer'
     'org/gnome/shell/extensions/quicksettings-audio-devices-hider'
+    'org/gnome/software'
 		'org/gnome/desktop/interface'
 		# 'org/gnome/desktop/sound'
 		# 'org/gnome/desktop/wm/preferences'
