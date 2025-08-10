@@ -32,6 +32,7 @@ in
         "docker"
         "git"
         "networkmanager"
+        "plugdev"
         "scanner" # for print/scan"
         "lp" # for print/scan"
       ])
