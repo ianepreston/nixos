@@ -207,7 +207,7 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/extensions/paperwm" = {
       restore-keybinds = ''
-        {"toggle-tiled-left":{"bind":"[\\\\\\\\"<Super>Left\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\"<Super>Right\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\n\n
+        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\n\\n\n
       '';
     };
 
@@ -225,12 +225,6 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/world-clocks" = {
       locations = [];
-    };
-
-    "org/gnome/software" = {
-      check-timestamp = mkInt64 1754782280;
-      first-run = false;
-      flatpak-purge-timestamp = mkInt64 1754178371;
     };
   };
 }
