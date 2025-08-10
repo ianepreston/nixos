@@ -33,8 +33,5 @@
       };
     };
   };
-  catppuccin = {
-    flavor = "latte";
-  };
 
 }

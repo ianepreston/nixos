@@ -7,8 +7,8 @@
     {
       self,
       nixpkgs,
-      catppuccin,
       nix-flatpak,
+      stylix,
       ...
     }@inputs:
     let
@@ -73,8 +73,8 @@
             };
             modules = [
               ./hosts/nixos/${host}
-              catppuccin.nixosModules.catppuccin
               nix-flatpak.nixosModules.nix-flatpak
+              stylix.nixosModules.stylix
             ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
@@ -87,7 +87,6 @@
         };
         modules = [
           ./home/ipreston/wsl.nix
-          catppuccin.homeModules.catppuccin
         ];
       };
       homeConfigurations."vm@work" = inputs.home-manager.lib.homeManagerConfiguration {
@@ -98,7 +97,6 @@
         };
         modules = [
           ./home/work/workvm.nix
-          catppuccin.homeModules.catppuccin
         ];
       };
       homeConfigurations."wsl@work" = inputs.home-manager.lib.homeManagerConfiguration {
@@ -109,7 +107,6 @@
         };
         modules = [
           ./home/work/workwsl.nix
-          catppuccin.homeModules.catppuccin
         ];
       };
     };
@@ -128,7 +125,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     stylix.url = "github:danth/stylix/release-25.05";
-    catppuccin.url = "github:catppuccin/nix";
     nix-flatpak.url = "github:gmodena/nix-flatpak/?ref=latest";
     # Declarative partitioning and formatting
     disko = {

@@ -195,7 +195,8 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/shell" = {
-      enabled-extensions = ["user-theme@gnome-shell-extensions.gcampax.github.com"];
+      disabled-extensions = [];
+      enabled-extensions = ["user-theme@gnome-shell-extensions.gcampax.github.com" "appindicatorsupport@rgcjonas.gmail.com" "dash-in-panel@fthx"];
       favorite-apps = ["org.gnome.Nautilus.desktop" "firefox.desktop" "org.gnome.Console.desktop"];
       last-selected-power-profile = "performance";
       welcome-dialog-last-shown-version = "48.1";

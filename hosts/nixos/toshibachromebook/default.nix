@@ -38,7 +38,6 @@
       "hosts/common/optional/themes.nix"
       "hosts/common/optional/zsa-keeb.nix"
     ])
-    inputs.stylix.nixosModules.stylix
   ];
   # Bootloader.
   # boot.loader.grub.enable = true;
