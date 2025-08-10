@@ -208,7 +208,7 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/extensions/paperwm" = {
       restore-keybinds = ''
-        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\n\\n\n
+        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\\\\\n\\\\n\\n\n
       '';
     };
 
