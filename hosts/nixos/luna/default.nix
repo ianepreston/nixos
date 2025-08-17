@@ -17,6 +17,11 @@
     inputs.hardware.nixosModules.common-cpu-intel
     inputs.hardware.nixosModules.common-gpu-intel
     inputs.hardware.nixosModules.common-gpu-nvidia
+    #
+    # ========== Disk Layout ==========
+    #
+    inputs.disko.nixosModules.disko
+    (customLib.relativeToRoot "hosts/common/disks/luna.nix")
 
     (map customLib.relativeToRoot [
       #
