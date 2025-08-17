@@ -1,7 +1,7 @@
-{ pkgs, config, ... }:
+{ ... }:
 {
   disko.devices = {
-    nvme = {
+    disk = {
       primary = {
         type = "disk";
         device = "/dev/nvme0n1";
