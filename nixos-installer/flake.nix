@@ -71,6 +71,18 @@
         # host = newConfig "name" disk" "swapSize" "useLuks" "useImpermanence"
         # Swap size is in GiB
         # toshibachromebook = newConfig "toshibachromebook" "/dev/sda" 4 true false;
+        luna = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = minimalSpecialArgs;
+          modules = [
+            inputs.disko.nixosModules.disko
+            ../hosts/common/disks/luna.nix
+            ./minimal-configuration.nix
+            { networking.hostName = "luna"; }
+            { boot.loader.grub.device = "nodev"; }
+            ../hosts/nixos/luna/hardware-configuration.nix
+          ];
+        };
         toshibachromebook = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           specialArgs = minimalSpecialArgs;
