@@ -79,8 +79,18 @@
             ../hosts/common/disks/luna.nix
             ./minimal-configuration.nix
             { networking.hostName = "luna"; }
-            { boot.loader.grub.device = "nodev"; }
             ../hosts/nixos/luna/hardware-configuration.nix
+          ];
+        };
+        terra = nixpkgs.lib.nixosSystem {
+          system = "x86_64-linux";
+          specialArgs = minimalSpecialArgs;
+          modules = [
+            inputs.disko.nixosModules.disko
+            ../hosts/common/disks/terra.nix
+            ./minimal-configuration.nix
+            { networking.hostName = "terra"; }
+            ../hosts/nixos/terra/hardware-configuration.nix
           ];
         };
         toshibachromebook = nixpkgs.lib.nixosSystem {
