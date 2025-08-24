@@ -4,27 +4,28 @@
 
   # The home.packages option allows you to install Nix packages into your
   # environment.
-  home.packages = [
-    # pkgs.dig
-    # pkgs.whois
-    # pkgs.fzf
-    pkgs.curl
-    pkgs.wget
-    pkgs.unzip
-    # pkgs.tree
-    pkgs.ripgrep
-    pkgs.fd
-    pkgs.lazygit
-    pkgs.neofetch
-    pkgs.jq
-    pkgs.yq-go
-    pkgs.shellcheck
-    # pkgs.direnv
-    # pkgs.nix-direnv
-    pkgs.nixfmt-rfc-style
-    pkgs.keychain
-    pkgs.sops
-    pkgs.age
+  home.packages = with pkgs; [
+    # dig
+    # whois
+    # fzf
+    curl
+    wget
+    unzip
+    tree
+    ripgrep
+    fd
+    lazygit
+    neofetch
+    jq
+    yq-go
+    shellcheck
+    # direnv
+    # nix-direnv
+    nixfmt-rfc-style
+    keychain
+    sops
+    age
+    coreutils
   ];
 
 }
