@@ -34,6 +34,7 @@
       #
       "hosts/common/optional/services/printing.nix" # Do I need this to print to PDF? Otherwise disable
       "hosts/common/optional/audio.nix" # WM
+      "hosts/common/optional/docker.nix"
       "hosts/common/optional/flatpak.nix"
       "hosts/common/optional/gaming.nix"
       "hosts/common/optional/gnome.nix" # WM
