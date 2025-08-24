@@ -23,5 +23,6 @@ in
     # package = config.boot.kernelPackages.nvidiaPackages.latest;
     # Latest isn't building at 2025-08-18, try again later
     package = config.boot.kernelPackages.nvidiaPackages.stable;
+    powerManagement.enable = true;
   };
 }
