@@ -25,4 +25,10 @@ in
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     powerManagement.enable = true;
   };
+  # Hopefully fix it going blank after resuming
+  systemd.services = {
+    "nvidia-suspend".enable = false;
+    "nvidia-resume".enable = false;
+    "nvidia-hibernate".enable = false;
+  };
 }
