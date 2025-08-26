@@ -82,4 +82,7 @@
       };
     };
   };
+  systemd.tmpfiles.rules = [
+    "d /mnt/data 0755 ipreston users -"
+  ];
 }
