@@ -17,6 +17,8 @@
   environment.systemPackages = with pkgs; [
     gnomeExtensions.user-themes
     gnomeExtensions.appindicator
+    wl-clipboard
+    xclip
 
   ];
   environment.gnome.excludePackages = (
