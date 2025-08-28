@@ -8,6 +8,7 @@
 {
 
   services.openssh.enable = true;
+  services.openssh.settings.PasswordAuthentication = false;
   programs.ssh = lib.optionalAttrs pkgs.stdenv.isLinux {
     startAgent = true;
     enableAskPassword = true;
