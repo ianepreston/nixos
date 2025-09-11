@@ -24,19 +24,19 @@ dconf dump /
 	| parse_dump
 	# filter out state & automatically inferred stuff.
 	| (reject
-    'apps/seahorse/windows/key-manager'
-    'apps/seahorse/listing'
+    # 'apps/seahorse/windows/key-manager'
+    # 'apps/seahorse/listing'
     'org/gnome/Console'
-    'org/gnome/TextEditor'
+    # 'org/gnome/TextEditor'
     'org/gnome/control-center'
     "org/gnome/desktop/background"
     "org/gnome/desktop/input-sources"
-    "org/gnome/eog/view"
-    "org/gnome/mutter"
-    "org/gnome/nautilus/window-state"
-    "org/gnome/shell/extensions/paperwm/workspaces"
-    'org/gnome/shell/extensions/quicksettings-audio-devices-renamer'
-    'org/gnome/shell/extensions/quicksettings-audio-devices-hider'
+    # "org/gnome/eog/view"
+    # "org/gnome/mutter"
+    # "org/gnome/nautilus/window-state"
+    # "org/gnome/shell/extensions/paperwm/workspaces"
+    # 'org/gnome/shell/extensions/quicksettings-audio-devices-renamer'
+    # 'org/gnome/shell/extensions/quicksettings-audio-devices-hider'
     'org/gnome/software'
 		'org/gnome/desktop/interface'
 		# 'org/gnome/desktop/sound'
