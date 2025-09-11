@@ -124,8 +124,12 @@ with lib.hm.gvariant; {
       move-to-monitor-up = [];
       move-to-workspace-left = ["<Shift><Super>h"];
       move-to-workspace-right = ["<Shift><Super>l"];
+      switch-applications = [];
+      switch-applications-backward = [];
       switch-to-workspace-left = ["<Super>h"];
       switch-to-workspace-right = ["<Super>l"];
+      switch-windows = ["<Alt>Tab"];
+      switch-windows-backward = ["<Shift><Alt>Tab"];
     };
 
     "org/gnome/desktop/wm/preferences" = {
