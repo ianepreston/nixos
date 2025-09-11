@@ -64,6 +64,10 @@ with lib.hm.gvariant; {
       application-id = "BambuStudio.desktop";
     };
 
+    "org/gnome/desktop/notifications/application/com-bambulab-bambustudio" = {
+      application-id = "com.bambulab.BambuStudio.desktop";
+    };
+
     "org/gnome/desktop/notifications/application/com-discordapp-discord" = {
       application-id = "com.discordapp.Discord.desktop";
     };
@@ -146,6 +150,21 @@ with lib.hm.gvariant; {
       migrated = true;
     };
 
+    "org/gnome/file-roller/dialogs/extract" = {
+      height = 800;
+      recreate-folders = true;
+      skip-newer = false;
+      width = 1000;
+    };
+
+    "org/gnome/file-roller/file-selector" = {
+      show-hidden = false;
+      sidebar-size = 300;
+      sort-method = "name";
+      sort-type = "ascending";
+      window-size = mkTuple [(-1) (-1)];
+    };
+
     "org/gnome/file-roller/listing" = {
       list-mode = "as-folder";
       name-column-width = 66;
@@ -169,6 +188,11 @@ with lib.hm.gvariant; {
       default-folder-viewer = "icon-view";
       migrated-gtk-settings = true;
       search-filter-time-type = "last_modified";
+    };
+
+    "org/gnome/nautilus/window-state" = {
+      initial-size = mkTuple [890 550];
+      maximized = false;
     };
 
     "org/gnome/settings-daemon/plugins/color" = {
@@ -195,6 +219,7 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/shell" = {
+      command-history = ["r" "rr" "R"];
       disabled-extensions = [];
       enabled-extensions = ["user-theme@gnome-shell-extensions.gcampax.github.com" "appindicatorsupport@rgcjonas.gmail.com" "dash-in-panel@fthx"];
       favorite-apps = ["org.gnome.Nautilus.desktop" "firefox.desktop" "org.gnome.Console.desktop"];
@@ -208,7 +233,7 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/extensions/paperwm" = {
       restore-keybinds = ''
-        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\\\\\n\\\\n\\n\n
+        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\\\\\\\\\\\\\n\\\\\\\\n\\\\n\\n\n
       '';
     };
 
@@ -226,6 +251,10 @@ with lib.hm.gvariant; {
 
     "org/gnome/shell/world-clocks" = {
       locations = [];
+    };
+
+    "org/gtk/gtk4/settings/file-chooser" = {
+      show-hidden = true;
     };
   };
 }
