@@ -7,6 +7,7 @@
     ../optional/calibre.nix
     ../optional/comms.nix
     ../optional/media.nix
+    ../optional/ssh.nix
     ../optional/sops.nix
   ];
 }
