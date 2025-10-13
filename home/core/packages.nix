@@ -8,6 +8,7 @@
     # dig
     # whois
     # fzf
+    traceroute
     curl
     wget
     unzip
