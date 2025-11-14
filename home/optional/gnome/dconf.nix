@@ -1,6 +1,7 @@
 # Generated via dconf2nix: https://github.com/gvolpe/dconf2nix
-{lib, ...}:
-with lib.hm.gvariant; {
+{ lib, ... }:
+with lib.hm.gvariant;
+{
   dconf.settings = {
     "org/gnome/calculator" = {
       base = 10;
@@ -10,7 +11,10 @@ with lib.hm.gvariant; {
       target-currency = "";
       target-units = "radian";
       window-maximized = false;
-      window-size = mkTuple [360 616];
+      window-size = mkTuple [
+        360
+        616
+      ];
     };
 
     "org/gnome/desktop/a11y/applications" = {
@@ -18,29 +22,46 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/desktop/app-folders" = {
-      folder-children = ["System" "Utilities" "YaST" "Pardus"];
+      folder-children = [
+        "System"
+        "Utilities"
+        "YaST"
+        "Pardus"
+      ];
     };
 
     "org/gnome/desktop/app-folders/folders/Pardus" = {
-      categories = ["X-Pardus-Apps"];
+      categories = [ "X-Pardus-Apps" ];
       name = "X-Pardus-Apps.directory";
       translate = true;
     };
 
     "org/gnome/desktop/app-folders/folders/System" = {
-      apps = ["org.gnome.DiskUtility.desktop" "org.gnome.Logs.desktop" "org.gnome.SystemMonitor.desktop" "org.gnome.baobab.desktop"];
+      apps = [
+        "org.gnome.DiskUtility.desktop"
+        "org.gnome.Logs.desktop"
+        "org.gnome.SystemMonitor.desktop"
+        "org.gnome.baobab.desktop"
+      ];
       name = "X-GNOME-Shell-System.directory";
       translate = true;
     };
 
     "org/gnome/desktop/app-folders/folders/Utilities" = {
-      apps = ["org.gnome.Connections.desktop" "org.gnome.Evince.desktop" "org.gnome.FileRoller.desktop" "org.gnome.font-viewer.desktop" "org.gnome.Loupe.desktop" "org.gnome.seahorse.Application.desktop"];
+      apps = [
+        "org.gnome.Connections.desktop"
+        "org.gnome.Evince.desktop"
+        "org.gnome.FileRoller.desktop"
+        "org.gnome.font-viewer.desktop"
+        "org.gnome.Loupe.desktop"
+        "org.gnome.seahorse.Application.desktop"
+      ];
       name = "X-GNOME-Shell-Utilities.directory";
       translate = true;
     };
 
     "org/gnome/desktop/app-folders/folders/YaST" = {
-      categories = ["X-SuSE-YaST"];
+      categories = [ "X-SuSE-YaST" ];
       name = "suse-yast.directory";
       translate = true;
     };
@@ -56,7 +77,18 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/desktop/notifications" = {
-      application-children = ["firefox" "gnome-power-panel" "org-gnome-console" "discord" "spotify" "org-gnome-nautilus" "com-discordapp-discord" "org-gnome-software" "bambustudio" "signal"];
+      application-children = [
+        "firefox"
+        "gnome-power-panel"
+        "org-gnome-console"
+        "discord"
+        "spotify"
+        "org-gnome-nautilus"
+        "com-discordapp-discord"
+        "org-gnome-software"
+        "bambustudio"
+        "signal"
+      ];
       show-in-lock-screen = false;
     };
 
@@ -109,7 +141,11 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/desktop/search-providers" = {
-      sort-order = ["org.gnome.Settings.desktop" "org.gnome.Contacts.desktop" "org.gnome.Nautilus.desktop"];
+      sort-order = [
+        "org.gnome.Settings.desktop"
+        "org.gnome.Contacts.desktop"
+        "org.gnome.Nautilus.desktop"
+      ];
     };
 
     "org/gnome/desktop/sound" = {
@@ -117,19 +153,19 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/desktop/wm/keybindings" = {
-      minimize = [];
-      move-to-monitor-down = [];
-      move-to-monitor-left = [];
-      move-to-monitor-right = [];
-      move-to-monitor-up = [];
-      move-to-workspace-left = ["<Shift><Super>h"];
-      move-to-workspace-right = ["<Shift><Super>l"];
-      switch-applications = [];
-      switch-applications-backward = [];
-      switch-to-workspace-left = ["<Super>h"];
-      switch-to-workspace-right = ["<Super>l"];
-      switch-windows = ["<Alt>Tab"];
-      switch-windows-backward = ["<Shift><Alt>Tab"];
+      minimize = [ ];
+      move-to-monitor-down = [ ];
+      move-to-monitor-left = [ ];
+      move-to-monitor-right = [ ];
+      move-to-monitor-up = [ ];
+      move-to-workspace-left = [ "<Shift><Super>h" ];
+      move-to-workspace-right = [ "<Shift><Super>l" ];
+      switch-applications = [ ];
+      switch-applications-backward = [ ];
+      switch-to-workspace-left = [ "<Super>h" ];
+      switch-to-workspace-right = [ "<Super>l" ];
+      switch-windows = [ "<Alt>Tab" ];
+      switch-windows-backward = [ "<Shift><Alt>Tab" ];
     };
 
     "org/gnome/desktop/wm/preferences" = {
@@ -147,7 +183,10 @@ with lib.hm.gvariant; {
       sidebar-page = "thumbnails";
       sidebar-size = 586;
       sizing-mode = "fit-page";
-      window-ratio = mkTuple [1.511792 1.008409];
+      window-ratio = mkTuple [
+        1.511792
+        1.008409
+      ];
     };
 
     "org/gnome/evolution-data-server" = {
@@ -166,7 +205,10 @@ with lib.hm.gvariant; {
       sidebar-size = 300;
       sort-method = "name";
       sort-type = "ascending";
-      window-size = mkTuple [(-1) (-1)];
+      window-size = mkTuple [
+        (-1)
+        (-1)
+      ];
     };
 
     "org/gnome/file-roller/listing" = {
@@ -184,8 +226,8 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/mutter/keybindings" = {
-      toggle-tiled-left = ["<Super>Left"];
-      toggle-tiled-right = ["<Super>Right"];
+      toggle-tiled-left = [ "<Super>Left" ];
+      toggle-tiled-right = [ "<Super>Right" ];
     };
 
     "org/gnome/nautilus/preferences" = {
@@ -195,7 +237,10 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/nautilus/window-state" = {
-      initial-size = mkTuple [890 550];
+      initial-size = mkTuple [
+        890
+        550
+      ];
       maximized = false;
     };
 
@@ -206,27 +251,41 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/settings-daemon/plugins/media-keys" = {
-      custom-keybindings = ["/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"];
-      home = ["<Super>e"];
-      magnifier = [];
-      magnifier-zoom-in = [];
-      magnifier-zoom-out = [];
-      screenreader = [];
-      screensaver = [];
-      www = ["<Super>f"];
+      custom-keybindings = [
+        "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
+      ];
+      home = [ "<Super>e" ];
+      magnifier = [ ];
+      magnifier-zoom-in = [ ];
+      magnifier-zoom-out = [ ];
+      screenreader = [ ];
+      screensaver = [ ];
+      www = [ "<Super>f" ];
     };
 
     "org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0" = {
       binding = "<Super>t";
-      command = "kgx";
+      command = "ghostty";
       name = "Launch Terminal";
     };
 
     "org/gnome/shell" = {
-      command-history = ["r" "rr" "R"];
-      disabled-extensions = [];
-      enabled-extensions = ["user-theme@gnome-shell-extensions.gcampax.github.com" "appindicatorsupport@rgcjonas.gmail.com" "dash-in-panel@fthx"];
-      favorite-apps = ["org.gnome.Nautilus.desktop" "firefox.desktop" "org.gnome.Console.desktop"];
+      command-history = [
+        "r"
+        "rr"
+        "R"
+      ];
+      disabled-extensions = [ ];
+      enabled-extensions = [
+        "user-theme@gnome-shell-extensions.gcampax.github.com"
+        "appindicatorsupport@rgcjonas.gmail.com"
+        "dash-in-panel@fthx"
+      ];
+      favorite-apps = [
+        "org.gnome.Nautilus.desktop"
+        "firefox.desktop"
+        "ghostty.desktop"
+      ];
       last-selected-power-profile = "performance";
       welcome-dialog-last-shown-version = "48.1";
     };
@@ -250,11 +309,11 @@ with lib.hm.gvariant; {
     };
 
     "org/gnome/shell/keybindings" = {
-      show-screenshot-ui = ["<Shift><Super>s"];
+      show-screenshot-ui = [ "<Shift><Super>s" ];
     };
 
     "org/gnome/shell/world-clocks" = {
-      locations = [];
+      locations = [ ];
     };
 
     "org/gtk/gtk4/settings/file-chooser" = {

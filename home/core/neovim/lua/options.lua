@@ -19,6 +19,7 @@ g.eden_theme_variant = "latte" -- theme variant for g.eden_theme. comment to use
 g.eden_header = "small" -- "big" or "small" header
 
 g.mapleader = " " -- leader key for keymaps
+g.clipboard = "osc52" --allow copy in ssh and wsl
 
 opt.guifont = "monospace:h12" -- font used in Neovim GUI apps like Neovide
 
@@ -29,7 +30,7 @@ opt.fillchars = "eob: ,fold: ,foldopen:,foldsep: ,foldclose:"
 opt.foldcolumn = "auto" -- Width of fold column (if you use folds a lot, better set to "1" and install nvim-ufo)
 
 opt.backup = false -- creates a backup file
-opt.clipboard = "unnamedplus" -- allows neovim to access the system clipboard
+opt.clipboard = "" -- Don't use the system clipboard as the default register
 opt.cmdheight = 0 -- more space in the neovim command line for displaying messages
 opt.completeopt = { "menuone", "noselect" } -- mostly just for cmp
 opt.conceallevel = 0 -- so that `` is visible in markdown files
