@@ -23,8 +23,8 @@ g.clipboard = "osc52" --allow copy in ssh and wsl
 
 opt.guifont = "monospace:h12" -- font used in Neovim GUI apps like Neovide
 
-vim.o.background = "light"
--- Hide '~' shown on every line after EOF by replacing it with ' ', improve fold charasters
+opt.background = "light"
+-- Hide '~' shown on every line after EOF by replacing it with ' ', improve fold characters
 ---@diagnostic disable-next-line: assign-type-mismatch
 opt.fillchars = "eob: ,fold: ,foldopen:,foldsep: ,foldclose:"
 opt.foldcolumn = "auto" -- Width of fold column (if you use folds a lot, better set to "1" and install nvim-ufo)
@@ -32,7 +32,7 @@ opt.foldcolumn = "auto" -- Width of fold column (if you use folds a lot, better 
 opt.backup = false -- creates a backup file
 opt.clipboard = "" -- Don't use the system clipboard as the default register
 opt.cmdheight = 0 -- more space in the neovim command line for displaying messages
-opt.completeopt = { "menuone", "noselect" } -- mostly just for cmp
+opt.completeopt = { "menuone", "noselect" } -- mostly just for cmp, menuone shows a menu even if there's only one option, noselect means you have to hit tab to do the completion
 opt.conceallevel = 0 -- so that `` is visible in markdown files
 opt.fileencoding = "utf-8" -- the encoding written to a file
 opt.hlsearch = true -- highlight all matches on previous search pattern
@@ -70,8 +70,7 @@ opt.shortmess:append "c" -- hide all the completion messages, e.g. "-- XXX compl
 opt.whichwrap:append "<,>,[,],h,l" -- keys allowed to move to the previous/next line when the beginning/end of line is reached
 opt.iskeyword:append "-" -- treats words with `-` as single words
 opt.formatoptions:remove { "c", "r", "o" } -- This is a sequence of letters which describes how automatic formatting is to be done
-opt.linebreak = true
--- opt.colorcolumn = {80, 120}                 -- set line width indication at columns 80 and 120
+-- opt.colorcolumn = { 80, 120 } -- set line width indication at columns 80 and 120
 opt.sessionoptions = "blank,buffers,curdir,folds,help,tabpages,winsize,winpos,terminal,localoptions"
 vim.lsp.set_log_level "off" -- LSP log gets huge and I don't care about it
 
