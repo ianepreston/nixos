@@ -126,18 +126,18 @@ map("x", "<leader>p", '"_dP', { desc = "Paste over w/o changing register" })
 map("x", "<leader>D", "_d", { desc = "Delete without changing unnamed register" })
 
 -- Create new file
-map("n", "New File", "<cmd>ene!<cr>", { desc = "New file" })
+-- map("n", "New File", "<cmd>ene!<cr>", { desc = "New file" })
 
 -- Save file with Ctrl + s, <leader>w, <leader>W
-map({ "n", "x", "i" }, "<C-s>", "<cmd>w<cr><esc>", { desc = "Save file" })
+-- map({ "n", "x", "i" }, "<C-s>", "<cmd>w<cr><esc>", { desc = "Save file" })
 map("n", "<leader>w", "<cmd>w<cr>", { desc = "Save file (:w)" })
 -- SudaWrite
 map("n", "<leader>W", "<cmd>SudaWrite<cr>", { desc = "Save file with Sudo" })
 
 -- Options, UI, Toggles
 map("n", "<leader>ow", "<cmd>set wrap!<cr>", { desc = "Toggle word wrapping" })
-map("n", "<leader>ol", "<cmd>set number!<cr>", { desc = "Toggle line numbering" })
-map("n", "<leader>or", "<cmd>set relativenumber!<cr>", { desc = "Toggle relative line numbering" })
+-- map("n", "<leader>ol", "<cmd>set number!<cr>", { desc = "Toggle line numbering" })
+-- map("n", "<leader>or", "<cmd>set relativenumber!<cr>", { desc = "Toggle relative line numbering" })
 map("n", "<leader>ot", "<cmd>set expandtab!<cr>", { desc = "Toggle spaces/tab in Insert mode" })
 -- I think it's better to V-select your lines, do `!cat -A`, watch for strange characters, and undo `cat -A` with `u`
 map("n", "<leader>oc", "<cmd>set list!<cr>", { desc = "Toggle hidden character visibility" })
@@ -150,14 +150,14 @@ map("n", "<leader>os", "<cmd>AerialToggle!<cr>", { desc = "Toggle symbols explor
 -- If changing a number/string, do the change in Insert mode and then hit Enter
 map("n", "<leader>oo", "<cmd>options<cr>", { desc = "Interactive vim_options explorer" })
 
-local function toggle_cmdheight()
-  local h = 1 - vim.api.nvim_get_option "cmdheight"
-  vim.api.nvim_set_option("cmdheight", h)
-end
-
--- With cmdheight=0, when you type `:`, you type over the statusline.
--- When cmdheight=1, there is a separate line. Also, it shows partial commands as you type them
-map("n", "<leader>oc", toggle_cmdheight, { desc = "Toggle cmdline visibility" })
+-- local function toggle_cmdheight()
+--   local h = 1 - vim.api.nvim_get_option "cmdheight"
+--   vim.api.nvim_set_option("cmdheight", h)
+-- end
+--
+-- -- With cmdheight=0, when you type `:`, you type over the statusline.
+-- -- When cmdheight=1, there is a separate line. Also, it shows partial commands as you type them
+-- map("n", "<leader>oc", toggle_cmdheight, { desc = "Toggle cmdline visibility" })
 
 local function toggle_autopairs()
   local autopairs = require "nvim-autopairs"
@@ -172,10 +172,10 @@ map("n", "<leader>op", toggle_autopairs, { desc = "Toggle bracket pairing (autop
 
 -- Insert --
 -- Navigation in Insert mode
-map("i", "<C-h>", "<Left>", { desc = "Move cursor left" })
-map("i", "<C-j>", "<Down>", { desc = "Move cursor down" })
-map("i", "<C-k>", "<Up>", { desc = "Move cursor up" })
-map("i", "<C-l>", "<Right>", { desc = "Move cursor right" })
+-- map("i", "<C-h>", "<Left>", { desc = "Move cursor left" })
+-- map("i", "<C-j>", "<Down>", { desc = "Move cursor down" })
+-- map("i", "<C-k>", "<Up>", { desc = "Move cursor up" })
+-- map("i", "<C-l>", "<Right>", { desc = "Move cursor right" })
 
 -- Add undo break-points (so that `u` will undo up to comma, semicolon, and fullstop
 -- <c-g>u = close undo sequence, start new change
@@ -242,12 +242,28 @@ map({ "n", "x" }, "<leader>la", function()
   vim.lsp.buf.code_action()
 end, { desc = "Code actions (LSP)" })
 -- Try [d and ]d instead of <leader>ln and <leader>lp
+-- Next diagnostic (forward)
 map("n", "<leader>ln", function()
-  vim.diagnostic.goto_next { buffer = 0 }
-end, { desc = "Go to next diagnostics (LSP)" })
+  vim.diagnostic.jump {
+    count = 1, -- positive moves forward
+    float = true, -- show the diagnostic in a floating window
+    buf = 0, -- optional: current buffer; omit to use the current buffer implicitly
+    wrap = true, -- optional: wrap around file
+    -- severity = { min = vim.diagnostic.severity.WARN },  -- example: skip hints
+  }
+end, { desc = "Diagnostics: next (with float)" })
+
+-- Previous diagnostic (backward)
 map("n", "<leader>lp", function()
-  vim.diagnostic.goto_prev { buffer = 0 }
-end, { desc = "Go to previous diagnostics (LSP)" })
+  vim.diagnostic.jump {
+    count = -1, -- negative moves backward
+    float = true,
+    buf = 0, -- optional: current buffer; omit to use the current buffer implicitly
+    wrap = true, -- optional: wrap around file
+    -- Same optional filters as above
+  }
+end, { desc = "Diagnostics: previous (with float)" })
+
 map("n", "<leader>lr", function()
   vim.lsp.buf.rename()
 end, { desc = "Rename (LSP)" })
