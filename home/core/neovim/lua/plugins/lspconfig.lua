@@ -38,10 +38,12 @@ function M.config(_, opts)
   capabilities.textDocument.completion.completionItem.snippetSupport = true
   capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
 
-  local lspconfig = require "lspconfig"
-  local on_attach = function(client, bufnr)
-    require("illuminate").on_attach(client)
-  end
+  vim.api.nvim_create_autocmd("LspAttach", {
+    callback = function(event)
+      local client = vim.lsp.get_client_by_id(event.data.client_id)
+      require("illuminate").on_attach(client)
+    end,
+  })
 
   -- Try to configure each LSP server from `lua/settings/toolset.lua` with options in `settings/{server}.lua`, if present
   for _, server in pairs(require("settings.toolset").lsp_servers) do
@@ -59,7 +61,8 @@ function M.config(_, opts)
     end
 
     -- You can manually add extra LSP server configurations here, if you don't want to use `settings/{server}.lua`
-    lspconfig[server].setup(server_opts)
+    vim.lsp.config(server, server_opts)
+    vim.lsp.enable(server)
   end
 
   local signs = {
