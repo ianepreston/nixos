@@ -26,9 +26,12 @@ opt.guifont = "monospace:h12" -- font used in Neovim GUI apps like Neovide
 opt.background = "light"
 -- Hide '~' shown on every line after EOF by replacing it with ' ', improve fold characters
 ---@diagnostic disable-next-line: assign-type-mismatch
+
 opt.fillchars = "eob: ,fold: ,foldopen:,foldsep: ,foldclose:"
 opt.foldcolumn = "auto" -- Width of fold column (if you use folds a lot, better set to "1" and install nvim-ufo)
-
+opt.foldmethod = "expr"
+opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
+opt.foldlevel = 99 -- start with everything ope
 opt.backup = false -- creates a backup file
 opt.clipboard = "" -- Don't use the system clipboard as the default register
 opt.cmdheight = 0 -- more space in the neovim command line for displaying messages
