@@ -6,7 +6,7 @@ local M = {
   "nvim-treesitter/nvim-treesitter",
   enabled = true,
   build = ":TSUpdate",
-  event = { "BufReadPost", "BufNewFile" },
+  event = { "BufReadPre", "BufNewFile" },
   dependencies = {
     "JoosepAlviste/nvim-ts-context-commentstring",
     "nvim-treesitter/nvim-treesitter-textobjects",
@@ -16,11 +16,11 @@ local M = {
     -- for ensure_installed, see config() below
 
     ignore_install = { "" }, -- List of parsers to ignore installing
-    sync_install = false,    -- install languages synchronously (only applied to `ensure_installed`)
+    sync_install = false, -- install languages synchronously (only applied to `ensure_installed`)
 
     -- Automatically install missing parsers when entering buffer
     -- set to false if you don't have tree-sitter CLI installed
-    auto_install = true;
+    auto_install = true,
 
     highlight = {
       enable = true,
@@ -116,7 +116,7 @@ local M = {
     playground = {
       enable = false,
       disable = {},
-      updatetime = 25,         -- Debounced time for highlighting nodes in the playground from source code
+      updatetime = 25, -- Debounced time for highlighting nodes in the playground from source code
       persist_queries = false, -- Whether the query persists across vim sessions
       keybindings = {
         toggle_query_editor = "o",
@@ -133,7 +133,7 @@ local M = {
     },
     rainbow = {
       enable = false,
-      extended_mode = true,  -- Highlight also non-parentheses delimiters, boolean or table: lang -> boolean
+      extended_mode = true, -- Highlight also non-parentheses delimiters, boolean or table: lang -> boolean
       max_file_lines = 1000, -- Do not enable for files with more than 1000 lines, int
     },
   },
