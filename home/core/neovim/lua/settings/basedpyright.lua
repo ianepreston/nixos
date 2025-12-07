@@ -1,8 +1,8 @@
 local opts = {
   settings = {
-    python = {
+    basedpyright = {
       analysis = {
-        typeCheckingMode = "off",
+        typeCheckingMode = "recommended",
       },
     },
   },
