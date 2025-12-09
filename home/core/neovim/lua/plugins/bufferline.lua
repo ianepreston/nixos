@@ -7,14 +7,19 @@ local M = {
   event = { "BufReadPre", "BufAdd", "BufNew", "BufReadPost" },
   dependencies = {
     "nvim-tree/nvim-web-devicons",
-    "famiu/bufdelete.nvim",
   },
   opts = {
     options = {
-      close_command = "Bdelete! %d", -- can be a string | function, see "Mouse actions"
-      right_mouse_command = "Bdelete! %d", -- can be a string | function, see "Mouse actions"
+      close_command = function(n)
+        require("snacks").bufdelete.delete(n, { force = false })
+      end,
+      right_mouse_command = function(n)
+        require("snacks").bufdelete.delete(n, { force = false })
+      end,
+
       separator_style = "thin", -- | "thick" | "thin" | { 'any', 'any' },
       buffer_close_icon = "",
+
       offsets = {
         {
           filetype = "neo-tree",
@@ -22,7 +27,9 @@ local M = {
           highlight = "Directory",
           text_align = "left",
         },
+        { filetype = "snacks_layout_box" },
       },
+
       show_close_icon = false,
       show_buffer_close_icons = false,
     },

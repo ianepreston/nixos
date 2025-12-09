@@ -77,8 +77,15 @@ map("n", "<leader>bp", "<cmd>bprev<cr>", { desc = "Previous buffer" })
 map("n", "<leader>.", "<cmd>BufferLinePick<cr>", { desc = "Quick pick buffer" })
 map("n", "<leader>,", "<cmd>Telescope buffers<cr>", { desc = "Search buffers (Telescope)" })
 
-map("n", "<leader>q", "<cmd>Bdelete<cr>", { desc = "Close buffer" })
-map("n", "<leader>Q", "<cmd>Bdelete!<cr>", { desc = "Close buffer (force)" })
+-- Close buffer (preserve window layout)
+map("n", "<leader>q", function()
+  require("snacks").bufdelete.delete()
+end, { desc = "Close buffer" })
+
+-- Close buffer (force)
+map("n", "<leader>Q", function()
+  require("snacks").bufdelete.delete { force = true }
+end, { desc = "Close buffer (force)" })
 
 -- map("n", "<leader>X", "<cmd>BufferLinePickClose<cr>", { desc = "Pick which buffer to close" })
 

@@ -5,7 +5,7 @@
 vim.api.nvim_create_autocmd({ "BufWritePre" }, {
   desc = "Create missing directories when saving a file if they don't exist",
   callback = function(event)
-    if event.match:match("^%w%w+://") then
+    if event.match:match "^%w%w+://" then
       return
     end
     local file = vim.loop.fs_realpath(event.match) or event.match
@@ -15,9 +15,21 @@ vim.api.nvim_create_autocmd({ "BufWritePre" }, {
 
 vim.api.nvim_create_autocmd({ "FileType" }, {
   desc = "Maps `q` to exit service buffers and excludes them from buffer listings",
-  pattern = { "qf", "help", "man", "lspinfo", "spectre_panel", "checkhealth", "neotest-summary", "neotest-output", "neotest-output-panel" },
+  pattern = {
+    "qf",
+    "help",
+    "man",
+    "lspinfo",
+    "spectre_panel",
+    "checkhealth",
+    "neotest-summary",
+    "neotest-output",
+    "neotest-output-panel",
+  },
   callback = function()
-    vim.keymap.set("n", "q", "<cmd>Bdelete<cr>", { desc = "Close buffer", silent = true, noremap = true })
+    vim.keymap.set("n", "q", function()
+      require("snacks").bufdelete.delete()
+    end, { desc = "Close buffer", silent = true, noremap = true })
     vim.bo.buflisted = false
   end,
 })
