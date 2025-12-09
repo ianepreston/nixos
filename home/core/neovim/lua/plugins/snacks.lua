@@ -17,3 +17,5 @@ local M = {
 function M.config(_, opts)
   require("snacks").setup(opts)
 end
+
+return M
