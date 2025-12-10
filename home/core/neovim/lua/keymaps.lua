@@ -151,7 +151,6 @@ map("n", "<leader>oc", "<cmd>set list!<cr>", { desc = "Toggle hidden character v
 map("n", "<leader>oh", function()
   vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled())
 end, { desc = "Toggle Inlay Hints" })
-map("n", "<leader>os", "<cmd>AerialToggle!<cr>", { desc = "Toggle symbols explorer (Aerial)" })
 
 -- Interactive browsing & setting of any options -- when on a set line, hit Enter to cycle through the values
 -- If changing a number/string, do the change in Insert mode and then hit Enter
