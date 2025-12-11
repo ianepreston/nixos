@@ -163,7 +163,7 @@ function M.init()
     require("mini.icons").mock_nvim_web_devicons()
     return package.loaded["nvim-web-devicons"]
   end
-  -- indentscope
+  -- indentscope and pairs
   vim.api.nvim_create_autocmd("FileType", {
     -- Not all of these are filetypes, actually
     pattern = {
@@ -197,6 +197,7 @@ function M.init()
     },
     callback = function()
       vim.b.miniindentscope_disable = true
+      vim.b.minipairs_disable = true
     end,
   })
 end
@@ -279,27 +280,6 @@ function M.config(_, opts)
   --------------------------------------------------------------------------------------
   require("mini.pairs").setup(opts.pairs)
 
-  -- If you want to disable pairs in specific prompts (like Telescope),
-  -- unmap or disable for that buffer. `mini.pairs` doesn’t have per-filetype
-  -- runtime options, but we can temporarily stop its mappings in that buffer.
-  -- The simplest approach is to set a buffer-local flag on FileType events and
-  -- clear mappings via MiniPairs.map_buf()/unmap_buf() if needed. See docs.
-  -- (You can refine this later if you actually see conflicts in your setup.)
-  vim.api.nvim_create_autocmd("FileType", {
-    pattern = { "TelescopePrompt" },
-    callback = function()
-      -- Example: unmap some common opens to avoid interference in Telescope
-      local MP = _G.MiniPairs
-      if MP and MP.unmap_buf then
-        for _, ch in ipairs { "(", "[", "{", '"', "'" } do
-          -- unmap in insert mode; second arg is pair to unregister (close char)
-          -- This matches the module's buffer-unmap API in the docs.
-          pcall(MP.unmap_buf, 0, "i", ch, MP.get_pairs()[ch])
-        end
-      end
-    end,
-    desc = "Reduce pairs mappings in Telescope prompt buffers",
-  })
   --------------------------------------------------------------------------------------
   -- SESSIONS
   --------------------------------------------------------------------------------------
