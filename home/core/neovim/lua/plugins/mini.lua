@@ -1,7 +1,14 @@
+-- Shift + Alt/Meta + Direction
+local keymap = {
+  left = "<M-H>",
+  right = "<M-L>",
+  down = "<M-J>",
+  up = "<M-K>",
+}
 local M = {
   "nvim-mini/mini.nvim",
   enabled = true,
-  event = "InsertEnter",
+  lazy = false,
   version = "*", -- Stable
 
   opts = {
@@ -19,6 +26,10 @@ local M = {
         },
       }
     end,
+    indentscope = {
+      symbol = "│",
+      options = { try_as_border = true },
+    },
 
     files = {
       windows = {
@@ -33,8 +44,59 @@ local M = {
         use_as_default_explorer = true,
       },
     },
+    -- Move any selection in any direction (smart: reindents vertical movements, respects v:count, etc)
+    move = {
+      mappings = {
+        -- Move visual selection in Visual mode. Defaults are Alt (Meta) + hjkl.
+        left = keymap.left,
+        right = keymap.right,
+        down = keymap.down,
+        up = keymap.up,
+
+        -- Move current line in Normal mode
+        line_left = keymap.left,
+        line_right = keymap.right,
+        line_down = keymap.down,
+        line_up = keymap.up,
+      },
+
+      -- Options which control moving behavior
+      options = {
+        -- Automatically reindent selection during linewise vertical move
+        reindent_linewise = true,
+      },
+    },
     pairs = {
       modes = { insert = true, command = false, terminal = false },
+    },
+    sessions = {
+      -- Whether to read latest session if Neovim opened without file arguments
+      autoread = false,
+
+      -- Whether to write current session before quitting Neovim
+      autowrite = true,
+
+      -- Directory where global sessions are stored (use `''` to disable)
+      -- Note: "data" is not just XDG_DATA_HOME, see https://neovim.io/doc/user/starting.html#standard-path
+      directory = vim.fn.stdpath "data" .. "/sessions/",
+
+      -- File for local session
+      -- Note: I prefer .session.vim, but some plugins (including tmux-resurrect) expect Session.vim
+      file = "Session.vim",
+
+      -- Whether to force possibly harmful actions (meaning depends on function)
+      force = { read = false, write = true, delete = false },
+
+      -- Hook functions for actions. Default `nil` means 'do nothing'.
+      hooks = {
+        -- Before successful action
+        pre = { read = nil, write = nil, delete = nil },
+        -- After successful action
+        post = { read = nil, write = nil, delete = nil },
+      },
+
+      -- Whether to print session path after action
+      verbose = { read = false, write = true, delete = true },
     },
 
     surround = {
@@ -72,6 +134,7 @@ local M = {
   },
 
   keys = {
+    -- files
     {
       "<leader>fe",
       function()
@@ -86,9 +149,57 @@ local M = {
       end,
       desc = "Open mini.files explorer (cwd)",
     },
+    -- move
+    { keymap.left, mode = { "n", "x" } },
+    { keymap.right, mode = { "n", "x" } },
+    { keymap.down, mode = { "n", "x" } },
+    { keymap.up, mode = { "n", "x" } },
   },
 }
 
+function M.init()
+  -- icons
+  package.preload["nvim-web-devicons"] = function()
+    require("mini.icons").mock_nvim_web_devicons()
+    return package.loaded["nvim-web-devicons"]
+  end
+  -- indentscope
+  vim.api.nvim_create_autocmd("FileType", {
+    -- Not all of these are filetypes, actually
+    pattern = {
+      "help",
+      "man",
+      "lspinfo",
+      "nofile",
+      "spectre_panel",
+      "terminal",
+      "telescope",
+      "alpha",
+      "dashboard",
+      "terminal",
+      "lazy",
+      "mason",
+      "dirvish",
+      "fugitive",
+      "alpha",
+      "NvimTree",
+      "neo-tree",
+      "packer",
+      "neogitstatus",
+      "Trouble",
+      "lir",
+      "Outline",
+      "spectre_panel",
+      "toggleterm",
+      "lazyterm",
+      "DressingSelect",
+      "TelescopePrompt",
+    },
+    callback = function()
+      vim.b.miniindentscope_disable = true
+    end,
+  })
+end
 function M.config(_, opts)
   --------------------------------------------------------------------------------------
   -- AI
@@ -151,9 +262,18 @@ function M.config(_, opts)
 
   require("which-key").add(ret, { notify = false })
   --------------------------------------------------------------------------------------
+  --  indentscope
+  --------------------------------------------------------------------------------------
+  require("mini.indentscope").setup(opts.indentscope)
+  --------------------------------------------------------------------------------------
   --  FILES
   --------------------------------------------------------------------------------------
   require("mini.files").setup(opts.files)
+  --------------------------------------------------------------------------------------
+  --  MOVE
+  --------------------------------------------------------------------------------------
+
+  require("mini.move").setup(opts.move)
   --------------------------------------------------------------------------------------
   --  PAIRS
   --------------------------------------------------------------------------------------
@@ -180,7 +300,11 @@ function M.config(_, opts)
     end,
     desc = "Reduce pairs mappings in Telescope prompt buffers",
   })
+  --------------------------------------------------------------------------------------
+  -- SESSIONS
+  --------------------------------------------------------------------------------------
 
+  require("mini.sessions").setup(opts.sessions)
   --------------------------------------------------------------------------------------
   -- SURROUND
   --------------------------------------------------------------------------------------
