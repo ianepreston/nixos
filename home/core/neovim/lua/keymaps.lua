@@ -166,17 +166,6 @@ map("n", "<leader>oo", "<cmd>options<cr>", { desc = "Interactive vim_options exp
 -- -- When cmdheight=1, there is a separate line. Also, it shows partial commands as you type them
 -- map("n", "<leader>oc", toggle_cmdheight, { desc = "Toggle cmdline visibility" })
 
-local function toggle_autopairs()
-  local autopairs = require "nvim-autopairs"
-  if autopairs.state.disable then
-    autopairs.enable()
-  else
-    autopairs.disable()
-  end
-end
-
-map("n", "<leader>op", toggle_autopairs, { desc = "Toggle bracket pairing (autopairs)" })
-
 -- Insert --
 -- Navigation in Insert mode
 -- map("i", "<C-h>", "<Left>", { desc = "Move cursor left" })
