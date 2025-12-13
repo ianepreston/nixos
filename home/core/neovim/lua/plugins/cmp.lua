@@ -126,10 +126,10 @@ function M.config()
     },
     -- Add your custom completion sources (like copilot-cmp) here
     sources = {
-      { name = "nvim_lsp" },
-      { name = "nvim_lua" },
-      { name = "buffer" },
-      { name = "path" },
+      { name = "nvim_lsp", priority = 1000 },
+      { name = "nvim_lua", priority = 900 },
+      { name = "path", priority = 800 },
+      { name = "buffer", priority = 700 },
     },
     confirm_opts = {
       behavior = cmp.ConfirmBehavior.Replace,
@@ -140,10 +140,6 @@ function M.config()
       documentation = cmp.config.window.bordered(),
     },
     sorting = require "cmp.config.default"().sorting,
-    experimental = {
-      -- If you like gmail-style inline autocompletion, you may try setting this to true
-      ghost_text = false,
-    },
   }
 end
 
