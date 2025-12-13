@@ -16,8 +16,10 @@ local M = {
     },
     on_attach = function(bufnr)
       local gs = package.loaded.gitsigns
-      local function map(mode, lhs, rhs, desc)
-        vim.keymap.set(mode, lhs, rhs, { buffer = bufnr, desc = desc })
+      local function map(mode, lhs, rhs, opts)
+        opts = opts or {}
+        opts.buffer = bufnr
+        vim.keymap.set(mode, lhs, rhs, opts)
       end
 
       -- diff
