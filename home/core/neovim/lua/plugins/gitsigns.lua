@@ -14,6 +14,43 @@ local M = {
       -- topdelete = { hl = "GitSignsDelete", text = "▎", numhl = "GitSignsDeleteNr", linehl = "GitSignsDeleteLn" },
       -- changedelete = { hl = "GitSignsChange", text = "▎", numhl = "GitSignsChangeNr", linehl = "GitSignsChangeLn" },
     },
+    on_attach = function(bufnr)
+      local gs = package.loaded.gitsigns
+      local function map(mode, lhs, rhs, desc)
+        vim.keymap.set(mode, lhs, rhs, { buffer = bufnr, desc = desc })
+      end
+
+      -- diff
+      map("n", "<leader>gd", "<cmd>Gitsigns diffthis HEAD<cr>", { desc = "Git Diff w/HEAD" })
+      -- Git hunks (prev/next hunk duplicated to support two popular keybind choices)
+      map("n", "<leader>ghj", function()
+        require("gitsigns").next_hunk { navigation_message = false }
+      end, { desc = "Next git hunk" })
+      map("n", "<leader>ghk", function()
+        require("gitsigns").prev_hunk { navigation_message = false }
+      end, { desc = "Previous git hunk" })
+      map("n", "]h", function()
+        require("gitsigns").next_hunk()
+      end, { desc = "Next git hunk" })
+      map("n", "[h", function()
+        require("gitsigns").prev_hunk()
+      end, { desc = "Previous git hunk" })
+      map("n", "<leader>ghp", function()
+        require("gitsigns").preview_hunk()
+      end, { desc = "Preview Hunk" })
+      map("n", "<leader>ghr", function()
+        require("gitsigns").reset_hunk()
+      end, { desc = "Reset Hunk" })
+      map("n", "<leader>ghR", function()
+        require("gitsigns").reset_buffer()
+      end, { desc = "Reset Buffer" })
+      map("n", "<leader>ghs", function()
+        require("gitsigns").stage_hunk()
+      end, { desc = "Stage Hunk" })
+      map("n", "<leader>ghu", function()
+        require("gitsigns").undo_stage_hunk()
+      end, { desc = "Undo Stage Hunk" })
+    end,
     signcolumn = true, -- Toggle with `:Gitsigns toggle_signs`
     watch_gitdir = {
       interval = 1000,
