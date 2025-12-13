@@ -64,7 +64,7 @@ M.ts_languages = {
 M.lsp_servers = {
   "basedpyright",
   "bashls", -- bash-language-server
-  "buf_ls",  -- buf
+  "buf_ls", -- buf
   -- Note for C/C++: for complex projects like Linux kernel, clang relies on "JSON compilation database"
   -- Use https://github.com/rizsotto/Bear to "wrap" build process and autogenerate compile_commands.json
   "clangd",
@@ -101,30 +101,27 @@ M.lsp_with_no_mason = {
 
 -- You can conditionally exclude a server from auto-installation
 -- Example: exclude clangd if `clangd` executable is already available in your environment
-if vim.fn.executable("clangd") == 1 then
-    table.insert(M.lsp_with_no_mason, "clangd")
+if vim.fn.executable "clangd" == 1 then
+  table.insert(M.lsp_with_no_mason, "clangd")
 end
-if vim.fn.executable("gopls") == 1 then
-    table.insert(M.lsp_with_no_mason, "gopls")
+if vim.fn.executable "gopls" == 1 then
+  table.insert(M.lsp_with_no_mason, "gopls")
 end
 
 -- List of LSP servers to be installed with Mason
 -- This table is used by `lua/plugins/mason.lua` and during Docker build (to bootstrap dependencies)
 -- It takes `lsp_servers` from above and exclude `lsp_with_no_mason` from it
-M.lsp_mason_install = vim.tbl_filter(
-  function(server)
-    return not vim.tbl_contains(M.lsp_with_no_mason, server)
-  end,
-  M.lsp_servers
-)
+M.lsp_mason_install = vim.tbl_filter(function(server)
+  return not vim.tbl_contains(M.lsp_with_no_mason, server)
+end, M.lsp_servers)
 
 -- Debug adapters for mason-nvim-dap.nvim (see `lua/plugins/dap.lua` for explanation)
 -- Available adapters: https://github.com/jay-babu/mason-nvim-dap.nvim/blob/main/lua/mason-nvim-dap/mappings/source.lua
 M.debug_tools = {
   "codelldb", -- c, c++, rust
-  "delve",    -- golang
-  "python",   -- technically, it's `debugpy`
-  "js",       -- js-debug-adapter
+  "delve", -- golang
+  "python", -- technically, it's `debugpy`
+  "js", -- js-debug-adapter
   -- "node2",   -- javascriptreact, typescriptreact, typescript, javascript
   -- "chrome",  -- same as node2
   -- "firefox", -- same as node2
@@ -138,7 +135,6 @@ M.null_ls_sources = function(null_ls)
   return {
     null_ls.builtins.code_actions.gitsigns,
     null_ls.builtins.code_actions.gomodifytags,
-    -- null_ls.builtins.completion.luasnip,
     -- null_ls.builtins.completion.spell,
     -- null_ls.builtins.completion.tags,
     -- null_ls.builtins.diagnostics.ansiblelint,
