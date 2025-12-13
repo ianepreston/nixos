@@ -186,9 +186,6 @@ map("x", ">", ">gv", { desc = "Increase indent and reselect the text" })
 
 -- (Mainly) Plugins --
 
--- NvimTree
-map("n", "<leader>e", "<cmd>NvimTreeToggle<cr>", { desc = "Toggle file browser (nvim-tree)" })
-
 -- Telescope
 map("n", "<leader>ff", "<cmd>Telescope find_files<cr>", { desc = "Find files by path" })
 map("n", "<leader>fr", "<cmd>Telescope oldfiles<cr>", { desc = "Find recently opened files" })
