@@ -15,7 +15,6 @@ local M = {
       },
       cmp = true,
       gitsigns = true,
-      illuminate = true,
       show_end_of_buffer = false,
       indent_blankline = { enabled = true },
       lsp_trouble = true,

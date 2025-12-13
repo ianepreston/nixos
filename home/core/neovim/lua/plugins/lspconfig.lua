@@ -38,13 +38,6 @@ function M.config(_, opts)
   capabilities.textDocument.completion.completionItem.snippetSupport = true
   capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
 
-  vim.api.nvim_create_autocmd("LspAttach", {
-    callback = function(event)
-      local client = vim.lsp.get_client_by_id(event.data.client_id)
-      require("illuminate").on_attach(client)
-    end,
-  })
-
   -- Try to configure each LSP server from `lua/settings/toolset.lua` with options in `settings/{server}.lua`, if present
   for _, server in pairs(require("settings.toolset").lsp_servers) do
     server_opts = {
