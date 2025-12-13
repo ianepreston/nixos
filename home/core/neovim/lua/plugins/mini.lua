@@ -69,6 +69,23 @@ local M = {
     pairs = {
       modes = { insert = true, command = false, terminal = false },
     },
+    starter = function()
+      local starter = require "mini.starter"
+      return {
+        -- Whether to open Starter buffer on VimEnter. Not opened if Neovim was
+        -- started with intent to show something else.
+        autoopen = true,
+        -- Whether to evaluate action of single active item
+        evaluate_single = true,
+        -- items = {
+        --   starter.sections.telescope(),
+        -- },
+        content_hooks = {
+          starter.gen_hook.adding_bullet(),
+          starter.gen_hook.aligning("center", "center"),
+        },
+      }
+    end,
     sessions = {
       -- Whether to read latest session if Neovim opened without file arguments
       autoread = false,
@@ -288,7 +305,7 @@ function M.config(_, opts)
   --------------------------------------------------------------------------------------
   -- STARTER
   --------------------------------------------------------------------------------------
-  require("mini.starter").setup()
+  require("mini.starter").setup(opts.starter())
   --------------------------------------------------------------------------------------
   -- SURROUND
   --------------------------------------------------------------------------------------
