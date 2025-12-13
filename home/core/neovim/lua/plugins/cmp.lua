@@ -141,6 +141,17 @@ function M.config()
     },
     sorting = require "cmp.config.default"().sorting,
   }
+
+  -- Cmdline completion
+  cmp.setup.cmdline("/", {
+    mapping = cmp.mapping.preset.cmdline(),
+    sources = { { name = "buffer" } },
+  })
+
+  cmp.setup.cmdline(":", {
+    mapping = cmp.mapping.preset.cmdline(),
+    sources = cmp.config.sources({ { name = "path" } }, { { name = "cmdline" } }),
+  })
 end
 
 return M
