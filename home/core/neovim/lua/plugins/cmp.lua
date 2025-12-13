@@ -16,11 +16,6 @@ local M = {
     "hrsh7th/cmp-path",
     -- Source for vim's cmdline (`/` search based on current buffer + `:` commands)
     "hrsh7th/cmp-cmdline",
-    -- Really powerful snippet engine (javadoc, function stubs, etc)
-    -- To create your own snippets, visit https://github.com/L3MON4D3/LuaSnip
-    "L3MON4D3/LuaSnip",
-    -- Luasnip snippets completion source
-    "saadparwaiz1/cmp_luasnip",
     -- Source for neovim Lua API
     "hrsh7th/cmp-nvim-lua",
   },
@@ -29,9 +24,6 @@ local M = {
 
 function M.config()
   local cmp = require "cmp"
-  local luasnip = require "luasnip"
-  -- support of importing vs code snippets
-  require("luasnip/loaders/from_vscode").lazy_load()
 
   local check_backspace = function()
     local col = vim.fn.col "." - 1
@@ -78,11 +70,6 @@ function M.config()
   }
 
   cmp.setup {
-    snippet = {
-      expand = function(args)
-        luasnip.lsp_expand(args.body) -- For `luasnip` users.
-      end,
-    },
     mapping = cmp.mapping.preset.insert {
       ["<C-k>"] = cmp.mapping.select_prev_item(),
       ["<C-j>"] = cmp.mapping.select_next_item(),
@@ -103,10 +90,6 @@ function M.config()
       ["<Tab>"] = cmp.mapping(function(fallback)
         if cmp.visible() then
           cmp.select_next_item()
-        elseif luasnip.expandable() then
-          luasnip.expand()
-        elseif luasnip.expand_or_jumpable() then
-          luasnip.expand_or_jump()
         elseif check_backspace() then
           fallback()
         else
@@ -119,8 +102,6 @@ function M.config()
       ["<S-Tab>"] = cmp.mapping(function(fallback)
         if cmp.visible() then
           cmp.select_prev_item()
-        elseif luasnip.jumpable(-1) then
-          luasnip.jump(-1)
         else
           fallback()
         end
@@ -136,7 +117,6 @@ function M.config()
         vim_item.menu = ({
           nvim_lsp = "",
           nvim_lua = "",
-          luasnip = "",
           buffer = "",
           path = "",
           emoji = "",
@@ -148,7 +128,6 @@ function M.config()
     sources = {
       { name = "nvim_lsp" },
       { name = "nvim_lua" },
-      { name = "luasnip" },
       { name = "buffer" },
       { name = "path" },
     },
