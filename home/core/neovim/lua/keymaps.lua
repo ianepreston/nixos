@@ -24,6 +24,9 @@ map("", "<Space>", "<Nop>", { desc = "Leader key" })
 vim.g.mapleader = " "
 -- vim.g.maplocalleader = "\\"
 
+vim.keymap.set({ "n", "x" }, "gy", '"+y', { desc = "Yank to system clipboard" })
+vim.keymap.set("n", "gY", '"+Y', { desc = "Yank line to system clipboard" })
+
 -- smart-splits plugin
 -- Resizing splits
 -- Keymaps accept ranges: `5<M-h>` will grow left by 5 times the default amount
