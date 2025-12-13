@@ -8,6 +8,16 @@ local M = {
   dependencies = {
     "nvim-tree/nvim-web-devicons",
   },
+  keys = {
+    {
+      "<leader>.",
+      mode = "n",
+      function()
+        require("bufferline").pick()
+      end,
+      desc = "Quick pick buffer",
+    },
+  },
   opts = {
     options = {
       close_command = function(n)

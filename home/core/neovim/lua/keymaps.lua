@@ -76,8 +76,6 @@ map("n", "[b", "<cmd>bprev<cr>", { desc = "Previous buffer" })
 map("n", "<leader>bn", "<cmd>bnext<cr>", { desc = "Next buffer" })
 map("n", "<leader>bp", "<cmd>bprev<cr>", { desc = "Previous buffer" })
 
--- Mnemonics: `,` for deliberate search, `.` for immediate jump (like in typing)
-map("n", "<leader>.", "<cmd>BufferLinePick<cr>", { desc = "Quick pick buffer" })
 map("n", "<leader>,", "<cmd>Telescope buffers<cr>", { desc = "Search buffers (Telescope)" })
 
 -- Close buffer (preserve window layout)
