@@ -20,20 +20,23 @@ return {
     -- Define your formatters
     formatters_by_ft = {
       lua = { "stylua" },
-      python = { "isort", "ruff_format" },
-      nix = {"nixfmt"},
-      yaml = {"yamllint", "yamlfmt"},
-      tf = {"tfmt"},
-      terraform = {"tfmt"},
-      tfvars = {"tfmt"},
+      python = { "ruff_fix", "ruff_format" },
+      nix = { "nixfmt" },
+      yaml = { "yamlfmt" },
+      tf = { "tfmt" },
+      terraform = { "tfmt" },
+      tfvars = { "tfmt" },
       javascript = { "prettierd", "prettier", stop_after_first = true },
+      sh = { "shfmt" },
+      bash = { "shfmt" },
+      markdown = { "prettierd", "prettier", stop_after_first = true },
     },
     -- Set default options
     default_format_opts = {
       lsp_format = "fallback",
     },
     -- Set up format-on-save
-    format_on_save = { timeout_ms = 500 },
+    format_on_save = { timeout_ms = 1000 },
     -- Customize formatters
     formatters = {
       shfmt = {
@@ -41,9 +44,9 @@ return {
       },
       tfmt = {
         command = "tofu",
-        args = {"fmt", "-"},
-        stdin = true;
-      }
+        args = { "fmt", "-" },
+        stdin = true,
+      },
     },
   },
   init = function()
