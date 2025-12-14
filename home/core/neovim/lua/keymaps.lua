@@ -363,11 +363,6 @@ end, { desc = "Toggle vertical terminal" })
 -- map("n", "<leader>t2h", "<cmd>2 ToggleTerm direction=horizontal<cr>", { desc = "Toggle 2nd horizontal terminal" })
 -- map("n", "<leader>t2v", "<cmd>2 ToggleTerm size=50 direction=vertical<cr>", { desc = "Toggle 2nd vertical terminal" })
 
--- zen mode
-map("n", "<leader>z", function()
-  return require("zen-mode").toggle()
-end, { desc = "Toggle Zen mode" })
-
 -- Mini.Sessions (note: there is no need for manual saving because of MiniSession.config.autosave = true)
 map("n", "<leader>sl", function()
   require("mini.sessions").read(nil)
