@@ -3,13 +3,6 @@ local M = {
   priority = 1000,
   lazy = false,
   opts = {
-    input = {
-      enabled = true,
-    },
-    picker = {
-      enabled = true,
-      ui_select = true,
-    },
     bufdelete = { enabled = true },
     dashboard = {
       enabled = true,
@@ -34,6 +27,13 @@ local M = {
         },
         { section = "startup" },
       },
+    },
+    input = {
+      enabled = true,
+    },
+    picker = {
+      enabled = true,
+      ui_select = true,
     },
   },
 }
