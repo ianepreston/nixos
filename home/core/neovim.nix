@@ -15,23 +15,18 @@
     # Packages available within Neovim during runtime. Put your LSP Servers, formatters, linters, etc.
     extraPackages = with pkgs; [
       bash-language-server
-      # buf # added by default, don't think I need it
-      # clang provides both LSP Server for C/C++ and a C compiler for treesitter parsers
+      codespell
       clang
-      # lldb # C debugger I don't think I need
       lua-language-server
       stylua
-      # gopls
-      # gomodifytags
       lua51Packages.lua
       lua51Packages.luv
       lua51Packages.luarocks-nix
       lua51Packages.jsregexp
       statix
       nixpkgs-fmt
-      # go-tools
-      # rust-analyzer
       dockerfile-language-server-nodejs
+      hadolint # docker linter
       emmet-language-server
       vscode-langservers-extracted
       nixd
@@ -40,10 +35,11 @@
       typescript-language-server
       eslint
       python312Packages.debugpy
-      # delve # go debugger
+      shellcheck
       taplo
       yaml-language-server
       yamlfmt
+      yamllint
       ruff
       isort
       terraform-ls
