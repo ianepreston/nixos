@@ -8,10 +8,6 @@ local M = {
   event = { "BufReadPre", "BufNewFile" },
   dependencies = {
     "nvim-lua/plenary.nvim",
-    {
-      "williamboman/mason.nvim",
-      enabled = vim.g.mason_enabled,
-    }
   },
 }
 
