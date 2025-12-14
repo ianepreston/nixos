@@ -3,59 +3,6 @@
 
 local M = {}
 
--- Treesitter languages for automatic installation
--- NOTE: if `auto_install = true` in `lua/plugins/treesitter.lua`, grammars are installed
--- automatically on demand if `tree-sitter` CLI tool is available. Otherwise, you can manually
--- specify grammars in the list below -- they will be pre-installed even if you never use them.
-M.ts_languages = {
-  "bash",
-  "c",
-  "cmake",
-  "cpp",
-  "css",
-  "cuda",
-  "dockerfile",
-  "editorconfig",
-  "git_config",
-  "gitcommit",
-  "gitignore",
-  "go",
-  "gomod",
-  "gosum",
-  "gowork",
-  "html",
-  "java",
-  "javascript",
-  "json",
-  "lua",
-  "luadoc",
-  "luap",
-  "make",
-  "markdown",
-  "markdown_inline",
-  "nix",
-  "printf",
-  "proto",
-  "python",
-  "query",
-  "regex",
-  "rst",
-  "rust",
-  "scala",
-  "sql",
-  "ssh_config",
-  "terraform",
-  "toml",
-  "tsx",
-  "typescript",
-  "udev",
-  "vim",
-  "vimdoc",
-  "xml",
-  "yaml",
-  "zig",
-}
-
 -- LSP Servers according to nvim-lspconfig. `lua/plugins/lspconfig.lua` configures LSP servers with defaults which you can extend:
 -- https://github.com/neovim/nvim-lspconfig/blob/master/doc/configs.md
 -- Each LSP server specified here may have a custom configuration in `lua/settings/{server}.lua` which will automatically loaded.
@@ -133,31 +80,25 @@ M.debug_tools = {
 -- NOTE: Some built-in sources (like gitsigns) cause harmless Mason installation errors. You can exclude them in `lua/plugins/mason.lua`
 M.null_ls_sources = function(null_ls)
   return {
+
+    -- Code actions (optional)
     null_ls.builtins.code_actions.gitsigns,
-    null_ls.builtins.code_actions.gomodifytags,
-    -- null_ls.builtins.completion.spell,
-    -- null_ls.builtins.completion.tags,
-    -- null_ls.builtins.diagnostics.ansiblelint,
-    -- null_ls.builtins.diagnostics.buf,
-    -- null_ls.builtins.diagnostics.codespell,
-    -- null_ls.builtins.diagnostics.hadolint,
-    -- null_ls.builtins.diagnostics.mypy,
-    null_ls.builtins.diagnostics.staticcheck,
-    -- null_ls.builtins.diagnostics.statix,
-    -- null_ls.builtins.diagnostics.yamllint,
-    -- null_ls.builtins.diagnostics.zsh,
-    -- null_ls.builtins.formatting.alejandra,
-    -- null_ls.builtins.formatting.black,
-    -- null_ls.builtins.formatting.buf,
-    -- null_ls.builtins.formatting.clang_format,
-    -- null_ls.builtins.formatting.gofmt,
-    -- null_ls.builtins.formatting.goimports,
-    -- null_ls.builtins.formatting.google_java_format,
-    -- null_ls.builtins.formatting.isort,
-    -- null_ls.builtins.formatting.nixfmt,
-    -- null_ls.builtins.formatting.prettier,
-    -- null_ls.builtins.formatting.shfmt,
-    null_ls.builtins.formatting.stylua,
+
+    -- Bash/Shell
+    null_ls.builtins.diagnostics.shellcheck,
+
+    -- YAML
+    null_ls.builtins.diagnostics.yamllint,
+
+    -- Terraform
+    null_ls.builtins.diagnostics.tflint,
+
+    -- Nix
+    null_ls.builtins.diagnostics.statix,
+
+    -- Optional cross-language extras
+    null_ls.builtins.diagnostics.codespell,
+    null_ls.builtins.diagnostics.hadolint, -- Dockerfile
     null_ls.builtins.hover.printenv,
   }
 end
