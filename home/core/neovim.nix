@@ -25,7 +25,7 @@
       lua51Packages.jsregexp
       statix
       nixpkgs-fmt
-      dockerfile-language-server-nodejs
+      dockerfile-language-server
       hadolint # docker linter
       emmet-language-server
       vscode-langservers-extracted

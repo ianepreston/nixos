@@ -1,18 +1,21 @@
 { pkgs, ... }:
 {
   services.gnome.gcr-ssh-agent.enable = false;
-  services.xserver = {
-    enable = true;
-    xkb = {
-      layout = "us";
-      variant = "";
-    };
+  services = {
     displayManager.gdm = {
       enable = true;
       wayland = true;
     };
     desktopManager.gnome = {
       enable = true;
+    };
+    xserver = {
+      enable = true;
+      xkb = {
+        layout = "us";
+        variant = "";
+      };
+
     };
   };
   environment.systemPackages = with pkgs; [
