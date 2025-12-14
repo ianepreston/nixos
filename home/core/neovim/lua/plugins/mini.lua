@@ -115,7 +115,21 @@ local M = {
       -- Whether to print session path after action
       verbose = { read = false, write = true, delete = true },
     },
+    statusline = function()
+      return {
+        -- Pass-through options for mini.statusline.setup()
+        use_icons = true,
+        set_vim_settings = false, -- we'll set laststatus/showmode ourselves in M.init()
 
+        -- Icons and symbols used by our custom sections
+        diag_symbols = { error = " ", warn = " ", info = " ", hint = " " },
+        ff_symbols = { unix = "", dos = "", mac = "" },
+
+        -- Behavior toggles
+        show_encoding = true, -- set to false to hide 'utf-8'
+        location_fixed = true, -- true -> fixed width location to reduce jiggling
+      }
+    end,
     surround = {
       -- These are the default mappings, but they come with a catch: lua/plugins/flash-nvim.lua
       -- uses 's' to enter jump mode. If you delay a bit after pressing 's', you will end in
@@ -217,6 +231,10 @@ function M.init()
       vim.b.minipairs_disable = true
     end,
   })
+
+  -- Statusline UI
+  vim.o.laststatus = 3
+  vim.o.showmode = false
 end
 function M.config(_, opts)
   --------------------------------------------------------------------------------------
@@ -315,6 +333,189 @@ function M.config(_, opts)
   -- STARTER
   --------------------------------------------------------------------------------------
   require("mini.starter").setup(opts.starter())
+
+  --------------------------------------------------------------------------------------
+  --  STATUSLINE
+  --------------------------------------------------------------------------------------
+
+  do
+    local ms = require "mini.statusline"
+    local sl_opts = opts.statusline()
+
+    -- Helpers (mirroring your lualine components)
+    local diag_symbols = sl_opts.diag_symbols
+    local ff_symbols = sl_opts.ff_symbols
+
+    local function diagnostics()
+      local d = vim.diagnostic.get(0)
+      if #d == 0 then
+        return ""
+      end
+      local counts = { e = 0, w = 0, i = 0, h = 0 }
+      for _, item in ipairs(d) do
+        local s = item.severity
+        if s == vim.diagnostic.severity.ERROR then
+          counts.e = counts.e + 1
+        end
+        if s == vim.diagnostic.severity.WARN then
+          counts.w = counts.w + 1
+        end
+        if s == vim.diagnostic.severity.INFO then
+          counts.i = counts.i + 1
+        end
+        if s == vim.diagnostic.severity.HINT then
+          counts.h = counts.h + 1
+        end
+      end
+      local parts = {}
+      if counts.e > 0 then
+        table.insert(parts, diag_symbols.error .. counts.e)
+      end
+      if counts.w > 0 then
+        table.insert(parts, diag_symbols.warn .. counts.w)
+      end
+      if counts.i > 0 then
+        table.insert(parts, diag_symbols.info .. counts.i)
+      end
+      if counts.h > 0 then
+        table.insert(parts, diag_symbols.hint .. counts.h)
+      end
+      return table.concat(parts, " ")
+    end
+
+    local function git_branch()
+      local head = vim.b.gitsigns_head or vim.b.git_branch
+      if not head or head == "" then
+        return ""
+      end
+      return (" " .. head)
+    end
+
+    local function git_diff()
+      local s = vim.b.gitsigns_status_dict
+      if not s then
+        return ""
+      end
+      local parts = {}
+      if s.added and s.added > 0 then
+        table.insert(parts, "+" .. s.added)
+      end
+      if s.changed and s.changed > 0 then
+        table.insert(parts, "~" .. s.changed)
+      end
+      if s.removed and s.removed > 0 then
+        table.insert(parts, "-" .. s.removed)
+      end
+      return table.concat(parts, " ")
+    end
+
+    local function filename()
+      local name = vim.fn.expand "%:." -- relative path (like lualine path=1)
+      if name == "" then
+        name = "[No Name]"
+      end
+      return name
+    end
+
+    local function fileformat_icon()
+      local ff = vim.bo.fileformat
+      return ff_symbols[ff] or ff
+    end
+
+    local function shiftwidth()
+      return "󰌒 " .. vim.bo.shiftwidth
+    end
+
+    local function encoding()
+      local enc = vim.bo.fileencoding ~= "" and vim.bo.fileencoding or vim.o.encoding
+      if not sl_opts.show_encoding and enc:lower() == "utf-8" then
+        return ""
+      end
+      return enc
+    end
+
+    local function searchcount()
+      local ok, sc = pcall(vim.fn.searchcount, { maxcount = 999, timeout = 500 })
+      if not ok or sc.total == 0 then
+        return ""
+      end
+      return string.format(" %d/%d", sc.current, sc.total)
+    end
+
+    local function location()
+      local loc
+      if sl_opts.location_fixed then
+        -- Fixed width to minimize jiggling
+        loc = string.format("%7d/%-7d:%-3d", vim.fn.line ".", vim.fn.line "$", vim.fn.col ".")
+      else
+        loc = string.format("%d/%d:%d", vim.fn.line ".", vim.fn.line "$", vim.fn.col ".")
+      end
+      local sc = searchcount()
+      return (sc ~= "" and (sc .. "  " .. loc) or loc)
+    end
+
+    local function git()
+      local parts = {}
+      local branch = git_branch()
+      local diff = git_diff()
+      if branch ~= "" then
+        table.insert(parts, branch)
+      end
+      if diff ~= "" then
+        table.insert(parts, diff)
+      end
+      return table.concat(parts, " ")
+    end
+
+    local function fileinfo()
+      -- eol format icon, shiftwidth, encoding, filetype
+      local enc = encoding()
+      local ft = vim.bo.filetype ~= "" and vim.bo.filetype or "no ft"
+      local parts = { fileformat_icon(), shiftwidth() }
+      if enc ~= "" then
+        table.insert(parts, enc)
+      end
+      table.insert(parts, ft)
+      return table.concat(parts, " ")
+    end
+
+    local function datetime()
+      return os.date "%a %m/%d %H:%M"
+    end
+
+    -- Single setup call: include `content` directly (no `set_config`)
+    ms.setup {
+      use_icons = sl_opts.use_icons,
+      set_vim_settings = sl_opts.set_vim_settings,
+
+      content = {
+        active = function()
+          return ms.combine_groups {
+            -- LEFT
+            { hl = "MiniStatuslineMode", strings = { ms.section_mode {} } },
+            { hl = "MiniStatuslineDevinfo", strings = { git() } },
+
+            "%<", -- (ensure it's "%<" not "%<;") truncate center
+
+            -- CENTER
+            { hl = "MiniStatuslineError", strings = { diagnostics() } },
+            { hl = "MiniStatuslineFilename", strings = { filename() } },
+
+            "%=", -- right align
+
+            -- RIGHT
+            { hl = "MiniStatuslineDevinfo", strings = { fileinfo() } },
+            { hl = "MiniStatuslineFileinfo", strings = { location() } },
+            { hl = "MiniStatuslineFilename", strings = { datetime() } },
+          }
+        end,
+        inactive = function()
+          return ms.default_inactive()
+        end,
+      },
+    }
+  end
+
   --------------------------------------------------------------------------------------
   -- SURROUND
   --------------------------------------------------------------------------------------
