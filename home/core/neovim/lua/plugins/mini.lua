@@ -169,7 +169,17 @@ local M = {
     {
       "<leader>fe",
       function()
-        require("mini.files").open(vim.api.nvim_buf_get_name(0), true)
+        local MiniFiles = require "mini.files"
+        local path = vim.api.nvim_buf_get_name(0)
+
+        -- If buffer has no name or the path doesn't exist, use CWD
+        if path == nil or path == "" or vim.loop.fs_stat(path) == nil then
+          MiniFiles.open(vim.loop.cwd(), true)
+          return
+        end
+
+        -- Otherwise, open at the current file's directory
+        MiniFiles.open(path, true)
       end,
       desc = "Open mini.files explorer (directory of current file)",
     },
