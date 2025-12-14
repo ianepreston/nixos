@@ -3,7 +3,7 @@
     enable = true;
     enableZshIntegration = true;
     settings = {
-      theme = "catppuccin-latte";
+      theme = "Catppuccin Latte";
       font-family = "monospace";
       clipboard-read = "allow";
       clipboard-write = "allow";
