@@ -4,78 +4,58 @@
 -- `lua/plugins/mason.lua` instead.
 -- https://github.com/neovim/nvim-lspconfig
 
+-- lua/plugins/lsp.lua
 local M = {
   "neovim/nvim-lspconfig",
   enabled = true,
   event = { "BufReadPre", "BufNewFile" },
   dependencies = {
-    -- Package manager: install and manage LSP servers, DAP servers, linters, and formatters
-    -- https://github.com/williamboman/mason.nvim
-    {
-      "williamboman/mason.nvim",
-      enabled = vim.g.mason_enabled,
-    },
-    -- Source for neovim builtin LSP client
-    -- https://github.com/hrsh7th/cmp-nvim-lsp
     "hrsh7th/cmp-nvim-lsp",
-    -- Signature help, docs and completion for the nvim Lua API
-    -- https://github.com/folke/neodev.nvim
     "folke/neodev.nvim",
-    -- Schemas are used in lua/settings/{jsonls.lua,yamlls.lua}
-    -- To add your own schemas, refer to https://github.com/b0o/SchemaStore.nvim
     "b0o/schemastore.nvim",
   },
   opts = {
-    inlay_hints = {
-      enabled = true,
-      -- exclude = { "vue" },     -- filetypes for which you don't want to enable inlay hints
-    },
+    inlay_hints = { enabled = true }, -- we'll wire this via LspAttach below
   },
 }
 
 function M.config(_, opts)
-  local capabilities = vim.lsp.protocol.make_client_capabilities()
-  capabilities.textDocument.completion.completionItem.snippetSupport = true
-  capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
+  -- 1) Global defaults for ALL servers (0.11 style)
+  vim.lsp.config("*", {
+    capabilities = require("cmp_nvim_lsp").default_capabilities(), -- snippet & cmp support
+    on_attach = function(client, bufnr)
+      -- buffer-local mappings or simple tweaks go here
+      -- (for complex logic prefer LspAttach below)
+    end,
+    handlers = {
+      ["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, { border = "rounded" }),
+      ["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, { border = "rounded" }),
+    },
+  })
 
-  -- Try to configure each LSP server from `lua/settings/toolset.lua` with options in `settings/{server}.lua`, if present
-  for _, server in pairs(require("settings.toolset").lsp_servers) do
-    server_opts = {
-      on_attach = on_attach,
-      capabilities = capabilities,
-    }
-
-    server = vim.split(server, "@")[1]
-
-    -- Load custom LSP server configuration from `settings/{server}.lua` file
-    local require_ok, conf_opts = pcall(require, "settings." .. server)
-    if require_ok then
-      server_opts = vim.tbl_deep_extend("force", conf_opts, server_opts)
-    end
-
-    -- You can manually add extra LSP server configurations here, if you don't want to use `settings/{server}.lua`
-    vim.lsp.config(server, server_opts)
-    vim.lsp.enable(server)
+  -- 2) Enable all servers listed in your toolset (Neovim will merge lsp/<server>.lua)
+  local servers = {}
+  for _, s in ipairs(require("settings.toolset").lsp_servers) do
+    local name = vim.split(s, "@")[1] -- strip optional version suffix
+    table.insert(servers, name)
   end
+  vim.lsp.enable(servers)
 
+  -- 3) Diagnostics: minimal, lower-churn setup
   local signs = {
     { name = "DiagnosticSignError", text = "" },
     { name = "DiagnosticSignWarn", text = "" },
     { name = "DiagnosticSignHint", text = "" },
     { name = "DiagnosticSignInfo", text = "" },
   }
-
   for _, sign in ipairs(signs) do
     vim.fn.sign_define(sign.name, { texthl = sign.name, text = sign.text, numhl = "" })
   end
 
-  local diagnostics = {
-    virtual_text = true,
-    -- show signs
-    signs = {
-      active = signs,
-    },
-    update_in_insert = true,
+  vim.diagnostic.config {
+    virtual_text = true, -- consider turning off if you prefer floating only
+    signs = { active = signs },
+    update_in_insert = false, -- reduces redraw/CPU while typing
     underline = true,
     severity_sort = true,
     float = {
@@ -89,15 +69,21 @@ function M.config(_, opts)
     },
   }
 
-  vim.diagnostic.config(diagnostics)
-
-  vim.lsp.handlers["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, {
-    border = "rounded",
-  })
-
-  vim.lsp.handlers["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, {
-    border = "rounded",
-  })
+  -- 4) Inlay hints: enable on attach (only if server supports it)
+  if opts.inlay_hints and opts.inlay_hints.enabled then
+    vim.api.nvim_create_autocmd("LspAttach", {
+      group = vim.api.nvim_create_augroup("UserInlayHints", { clear = true }),
+      callback = function(ev)
+        local client = vim.lsp.get_client_by_id(ev.data.client_id)
+        if client and client.server_capabilities.inlayHintProvider then
+          -- Either of these forms works:
+          vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
+          -- or
+          -- vim.lsp.inlay_hint.enable(true, { bufnr = ev.buf })
+        end
+      end,
+    })
+  end
 end
 
 return M
