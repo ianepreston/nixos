@@ -31,10 +31,12 @@ local M = {
     input = {
       enabled = true,
     },
+    lazygit = {},
     picker = {
       enabled = true,
       ui_select = true,
     },
+    terminal = {},
   },
 }
 

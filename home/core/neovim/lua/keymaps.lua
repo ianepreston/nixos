@@ -329,15 +329,36 @@ end, { desc = "Previous todo comment" })
 -- Toggleterm
 -- `<c-\>` to toggle floating terminal, see lua/plugins/toggleterm.lua
 map("n", "<leader>ti", function()
-  _IPY_TOGGLE()
+  require("snacks").terminal.toggle("ipython", { start_insert = true })
 end, { desc = "Toggle iPython terminal" })
-map("n", "<leader>tb", function()
-  _BTOP_TOGGLE()
-end, { desc = "Toggle btop terminal" })
-map("n", "<leader>tf", "<cmd>ToggleTerm direction=float<cr>", { desc = "Toggle floating terminal" })
-map("n", "<leader>tt", "<cmd>ToggleTerm direction=tab<cr>", { desc = "Toggle terminal tab" })
-map("n", "<leader>th", "<cmd>ToggleTerm direction=horizontal<cr>", { desc = "Toggle horizontal terminal" })
-map("n", "<leader>tv", "<cmd>ToggleTerm size=50 direction=vertical<cr>", { desc = "Toggle vertical terminal" })
+map("n", "<leader>tf", function()
+  require("snacks").terminal.toggle(vim.o.shell, {
+    start_insert = true,
+    win = { -- optional visual tweaks; float is chosen because we passed cmd
+      style = "terminal", -- style used by Snacks; default is fine
+    },
+  })
+end, { desc = "Toggle floating terminal" })
+map("n", "<leader>tt", function()
+  vim.cmd.tabnew()
+  require("snacks").terminal.open(nil, {
+    start_insert = true,
+    win = { split = "below", position = "bottom", height = 0.4 },
+  })
+end, { desc = "Toggle terminal tab" })
+map("n", "<leader>th", function()
+  require("snacks").terminal.toggle(nil, {
+    start_insert = true,
+    -- no cmd -> split; configure it to open below
+    win = { split = "below", position = "bottom", height = 0.4 },
+  })
+end, { desc = "Toggle horizontal terminal" })
+map("n", "<leader>tv", function()
+  require("snacks").terminal.toggle(nil, {
+    start_insert = true,
+    win = { split = "right", position = "right", width = 50 },
+  })
+end, { desc = "Toggle vertical terminal" })
 -- Second terminal commands
 -- map("n", "<leader>t2h", "<cmd>2 ToggleTerm direction=horizontal<cr>", { desc = "Toggle 2nd horizontal terminal" })
 -- map("n", "<leader>t2v", "<cmd>2 ToggleTerm size=50 direction=vertical<cr>", { desc = "Toggle 2nd vertical terminal" })
@@ -373,7 +394,7 @@ end, { desc = "Select & delete a session" })
 
 -- Git
 map("n", "<leader>gg", function()
-  _LAZYGIT_TOGGLE()
+  Snacks.lazygit.open()
 end, { desc = "Toggle LazyGit" })
 map("n", "<leader>gs", "<cmd>Telescope git_status<cr>", { desc = "Search through git status" })
 map("n", "<leader>gb", "<cmd>Telescope git_branches<cr>", { desc = "Git branches (checkout on <cr>)" })
