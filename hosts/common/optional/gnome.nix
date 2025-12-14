@@ -1,5 +1,6 @@
 { pkgs, ... }:
 {
+  services.gnome.gcr-ssh-agent.enable = false;
   services.xserver = {
     enable = true;
     xkb = {
