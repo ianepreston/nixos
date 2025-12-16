@@ -98,21 +98,60 @@ local M = {
       -- Whether to print session path after action
       verbose = { read = false, write = true, delete = true },
     },
-    statusline = function()
-      return {
-        -- Pass-through options for mini.statusline.setup()
-        use_icons = true,
-        set_vim_settings = false, -- we'll set laststatus/showmode ourselves in M.init()
+    statusline = {
 
-        -- Icons and symbols used by our custom sections
-        diag_symbols = { error = " ", warn = " ", info = " ", hint = " " },
-        ff_symbols = { unix = "", dos = "", mac = "" },
+      use_icons = true,
 
-        -- Behavior toggles
-        show_encoding = true, -- set to false to hide 'utf-8'
-        location_fixed = true, -- true -> fixed width location to reduce jiggling
-      }
-    end,
+      content = {
+        -- Active window content (explicit, based on docs' example)
+        active = function()
+          local MiniStatusline = require "mini.statusline"
+
+          -- Same sections as in docs example; adjust trunc_widths to taste
+          local mode, mode_hl = MiniStatusline.section_mode { trunc_width = 120 }
+          local git = MiniStatusline.section_git { trunc_width = 40 }
+          local diff = MiniStatusline.section_diff { trunc_width = 75 }
+          local diagnostics = MiniStatusline.section_diagnostics { trunc_width = 75 }
+          local filename = MiniStatusline.section_filename { trunc_width = 140 }
+          local fileinfo = MiniStatusline.section_fileinfo { trunc_width = 120 }
+          local location = MiniStatusline.section_location { trunc_width = 200 }
+          local search = MiniStatusline.section_searchcount { trunc_width = 75 }
+
+          -- Macro indicator from the event-driven provider defined in M.config()
+          -- local macro = (M._macro_indicator and M._macro_indicator()) or ""
+
+          return MiniStatusline.combine_groups {
+            -- Left side
+            { hl = mode_hl, strings = { mode } },
+            { hl = "MiniStatuslineDevinfo", strings = { git, diff, diagnostics } },
+            "%<", -- general truncate point on the left
+            { hl = "MiniStatuslineFilename", strings = { filename } },
+
+            -- Center/right separator
+            "%=",
+
+            -- >>> Macro component (colored like the mode for visibility)
+            -- { hl = mode_hl, strings = { macro } },
+
+            -- Right side
+            { hl = "MiniStatuslineFileinfo", strings = { fileinfo } },
+            { hl = mode_hl, strings = { search, location } },
+          }
+        end,
+
+        -- Inactive windows: keep the simple default pattern from docs
+        inactive = function()
+          local MiniStatusline = require "mini.statusline"
+          local filename = MiniStatusline.section_filename { trunc_width = 140 }
+          local fileinfo = MiniStatusline.section_fileinfo { trunc_width = 120 }
+          return MiniStatusline.combine_groups {
+            { hl = "MiniStatuslineInactive", strings = { filename } },
+            "%=",
+            { hl = "MiniStatuslineInactive", strings = { fileinfo } },
+          }
+        end,
+      },
+    },
     surround = {
       -- These are the default mappings, but they come with a catch: lua/plugins/flash-nvim.lua
       -- uses 's' to enter jump mode. If you delay a bit after pressing 's', you will end in
@@ -327,184 +366,37 @@ function M.config(_, opts)
   --  STATUSLINE
   --------------------------------------------------------------------------------------
 
-  do
-    local ms = require "mini.statusline"
-    local sl_opts = opts.statusline()
+  require("mini.diff").setup() -- helps statusline, not currently independently configured
+  require("mini.git").setup() -- helps statusline, not currently independently configured
+  -- Macro recording indicator state + autocmds
+  -- local macro_state = { reg = "" }
+  --
+  -- vim.api.nvim_create_augroup("MiniStatuslineMacro", { clear = true })
+  -- vim.api.nvim_create_autocmd({ "RecordingEnter", "RecordingLeave" }, {
+  --   group = "MiniStatuslineMacro",
+  --   callback = function(ev)
+  --     if ev.event == "RecordingLeave" then
+  --       -- reg_recording() clears just after the event; defer slightly to avoid stale value
+  --       vim.defer_fn(function()
+  --         macro_state.reg = ""
+  --         vim.cmd "redrawstatus"
+  --       end, 30)
+  --     else
+  --       macro_state.reg = vim.fn.reg_recording()
+  --       vim.cmd "redrawstatus"
+  --     end
+  --   end,
+  -- })
+  --
+  -- -- Expose a small provider for use inside opts.statusline.content.active
+  -- local function macro_indicator()
+  --   if macro_state.reg == "" then
+  --     return ""
+  --   end
+  --   return (" REC @%s"):format(macro_state.reg)
+  -- end
 
-    -- Helpers (mirroring your lualine components)
-    local diag_symbols = sl_opts.diag_symbols
-    local ff_symbols = sl_opts.ff_symbols
-
-    local function diagnostics()
-      local d = vim.diagnostic.get(0)
-      if #d == 0 then
-        return ""
-      end
-      local counts = { e = 0, w = 0, i = 0, h = 0 }
-      for _, item in ipairs(d) do
-        local s = item.severity
-        if s == vim.diagnostic.severity.ERROR then
-          counts.e = counts.e + 1
-        end
-        if s == vim.diagnostic.severity.WARN then
-          counts.w = counts.w + 1
-        end
-        if s == vim.diagnostic.severity.INFO then
-          counts.i = counts.i + 1
-        end
-        if s == vim.diagnostic.severity.HINT then
-          counts.h = counts.h + 1
-        end
-      end
-      local parts = {}
-      if counts.e > 0 then
-        table.insert(parts, diag_symbols.error .. counts.e)
-      end
-      if counts.w > 0 then
-        table.insert(parts, diag_symbols.warn .. counts.w)
-      end
-      if counts.i > 0 then
-        table.insert(parts, diag_symbols.info .. counts.i)
-      end
-      if counts.h > 0 then
-        table.insert(parts, diag_symbols.hint .. counts.h)
-      end
-      return table.concat(parts, " ")
-    end
-
-    local function git_branch()
-      local head = vim.b.gitsigns_head or vim.b.git_branch
-      if not head or head == "" then
-        return ""
-      end
-      return (" " .. head)
-    end
-
-    local function git_diff()
-      local s = vim.b.gitsigns_status_dict
-      if not s then
-        return ""
-      end
-      local parts = {}
-      if s.added and s.added > 0 then
-        table.insert(parts, "+" .. s.added)
-      end
-      if s.changed and s.changed > 0 then
-        table.insert(parts, "~" .. s.changed)
-      end
-      if s.removed and s.removed > 0 then
-        table.insert(parts, "-" .. s.removed)
-      end
-      return table.concat(parts, " ")
-    end
-
-    local function filename()
-      local name = vim.fn.expand "%:." -- relative path (like lualine path=1)
-      if name == "" then
-        name = "[No Name]"
-      end
-      return name
-    end
-
-    local function fileformat_icon()
-      local ff = vim.bo.fileformat
-      return ff_symbols[ff] or ff
-    end
-
-    local function shiftwidth()
-      return "󰌒 " .. vim.bo.shiftwidth
-    end
-
-    local function encoding()
-      local enc = vim.bo.fileencoding ~= "" and vim.bo.fileencoding or vim.o.encoding
-      if not sl_opts.show_encoding and enc:lower() == "utf-8" then
-        return ""
-      end
-      return enc
-    end
-
-    local function searchcount()
-      local ok, sc = pcall(vim.fn.searchcount, { maxcount = 999, timeout = 500 })
-      if not ok or sc.total == 0 then
-        return ""
-      end
-      return string.format(" %d/%d", sc.current, sc.total)
-    end
-
-    local function location()
-      local loc
-      if sl_opts.location_fixed then
-        -- Fixed width to minimize jiggling
-        loc = string.format("%7d/%-7d:%-3d", vim.fn.line ".", vim.fn.line "$", vim.fn.col ".")
-      else
-        loc = string.format("%d/%d:%d", vim.fn.line ".", vim.fn.line "$", vim.fn.col ".")
-      end
-      local sc = searchcount()
-      return (sc ~= "" and (sc .. "  " .. loc) or loc)
-    end
-
-    local function git()
-      local parts = {}
-      local branch = git_branch()
-      local diff = git_diff()
-      if branch ~= "" then
-        table.insert(parts, branch)
-      end
-      if diff ~= "" then
-        table.insert(parts, diff)
-      end
-      return table.concat(parts, " ")
-    end
-
-    local function fileinfo()
-      -- eol format icon, shiftwidth, encoding, filetype
-      local enc = encoding()
-      local ft = vim.bo.filetype ~= "" and vim.bo.filetype or "no ft"
-      local parts = { fileformat_icon(), shiftwidth() }
-      if enc ~= "" then
-        table.insert(parts, enc)
-      end
-      table.insert(parts, ft)
-      return table.concat(parts, " ")
-    end
-
-    local function datetime()
-      return os.date "%a %m/%d %H:%M"
-    end
-
-    -- Single setup call: include `content` directly (no `set_config`)
-    ms.setup {
-      use_icons = sl_opts.use_icons,
-      set_vim_settings = sl_opts.set_vim_settings,
-
-      content = {
-        active = function()
-          return ms.combine_groups {
-            -- LEFT
-            { hl = "MiniStatuslineMode", strings = { ms.section_mode {} } },
-            { hl = "MiniStatuslineDevinfo", strings = { git() } },
-
-            "%<", -- (ensure it's "%<" not "%<;") truncate center
-
-            -- CENTER
-            { hl = "MiniStatuslineError", strings = { diagnostics() } },
-            { hl = "MiniStatuslineFilename", strings = { filename() } },
-
-            "%=", -- right align
-
-            -- RIGHT
-            { hl = "MiniStatuslineDevinfo", strings = { fileinfo() } },
-            { hl = "MiniStatuslineFileinfo", strings = { location() } },
-            { hl = "MiniStatuslineFilename", strings = { datetime() } },
-          }
-        end,
-        inactive = function()
-          return ms.default_inactive()
-        end,
-      },
-    }
-  end
-
+  require("mini.statusline").setup(opts.statusline)
   --------------------------------------------------------------------------------------
   -- SURROUND
   --------------------------------------------------------------------------------------
