@@ -24,6 +24,7 @@ local M = {
         { "<leader>h", group = "help, config info" },
         { "<leader>gh", group = "git hunks navigation" },
         { "<leader>l", group = "lsp (code actions)" },
+        { "<leader>p", group = "tests (pytest)" },
         { "<leader>s", group = "session" },
         { "<leader>b", group = "buffers" },
         { "<leader>t", group = "terminal" },
