@@ -46,6 +46,7 @@ opt.showmode = false -- we don't need to see things like -- INSERT -- anymore
 opt.showtabline = 0 -- Never show tabs - some other plugin must be handling this
 opt.smartcase = true -- smart case
 opt.smartindent = true -- make indenting smarter again
+opt.winborder = "rounded"
 opt.splitbelow = true -- force all horizontal splits to go below current window
 opt.splitright = true -- force all vertical splits to go to the right of current window
 opt.swapfile = false -- creates a swapfile
