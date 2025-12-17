@@ -89,31 +89,6 @@ local M = {
       enabled = true,
       opts = {},
     },
-
-    -- A bridge between mason and dap that allows automatic installation and configuring of debuggers and their adapters
-    -- Note: it automatically creates basic default launch configurations for each debugging adapter.
-    -- Eventually, it is likely that if you need advanced debugging, you'll have to create configurations on
-    -- your own. Mason-nvim-dap provides just this: https://github.com/jay-babu/mason-nvim-dap.nvim/blob/main/lua/mason-nvim-dap/mappings/configurations.lua
-    -- If you need to create adapter configurations, see https://harrisoncramer.me/debugging-in-neovim/
-    -- For support of VS Code launch.json debug configurations, see `:h dap-launch.json`
-    -- https://github.com/jay-babu/mason-nvim-dap.nvim
-    {
-      "jay-babu/mason-nvim-dap.nvim",
-      enabled = vim.g.mason_enabled,
-      dependencies = "williamboman/mason.nvim",
-      cmd = { "DapInstall", "DapUninstall" },
-      opts = {
-        ensure_installed = require("settings.toolset").debug_tools,
-
-        -- Makes a best effort to setup the various debuggers with
-        -- reasonable debug configurations
-        automatic_installation = true,
-
-        -- You can provide additional configuration to the handlers,
-        -- see mason-nvim-dap README for more information
-        handlers = {},
-      },
-    },
   },
   -- End of dependencies, back to the dap itself
 
