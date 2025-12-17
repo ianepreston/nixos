@@ -72,9 +72,6 @@ local M = {
         reindent_linewise = true,
       },
     },
-    pairs = {
-      modes = { insert = true, command = false, terminal = false },
-    },
     sessions = {
       -- Whether to read latest session if Neovim opened without file arguments
       autoread = false,
@@ -360,11 +357,6 @@ function M.config(_, opts)
   --  NOTIFY
   --------------------------------------------------------------------------------------
   require("mini.notify").setup()
-
-  --------------------------------------------------------------------------------------
-  --  PAIRS
-  --------------------------------------------------------------------------------------
-  require("mini.pairs").setup(opts.pairs)
 
   --------------------------------------------------------------------------------------
   -- SESSIONS
