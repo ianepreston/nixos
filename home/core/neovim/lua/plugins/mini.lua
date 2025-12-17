@@ -117,8 +117,12 @@ local M = {
           local location = MiniStatusline.section_location { trunc_width = 200 }
           local search = MiniStatusline.section_searchcount { trunc_width = 75 }
 
+          local function macro_indicator()
+            local r = vim.fn.reg_recording()
+            return (r ~= "" and (" REC @%s"):format(r)) or ""
+          end
           -- Macro indicator from the event-driven provider defined in M.config()
-          -- local macro = (M._macro_indicator and M._macro_indicator()) or ""
+          local macro = macro_indicator()
 
           return MiniStatusline.combine_groups {
             -- Left side
@@ -131,7 +135,7 @@ local M = {
             "%=",
 
             -- >>> Macro component (colored like the mode for visibility)
-            -- { hl = mode_hl, strings = { macro } },
+            { hl = mode_hl, strings = { macro } },
 
             -- Right side
             { hl = "MiniStatuslineFileinfo", strings = { fileinfo } },
@@ -368,6 +372,22 @@ function M.config(_, opts)
 
   require("mini.diff").setup() -- helps statusline, not currently independently configured
   require("mini.git").setup() -- helps statusline, not currently independently configured
+
+  vim.api.nvim_create_augroup("MiniStatuslineMacro", { clear = true })
+  vim.api.nvim_create_autocmd({ "RecordingEnter", "RecordingLeave" }, {
+    group = "MiniStatuslineMacro",
+    callback = function(ev)
+      if ev.event == "RecordingLeave" then
+        -- small defer so reg_recording() is cleared before we render
+        vim.defer_fn(function()
+          vim.cmd "redrawstatus"
+        end, 30)
+      else
+        vim.cmd "redrawstatus"
+      end
+    end,
+  })
+
   -- Macro recording indicator state + autocmds
   -- local macro_state = { reg = "" }
   --
