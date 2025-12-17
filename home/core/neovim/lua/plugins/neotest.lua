@@ -72,7 +72,7 @@ function M.config()
           console = "internalConsole",
           subProcess = true,
           pythonPath = vim.fn.exepath "python",
-          redirectOutput = true,
+          -- redirectOutput = true,
         },
         -- Command line arguments for runner
         -- Can also be a function to return dynamic values

@@ -12,6 +12,7 @@
 --             |
 --      Communication via the Debug Adapter Protocol
 
+local PYTHON = require("utils.python").get_python()
 local M = {
   "mfussenegger/nvim-dap",
   enabled = true,
@@ -108,14 +109,9 @@ local M = {
     --
     local dap = require "dap"
 
-    -- Choose the python executable to run the adapter.
-    -- With Nix, prefer an explicit path (replace with your own, e.g., /nix/store/.../bin/python3)
-    -- If your shell PATH already has the Nix python3, "python3" is fine.
-    local python_path = vim.fn.exepath "python3" ~= "" and "python3" or "python"
-
     dap.adapters.python = {
       type = "executable",
-      command = python_path, -- runs: python3 -m debugpy.adapter
+      command = PYTHON, -- runs: python3 -m debugpy.adapter
       args = { "-m", "debugpy.adapter" },
     }
 
@@ -126,14 +122,7 @@ local M = {
         request = "launch",
         name = "Launch file",
         program = "${file}", -- run the current buffer
-        pythonPath = function()
-          -- Prefer project venv if present; otherwise fall back to adapter python
-          local venv = vim.fn.getcwd() .. "/.venv/bin/python"
-          if vim.fn.filereadable(venv) == 1 then
-            return venv
-          end
-          return python_path
-        end,
+        pythonPath = PYTHON,
         console = "internalConsole",
         justMyCode = false,
       },
