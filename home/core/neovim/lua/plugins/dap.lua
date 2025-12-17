@@ -4,13 +4,13 @@
 -- https://github.com/mfussenegger/nvim-dap/
 
 -- Terminology is confusing here, so here is a recap:
-  -- DAP-Client ----- Debug Adapter ------- Debugger ------ Debugee
-  -- (nvim-dap)  |   (per language)  |   (per language)    (your app)
-  --             |                   |
-  --             |        Implementation specific communication
-  --             |        Debug adapter and debugger could be the same process
-  --             |
-  --      Communication via the Debug Adapter Protocol
+-- DAP-Client ----- Debug Adapter ------- Debugger ------ Debugee
+-- (nvim-dap)  |   (per language)  |   (per language)    (your app)
+--             |                   |
+--             |        Implementation specific communication
+--             |        Debug adapter and debugger could be the same process
+--             |
+--      Communication via the Debug Adapter Protocol
 
 local M = {
   "mfussenegger/nvim-dap",
@@ -130,26 +130,39 @@ local M = {
     -- You can create your own configurations and adapters in a separate modules and require() them here
     -- or just put the code here like this (codelldb and c are just examples):
     -- For support of VS Code launch.json debug configurations, see `:h dap-launch.json`
-    -- 
-    -- local dap = require("dap")
     --
-    -- dap.adapters.codelldb = {
-    --   type = "server",
-    --   port = "${port}",
-    --   -- etc ...
-    -- }
-    --
-    -- dap.configurations.c = {
-    --   
-    --     name = "C Debug And Run",
-    --     type = "codelldb",
-    --     request = "launch",
-    --     -- etc ...
-    --   },
-    --   {
-    --     -- another C configuration...
-    --   },
-    -- }
+    local dap = require "dap"
+
+    -- Choose the python executable to run the adapter.
+    -- With Nix, prefer an explicit path (replace with your own, e.g., /nix/store/.../bin/python3)
+    -- If your shell PATH already has the Nix python3, "python3" is fine.
+    local python_path = vim.fn.exepath "python3" ~= "" and "python3" or "python"
+
+    dap.adapters.python = {
+      type = "executable",
+      command = python_path, -- runs: python3 -m debugpy.adapter
+      args = { "-m", "debugpy.adapter" },
+    }
+
+    dap.configurations.python = {
+      -- Launch the current file
+      {
+        type = "python",
+        request = "launch",
+        name = "Launch file",
+        program = "${file}", -- run the current buffer
+        pythonPath = function()
+          -- Prefer project venv if present; otherwise fall back to adapter python
+          local venv = vim.fn.getcwd() .. "/.venv/bin/python"
+          if vim.fn.filereadable(venv) == 1 then
+            return venv
+          end
+          return python_path
+        end,
+        console = "internalConsole",
+        justMyCode = false,
+      },
+    }
   end,
 }
 

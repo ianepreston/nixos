@@ -67,10 +67,16 @@ function M.config()
       require "neotest-python" {
         -- Extra arguments for nvim-dap configuration
         -- See https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for values
-        dap = { justMyCode = false },
+        dap = {
+          justMyCode = false,
+          console = "internalConsole",
+          subProcess = true,
+          pythonPath = vim.fn.exepath "python",
+          redirectOutput = true,
+        },
         -- Command line arguments for runner
         -- Can also be a function to return dynamic values
-        args = { "--log-level", "DEBUG" },
+        args = { "-s", "--log-level", "DEBUG" },
         -- Runner to use. Will use pytest if available by default.
         -- Can be a function to return dynamic value.
         runner = "pytest",
