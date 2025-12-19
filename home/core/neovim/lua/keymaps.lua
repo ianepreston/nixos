@@ -261,7 +261,7 @@ map("n", "<leader>lr", function()
   vim.lsp.buf.rename()
 end, { desc = "Rename (LSP)" })
 map("n", "<leader>ls", function()
-  vim.lsp.buf.signature_help()
+  vim.lsp.buf.signature_help { border = "rounded" }
 end, { desc = "Signature help (LSP)" })
 map("n", "<leader>lq", function()
   vim.diagnostic.setloclist()
@@ -289,7 +289,7 @@ local function show_documentation()
   elseif vim.fn.expand "%:t" == "Cargo.toml" and require("crates").popup_available() then
     require("crates").show_popup()
   else
-    vim.lsp.buf.hover()
+    vim.lsp.buf.hover { border = "rounded" }
   end
 end
 

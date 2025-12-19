@@ -23,14 +23,6 @@ function M.config(_, opts)
   -- 1) Global defaults for ALL servers (0.11 style)
   vim.lsp.config("*", {
     capabilities = require("cmp_nvim_lsp").default_capabilities(), -- snippet & cmp support
-    on_attach = function(client, bufnr)
-      -- buffer-local mappings or simple tweaks go here
-      -- (for complex logic prefer LspAttach below)
-    end,
-    handlers = {
-      ["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, { border = "rounded" }),
-      ["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, { border = "rounded" }),
-    },
   })
 
   -- 2) Enable all servers listed in your toolset (Neovim will merge lsp/<server>.lua)
