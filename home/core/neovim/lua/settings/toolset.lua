@@ -84,14 +84,8 @@ M.null_ls_sources = function(null_ls)
     -- Code actions (optional)
     null_ls.builtins.code_actions.gitsigns,
 
-    -- Bash/Shell
-    null_ls.builtins.diagnostics.shellcheck,
-
     -- YAML
     null_ls.builtins.diagnostics.yamllint,
-
-    -- Terraform
-    null_ls.builtins.diagnostics.tflint,
 
     -- Nix
     null_ls.builtins.diagnostics.statix,
