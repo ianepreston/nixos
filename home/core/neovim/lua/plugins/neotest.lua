@@ -1,5 +1,6 @@
 -- Test runner
 -- https://github.com/nvim-neotest/neotest
+local PYTHON = require("utils.python").get_python()
 local M = {
   "nvim-neotest/neotest",
   dependencies = {
@@ -71,7 +72,6 @@ function M.config()
           justMyCode = false,
           console = "internalConsole",
           subProcess = true,
-          pythonPath = vim.fn.exepath "python",
           -- redirectOutput = true,
         },
         -- Command line arguments for runner
@@ -85,7 +85,7 @@ function M.config()
         -- Can also be a function to return dynamic value.
         -- If not provided, the path will be inferred by checking for
         -- virtual envs in the local directory and for Pipenev/Poetry configs
-        python = vim.fn.exepath "python", -- resolves from PATH at startup
+        python = PYTHON,
       },
       -- Returns if a given file path is a test file.
       -- NB: This function is called a lot so don't perform any heavy tasks within it.
