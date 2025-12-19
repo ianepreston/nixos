@@ -61,7 +61,7 @@ local M = {
         name = "Launch file",
         program = "${file}", -- run the current buffer
         pythonPath = PYTHON,
-        console = "internalConsole",
+        console = "integratedTerminal",
         justMyCode = false,
       },
     }

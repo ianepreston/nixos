@@ -70,9 +70,9 @@ function M.config()
         -- See https://github.com/microsoft/debugpy/wiki/Debug-configuration-settings for values
         dap = {
           justMyCode = false,
-          console = "internalConsole",
+          console = "integratedTerminal",
           subProcess = true,
-          -- redirectOutput = true,
+          redirectOutput = false,
         },
         -- Command line arguments for runner
         -- Can also be a function to return dynamic values
