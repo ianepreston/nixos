@@ -20,69 +20,7 @@ local M = {
 
   dependencies = {
     "nvim-neotest/nvim-nio",
-
-    -- An IDE-like UI for DAP (inspired by LunarVim/nvim-basic-ide)
-    -- https://github.com/rcarriga/nvim-dap-ui
-    {
-      "rcarriga/nvim-dap-ui",
-      enabled = true,
-      opts = {
-        expand_lines = true,
-        icons = { expanded = "", collapsed = "", circular = "" },
-        mappings = {
-          -- Use a table to apply multiple mappings
-          expand = { "<CR>", "<2-LeftMouse>" },
-          open = "o",
-          remove = "d",
-          edit = "e",
-          repl = "r",
-          toggle = "t",
-        },
-        layouts = {
-          {
-            elements = {
-              { id = "scopes", size = 0.33 },
-              { id = "breakpoints", size = 0.17 },
-              { id = "stacks", size = 0.25 },
-              { id = "watches", size = 0.25 },
-            },
-            size = 0.33,
-            position = "right",
-          },
-          {
-            elements = {
-              { id = "repl", size = 0.45 },
-              { id = "console", size = 0.55 },
-            },
-            size = 0.27,
-            position = "bottom",
-          },
-        },
-        floating = {
-          max_height = 0.9,
-          max_width = 0.5, -- Floats will be treated as percentage of your screen.
-          border = vim.g.border_chars, -- Border style. Can be 'single', 'double' or 'rounded'
-          mappings = {
-            close = { "q", "<Esc>" },
-          },
-        },
-      },
-      config = function(_, opts)
-        local dap = require "dap"
-        local dapui = require "dapui"
-        dapui.setup(opts)
-        dap.listeners.after.event_initialized["dapui_config"] = function()
-          dapui.open {}
-        end
-        dap.listeners.before.event_terminated["dapui_config"] = function()
-          dapui.close {}
-        end
-        dap.listeners.before.event_exited["dapui_config"] = function()
-          dapui.close {}
-        end
-      end,
-    },
-
+    require "plugins.dap-conf.nvim-dap-ui",
     -- Displaying values of variables during debugging, highlighting changed variables, etc
     -- https://github.com/theHamsta/nvim-dap-virtual-text
     {
@@ -91,7 +29,6 @@ local M = {
       opts = {},
     },
   },
-  -- End of dependencies, back to the dap itself
 
   opts = {},
 
