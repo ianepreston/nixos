@@ -31,6 +31,7 @@ local M = {
   },
 
   opts = {},
+  keys = require "plugins.dap-conf.keys",
 
   config = function(_, opts)
     -- Set highlighting of a debugger-active line to the style of Visual mode highlighting
