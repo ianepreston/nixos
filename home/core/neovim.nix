@@ -41,6 +41,7 @@
       yamlfmt
       yamllint
       ruff
+      shfmt
       isort
       terraform-ls
       tflint
