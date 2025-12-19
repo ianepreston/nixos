@@ -146,7 +146,7 @@ map("n", "<leader>W", "<cmd>SudaWrite<cr>", { desc = "Save file with Sudo" })
 map("n", "<leader>ow", "<cmd>set wrap!<cr>", { desc = "Toggle word wrapping" })
 -- map("n", "<leader>ol", "<cmd>set number!<cr>", { desc = "Toggle line numbering" })
 -- map("n", "<leader>or", "<cmd>set relativenumber!<cr>", { desc = "Toggle relative line numbering" })
-map("n", "<leader>ot", "<cmd>set expandtab!<cr>", { desc = "Toggle spaces/tab in Insert mode" })
+map("n", "<leader>ot", "<cmd>set expandtab!<cr>", { desc = "Toggle spaces/tab in Insert mode" }) -- codespell:ignore ot
 -- I think it's better to V-select your lines, do `!cat -A`, watch for strange characters, and undo `cat -A` with `u`
 map("n", "<leader>oc", "<cmd>set list!<cr>", { desc = "Toggle hidden character visibility" })
 map("n", "<leader>oh", function()
@@ -396,7 +396,7 @@ map("n", "<leader>gb", "<cmd>Telescope git_branches<cr>", { desc = "Git branches
 map("n", "<leader>gc", "<cmd>Telescope git_commits<cr>", { desc = "Git commits (checkout on <cr>)" })
 map("n", "<leader>gC", "<cmd>Telescope git_bcommits<cr>", { desc = "Git commits for the buffer (c/o on <cr>)" })
 
--- Stable `<leader>/` in visual (x) mode is surpisingly hard: here, we take the actual escape sequence for <ESC>
+-- Stable `<leader>/` in visual (x) mode is surprisingly hard: here, we take the actual escape sequence for <ESC>
 local esc = vim.api.nvim_replace_termcodes("<ESC>", true, false, true)
 map("x", "<leader>/", function()
   -- Now, we need to comment lines as if it was in a normal mode
