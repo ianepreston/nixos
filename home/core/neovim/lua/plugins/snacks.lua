@@ -25,7 +25,7 @@ local M = {
           title = "Git Status",
           section = "terminal",
           enabled = function()
-            return Snacks.git.get_root() ~= nil
+            return require("snacks").git.get_root() ~= nil
           end,
           cmd = "git status --short --branch --renames",
           height = 5,
