@@ -206,34 +206,6 @@ function M.config(_, opts)
     end,
   })
 
-  -- Macro recording indicator state + autocmds
-  -- local macro_state = { reg = "" }
-  --
-  -- vim.api.nvim_create_augroup("MiniStatuslineMacro", { clear = true })
-  -- vim.api.nvim_create_autocmd({ "RecordingEnter", "RecordingLeave" }, {
-  --   group = "MiniStatuslineMacro",
-  --   callback = function(ev)
-  --     if ev.event == "RecordingLeave" then
-  --       -- reg_recording() clears just after the event; defer slightly to avoid stale value
-  --       vim.defer_fn(function()
-  --         macro_state.reg = ""
-  --         vim.cmd "redrawstatus"
-  --       end, 30)
-  --     else
-  --       macro_state.reg = vim.fn.reg_recording()
-  --       vim.cmd "redrawstatus"
-  --     end
-  --   end,
-  -- })
-  --
-  -- -- Expose a small provider for use inside opts.statusline.content.active
-  -- local function macro_indicator()
-  --   if macro_state.reg == "" then
-  --     return ""
-  --   end
-  --   return (" REC @%s"):format(macro_state.reg)
-  -- end
-
   require("mini.statusline").setup(opts.statusline)
   --------------------------------------------------------------------------------------
   -- SURROUND
