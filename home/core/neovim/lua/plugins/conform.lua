@@ -28,7 +28,7 @@ return {
       javascript = { "prettierd" },
       sh = { "shfmt" },
       bash = { "shfmt" },
-      markdown = { "prettierd" },
+      markdown = { "prettier" },
     },
     -- Set default options
     default_format_opts = {
@@ -38,6 +38,17 @@ return {
     format_on_save = { timeout_ms = 1000 },
     -- Customize formatters
     formatters = {
+      prettier = {
+        -- Enforce global Markdown wrapping:
+        -- Wrap prose and set your desired column width (change 80 as needed).
+        prepend_args = {
+          "--prose-wrap",
+          "always",
+          "--print-width",
+          "80",
+        },
+      },
+
       shfmt = {
         prepend_args = { "-i", "2" },
       },

@@ -32,6 +32,7 @@
       nixd
       nil
       prettierd
+      prettier
       typescript-language-server
       eslint
       python3Packages.debugpy
