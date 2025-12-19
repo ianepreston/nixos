@@ -25,10 +25,10 @@ return {
       tf = { "tfmt" },
       terraform = { "tfmt" },
       tfvars = { "tfmt" },
-      javascript = { "prettierd", "prettier", stop_after_first = true },
+      javascript = { "prettierd" },
       sh = { "shfmt" },
       bash = { "shfmt" },
-      markdown = { "prettierd", "prettier", stop_after_first = true },
+      markdown = { "prettierd" },
     },
     -- Set default options
     default_format_opts = {
