@@ -192,7 +192,9 @@ map("n", "<leader>fr", "<cmd>Telescope oldfiles<cr>", { desc = "Find recently op
 map("n", "<leader>fg", "<cmd>Telescope live_grep<cr>", { desc = "Search text in files (grep)" })
 map("n", "<leader>fb", "<cmd>Telescope current_buffer_fuzzy_find <cr>", { desc = "Search in current buffer" })
 
-map("n", "<leader>fR", "<cmd>Telescope registers<cr>", { desc = "Find registers" })
+map("n", "<leader>fR", function()
+  require("telescope.builtin").lsp_references()
+end, { desc = "Find References Telescope" })
 map("n", "<leader>fm", "<cmd>Telescope marks<cr>", { desc = "Find marks" })
 map("n", "<leader>fj", "<cmd>Telescope jumplist<cr>", { desc = "Search jumplist" })
 map("n", "<leader>fc", "<cmd>Telescope command_history<cr>", { desc = "Search command history" })
