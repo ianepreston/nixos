@@ -24,6 +24,7 @@ in
     # Latest isn't building at 2025-08-18, try again later
     package = config.boot.kernelPackages.nvidiaPackages.stable;
     powerManagement.enable = true;
+    modesetting.enable = true;
   };
   # Hopefully fix it going blank after resuming
   systemd.services = {

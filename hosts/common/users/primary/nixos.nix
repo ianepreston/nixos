@@ -35,6 +35,7 @@ in
         "plugdev"
         "scanner" # for print/scan"
         "lp" # for print/scan"
+        "render" # might be required for HDMI dummy plug
       ])
     ];
   };
