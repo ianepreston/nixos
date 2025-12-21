@@ -37,6 +37,7 @@
       "hosts/common/optional/nvidia-rtx3070.nix"
       "hosts/common/optional/obsidian.nix"
       "hosts/common/optional/smbclient.nix"
+      "hosts/common/optional/sunshine.nix"
       "hosts/common/optional/themes.nix"
       "hosts/common/optional/zsa-keeb.nix"
     ])
