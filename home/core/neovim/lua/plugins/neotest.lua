@@ -46,7 +46,7 @@ local M = {
     {
       "<leader>ps",
       function()
-        require("neotest").summary()
+        require("neotest").summary.toggle()
       end,
       mode = "n",
       desc = "Displays test suite structure from project root. ",
