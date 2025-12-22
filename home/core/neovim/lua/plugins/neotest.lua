@@ -51,6 +51,34 @@ local M = {
       mode = "n",
       desc = "Displays test suite structure from project root. ",
     },
+    {
+      "<leader>pl",
+      function()
+        require("neotest").run.run_last()
+      end,
+      desc = "Run Last Test",
+    },
+    {
+      "<leader>px",
+      function()
+        require("neotest").run.stop()
+      end,
+      desc = "Stop Test",
+    },
+    {
+      "<leader>pa",
+      function()
+        require("neotest").run.run(vim.uv.cwd())
+      end,
+      desc = "Run All Tests in Project",
+    },
+    {
+      "<leader>pp",
+      function()
+        require("neotest").output_panel.toggle()
+      end,
+      desc = "Toggle Output Panel",
+    },
   },
 }
 
@@ -81,6 +109,22 @@ function M.config()
       },
       -- Returns if a given file path is a test file.
       -- NB: This function is called a lot so don't perform any heavy tasks within it.
+    },
+    -- VIRTUAL TEXT & DIAGNOSTICS CONFIG
+    diagnostic = {
+      enabled = true,
+      severity = vim.diagnostic.severity.ERROR, -- Only show virtual text for errors
+    },
+    status = {
+      enabled = true,
+      virtual_text = true, -- Shows "Passed/Failed" next to test names
+      signs = true, -- Shows icons in the sign column (gutter)
+    },
+    floating = {
+      border = "rounded",
+      max_height = 0.6,
+      max_width = 0.6,
+      options = {},
     },
   }
 end
