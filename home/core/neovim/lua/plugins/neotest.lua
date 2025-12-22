@@ -22,7 +22,7 @@ local M = {
     {
       "<leader>pf",
       function()
-        require("neotest").run.run(vim.fn.expand "%")
+        require("neotest").run.run(vim.api.nvim_buf_get_name(0))
       end,
       mode = "n",
       desc = "Run tests in current file",
