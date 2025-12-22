@@ -48,6 +48,7 @@
       tflint
       opentofu
       basedpyright
+      ty
       tree-sitter
     ];
   };
