@@ -46,7 +46,7 @@ local M = {
     {
       "<leader>po",
       function()
-        require("neotest").output()
+        require("neotest").output.open { enter = true }
       end,
       mode = "n",
       desc = "Displays output of tests",
