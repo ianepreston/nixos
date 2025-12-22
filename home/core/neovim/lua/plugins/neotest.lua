@@ -44,14 +44,6 @@ local M = {
       desc = "Watches files related to tests for changes and re-runs tests",
     },
     {
-      "<leader>po",
-      function()
-        require("neotest").output.open { enter = true }
-      end,
-      mode = "n",
-      desc = "Displays output of tests",
-    },
-    {
       "<leader>ps",
       function()
         require("neotest").summary()
