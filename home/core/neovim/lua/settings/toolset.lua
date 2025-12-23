@@ -15,8 +15,8 @@ M.ts_languages = {
 -- For example, if `lua/settings/nixd.lua` exists, options in it will be merged with nvim-lspconfig defaults and used to configure nixd.
 -- It's NOT Mason installation list: only a list of LSP servers to be configured and set up with nvim-lspconfig.
 M.lsp_servers = {
-  -- "basedpyright",
-  "ty",
+  "basedpyright",
+  -- "ty",
   "bashls", -- bash-language-server
   "buf_ls", -- buf
   -- Note for C/C++: for complex projects like Linux kernel, clang relies on "JSON compilation database"
