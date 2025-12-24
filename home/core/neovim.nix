@@ -35,7 +35,7 @@
       prettier
       typescript-language-server
       eslint
-      python3Packages.debugpy
+      python313Packages.debugpy
       shellcheck
       taplo
       yaml-language-server

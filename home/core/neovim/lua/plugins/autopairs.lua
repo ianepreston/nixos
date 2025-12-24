@@ -9,7 +9,7 @@ local M = {
   dependencies = { "hrsh7th/nvim-cmp" },
   opts = {
     check_ts = true, -- treesitter integration
-    disable_filetype = { "TelescopePrompt" },
+    disable_filetype = { "TelescopePrompt", "dap-repl" },
     -- Don't add pairs if it already has a close pair in the same line
     enable_check_bracket_line = false,
     ts_config = {

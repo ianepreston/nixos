@@ -96,7 +96,7 @@ function M.config()
         },
         -- Command line arguments for runner
         -- Can also be a function to return dynamic values
-        args = { "-s", "--log-level", "DEBUG" },
+        args = { "-s", "--log-level", "DEBUG", "-p", "no:cov" },
         -- Runner to use. Will use pytest if available by default.
         -- Can be a function to return dynamic value.
         runner = "pytest",
