@@ -41,6 +41,7 @@
   services.flatpak.packages = [
     "com.discordapp.Discord"
     "com.bambulab.BambuStudio"
+    "com.google.Chrome"
     #{ appId = "com.brave.Browser"; origin = "flathub"; }
     #"com.obsproject.Studio"
     #"im.riot.Riot"
