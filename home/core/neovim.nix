@@ -57,6 +57,12 @@
   xdg.configFile."nvim".source =
     config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/src/nixos/home/core/neovim";
 
+  # Make yamlfmt not fight with yamllint
+  xdg.configFile."yamlfmt/.yamlfmt".text = ''
+    formatter:
+      type: basic
+      include_document_start: true
+  '';
   # Tools available during activation
   home.extraActivationPath = with pkgs; [
     git
