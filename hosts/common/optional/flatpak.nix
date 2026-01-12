@@ -42,6 +42,7 @@
     "com.discordapp.Discord"
     "com.bambulab.BambuStudio"
     "com.google.Chrome"
+    "io.kinvolk.Headlamp"
     #{ appId = "com.brave.Browser"; origin = "flathub"; }
     #"com.obsproject.Studio"
     #"im.riot.Riot"
