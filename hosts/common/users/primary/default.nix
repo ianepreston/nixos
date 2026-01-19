@@ -42,6 +42,7 @@ in
 # Import the user's personal/home configurations, unless the environment is minimal
 // lib.optionalAttrs (inputs ? "home-manager") {
   home-manager = {
+    backupFileExtension = "hm-backup";
     extraSpecialArgs = {
       inherit
         pkgs
