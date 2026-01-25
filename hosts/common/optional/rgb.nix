@@ -1,11 +1,20 @@
 {
   pkgs,
+  inputs,
   ...
 }:
+let
+  pkgsUnstable = import inputs.nixpkgs-unstable {
+    system = pkgs.system;
+    # Optional but recommended: share config (allowUnfree, etc.)
+    config = pkgs.config;
+  };
+in
+
 {
   services.hardware.openrgb = {
     enable = true;
-    package = pkgs.openrgb-with-all-plugins;
+    package = pkgsUnstable.openrgb-with-all-plugins;
     motherboard = "amd";
   };
   hardware.i2c.enable = true;
