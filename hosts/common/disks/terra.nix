@@ -4,7 +4,7 @@
     disk = {
       primary = {
         type = "disk";
-        device = "/dev/sda";
+        device = "/dev/nvme0n1";
         content = {
           type = "gpt";
           partitions = {
@@ -54,35 +54,6 @@
         };
 
       };
-      ssd = {
-        type = "disk";
-        device = "/dev/sdb";
-        content = {
-          type = "gpt";
-          partitions = {
-            root = {
-              size = "100%";
-              content = {
-                type = "btrfs";
-                extraArgs = [ "-f" ];
-                subvolumes = {
-                  "@data" = {
-                    mountpoint = "/mnt/data";
-                    mountOptions = [
-                      "compress=zstd"
-                      "noatime"
-                    ];
-                  };
-                };
-              };
-            };
-          };
-        };
-
-      };
     };
   };
-  systemd.tmpfiles.rules = [
-    "d /mnt/data 0755 ipreston users -"
-  ];
 }
