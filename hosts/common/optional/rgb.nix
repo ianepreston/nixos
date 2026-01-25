@@ -12,4 +12,5 @@
     "i2c-dev"
     "i2c-piix4"
   ];
+  boot.kernelParams = [ "acpi_enforce_resources=lax" ];
 }
