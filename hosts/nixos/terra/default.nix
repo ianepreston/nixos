@@ -34,7 +34,9 @@
       "hosts/common/optional/flatpak.nix"
       "hosts/common/optional/gaming.nix"
       "hosts/common/optional/gnome.nix" # WM
+      "hosts/common/optional/nvidia-rtx5080.nix"
       "hosts/common/optional/obsidian.nix"
+      "hosts/common/optional/rgb.nix"
       "hosts/common/optional/smbclient.nix"
       "hosts/common/optional/sunshine.nix"
       "hosts/common/optional/themes.nix"
