@@ -6,11 +6,13 @@ local M = {
   "nvim-treesitter/nvim-treesitter",
   enabled = true,
   build = ":TSUpdate",
-  event = { "BufReadPre", "BufNewFile" },
+  lazy = false,
+  -- event = { "BufReadPre", "BufNewFile" },
   dependencies = {
-    "JoosepAlviste/nvim-ts-context-commentstring",
-    "nvim-treesitter/nvim-treesitter-textobjects",
-    "nvim-tree/nvim-web-devicons",
+    { "JoosepAlviste/nvim-ts-context-commentstring" },
+    { "nvim-treesitter/nvim-treesitter-textobjects", branch = "main" },
+    { "nvim-treesitter/nvim-treesitter-context", branch = "master" },
+    { "nvim-tree/nvim-web-devicons" },
   },
   opts = {
     -- for ensure_installed, see config() below
@@ -144,7 +146,7 @@ function M.config(_, opts)
   require("ts_context_commentstring").setup {
     enable_autocmd = false,
   }
-  require("nvim-treesitter.configs").setup(opts)
+  require("nvim-treesitter.config").setup(opts)
 end
 
 return M
