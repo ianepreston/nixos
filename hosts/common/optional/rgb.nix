@@ -1,6 +1,7 @@
 {
   pkgs,
   inputs,
+  hostSpec,
   ...
 }:
 let
@@ -21,6 +22,9 @@ in
   boot.kernelModules = [
     "i2c-dev"
     "i2c-piix4"
+    "i2c-mux"
+    "i2c-designware-platform"
   ];
   boot.kernelParams = [ "acpi_enforce_resources=lax" ];
+  users.users.${hostSpec.username}.extraGroups = [ "i2c" ];
 }
