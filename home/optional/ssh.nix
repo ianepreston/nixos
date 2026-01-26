@@ -26,6 +26,11 @@
           "Ciphers" = "+3des-cbc";
         };
       };
+      "laconia" = {
+        hostname = "laconia.ipreston.net";
+        user = "ipreston";
+        port = 2222;
+      };
     };
   };
 }
