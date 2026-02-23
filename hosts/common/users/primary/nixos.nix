@@ -15,11 +15,14 @@ let
   sopsHashedPasswordFile = lib.optionalString (
     !hostSpec.isMinimal
   ) config.sops.secrets."passwords/${hostSpec.username}".path;
+  pubKeys = lib.filesystem.listFilesRecursive ./keys;
 in
 {
   users.mutableUsers = false; # Only allow declarative credentials; Required for password to be set via sops during system activation!
   users.users.${hostSpec.username} = {
     home = "/home/${hostSpec.username}";
+    # These get placed into /etc/ssh/authorized_keys.d/<name> on nixos
+    openssh.authorizedKeys.keys = lib.lists.forEach pubKeys (key: builtins.readFile key);
     isNormalUser = true;
     hashedPasswordFile = sopsHashedPasswordFile; # Blank if sops is not working.
     # hashedPassword = "$y$j9T$btcmX70EFVuOykqTAJW5f1$VBwwrnrLIMRQu1TN6DBjiVm.WeJr/PuKaujc4xVoD.1";
@@ -39,6 +42,18 @@ in
       ])
     ];
   };
+
+  # Create ssh sockets directory for controlpaths when homemanager not loaded (i.e. isMinimal)
+  systemd.tmpfiles.rules =
+    let
+      user = config.users.users.${hostSpec.username}.name;
+      group = config.users.users.${hostSpec.username}.group;
+    in
+    # you must set the rule for .ssh separately first, otherwise it will be automatically created as root:root and .ssh/sockects will fail
+    [
+      "d /home/${hostSpec.username}/.ssh 0750 ${user} ${group} -"
+      "d /home/${hostSpec.username}/.ssh/sockets 0750 ${user} ${group} -"
+    ];
 
   # No matter what environment we are in we want these tools for root, and the user(s)
   programs.git.enable = true;

@@ -7,6 +7,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-darwin,
       nix-flatpak,
       stylix,
       ...
@@ -79,6 +80,21 @@
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
       );
+      darwinConfigurations = builtins.listToAttrs (
+        map (host: {
+          name = host;
+          value = inputs.nix-darwin.lib.darwinSystem {
+            specialArgs = {
+              inherit inputs outputs customLib;
+              lib = inputs.nixpkgs-darwin.lib;
+              hostSpec = hostSpecs.${host};
+            };
+            modules = [
+              ./hosts/darwin/${host}
+            ];
+          };
+        }) (builtins.attrNames (builtins.readDir ./hosts/darwin))
+      );
       homeConfigurations."penguin" = inputs.home-manager.lib.homeManagerConfiguration {
         pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
         extraSpecialArgs = {
@@ -92,6 +108,7 @@
     };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs-darwin.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     # The next two are for pinning to stable vs unstable regardless of what the above is set to
     # This is particularly useful when an upcoming stable release is in beta because you can effectively
     # keep 'nixpkgs-stable' set to stable for critical packages while setting 'nixpkgs' to the beta branch to
@@ -99,6 +116,8 @@
     # See also 'stable-packages' and 'unstable-packages' overlays at 'overlays/default.nix"
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nix-darwin.url = "github:nix-darwin/nix-darwin/nix-darwin-25.11";
+    nix-darwin.inputs.nixpkgs.follows = "nixpkgs-darwin";
     hardware.url = "github:nixos/nixos-hardware";
     home-manager = {
       url = "github:nix-community/home-manager/release-25.11";

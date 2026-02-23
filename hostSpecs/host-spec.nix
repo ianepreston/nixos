@@ -1,28 +1,31 @@
 # Specifications For Differentiating Hosts
 {
   lib,
+  config,
   ...
 }:
 {
   options.hostSpecs = lib.mkOption {
     description = "AttrSet of Host Configuration Options";
     type = lib.types.attrsOf (
-      lib.types.submodule {
+      lib.types.submodule (
+        {config, ...}:
+        {
         options = {
           # Data variables that don't dictate configuration settings
           hostName = lib.mkOption {
             type = lib.types.str;
             description = "The hostname of the host";
           };
+          hostNameFile = lib.mkOption {
+            type = lib.types.str;
+            description = "The filename for host specific configs";
+            default = config.hostName;
+          };
           username = lib.mkOption {
             type = lib.types.str;
             description = "The username of the host";
             default = "ipreston";
-          };
-          home = lib.mkOption {
-            type = lib.types.str;
-            description = "The home directory of the user";
-            default = "/home/ipreston";
           };
           # Configuration Settings
           email = lib.mkOption {
@@ -55,8 +58,16 @@
             default = false;
             description = "Used to indicate a host that is darwin";
           };
+          home = lib.mkOption {
+            type = lib.types.str;
+            description = "The home directory of the user";
+            default = if config.isDarwin
+                      then "/Users/${config.username}"
+                      else "/home/${config.username}";
+          };
         };
       }
+)
     );
   };
 }

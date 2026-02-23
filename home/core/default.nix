@@ -4,6 +4,9 @@
   hostSpec,
   ...
 }:
+let
+    platform = if hostSpec.isDarwin then "darwin" else "nixos";
+in
 {
   imports = [
     ./direnv.nix
@@ -12,13 +15,12 @@
     ./packages.nix
     ./starship.nix
     ./zsh.nix
+    ./${platform}.nix
   ];
-  # inherit hostSpec;
-  services.ssh-agent.enable = true;
   programs.home-manager.enable = true;
   home = {
     username = lib.mkDefault hostSpec.username;
-    homeDirectory = lib.mkDefault hostSpec.home;
+    homeDirectory = builtins.trace "DEBUG ${hostSpec.home}" lib.mkDefault hostSpec.home;
     stateVersion = lib.mkDefault "23.05";
     # sessionPath = [
     #   "$HOME/.local/bin"
@@ -37,9 +39,4 @@
 
   };
 
-  xdg.mimeApps = {
-    enable = true;
-  };
-  # Nicely reload system units when changing configs
-  systemd.user.startServices = "sd-switch";
 }
