@@ -3,10 +3,12 @@
   customLib,
   pkgs,
   inputs,
+  hostSpec,
   ...
 }:
 
 {
+  system.primaryUser = hostSpec.username;
   imports = lib.flatten [
     (map customLib.relativeToRoot [
       #
@@ -18,6 +20,7 @@
       # ========== Optional Configs ==========
       #
     ])
+    ./homebrew.nix
   ];
 
   networking.hostName = inputs.nix-secrets.workvm_hostname;
