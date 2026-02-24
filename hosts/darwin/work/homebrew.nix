@@ -19,4 +19,8 @@
       "ghostty"
     ];
   };
+  # Rest of my zsh config shouldn't conflict with this.
+  programs.zsh.interactiveShellInit = ''
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  '';
 }
