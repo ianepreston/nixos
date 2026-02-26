@@ -5,10 +5,7 @@
   # The home.packages option allows you to install Nix packages into your
   # environment.
   home.packages = with pkgs; [
-    # dig
-    # whois
-    # fzf
-    # traceroute
+    gh
     curl
     wget
     unzip
@@ -20,8 +17,6 @@
     jq
     yq-go
     shellcheck
-    # direnv
-    # nix-direnv
     nixfmt-rfc-style
     keychain
     sops
