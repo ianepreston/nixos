@@ -28,10 +28,10 @@ in
         "hasconfig:remote.*.url:git@github.com-emu:databricks-eng/**".path = workGitConfig;
       };
       url = {
-        "git@github.com-emu:databricks-eng/" = {
+        "git@github.com-emu:databricks-eng" = {
           insteadOf = "git@github.com:databricks-eng";
         };
-        "git@github.com-emu:databricks-field-eng/" = {
+        "git@github.com-emu:databricks-field-eng" = {
           insteadOf = "git@github.com:databricks-field-eng";
         };
       };
