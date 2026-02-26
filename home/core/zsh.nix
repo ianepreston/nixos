@@ -14,6 +14,10 @@
       size = 10000;
     };
     initContent = ''
+      if [ -d "$HOME/.local/bin" ]; then
+        export PATH="$HOME/.local/bin:$PATH"
+      fi
+      alias llm="dbexec repo run llm"
       alias vim="nvim"
       alias vi="nvim"
       # Can probably get rid of this with some better config but whatever
