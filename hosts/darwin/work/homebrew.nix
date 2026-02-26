@@ -17,6 +17,7 @@
     ];
     casks = [
       "ghostty"
+      "obsidian"
     ];
   };
   # Rest of my zsh config shouldn't conflict with this.
