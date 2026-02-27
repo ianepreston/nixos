@@ -18,6 +18,7 @@
         export PATH="$HOME/.local/bin:$PATH"
       fi
       alias llm="dbexec repo run llm"
+      alias isaac="dbexec repo run isaac"
       alias vim="nvim"
       alias vi="nvim"
       # Can probably get rid of this with some better config but whatever
