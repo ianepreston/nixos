@@ -1,4 +1,4 @@
-{ ... }:
+{ pkgs, ... }:
 {
   services.ssh-agent.enable = true;
   xdg.mimeApps = {
@@ -6,4 +6,8 @@
   };
   # Nicely reload system units when changing configs
   systemd.user.startServices = "sd-switch";
+  home.packages = with pkgs; [
+    coreutils
+    keychain
+  ];
 }

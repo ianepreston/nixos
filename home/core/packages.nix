@@ -6,6 +6,7 @@
   # environment.
   home.packages = with pkgs; [
     gh
+    ripgrep
     curl
     wget
     unzip
@@ -18,10 +19,8 @@
     yq-go
     shellcheck
     nixfmt-rfc-style
-    keychain
     sops
     age
-    coreutils
   ];
 
 }
