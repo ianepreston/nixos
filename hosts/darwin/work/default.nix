@@ -21,6 +21,7 @@
       #
     ])
     ./homebrew.nix
+    ./system-settings.nix
     ./yubikey.nix
   ];
 

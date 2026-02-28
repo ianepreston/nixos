@@ -10,6 +10,7 @@
     taps = [
       "hashicorp/tap"
       "databricks/tap"
+      "nikitabobko/tap"
     ];
     brews = [
       "awscli"
@@ -24,6 +25,7 @@
       "ghostty"
       "obsidian"
       "gcloud-cli"
+      "nikitabobko/tap/aerospace"
     ];
   };
   # Rest of my zsh config shouldn't conflict with this.
