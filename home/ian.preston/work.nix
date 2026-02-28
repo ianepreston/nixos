@@ -54,4 +54,10 @@ in
     [github]
       name = "ian-preston_data"
   '';
+  programs.zsh.initContent = ''
+    alias llm="dbexec repo run llm"
+    alias isaac="dbexec repo run isaac"
+    export I_DANGEROUSLY_OPT_IN_TO_UNSUPPORTED_ALPHA_TOOLS=true
+    export MCP_PRIVACY_SUMMARIZATION_ENABLED=true
+  '';
 }
