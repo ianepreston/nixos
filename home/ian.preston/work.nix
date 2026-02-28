@@ -32,7 +32,9 @@ in
   };
   home.file."${workGitConfig}".text = ''
     [user]
-      name = "${hostSpec.userFullName}"
+      name = "ian-preston_data"
       email = "${workGitEmail}"
+    [github]
+      name = "ian-preston_data"
   '';
 }
