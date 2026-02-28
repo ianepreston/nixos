@@ -21,6 +21,7 @@
       #
     ])
     ./homebrew.nix
+    ./yubikey.nix
   ];
 
   networking.hostName = inputs.nix-secrets.workvm_hostname;
