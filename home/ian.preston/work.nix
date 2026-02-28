@@ -20,13 +20,30 @@ in
     includeIf = {
       "hasconfig:remote.*.url:git@github.com-emu:databricks-field-eng/**".path = workGitConfig;
       "hasconfig:remote.*.url:git@github.com-emu:databricks-eng/**".path = workGitConfig;
+      "hasconfig:remote.*.url:https://github.com/databricks-field-eng/**".path = workGitConfig;
+      "hasconfig:remote.*.url:https://github.com/databricks-eng/**".path = workGitConfig;
     };
     url = {
-      "git@github.com-emu:databricks-eng" = {
-        insteadOf = "git@github.com:databricks-eng";
+      "git@github.com-emu:databricks-eng/" = {
+        insteadOf = [
+          "git@github.com:databricks-eng/"
+          "https://github.com/databricks-eng/"
+        ];
       };
-      "git@github.com-emu:databricks-field-eng" = {
-        insteadOf = "git@github.com:databricks-field-eng";
+      "git@github.com-emu:databricks-field-eng/" = {
+        insteadOf = [
+          "git@github.com:databricks-field-eng/"
+          "https://github.com/databricks-field-eng/"
+        ];
+      };
+      "git@github.com-emu:" = {
+        insteadOf = [
+          "org-145372899@github.com:"
+          "org-140212977@github.com:"
+        ];
+      };
+      "git@github.com:" = {
+        insteadOf = "https://github.com/";
       };
     };
   };
