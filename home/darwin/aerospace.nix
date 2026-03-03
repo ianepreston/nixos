@@ -31,66 +31,67 @@
     10 = 'secondary'
 
     # ---- Main mode ----
+    # Primary modifier is opt/alt. macOS apps almost never bind alt as a primary
+    # shortcut (it's used for character variants), so this namespace is clean.
+    # Using cmd caused too many collisions: cmd+enter (modal accept), cmd+l (URL
+    # bar), cmd+[/] (browser back/forward), cmd+1-9 (browser tabs), etc.
     [mode.main.binding]
 
-    # Window focus (hjkl — no arrow keys needed)
-    # cmd+h replaces macOS "Hide Application" (disabled in system-settings.nix)
-    # cmd+l replaces browser URL bar; use ctrl+l instead (configured for Chrome)
-    cmd-h = 'focus left'
-    cmd-j = 'focus down'
-    cmd-k = 'focus up'
-    cmd-l = 'focus right'
+    # Window focus (hjkl)
+    alt-h = 'focus left'
+    alt-j = 'focus down'
+    alt-k = 'focus up'
+    alt-l = 'focus right'
 
     # Window movement
-    cmd-shift-h = 'move left'
-    cmd-shift-j = 'move down'
-    cmd-shift-k = 'move up'
-    cmd-shift-l = 'move right'
+    alt-shift-h = 'move left'
+    alt-shift-j = 'move down'
+    alt-shift-k = 'move up'
+    alt-shift-l = 'move right'
 
     # Workspace switching
-    cmd-1 = 'workspace 1'
-    cmd-2 = 'workspace 2'
-    cmd-3 = 'workspace 3'
-    cmd-4 = 'workspace 4'
-    cmd-5 = 'workspace 5'
-    cmd-6 = 'workspace 6'
-    cmd-7 = 'workspace 7'
-    cmd-8 = 'workspace 8'
-    cmd-9 = 'workspace 9'
-    cmd-0 = 'workspace 10'
+    alt-1 = 'workspace 1'
+    alt-2 = 'workspace 2'
+    alt-3 = 'workspace 3'
+    alt-4 = 'workspace 4'
+    alt-5 = 'workspace 5'
+    alt-6 = 'workspace 6'
+    alt-7 = 'workspace 7'
+    alt-8 = 'workspace 8'
+    alt-9 = 'workspace 9'
+    alt-0 = 'workspace 10'
 
     # Move window to workspace
-    cmd-shift-1 = 'move-node-to-workspace 1'
-    cmd-shift-2 = 'move-node-to-workspace 2'
-    cmd-shift-3 = 'move-node-to-workspace 3'
-    cmd-shift-4 = 'move-node-to-workspace 4'
-    cmd-shift-5 = 'move-node-to-workspace 5'
-    cmd-shift-6 = 'move-node-to-workspace 6'
-    cmd-shift-7 = 'move-node-to-workspace 7'
-    cmd-shift-8 = 'move-node-to-workspace 8'
-    cmd-shift-9 = 'move-node-to-workspace 9'
-    cmd-shift-0 = 'move-node-to-workspace 10'
+    alt-shift-1 = 'move-node-to-workspace 1'
+    alt-shift-2 = 'move-node-to-workspace 2'
+    alt-shift-3 = 'move-node-to-workspace 3'
+    alt-shift-4 = 'move-node-to-workspace 4'
+    alt-shift-5 = 'move-node-to-workspace 5'
+    alt-shift-6 = 'move-node-to-workspace 6'
+    alt-shift-7 = 'move-node-to-workspace 7'
+    alt-shift-8 = 'move-node-to-workspace 8'
+    alt-shift-9 = 'move-node-to-workspace 9'
+    alt-shift-0 = 'move-node-to-workspace 10'
 
-    # Workspace cycling (sacrifices browser back/forward; use trackpad gestures)
-    cmd-leftSquareBracket  = 'workspace prev'
-    cmd-rightSquareBracket = 'workspace next'
-    cmd-backslash          = 'workspace-back-and-forth'
+    # Workspace cycling (browser back/forward is cmd+[/] again — no trade-off)
+    alt-leftSquareBracket  = 'workspace prev'
+    alt-rightSquareBracket = 'workspace next'
+    alt-backslash          = 'workspace-back-and-forth'
 
     # Layout controls
-    # ctrl+cmd+f matches macOS fullscreen convention (green traffic-light button)
-    ctrl-cmd-f      = 'fullscreen'
-    cmd-shift-space = 'layout floating tiling'
-    cmd-comma       = 'layout h_tiles v_tiles'
+    ctrl-cmd-f = 'fullscreen'           # matches macOS green traffic-light button
+    alt-space  = 'layout floating tiling'
+    alt-comma  = 'layout h_tiles v_tiles'
 
     # Enter resize mode
-    cmd-r = 'mode resize'
+    alt-r = 'mode resize'
 
     # App launching — terminal and browser only; everything else via Spotlight (cmd+space)
-    cmd-enter       = "exec-and-forget open -na Ghostty"
-    cmd-shift-enter = "exec-and-forget open -a 'Google Chrome'"
+    alt-enter       = "exec-and-forget open -na Ghostty"
+    alt-shift-enter = "exec-and-forget open -a 'Google Chrome'"
 
     # ---- Resize mode ----
-    # Enter via cmd-r, exit via esc or enter
+    # Enter via alt-r, exit via esc or enter
     [mode.resize.binding]
     h     = 'resize width -50'
     l     = 'resize width +50'
