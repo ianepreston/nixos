@@ -158,7 +158,7 @@
 
     -- alt+return: Ghostty
     hs.hotkey.bind({"alt"}, "return", function()
-      hs.execute("open -na Ghostty")
+      hs.application.launchOrFocus("Ghostty")
     end)
 
     -- alt+shift+return: Chrome
