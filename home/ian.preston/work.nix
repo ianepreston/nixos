@@ -14,8 +14,7 @@ in
       font-family = FiraCode Nerd Font Mono
       clipboard-read = allow
       clipboard-write = allow
-      font-size = 11
-      macos-titlebar-style = hidden
+      font-size = 14
     '';
   };
   programs.git.settings = {
