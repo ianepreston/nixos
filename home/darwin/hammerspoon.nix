@@ -20,42 +20,54 @@
     -- Helpers
     ---------------------------------------------------------------------------
 
-    -- Get ordered user spaces for the screen the focused window is on
-    local function getUserSpaces()
-      local win = hs.window.focusedWindow()
-      if not win then return nil, nil, nil end
-      local screen = win:screen()
-      local uuid = screen:getUUID()
+    -- Get all ordered spaces for the screen containing the focused space
+    local function getNavigableSpaces()
+      local currentSpace = spaces.focusedSpace()
+      if not currentSpace then return nil, nil end
+
       local allSpaces = spaces.allSpaces()
-      local screenSpaces = allSpaces[uuid]
-      if not screenSpaces then return nil, nil, nil end
-
-      -- Filter to user spaces only (exclude fullscreen spaces)
-      local userSpaces = {}
-      for _, spc in ipairs(screenSpaces) do
-        if spaces.spaceType(spc) == "user" then
-          table.insert(userSpaces, spc)
+      for _, screenSpaces in pairs(allSpaces) do
+        for i, spc in ipairs(screenSpaces) do
+          if spc == currentSpace then
+            return screenSpaces, i
+          end
         end
       end
+      return nil, nil
+    end
 
-      -- Find current space index
-      local winSpaces = spaces.windowSpaces(win)
-      if not winSpaces or #winSpaces == 0 then return userSpaces, nil, win end
-      local currentSpaceID = winSpaces[1]
-      for i, spc in ipairs(userSpaces) do
-        if spc == currentSpaceID then
-          return userSpaces, i, win
-        end
-      end
-      return userSpaces, nil, win
+    -- After gotoSpace the space animation plays but no window gets focus
+    -- automatically. Focus the frontmost window once the animation settles.
+    local function focusAfterSwitch()
+      hs.timer.doAfter(0.35, function()
+        local win = hs.window.frontmostWindow()
+        if win then win:focus() end
+      end)
     end
 
     ---------------------------------------------------------------------------
-    -- Space switching via ctrl+arrow (native Mission Control shortcut)
+    -- Space switching
+    -- Debounced so rapid keypresses don't queue up animations.
     ---------------------------------------------------------------------------
 
+    local switching = false
+
     local function switchSpace(dir)
-      hs.eventtap.keyStroke({"ctrl"}, dir, 0)
+      if switching then return end
+      local navSpaces, idx = getNavigableSpaces()
+      if not navSpaces or not idx then return end
+      local target
+      if dir == "left" and idx > 1 then
+        target = navSpaces[idx - 1]
+      elseif dir == "right" and idx < #navSpaces then
+        target = navSpaces[idx + 1]
+      end
+      if target then
+        switching = true
+        spaces.gotoSpace(target)
+        focusAfterSwitch()
+        hs.timer.doAfter(0.5, function() switching = false end)
+      end
     end
 
     -- alt+h: space left
@@ -64,8 +76,9 @@
     hs.hotkey.bind({"alt"}, "l", function() switchSpace("right") end)
 
     ---------------------------------------------------------------------------
-    -- Move window to adjacent space (click-drag + ctrl+arrow approach)
-    -- Works on macOS Sequoia where hs.spaces.moveWindowToSpace is broken
+    -- Move window to adjacent space
+    -- Uses hs.spaces.moveWindowToSpace (works on Sequoia with window ID).
+    -- Follows the window to its new space and re-focuses it.
     ---------------------------------------------------------------------------
 
     local function moveWindowOneSpace(dir)
@@ -73,46 +86,20 @@
       if not win or not win:isStandard() then return end
       if win:isFullScreen() then return end
 
-      local screen = win:screen()
-      local uuid = screen:getUUID()
-      local allSp = spaces.allSpaces()
-      local screenSpaces = allSp[uuid]
-      if not screenSpaces then return end
+      local navSpaces, idx = getNavigableSpaces()
+      if not navSpaces or not idx then return end
 
-      -- Filter to user spaces
-      local userSpaces = {}
-      for _, spc in ipairs(screenSpaces) do
-        if spaces.spaceType(spc) == "user" then
-          table.insert(userSpaces, spc)
-        end
+      local target
+      if dir == "left" and idx > 1 then
+        target = navSpaces[idx - 1]
+      elseif dir == "right" and idx < #navSpaces then
+        target = navSpaces[idx + 1]
       end
+      if not target then return end
 
-      local winSpaces = spaces.windowSpaces(win)
-      if not winSpaces or #winSpaces == 0 then return end
-      local initialSpace = winSpaces[1]
-
-      -- Check if we're at the edge
-      local atEdge = false
-      if dir == "right" and initialSpace == userSpaces[#userSpaces] then atEdge = true end
-      if dir == "left" and initialSpace == userSpaces[1] then atEdge = true end
-      if atEdge then return end
-
-      -- Simulate click on window's zoom button area, then ctrl+arrow to drag it
-      local currentCursor = hs.mouse.getRelativePosition()
-      local zoomRect = win:zoomButtonRect()
-      if not zoomRect then return end
-      local safePoint = hs.geometry.point(zoomRect.x - 1, zoomRect.y - 1)
-
-      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDown, safePoint):post()
-      switchSpace(dir)
-      hs.timer.waitUntil(
-        function() return spaces.windowSpaces(win)[1] ~= initialSpace end,
-        function()
-          hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseUp, safePoint):post()
-          hs.mouse.setRelativePosition(currentCursor)
-        end,
-        0.05
-      )
+      spaces.moveWindowToSpace(win:id(), target)
+      spaces.gotoSpace(target)
+      hs.timer.doAfter(0.35, function() win:focus() end)
     end
 
     -- alt+shift+h: move window to space left
@@ -124,15 +111,17 @@
     -- Window snapping
     ---------------------------------------------------------------------------
 
+    local gap = 8 -- pixels between side-by-side snapped windows
+
     local function snapWindow(position)
       local win = hs.window.focusedWindow()
       if not win then return end
       local screen = win:screen():frame()
 
       if position == "left" then
-        win:setFrame(hs.geometry.rect(screen.x, screen.y, screen.w / 2, screen.h))
+        win:setFrame(hs.geometry.rect(screen.x, screen.y, screen.w / 2 - gap / 2, screen.h))
       elseif position == "right" then
-        win:setFrame(hs.geometry.rect(screen.x + screen.w / 2, screen.y, screen.w / 2, screen.h))
+        win:setFrame(hs.geometry.rect(screen.x + screen.w / 2 + gap / 2, screen.y, screen.w / 2 - gap / 2, screen.h))
       elseif position == "maximize" then
         win:setFrame(screen)
       elseif position == "center" then
@@ -164,6 +153,16 @@
     -- alt+shift+return: Chrome
     hs.hotkey.bind({"alt", "shift"}, "return", function()
       hs.application.launchOrFocus("Google Chrome")
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Window picker: alt+tab shows letter hints for all windows on this space
+    -- Press the highlighted letter to jump to that window.
+    -- (cmd+tab is the native app switcher and is untouched)
+    ---------------------------------------------------------------------------
+    hs.hotkey.bind({"alt"}, "tab", function()
+      local filter = hs.window.filter.new():setCurrentSpace(true)
+      hs.hints.windowHints(filter:getWindows())
     end)
 
     ---------------------------------------------------------------------------
