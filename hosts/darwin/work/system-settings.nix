@@ -1,10 +1,7 @@
-# macOS system settings for keyboard-driven workflow with Hammerspoon.
+# macOS system settings for keyboard-driven workflow.
 #
-# Scope is intentionally narrow: fast key repeat + Mission Control shortcuts.
-#
-# With opt/alt as the Hammerspoon modifier, no macOS system shortcuts need to
-# be patched out. Hammerspoon synthesizes ctrl+left/right to switch spaces, so
-# those Mission Control shortcuts must be explicitly enabled here.
+# AeroSpace handles workspace switching (virtual workspaces, no macOS Spaces).
+# Hammerspoon handles window snapping and app launching.
 { ... }:
 {
   system.defaults = {
@@ -13,31 +10,21 @@
       KeyRepeat = 2; # ~30ms repeat interval
       InitialKeyRepeat = 15; # ~225ms before repeat starts
       ApplePressAndHoldEnabled = false; # disable accented char picker on hold
+
+      # Reduce window open/close animations for snappier feel
+      NSAutomaticWindowAnimationsEnabled = false;
     };
 
-    # Mission Control keyboard shortcuts — required for Hammerspoon space switching.
-    # Hammerspoon's alt+h/l synthesize ctrl+left/right; if these are disabled,
-    # the synthesized keystrokes do nothing.
-    #
-    # 79 = Move left a space  (ctrl+left,  keycode 123, modifier 262144)
-    # 81 = Move right a space (ctrl+right, keycode 124, modifier 262144)
-    CustomUserPreferences."com.apple.symbolichotkeys" = {
-      AppleSymbolicHotKeys = {
-        "79" = {
-          enabled = true;
-          value = {
-            parameters = [ 65535 123 262144 ];
-            type = "standard";
-          };
-        };
-        "81" = {
-          enabled = true;
-          value = {
-            parameters = [ 65535 124 262144 ];
-            type = "standard";
-          };
-        };
-      };
+    # Hot corners: upper-left triggers Mission Control (workspace overview)
+    # corner values: 0=disabled, 2=Mission Control, 4=Desktop, 5=Screen Saver
+    # modifier values: 0=none, 131072=shift, 262144=ctrl, 524288=opt, 1048576=cmd
+    CustomUserPreferences."com.apple.dock" = {
+      wvous-tl-corner = 2; # top-left → Mission Control
+      wvous-tl-modifier = 0; # no modifier required
+
+      # Speed up Mission Control / space-switch animation
+      expose-animation-duration = "0.1";
     };
+
   };
 }
