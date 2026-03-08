@@ -157,19 +157,19 @@ NixOS: `sudo nixos-rebuild switch --flake .` (or `task rebuild`) macOS:
 
 ### GNOME (NixOS) — test on terra or luna
 
-- [ ] Alt+h switches to workspace left
-- [ ] Alt+l switches to workspace right
-- [ ] Alt+Shift+h moves window to workspace left
-- [ ] Alt+Shift+l moves window to workspace right
-- [ ] Alt+Left tiles window to left half
-- [ ] Alt+Right tiles window to right half
-- [ ] Alt+Up maximizes window
-- [ ] Alt+Tab cycles windows on current workspace
-- [ ] Alt+Shift+Tab cycles windows backward
-- [ ] Super+t no longer launches Ghostty (removed)
-- [ ] Super+f no longer launches browser (removed)
-- [ ] Super+e still opens file manager (kept)
-- [ ] Shift+Super+s still opens screenshot UI (kept)
+- [x] Alt+h switches to workspace left
+- [x] Alt+l switches to workspace right
+- [x] Alt+Shift+h moves window to workspace left
+- [x] Alt+Shift+l moves window to workspace right
+- [x] Alt+Left tiles window to left half
+- [x] Alt+Right tiles window to right half
+- [x] Alt+Up maximizes window
+- [x] Alt+Tab cycles windows on current workspace
+- [x] Alt+Shift+Tab cycles windows backward
+- [x] Super+t no longer launches Ghostty (removed)
+- [x] Super+f no longer launches browser (removed)
+- [x] Super+e still opens file manager (kept)
+- [x] Shift+Super+s still opens screenshot UI (kept)
 
 ### macOS (Hammerspoon) — test on work machine
 
@@ -190,10 +190,10 @@ NixOS: `sudo nixos-rebuild switch --flake .` (or `task rebuild`) macOS:
 
 ### Regression checks
 
-- [ ] GNOME Activities overview still accessible (Super key tap or hot corner)
-- [ ] Browser address bar still works with Ctrl+l
-- [ ] Spotlight/GNOME search still works for launching apps
-- [ ] No stale dconf keys causing warnings in `journalctl --user`
-- [ ] Vimium in Firefox still works for scrolling and link hints (verify alt+h/l
+- [x] GNOME Activities overview still accessible (Super key tap or hot corner)
+- [x] Browser address bar still works with Ctrl+l
+- [x] Spotlight/GNOME search still works for launching apps
+- [x] No stale dconf keys causing warnings in `journalctl --user`
+- [x] Vimium in Firefox still works for scrolling and link hints (verify alt+h/l
       don't conflict — GNOME should intercept before Firefox sees them)
-- [ ] GNOME screenshot shortcut (Shift+Super+s) unchanged and working
+- [x] GNOME screenshot shortcut (Shift+Super+s) unchanged and working

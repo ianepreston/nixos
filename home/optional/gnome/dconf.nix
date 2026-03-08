@@ -153,17 +153,18 @@ with lib.hm.gvariant;
     };
 
     "org/gnome/desktop/wm/keybindings" = {
+      maximize = [ "<Alt>Up" ];
       minimize = [ ];
       move-to-monitor-down = [ ];
       move-to-monitor-left = [ ];
       move-to-monitor-right = [ ];
       move-to-monitor-up = [ ];
-      move-to-workspace-left = [ "<Shift><Super>h" ];
-      move-to-workspace-right = [ "<Shift><Super>l" ];
+      move-to-workspace-left = [ "<Shift><Alt>h" ];
+      move-to-workspace-right = [ "<Shift><Alt>l" ];
       switch-applications = [ ];
       switch-applications-backward = [ ];
-      switch-to-workspace-left = [ "<Super>h" ];
-      switch-to-workspace-right = [ "<Super>l" ];
+      switch-to-workspace-left = [ "<Alt>h" ];
+      switch-to-workspace-right = [ "<Alt>l" ];
       switch-windows = [ "<Alt>Tab" ];
       switch-windows-backward = [ "<Shift><Alt>Tab" ];
     };
@@ -226,8 +227,8 @@ with lib.hm.gvariant;
     };
 
     "org/gnome/mutter/keybindings" = {
-      toggle-tiled-left = [ "<Super>Left" ];
-      toggle-tiled-right = [ "<Super>Right" ];
+      toggle-tiled-left = [ "<Alt>Left" ];
+      toggle-tiled-right = [ "<Alt>Right" ];
     };
 
     "org/gnome/nautilus/preferences" = {
@@ -251,22 +252,14 @@ with lib.hm.gvariant;
     };
 
     "org/gnome/settings-daemon/plugins/media-keys" = {
-      custom-keybindings = [
-        "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/"
-      ];
+      custom-keybindings = [ ];
       home = [ "<Super>e" ];
       magnifier = [ ];
       magnifier-zoom-in = [ ];
       magnifier-zoom-out = [ ];
       screenreader = [ ];
       screensaver = [ ];
-      www = [ "<Super>f" ];
-    };
-
-    "org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0" = {
-      binding = "<Super>t";
-      command = "ghostty";
-      name = "Launch Terminal";
+      www = [ ];
     };
 
     "org/gnome/shell" = {
@@ -292,16 +285,6 @@ with lib.hm.gvariant;
 
     "org/gnome/shell/app-switcher" = {
       current-workspace-only = true;
-    };
-
-    "org/gnome/shell/extensions/paperwm" = {
-      restore-keybinds = ''
-        {"toggle-tiled-left":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Left\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"},"toggle-tiled-right":{"bind":"[\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"<Super>Right\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]","schema_id":"org.gnome.mutter.keybindings"}}\\\\\\\\\\\\\\\\n\\\\\\\\n\\\\n\\n\n
-      '';
-    };
-
-    "org/gnome/shell/extensions/paperwm/workspaces/9aee5735-5d95-4ec1-ac30-5c53ae4aff49" = {
-      index = 0;
     };
 
     "org/gnome/shell/extensions/user-theme" = {
