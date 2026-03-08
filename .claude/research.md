@@ -6,9 +6,15 @@
 
 ## Overview
 
-This is a **flake-based, multi-host, multi-platform NixOS + nix-darwin configuration** for Ian Preston's personal and work machines. It manages both NixOS (Linux) and macOS systems from a single declarative repository, with full secrets management, declarative disk partitioning, and a modular composition pattern throughout.
+This is a **flake-based, multi-host, multi-platform NixOS + nix-darwin
+configuration** for Ian Preston's personal and work machines. It manages both
+NixOS (Linux) and macOS systems from a single declarative repository, with full
+secrets management, declarative disk partitioning, and a modular composition
+pattern throughout.
 
-The project draws inspiration from [EmergentMind's nix-config](https://github.com/EmergentMind/nix-config) and follows that playbook for structure and patterns.
+The project draws inspiration from
+[EmergentMind's nix-config](https://github.com/EmergentMind/nix-config) and
+follows that playbook for structure and patterns.
 
 ---
 
@@ -40,22 +46,28 @@ nixos/
 
 ## Flake Inputs
 
-| Input | Source | Branch/Ref |
-|-------|--------|------------|
-| nixpkgs | nixos/nixpkgs | nixos-25.11 |
-| nixpkgs-darwin | nixos/nixpkgs | nixpkgs-25.11-darwin |
-| nixpkgs-stable | nixos/nixpkgs | nixos-25.11 |
-| nixpkgs-unstable | nixos/nixpkgs | nixos-unstable |
-| nix-darwin | nix-darwin/nix-darwin | nix-darwin-25.11 |
-| hardware | nixos/nixos-hardware | (latest) |
-| home-manager | nix-community/home-manager | release-25.11 |
-| stylix | danth/stylix | release-25.11 |
-| nix-flatpak | gmodena/nix-flatpak | latest tag |
-| disko | nix-community/disko | (latest) |
-| sops-nix | Mic92/sops-nix | (latest) |
-| nix-secrets | private git+ssh repo | main (shallow) |
+| Input            | Source                     | Branch/Ref           |
+| ---------------- | -------------------------- | -------------------- |
+| nixpkgs          | nixos/nixpkgs              | nixos-25.11          |
+| nixpkgs-darwin   | nixos/nixpkgs              | nixpkgs-25.11-darwin |
+| nixpkgs-stable   | nixos/nixpkgs              | nixos-25.11          |
+| nixpkgs-unstable | nixos/nixpkgs              | nixos-unstable       |
+| nix-darwin       | nix-darwin/nix-darwin      | nix-darwin-25.11     |
+| hardware         | nixos/nixos-hardware       | (latest)             |
+| home-manager     | nix-community/home-manager | release-25.11        |
+| stylix           | danth/stylix               | release-25.11        |
+| nix-flatpak      | gmodena/nix-flatpak        | latest tag           |
+| disko            | nix-community/disko        | (latest)             |
+| sops-nix         | Mic92/sops-nix             | (latest)             |
+| nix-secrets      | private git+ssh repo       | main (shallow)       |
 
-`nixpkgs-stable` and `nixpkgs` currently point to the same branch; the split exists so `nixpkgs` can be moved to a beta branch during release cycles while `nixpkgs-stable` stays pinned. `nixpkgs-unstable` is used selectively (e.g., OpenRGB). `nix-secrets` is a private repository containing encrypted SOPS secrets (passwords, SSH keys, work-specific hostnames/usernames). `nix-darwin.inputs.nixpkgs` follows `nixpkgs-darwin`, and both `home-manager` and `disko` and `sops-nix` follow the main `nixpkgs`.
+`nixpkgs-stable` and `nixpkgs` currently point to the same branch; the split
+exists so `nixpkgs` can be moved to a beta branch during release cycles while
+`nixpkgs-stable` stays pinned. `nixpkgs-unstable` is used selectively (e.g.,
+OpenRGB). `nix-secrets` is a private repository containing encrypted SOPS
+secrets (passwords, SSH keys, work-specific hostnames/usernames).
+`nix-darwin.inputs.nixpkgs` follows `nixpkgs-darwin`, and both `home-manager`
+and `disko` and `sops-nix` follow the main `nixpkgs`.
 
 ---
 
@@ -73,28 +85,39 @@ nixos/
 ### terra — Desktop Workstation (NixOS, x86_64)
 
 - **CPU**: AMD (uses `nixos-hardware` common-cpu-amd module)
-- **GPU**: NVIDIA RTX 5080 (stable drivers, modesetting enabled, power management on, suspend/resume/hibernate services disabled)
-- **Disk**: Single NVMe (`nvme0n1`), btrfs with subvolumes (`@root`, `@nix`, `@swap`), 32 GB swapfile
+- **GPU**: NVIDIA RTX 5080 (stable drivers, modesetting enabled, power
+  management on, suspend/resume/hibernate services disabled)
+- **Disk**: Single NVMe (`nvme0n1`), btrfs with subvolumes (`@root`, `@nix`,
+  `@swap`), 32 GB swapfile
 - **Filesystems**: zstd compression, noatime
 - **Desktop**: GNOME + Wayland + GDM
-- **Kernel**: Default (LTS) — latest kernel commented out due to NVIDIA build issues
-- **Notable**: Sunshine game-streaming server; OpenRGB; ZSA keyboard firmware; Flatpak apps (Discord, BambuStudio, Chrome, Headlamp); Docker (rootless); PipeWire audio; printer support; Obsidian
+- **Kernel**: Default (LTS) — latest kernel commented out due to NVIDIA build
+  issues
+- **Notable**: Sunshine game-streaming server; OpenRGB; ZSA keyboard firmware;
+  Flatpak apps (Discord, BambuStudio, Chrome, Headlamp); Docker (rootless);
+  PipeWire audio; printer support; Obsidian
 
-**Home config** (`home/ipreston/terra.nix`): imports core + adb, browser (Firefox), gnome extras, calibre, comms (Signal), freecad, media (Spotify, VLC), ssh client config, sops secrets
+**Home config** (`home/ipreston/terra.nix`): imports core + adb, browser
+(Firefox), gnome extras, calibre, comms (Signal), freecad, media (Spotify, VLC),
+ssh client config, sops secrets
 
 ---
 
 ### luna — Gaming Laptop (NixOS, x86_64)
 
 - **Hardware**: MSI GS43VR-6RE Phantom Pro
-- **CPU**: Intel (uses `nixos-hardware` common-cpu-intel, common-gpu-intel, common-gpu-nvidia modules)
+- **CPU**: Intel (uses `nixos-hardware` common-cpu-intel, common-gpu-intel,
+  common-gpu-nvidia modules)
 - **GPU**: Intel iGPU + NVIDIA GTX 1060
 - **Kernel**: Latest (`linuxPackages_latest`)
-- **Disk**: NVMe (system, btrfs with `@root`/`@nix`/`@swap`, 25 GB swapfile) + SSD (`/dev/sda` with `@data` subvolume mounted at `/mnt/data`)
+- **Disk**: NVMe (system, btrfs with `@root`/`@nix`/`@swap`, 25 GB swapfile) +
+  SSD (`/dev/sda` with `@data` subvolume mounted at `/mnt/data`)
 - **Desktop**: GNOME + Wayland
-- **Notable**: Xreal Air AR headset udev rules; similar optional modules to terra minus Sunshine, RGB, and RTX driver
+- **Notable**: Xreal Air AR headset udev rules; similar optional modules to
+  terra minus Sunshine, RGB, and RTX driver
 
-**Home config** (`home/ipreston/luna.nix`): imports core + browser, gnome, moonlight (game-streaming client), comms, media, sops
+**Home config** (`home/ipreston/luna.nix`): imports core + browser, gnome,
+moonlight (game-streaming client), comms, media, sops
 
 ---
 
@@ -110,7 +133,8 @@ nixos/
 
 ### iso — Custom NixOS Live ISO
 
-- Extends `nixos/modules/installer/cd-dvd/installation-cd-minimal-new-kernel-no-zfs`
+- Extends
+  `nixos/modules/installer/cd-dvd/installation-cd-minimal-new-kernel-no-zfs`
 - SSH server enabled (for remote installation)
 - systemd-boot with `zstd:3` compression
 - Home-manager active with core utilities
@@ -122,22 +146,33 @@ nixos/
 
 - **Platform**: macOS (Apple Silicon)
 - **Hostname / Username**: pulled from encrypted nix-secrets (not hardcoded)
-- **Nix daemon**: managed by Determinate Nix installer (`nix.enable = false` in darwin config)
+- **Nix daemon**: managed by Determinate Nix installer (`nix.enable = false` in
+  darwin config)
 - **Homebrew**: managed declaratively via nix-darwin
   - Taps: `hashicorp/tap`, `databricks/tap`, `nikitabobko/tap`
-  - Packages: `awscli`, `azure-cli`, `node`, `uv`, `sf` (Salesforce CLI), `databricks`, `terraform`
+  - Packages: `awscli`, `azure-cli`, `node`, `uv`, `sf` (Salesforce CLI),
+    `databricks`, `terraform`
   - Casks: `ghostty`, `obsidian`, `gcloud-cli`, `aerospace`
-- **Window Manager**: AeroSpace tiling WM with vim-style keybindings (alt as modifier)
+- **Window Manager**: AeroSpace tiling WM with vim-style keybindings (alt as
+  modifier)
 - **System settings**: Fast key repeat (2/15), press-and-hold disabled
 - **YubiKey**: PAM-based sudo authentication via `pam_u2f`
-- **Git**: conditional `includeIf` for databricks-eng and databricks-field-eng GitHub orgs, matching both SSH (`github.com-emu`) and HTTPS URL patterns
-  - URL rewriting rules redirect `git@github.com:databricks-*` and `https://github.com/databricks-*` through the `github.com-emu` SSH alias (Enterprise Managed User authentication)
+- **Git**: conditional `includeIf` for databricks-eng and databricks-field-eng
+  GitHub orgs, matching both SSH (`github.com-emu`) and HTTPS URL patterns
+  - URL rewriting rules redirect `git@github.com:databricks-*` and
+    `https://github.com/databricks-*` through the `github.com-emu` SSH alias
+    (Enterprise Managed User authentication)
   - Additional org-id based rewrites for numeric GitHub org IDs
-  - `https://github.com/` globally rewritten to `git@github.com:` (SSH preferred)
-- **Shell extras**: `llm` and `isaac` aliases; env vars for internal Databricks tooling
-- **Ghostty terminal**: Catppuccin Latte theme, FiraCode Nerd Font Mono 11pt, hidden titlebar, written to `~/Library/Application Support/com.mitchellh.ghostty/config`
+  - `https://github.com/` globally rewritten to `git@github.com:` (SSH
+    preferred)
+- **Shell extras**: `llm` and `isaac` aliases; env vars for internal Databricks
+  tooling
+- **Ghostty terminal**: Catppuccin Latte theme, FiraCode Nerd Font Mono 11pt,
+  hidden titlebar, written to
+  `~/Library/Application Support/com.mitchellh.ghostty/config`
 
-**Home config** (`home/ian.preston/work.nix`): imports core + darwin (AeroSpace), git work overrides, Ghostty config, zsh aliases, work env vars
+**Home config** (`home/ian.preston/work.nix`): imports core + darwin
+(AeroSpace), git work overrides, Ghostty config, zsh aliases, work env vars
 
 ---
 
@@ -167,32 +202,41 @@ scanPaths = path: builtins.map (f: (path + "/${f}")) (
 );
 ```
 
-`relativeToRoot` uses `lib.path.append` to construct paths relative to the repo root (a typed path operation, not string interpolation).
+`relativeToRoot` uses `lib.path.append` to construct paths relative to the repo
+root (a typed path operation, not string interpolation).
 
-`scanPaths` auto-imports all `.nix` files (excluding `default.nix`) and directories from a given path. It is used in `hostSpecs/default.nix` and `home/darwin/default.nix` to avoid explicit import lists. Other directories like `home/core/default.nix` use explicit import lists for finer control.
+`scanPaths` auto-imports all `.nix` files (excluding `default.nix`) and
+directories from a given path. It is used in `hostSpecs/default.nix` and
+`home/darwin/default.nix` to avoid explicit import lists. Other directories like
+`home/core/default.nix` use explicit import lists for finer control.
 
 ---
 
 ## hostSpecs System
 
-Each host has a corresponding module in `hostSpecs/`. The option definition lives in `hostSpecs/host-spec.nix`:
+Each host has a corresponding module in `hostSpecs/`. The option definition
+lives in `hostSpecs/host-spec.nix`:
 
-| Attribute | Type | Default | Notes |
-|-----------|------|---------|-------|
-| `hostName` | string | (required) | Machine hostname |
-| `hostNameFile` | string | hostName | Filename for host-specific configs when it differs from hostname |
-| `username` | string | `"ipreston"` | Overridden for work (from secrets) |
-| `userFullName` | string | `"Ian Preston"` | Display name |
-| `email` | attrsOf string | (required) | Attribute set with keys like `gitHub`, `work` |
-| `gh_user` | string | `"ianepreston"` | GitHub username |
-| `isMinimal` | bool | false | Skip heavy packages |
-| `isWork` | bool | false | Enable work-specific config |
-| `isDarwin` | bool | false | macOS platform flag (exists because `pkgs.stdenv.isLinux` can cause infinite recursion in some evaluation contexts) |
-| `home` | string | computed | `/home/{username}` or `/Users/{username}` based on `isDarwin` |
+| Attribute      | Type           | Default         | Notes                                                                                                               |
+| -------------- | -------------- | --------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `hostName`     | string         | (required)      | Machine hostname                                                                                                    |
+| `hostNameFile` | string         | hostName        | Filename for host-specific configs when it differs from hostname                                                    |
+| `username`     | string         | `"ipreston"`    | Overridden for work (from secrets)                                                                                  |
+| `userFullName` | string         | `"Ian Preston"` | Display name                                                                                                        |
+| `email`        | attrsOf string | (required)      | Attribute set with keys like `gitHub`, `work`                                                                       |
+| `gh_user`      | string         | `"ianepreston"` | GitHub username                                                                                                     |
+| `isMinimal`    | bool           | false           | Skip heavy packages                                                                                                 |
+| `isWork`       | bool           | false           | Enable work-specific config                                                                                         |
+| `isDarwin`     | bool           | false           | macOS platform flag (exists because `pkgs.stdenv.isLinux` can cause infinite recursion in some evaluation contexts) |
+| `home`         | string         | computed        | `/home/{username}` or `/Users/{username}` based on `isDarwin`                                                       |
 
-Host spec files: `terra.nix`, `luna.nix`, `toshibachromebook.nix`, `iso.nix`, `work.nix`, `penguin.nix`, `minimal-configuration.nix` (sets `isMinimal = true` and `hostName = "installer"` for the nixos-installer flake).
+Host spec files: `terra.nix`, `luna.nix`, `toshibachromebook.nix`, `iso.nix`,
+`work.nix`, `penguin.nix`, `minimal-configuration.nix` (sets `isMinimal = true`
+and `hostName = "installer"` for the nixos-installer flake).
 
-All host specs are evaluated together via `lib.evalModules` in `flake.nix` and passed to configurations through `specialArgs` as `hostSpec`. Modules gate logic on these flags (e.g., `lib.mkIf hostSpec.isWork { ... }`).
+All host specs are evaluated together via `lib.evalModules` in `flake.nix` and
+passed to configurations through `specialArgs` as `hostSpec`. Modules gate logic
+on these flags (e.g., `lib.mkIf hostSpec.isWork { ... }`).
 
 ---
 
@@ -200,53 +244,68 @@ All host specs are evaluated together via `lib.evalModules` in `flake.nix` and p
 
 ### Core (`hosts/common/core/`)
 
-**`default.nix`** — Dynamically imports the correct platform module (`nixos.nix` or `darwin.nix`) based on `hostSpec.isDarwin`. Also imports home-manager and sops-nix platform modules (`nixosModules` or `darwinModules`), the user configuration, and installs `openssh` system-wide.
+**`default.nix`** — Dynamically imports the correct platform module (`nixos.nix`
+or `darwin.nix`) based on `hostSpec.isDarwin`. Also imports home-manager and
+sops-nix platform modules (`nixosModules` or `darwinModules`), the user
+configuration, and installs `openssh` system-wide.
 
 **`nixos.nix`** — Applied to all NixOS hosts:
+
 - `enableAllTerminfo` for terminal database support
 - `hardware.enableRedistributableFirmware` for firmware support
 - `nixpkgs.config.allowUnfree = true`
-- Nix settings: flakes + nix-command, `optimise.automatic`, trusted users (`@wheel`), warn-dirty disabled, `allow-import-from-derivation`, registries pointing to flake inputs, performance tuning (`connect-timeout = 5`, `log-lines = 25`, `min-free = 128MB`, `max-free = 1GB`)
+- Nix settings: flakes + nix-command, `optimise.automatic`, trusted users
+  (`@wheel`), warn-dirty disabled, `allow-import-from-derivation`, registries
+  pointing to flake inputs, performance tuning (`connect-timeout = 5`,
+  `log-lines = 25`, `min-free = 128MB`, `max-free = 1GB`)
 - Locale: `en_CA.UTF-8`, timezone `America/Edmonton`
-- Sudo: lecture suppressed, password feedback as asterisks, 2h timeout, `SSH_AUTH_SOCK` preserved (note: `wheelNeedsPassword = false` is set in `users/primary/nixos.nix`, making the timeout setting effectively irrelevant)
+- Sudo: lecture suppressed, password feedback as asterisks, 2h timeout,
+  `SSH_AUTH_SOCK` preserved (note: `wheelNeedsPassword = false` is set in
+  `users/primary/nixos.nix`, making the timeout setting effectively irrelevant)
 
 **`ssh.nix`** — SSH server + client core:
+
 - `sshd` with password authentication disabled
-- SSH agent with KDE ksshaskpass dialog (Linux only, wrapped in `lib.optionalAttrs pkgs.stdenv.isLinux`)
+- SSH agent with KDE ksshaskpass dialog (Linux only, wrapped in
+  `lib.optionalAttrs pkgs.stdenv.isLinux`)
 - GitHub known hosts pre-seeded (ed25519, rsa, ecdsa)
 
 **`sops.nix`** — Secrets management:
+
 - Shared secrets file path from nix-secrets (`sops/shared.yaml`)
 - SSH host key → age key derivation (automatic via `sshKeyPaths`)
-- Per-user age key bootstrapped from host-decrypted secrets to `~/.config/sops/age/keys.txt`
+- Per-user age key bootstrapped from host-decrypted secrets to
+  `~/.config/sops/age/keys.txt`
 - User password (`passwords/{username}`) decrypted with `neededForUsers = true`
-- Activation script fixes `.config` directory ownership (workaround for sops-nix issue #381)
+- Activation script fixes `.config` directory ownership (workaround for sops-nix
+  issue #381)
 
-**`darwin.nix`** — macOS core: empty (`{ }`) — all darwin-specific core config lives in the host entry point and its local modules.
+**`darwin.nix`** — macOS core: empty (`{ }`) — all darwin-specific core config
+lives in the host entry point and its local modules.
 
 ---
 
 ### Optional (`hosts/common/optional/`)
 
-| Module | What It Configures |
-|--------|-------------------|
-| `gnome.nix` | GNOME desktop, Wayland, GDM, extension packages (user-themes, appindicator), bloatware exclusions, wl-clipboard |
-| `kde.nix` | KDE Plasma 6, SDDM Wayland |
-| `audio.nix` | PipeWire with ALSA + PulseAudio compatibility |
-| `nvidia-rtx5080.nix` | RTX 5080: stable drivers, open source when supported, power mgmt, modesetting, suspend/resume/hibernate services disabled |
-| `nvidia-gtx1060.nix` | GTX 1060: PRIME offload, older GPU workarounds |
-| `gaming.nix` | Steam, Proton, Gamescope, Xbox controller |
-| `rgb.nix` | OpenRGB with all plugins, I2C kernel modules |
-| `zsa-keeb.nix` | ZSA keyboard via Keymapp |
-| `xreal-headset.nix` | Xreal Air AR headset udev rules + Google Chrome |
-| `sunshine.nix` | Game streaming server, firewall rules, GNOME extension |
-| `flatpak.nix` | Flatpak + xdg-portal, pre-installed: Discord, BambuStudio, Chrome, Headlamp |
-| `obsidian.nix` | Obsidian editor |
-| `docker.nix` | Rootless Docker |
-| `smbclient.nix` | CIFS mounts for NAS (laconia: media + home shares) |
-| `services/printing.nix` | CUPS, cups-browsed disabled (security) |
-| `themes.nix` | Stylix with Catppuccin Latte + Fira Code Nerd Font |
-| `minimal-user.nix` | Temporary hashed password for minimal/ISO builds |
+| Module                  | What It Configures                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `gnome.nix`             | GNOME desktop, Wayland, GDM, extension packages (user-themes, appindicator), bloatware exclusions, wl-clipboard           |
+| `kde.nix`               | KDE Plasma 6, SDDM Wayland                                                                                                |
+| `audio.nix`             | PipeWire with ALSA + PulseAudio compatibility                                                                             |
+| `nvidia-rtx5080.nix`    | RTX 5080: stable drivers, open source when supported, power mgmt, modesetting, suspend/resume/hibernate services disabled |
+| `nvidia-gtx1060.nix`    | GTX 1060: PRIME offload, older GPU workarounds                                                                            |
+| `gaming.nix`            | Steam, Proton, Gamescope, Xbox controller                                                                                 |
+| `rgb.nix`               | OpenRGB with all plugins, I2C kernel modules                                                                              |
+| `zsa-keeb.nix`          | ZSA keyboard via Keymapp                                                                                                  |
+| `xreal-headset.nix`     | Xreal Air AR headset udev rules + Google Chrome                                                                           |
+| `sunshine.nix`          | Game streaming server, firewall rules, GNOME extension                                                                    |
+| `flatpak.nix`           | Flatpak + xdg-portal, pre-installed: Discord, BambuStudio, Chrome, Headlamp                                               |
+| `obsidian.nix`          | Obsidian editor                                                                                                           |
+| `docker.nix`            | Rootless Docker                                                                                                           |
+| `smbclient.nix`         | CIFS mounts for NAS (laconia: media + home shares)                                                                        |
+| `services/printing.nix` | CUPS, cups-browsed disabled (security)                                                                                    |
+| `themes.nix`            | Stylix with Catppuccin Latte + Fira Code Nerd Font                                                                        |
+| `minimal-user.nix`      | Temporary hashed password for minimal/ISO builds                                                                          |
 
 ---
 
@@ -256,19 +315,23 @@ All configs use **disko** for declarative partitioning.
 
 #### Reusable Templates
 
-Three parameterized disk templates exist for different levels of security/persistence:
+Three parameterized disk templates exist for different levels of
+security/persistence:
 
-| Template | Features |
-|----------|----------|
-| `btrfs-disk.nix` | Basic btrfs: `@root`, `@nix`, optional `@swap`. Parameterized by `disk`, `withSwap`, `swapSize`. |
-| `btrfs-impermanence-disk.nix` | Adds `@persist` subvolume (mounted at `config.hostSpec.persistFolder`). Ready for impermanence. |
+| Template                           | Features                                                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `btrfs-disk.nix`                   | Basic btrfs: `@root`, `@nix`, optional `@swap`. Parameterized by `disk`, `withSwap`, `swapSize`.          |
+| `btrfs-impermanence-disk.nix`      | Adds `@persist` subvolume (mounted at `config.hostSpec.persistFolder`). Ready for impermanence.           |
 | `btrfs-luks-impermanence-disk.nix` | LUKS encryption + `@persist` + FIDO2 YubiKey support for disk unlock. Includes `yubikey-manager` package. |
 
-None of these templates are currently used by any host — terra and luna use their own bespoke disk configs. The templates represent a forward path toward impermanence and encrypted root.
+None of these templates are currently used by any host — terra and luna use
+their own bespoke disk configs. The templates represent a forward path toward
+impermanence and encrypted root.
 
 #### Host-Specific Disk Configs
 
 **terra.nix**: Single NVMe, bespoke config (not using the template)
+
 ```
 nvme0n1
 ├── EFI: 512 MB vfat
@@ -279,10 +342,13 @@ nvme0n1
 ```
 
 **luna.nix**: NVMe (system) + SSD (data), bespoke config
+
 - System NVMe: same btrfs layout as terra, 25 GB swapfile
-- `/dev/sda`: btrfs with `@data` subvolume mounted at `/mnt/data` (ownership set via systemd tmpfiles)
+- `/dev/sda`: btrfs with `@data` subvolume mounted at `/mnt/data` (ownership set
+  via systemd tmpfiles)
 
 **toshibachromebook.nix**: Legacy BIOS hybrid
+
 ```
 sda
 ├── BIOS grub: 2 MB
@@ -297,11 +363,14 @@ sda
 **`default.nix`** — Imports platform-specific user module based on `isDarwin`.
 
 **`nixos.nix`** — Declarative user definition:
+
 - Shell: zsh (via home-manager, not set at system level)
 - `mutableUsers = false` (fully declarative)
 - Password: hashed, from sops secrets (`/run/secrets-for-users/`)
 - SSH public keys: from `./keys/` directory (loaded recursively)
-- Groups: `wheel` + conditional membership in `audio video docker git networkmanager plugdev scanner lp render` (only if the group exists)
+- Groups: `wheel` + conditional membership in
+  `audio video docker git networkmanager plugdev scanner lp render` (only if the
+  group exists)
 - systemd tmpfiles: `.ssh/` and `.ssh/sockets/` directory structure
 - `security.sudo.wheelNeedsPassword = false` (passwordless sudo for wheel group)
 
@@ -313,19 +382,28 @@ sda
 
 ### Core Modules (`home/core/`)
 
-All users on all platforms get these (imported explicitly in `default.nix`, not via `scanPaths`):
+All users on all platforms get these (imported explicitly in `default.nix`, not
+via `scanPaths`):
 
 #### `default.nix`
-Sets `home.username`, `homeDirectory`, `stateVersion` (23.05), session variables (`FLAKE`, `SHELL`, `VISUAL`, `EDITOR`), and `preferXdgDirectories = true`. Imports the platform-specific module (`nixos.nix` or `darwin.nix`) based on `hostSpec.isDarwin`.
 
-**Note**: Contains a `builtins.trace "DEBUG"` call on `hostSpec.home` — this is a debug artifact that should be cleaned up.
+Sets `home.username`, `homeDirectory`, `stateVersion` (23.05), session variables
+(`FLAKE`, `SHELL`, `VISUAL`, `EDITOR`), and `preferXdgDirectories = true`.
+Imports the platform-specific module (`nixos.nix` or `darwin.nix`) based on
+`hostSpec.isDarwin`.
+
+**Note**: Contains a `builtins.trace "DEBUG"` call on `hostSpec.home` — this is
+a debug artifact that should be cleaned up.
 
 #### `packages.nix`
-CLI tools: `gh`, `ripgrep`, `fd`, `lazygit`, `shellcheck`, `nixfmt-rfc-style`, `curl`, `wget`, `unzip`, `tree`, `jq`, `yq-go`, `neofetch`, `sops`, `age`
+
+CLI tools: `gh`, `ripgrep`, `fd`, `lazygit`, `shellcheck`, `nixfmt-rfc-style`,
+`curl`, `wget`, `unzip`, `tree`, `jq`, `yq-go`, `neofetch`, `sops`, `age`
 
 **Note**: `ripgrep` appears twice in the package list (duplicate).
 
 #### `zsh.nix`
+
 - VI keybindings (`defaultKeymap = "viins"`)
 - Autosuggestions enabled
 - History: 10,000 entries with dedup and sharing across sessions
@@ -335,7 +413,9 @@ CLI tools: `gh`, `ripgrep`, `fd`, `lazygit`, `shellcheck`, `nixfmt-rfc-style`, `
 - `.bashrc` generated to auto-launch zsh from non-NixOS SSH sessions
 
 #### `git.nix`
-- `user.name` set to `hostSpec.gh_user` (the GitHub username `ianepreston`, not the display name)
+
+- `user.name` set to `hostSpec.gh_user` (the GitHub username `ianepreston`, not
+  the display name)
 - `user.email` from `hostSpec.email.gitHub`
 - Default branch: `main`
 - Pull: fast-forward only
@@ -344,10 +424,12 @@ CLI tools: `gh`, `ripgrep`, `fd`, `lazygit`, `shellcheck`, `nixfmt-rfc-style`, `
 - Auto-stash on rebase enabled
 
 #### `direnv.nix`
+
 - `nix-direnv` (better Nix integration than native direnv)
 - Shell hooks for both bash and zsh
 
 #### `starship.nix`
+
 - Unicode arrows for ahead/behind/diverged
 - Git metrics with status display
 - Container and Kubernetes modules disabled by default
@@ -355,30 +437,34 @@ CLI tools: `gh`, `ripgrep`, `fd`, `lazygit`, `shellcheck`, `nixfmt-rfc-style`, `
 #### `neovim.nix`
 
 Comprehensive Neovim setup based on **EdenVim**:
+
 - Python3 + Node.js provider support
-- Config symlinked via `mkOutOfStoreSymlink` to `~/src/nixos/home/core/neovim` (live editing)
+- Config symlinked via `mkOutOfStoreSymlink` to `~/src/nixos/home/core/neovim`
+  (live editing)
 - Lazy.nvim plugin manager restored on activation
 
 **LSP / Formatters / Linters installed as packages:**
 
-| Language | Tools |
-|----------|-------|
-| Bash | `bashls`, `shfmt` |
-| Lua | `lua-language-server`, `stylua` |
-| Nix | `nixd`, `nil`, `nixfmt-rfc-style` |
-| TypeScript/JS | `typescript-language-server`, `prettier` |
-| Python | `basedpyright`, `ruff`, `isort`, `debugpy` |
-| Terraform | `terraform-ls`, `tflint` |
-| Docker | `dockerfile-language-server` |
-| YAML | `yaml-language-server`, `yamlfmt`, `yamllint` |
-| Tree-sitter | `tree-sitter` (parsers) |
+| Language      | Tools                                         |
+| ------------- | --------------------------------------------- |
+| Bash          | `bashls`, `shfmt`                             |
+| Lua           | `lua-language-server`, `stylua`               |
+| Nix           | `nixd`, `nil`, `nixfmt-rfc-style`             |
+| TypeScript/JS | `typescript-language-server`, `prettier`      |
+| Python        | `basedpyright`, `ruff`, `isort`, `debugpy`    |
+| Terraform     | `terraform-ls`, `tflint`                      |
+| Docker        | `dockerfile-language-server`                  |
+| YAML          | `yaml-language-server`, `yamlfmt`, `yamllint` |
+| Tree-sitter   | `tree-sitter` (parsers)                       |
 
 #### `nixos.nix` (NixOS-specific home extras)
+
 - `ssh-agent` systemd user service
 - XDG MIME apps configuration
 - Extra packages: `coreutils`, `keychain`
 
 #### `darwin.nix` (macOS-specific home extras)
+
 - Currently empty stub
 
 ---
@@ -388,12 +474,17 @@ Comprehensive Neovim setup based on **EdenVim**:
 Auto-imported via `scanPaths` in `default.nix`:
 
 #### `aerospace.nix`
+
 AeroSpace tiling window manager configuration:
-- **Modifier**: `alt` (opt) — chosen because macOS apps rarely bind alt as a primary shortcut, avoiding collisions with cmd+enter, cmd+l, cmd+1-9, etc.
+
+- **Modifier**: `alt` (opt) — chosen because macOS apps rarely bind alt as a
+  primary shortcut, avoiding collisions with cmd+enter, cmd+l, cmd+1-9, etc.
 - **Window focus**: alt+hjkl (vim-style)
 - **Window movement**: alt+shift+hjkl
-- **Workspace switching**: alt+1-0 (10 workspaces), alt+[/] for prev/next, alt+\ for back-and-forth
-- **Layout**: ctrl+cmd+f for fullscreen, alt+space to toggle floating/tiling, alt+comma to cycle h_tiles/v_tiles
+- **Workspace switching**: alt+1-0 (10 workspaces), alt+[/] for prev/next, alt+\
+  for back-and-forth
+- **Layout**: ctrl+cmd+f for fullscreen, alt+space to toggle floating/tiling,
+  alt+comma to cycle h_tiles/v_tiles
 - **Resize mode**: alt+r to enter, hjkl to resize, esc/enter to exit
 - **App launch**: alt+enter for Ghostty, alt+shift+enter for Chrome
 - **Multi-monitor**: workspaces 1-7 on main display, 8-10 on secondary
@@ -404,32 +495,39 @@ AeroSpace tiling window manager configuration:
 ### Optional Home Modules (`home/optional/`)
 
 #### `gnome/`
+
 - **`ghostty.nix`**: Ghostty terminal, Catppuccin Latte theme, FiraCode 14pt
 - **`stylix.nix`**: Stylix theme targets for GNOME
 - **`dconf.nix`**: GNOME dconf settings
 - **`cursor.nix`**: Cursor theme configuration
 
 #### Single-module files
-| Module | Contents |
-|--------|----------|
-| `browser.nix` | Firefox as default browser |
-| `comms.nix` | Signal Desktop |
-| `media.nix` | Spotify, VLC |
-| `adb.nix` | Android tools, Heimdall |
-| `calibre.nix` | Calibre e-book management |
-| `freecad.nix` | FreeCAD |
+
+| Module          | Contents                        |
+| --------------- | ------------------------------- |
+| `browser.nix`   | Firefox as default browser      |
+| `comms.nix`     | Signal Desktop                  |
+| `media.nix`     | Spotify, VLC                    |
+| `adb.nix`       | Android tools, Heimdall         |
+| `calibre.nix`   | Calibre e-book management       |
+| `freecad.nix`   | FreeCAD                         |
 | `moonlight.nix` | Moonlight game-streaming client |
-| `wsl.nix` | `targets.genericLinux.enable` |
+| `wsl.nix`       | `targets.genericLinux.enable`   |
 
 #### `ssh.nix` (client config)
-- Default: no agent forwarding, no X11 forwarding, compression off, custom `ControlPath`
-- `switch` host (192.168.10.2): legacy crypto algorithms (DH groups, RSA, 3DES) for old network gear
+
+- Default: no agent forwarding, no X11 forwarding, compression off, custom
+  `ControlPath`
+- `switch` host (192.168.10.2): legacy crypto algorithms (DH groups, RSA, 3DES)
+  for old network gear
 - `laconia` host: custom domain + non-standard port for home NAS
 
 #### `sops.nix` (home-manager secrets)
+
 - Imports `sops-nix.homeManagerModules.sops`
 - Age key file: `~/.config/sops/age/keys.txt`
-- Per-host secrets file: `nix-secrets/sops/{hostName}.yaml` (uses `hostSpec.hostName`, which for the work machine is the secret hostname)
+- Per-host secrets file: `nix-secrets/sops/{hostName}.yaml` (uses
+  `hostSpec.hostName`, which for the work machine is the secret hostname)
 - Secrets managed: SSH ed25519 private key (placed at `~/.ssh/id_ed25519`)
 
 ---
@@ -441,27 +539,35 @@ The work machine configuration spans multiple files:
 ### Host-level (`hosts/darwin/work/`)
 
 **`default.nix`** — Entry point:
+
 - `system.primaryUser` set to work username
-- `nix.enable = false` — Nix daemon managed by Determinate Nix installer, not nix-darwin
+- `nix.enable = false` — Nix daemon managed by Determinate Nix installer, not
+  nix-darwin
 - Hostname from `inputs.nix-secrets.workvm_hostname`
 - Platform: `aarch64-darwin`
 
 **`homebrew.nix`** — Declarative Homebrew:
+
 - Cleanup, auto-update, and upgrade all disabled (manual control)
 - Brew shell env sourced in zsh `interactiveShellInit`
 
 **`system-settings.nix`** — macOS defaults:
+
 - `KeyRepeat = 2` (~30ms repeat interval)
 - `InitialKeyRepeat = 15` (~225ms before repeat starts)
-- `ApplePressAndHoldEnabled = false` (disables accented character picker, needed for vim-style hold-to-repeat)
+- `ApplePressAndHoldEnabled = false` (disables accented character picker, needed
+  for vim-style hold-to-repeat)
 
 **`yubikey.nix`** — YubiKey sudo authentication:
+
 - Installs `pam_u2f`
-- Configures `sudo_local` PAM service with `pam_u2f.so` as `sufficient` (touch YubiKey to authenticate)
+- Configures `sudo_local` PAM service with `pam_u2f.so` as `sufficient` (touch
+  YubiKey to authenticate)
 
 ### Home-level (`home/ian.preston/work.nix`)
 
 **Git configuration** — conditional per-org includes with URL rewriting:
+
 ```
 # includeIf triggers for work git identity:
 - git@github.com-emu:databricks-field-eng/**
@@ -478,19 +584,24 @@ The work machine configuration spans multiple files:
 - org-140212977@github.com:  → git@github.com-emu:
 - https://github.com/  → git@github.com: (global SSH preference)
 ```
+
 - Work `.gitconfig-work` sets `user.name = "ian-preston_data"` and work email
 
 **Ghostty terminal** — explicit config file written by home-manager:
+
 - Catppuccin Latte theme
 - FiraCode Nerd Font Mono at 11pt
 - Hidden macOS titlebar (`macos-titlebar-style = hidden`)
-- Written to `~/Library/Application Support/com.mitchellh.ghostty/config` (macOS app support path, not via Ghostty's Nix module)
+- Written to `~/Library/Application Support/com.mitchellh.ghostty/config` (macOS
+  app support path, not via Ghostty's Nix module)
 
 **Zsh aliases:**
+
 - `llm` → `dbexec repo run llm` (internal Databricks LLM tool)
 - `isaac` → `dbexec repo run isaac` (internal Databricks tool)
 
 **Environment variables:**
+
 - `I_DANGEROUSLY_OPT_IN_TO_UNSUPPORTED_ALPHA_TOOLS=true`
 - `MCP_PRIVACY_SUMMARIZATION_ENABLED=true`
 
@@ -501,49 +612,58 @@ The work machine configuration spans multiple files:
 Uses **sops-nix** with **age** encryption:
 
 1. Each NixOS host has an SSH host key (`/etc/ssh/ssh_host_ed25519_key`)
-2. sops-nix automatically derives an age key from the SSH host key via `sshKeyPaths`
-3. Shared secrets in `nix-secrets/sops/shared.yaml` are encrypted to that age key
-4. At build/activation time, sops-nix decrypts secrets to `/run/secrets/` (or `/run/secrets-for-users/` for user creation)
-5. Home-manager secrets use a separate per-user age key at `~/.config/sops/age/keys.txt`, bootstrapped from the host-decrypted secrets
+2. sops-nix automatically derives an age key from the SSH host key via
+   `sshKeyPaths`
+3. Shared secrets in `nix-secrets/sops/shared.yaml` are encrypted to that age
+   key
+4. At build/activation time, sops-nix decrypts secrets to `/run/secrets/` (or
+   `/run/secrets-for-users/` for user creation)
+5. Home-manager secrets use a separate per-user age key at
+   `~/.config/sops/age/keys.txt`, bootstrapped from the host-decrypted secrets
 6. Per-host home-manager secrets are in `nix-secrets/sops/{hostName}.yaml`
 
 Secrets stored:
+
 - System password (hashed, needed for user creation)
 - Per-user age key (bootstrapped to home directory)
 - User SSH private key (ed25519, via home-manager sops)
 - Work username and hostname (for the work machine, at flake evaluation time)
 
-Bootstrap workflow (`scripts/helpers.sh`): colored output helpers, yes/no prompts, age key generation tooling.
+Bootstrap workflow (`scripts/helpers.sh`): colored output helpers, yes/no
+prompts, age key generation tooling.
 
 ---
 
 ## Theming
 
 **Stylix** manages the global theme:
+
 - Color scheme: **Catppuccin Latte** (light)
 - Font: **Fira Code Nerd Font**
-- Targets configured at both host (`hosts/common/optional/themes.nix`) and home (`home/core/neovim/` + `home/optional/gnome/stylix.nix`) levels
+- Targets configured at both host (`hosts/common/optional/themes.nix`) and home
+  (`home/core/neovim/` + `home/optional/gnome/stylix.nix`) levels
 
 ---
 
 ## Task Runner (`Taskfile.yaml`)
 
-| Task | Command |
-|------|---------|
-| `rebuild` | `sudo nixos-rebuild switch --flake .` |
-| `rebuild:{hostname}` | Target-specific NixOS rebuild |
-| `build_darwin:{target}` | nix-darwin rebuild (`sudo darwin-rebuild switch`) |
-| `build_home:{target}` | Standalone home-manager rebuild |
-| `update` | `nix flake update` |
-| `update_dconf` | `scripts/dconf.sh` → writes `home/ipreston/gnome/dconf.nix` |
-| `garbage_collect` | `nix-collect-garbage --delete-older-than 7d` |
-| `iso` | Build the custom live ISO with zstd:3 compression (removes `result` dir first) |
+| Task                    | Command                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------ |
+| `rebuild`               | `sudo nixos-rebuild switch --flake .`                                          |
+| `rebuild:{hostname}`    | Target-specific NixOS rebuild                                                  |
+| `build_darwin:{target}` | nix-darwin rebuild (`sudo darwin-rebuild switch`)                              |
+| `build_home:{target}`   | Standalone home-manager rebuild                                                |
+| `update`                | `nix flake update`                                                             |
+| `update_dconf`          | `scripts/dconf.sh` → writes `home/ipreston/gnome/dconf.nix`                    |
+| `garbage_collect`       | `nix-collect-garbage --delete-older-than 7d`                                   |
+| `iso`                   | Build the custom live ISO with zstd:3 compression (removes `result` dir first) |
 
 ---
 
 ## Developer Shell
 
 `nix develop` from the repo root provides:
+
 - `nixos-rebuild`
 - `pciutils`
 - `go-task`
@@ -559,40 +679,79 @@ Bootstrap workflow (`scripts/helpers.sh`): colored output helpers, yes/no prompt
 ## Key Architectural Patterns & Design Decisions
 
 ### 1. `scanPaths` Auto-Import
-Some directories use `scanPaths` to auto-discover `.nix` files (e.g., `hostSpecs/`, `home/darwin/`). Others use explicit import lists for finer control (e.g., `home/core/`, host entry points that cherry-pick optional modules). When using `scanPaths`, adding a new module file is enough — no explicit import list to update.
+
+Some directories use `scanPaths` to auto-discover `.nix` files (e.g.,
+`hostSpecs/`, `home/darwin/`). Others use explicit import lists for finer
+control (e.g., `home/core/`, host entry points that cherry-pick optional
+modules). When using `scanPaths`, adding a new module file is enough — no
+explicit import list to update.
 
 ### 2. hostSpecs as Module Data
-Host metadata lives in `hostSpecs/` as NixOS modules and is passed to every configuration via `specialArgs`. This cleanly separates static data from configuration logic. The `isDarwin` flag exists because `pkgs.stdenv.isLinux` can cause infinite recursion during module evaluation.
+
+Host metadata lives in `hostSpecs/` as NixOS modules and is passed to every
+configuration via `specialArgs`. This cleanly separates static data from
+configuration logic. The `isDarwin` flag exists because `pkgs.stdenv.isLinux`
+can cause infinite recursion during module evaluation.
 
 ### 3. `mkOutOfStoreSymlink` for Neovim
-The Neovim config directory is symlinked into the Nix store path but points back to the working copy at `~/src/nixos/home/core/neovim`. This allows live editing of Lua plugin configs without rebuilding.
+
+The Neovim config directory is symlinked into the Nix store path but points back
+to the working copy at `~/src/nixos/home/core/neovim`. This allows live editing
+of Lua plugin configs without rebuilding.
 
 ### 4. Platform Abstraction via `isDarwin`
-Common code uses `hosts/common/core/nixos.nix` and `hosts/common/core/darwin.nix` as a pair. The `default.nix` imports the correct one based on `isDarwin`. Same pattern in `home/core/`. The host-level `default.nix` also dynamically selects the right home-manager and sops-nix platform modules (`nixosModules` vs `darwinModules`).
+
+Common code uses `hosts/common/core/nixos.nix` and
+`hosts/common/core/darwin.nix` as a pair. The `default.nix` imports the correct
+one based on `isDarwin`. Same pattern in `home/core/`. The host-level
+`default.nix` also dynamically selects the right home-manager and sops-nix
+platform modules (`nixosModules` vs `darwinModules`).
 
 ### 5. Private Secrets Repository
-`nix-secrets` is a separate private git repository referenced as a flake input (shallow clone over SSH). This lets the configuration repo be public while secrets remain private and encrypted. Some secrets (like work hostname and username) are accessed at flake evaluation time as direct attributes, not through sops decryption.
+
+`nix-secrets` is a separate private git repository referenced as a flake input
+(shallow clone over SSH). This lets the configuration repo be public while
+secrets remain private and encrypted. Some secrets (like work hostname and
+username) are accessed at flake evaluation time as direct attributes, not
+through sops decryption.
 
 ### 6. Declarative Disk Partitioning with disko
-All NixOS hosts have their partition layout described in Nix. First boot can be automated with `disko --mode disko` before `nixos-install`. Reusable parameterized templates exist for basic btrfs, impermanence, and LUKS-encrypted layouts, though hosts currently use bespoke configs.
+
+All NixOS hosts have their partition layout described in Nix. First boot can be
+automated with `disko --mode disko` before `nixos-install`. Reusable
+parameterized templates exist for basic btrfs, impermanence, and LUKS-encrypted
+layouts, though hosts currently use bespoke configs.
 
 ### 7. Work Machine Isolation
+
 The work machine uses:
+
 - A separate username/hostname from secrets (not in the public repo)
-- A separate git config include for work GitHub orgs with URL rewriting through EMU SSH alias
+- A separate git config include for work GitHub orgs with URL rewriting through
+  EMU SSH alias
 - Homebrew for work CLI tools (keeps them out of Nix package management)
 - Separate email addresses
 - Determinate Nix installer (not the standard nix daemon)
 - YubiKey for sudo authentication
 
 ### 8. Impermanence-Ready Disk Layout
-btrfs subvolumes (`@root`, `@nix`, `@swap`) follow the impermanence pattern, where `/nix` persists across wipes but `/` can be reset. Impermanence is not currently enabled but the disk layout supports it. Dedicated templates with `@persist` subvolumes and optional LUKS/FIDO2 encryption are ready for future use.
+
+btrfs subvolumes (`@root`, `@nix`, `@swap`) follow the impermanence pattern,
+where `/nix` persists across wipes but `/` can be reset. Impermanence is not
+currently enabled but the disk layout supports it. Dedicated templates with
+`@persist` subvolumes and optional LUKS/FIDO2 encryption are ready for future
+use.
 
 ### 9. ISO with Age Stamp
-The custom live ISO sets the shell prompt to include the ISO build time. This prevents using a stale ISO for recovery without knowing it's old.
+
+The custom live ISO sets the shell prompt to include the ISO build time. This
+prevents using a stale ISO for recovery without knowing it's old.
 
 ### 10. Flake-Level Host Auto-Discovery
-`flake.nix` auto-discovers hosts by reading the `hosts/nixos/` and `hosts/darwin/` directories. Adding a new host directory with a `default.nix` is sufficient to register it — no manual enumeration in the flake needed.
+
+`flake.nix` auto-discovers hosts by reading the `hosts/nixos/` and
+`hosts/darwin/` directories. Adding a new host directory with a `default.nix` is
+sufficient to register it — no manual enumeration in the flake needed.
 
 ---
 
@@ -600,23 +759,41 @@ The custom live ISO sets the shell prompt to include the ISO build time. This pr
 
 These are minor issues observed in the codebase that don't affect functionality:
 
-- `builtins.trace "DEBUG ${hostSpec.home}"` in `home/core/default.nix` — debug artifact that should be removed
+- `builtins.trace "DEBUG ${hostSpec.home}"` in `home/core/default.nix` — debug
+  artifact that should be removed
 - Duplicate `ripgrep` entry in `home/core/packages.nix`
-- `security.sudo.wheelNeedsPassword = false` (in `users/primary/nixos.nix`) makes the `timestamp_timeout=120` setting (in `core/nixos.nix`) irrelevant since sudo never asks for a password
-- Host-specific disk configs for terra and luna duplicate the logic in `btrfs-disk.nix` template — could be refactored to use the template with parameters
+- `security.sudo.wheelNeedsPassword = false` (in `users/primary/nixos.nix`)
+  makes the `timestamp_timeout=120` setting (in `core/nixos.nix`) irrelevant
+  since sudo never asks for a password
+- Host-specific disk configs for terra and luna duplicate the logic in
+  `btrfs-disk.nix` template — could be refactored to use the template with
+  parameters
 
 ---
 
 ## Notable Quirks and Specifics
 
-- **RTX 5080 on stable drivers**: Uses `config.boot.kernelPackages.nvidiaPackages.stable` — latest drivers weren't building as of 2025-08-18. Suspend/resume/hibernate nvidia systemd services are disabled to prevent screen blanking after resume.
-- **GTX 1060 PRIME offload**: The laptop uses Intel iGPU + Nvidia hardware modules from nixos-hardware for PRIME offloading.
-- **Chromebook GRUB**: Uses `grub.device = "nodev"` with `grub.efiInstallAsRemovable = true` and `efiSupport + cros_legacy` for dual-boot compatibility with ChromeOS firmware.
-- **Printing security**: `cups-browsed` is explicitly disabled (it has had high-profile CVEs).
-- **NAS mounts**: `laconia` NAS shares mounted via CIFS (`smbclient.nix`). The `switch` SSH host uses legacy crypto for an old network switch that doesn't support modern algorithms.
-- **Unstable overlay for OpenRGB**: `pkgs-unstable` is passed alongside main `pkgs` to get newer OpenRGB. The rest of the system uses stable.
-- **Determinate Nix on macOS**: The work Mac uses the Determinate Nix installer, so `nix.enable = false` to avoid nix-darwin conflicting with it.
-- **AeroSpace tiling WM**: Recently added to the work Mac, providing i3/sway-like tiling with vim keybindings. Uses alt as modifier to avoid macOS cmd shortcut collisions.
+- **RTX 5080 on stable drivers**: Uses
+  `config.boot.kernelPackages.nvidiaPackages.stable` — latest drivers weren't
+  building as of 2025-08-18. Suspend/resume/hibernate nvidia systemd services
+  are disabled to prevent screen blanking after resume.
+- **GTX 1060 PRIME offload**: The laptop uses Intel iGPU + Nvidia hardware
+  modules from nixos-hardware for PRIME offloading.
+- **Chromebook GRUB**: Uses `grub.device = "nodev"` with
+  `grub.efiInstallAsRemovable = true` and `efiSupport + cros_legacy` for
+  dual-boot compatibility with ChromeOS firmware.
+- **Printing security**: `cups-browsed` is explicitly disabled (it has had
+  high-profile CVEs).
+- **NAS mounts**: `laconia` NAS shares mounted via CIFS (`smbclient.nix`). The
+  `switch` SSH host uses legacy crypto for an old network switch that doesn't
+  support modern algorithms.
+- **Unstable overlay for OpenRGB**: `pkgs-unstable` is passed alongside main
+  `pkgs` to get newer OpenRGB. The rest of the system uses stable.
+- **Determinate Nix on macOS**: The work Mac uses the Determinate Nix installer,
+  so `nix.enable = false` to avoid nix-darwin conflicting with it.
+- **AeroSpace tiling WM**: Recently added to the work Mac, providing
+  i3/sway-like tiling with vim keybindings. Uses alt as modifier to avoid macOS
+  cmd shortcut collisions.
 
 ---
 
