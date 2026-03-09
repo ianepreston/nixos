@@ -173,20 +173,20 @@ NixOS: `sudo nixos-rebuild switch --flake .` (or `task rebuild`) macOS:
 
 ### macOS (Hammerspoon) — test on work machine
 
-- [ ] alt+h switches space left (unchanged from Phase 1)
-- [ ] alt+l switches space right (unchanged from Phase 1)
-- [ ] alt+shift+h moves window one space left
-- [ ] alt+shift+l moves window one space right
-- [ ] alt+up maximizes window
-- [ ] alt+left snaps left, alt+right snaps right
-- [ ] alt+Return does NOT launch Ghostty (removed)
-- [ ] alt+Shift+Return does NOT launch Chrome (removed)
+- [x] alt+h switches space left (unchanged from Phase 1)
+- [x] alt+l switches space right (unchanged from Phase 1)
+- [x] alt+shift+h moves window one space left
+- [x] alt+shift+l moves window one space right
+- [x] alt+up maximizes window
+- [x] alt+left snaps left, alt+right snaps right
+- [x] alt+Return does NOT launch Ghostty (removed)
+- [x] alt+Shift+Return does NOT launch Chrome (removed)
 
 ### Cross-platform consistency
 
-- [ ] Same physical keys (S+h, S+l) switch workspaces on both platforms
-- [ ] Same physical keys (S+F+h, S+F+l) move windows between workspaces
-- [ ] Same physical keys (S+arrow) snap/maximize on both platforms
+- [x] Same physical keys (S+h, S+l) switch workspaces on both platforms
+- [x] Same physical keys (S+F+h, S+F+l) move windows between workspaces
+- [x] Same physical keys (S+arrow) snap/maximize on both platforms
 
 ### Regression checks
 
