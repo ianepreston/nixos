@@ -30,8 +30,8 @@
     # Dock — left side to save vertical space on wide monitor, half default size
     dock = {
       orientation = "left";
-      tilesize = 32; # default is 64, so ~50%
-      autohide = false; # explicit: change to true if horizontal space gets tight
+      tilesize = 64; # default is 64
+      autohide = true;
       minimize-to-application = true; # keep dock tidy
       show-recents = false; # hide recent apps section
     };
