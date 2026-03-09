@@ -51,6 +51,43 @@
     hs.hotkey.bind({"alt"}, "down",  function() snapWindow("center") end)
 
     ---------------------------------------------------------------------------
+    -- Browser shortcut remapping: ctrl+t/w/n -> cmd+t/w/n
+    -- Makes browser tab shortcuts consistent with terminal (ctrl-based)
+    ---------------------------------------------------------------------------
+    local browserBundleIDs = {
+      ["com.google.Chrome"] = true,
+      ["org.mozilla.firefox"] = true,
+      ["com.apple.Safari"] = true,
+    }
+
+    local function isBrowserFocused()
+      local app = hs.application.frontmostApplication()
+      return app and browserBundleIDs[app:bundleID()] or false
+    end
+
+    local browserRemap = hs.eventtap.new({hs.eventtap.event.types.keyDown}, function(event)
+      local flags = event:getFlags()
+      local keyCode = event:getKeyCode()
+
+      if not flags.ctrl then return false end
+      if not isBrowserFocused() then return false end
+
+      local remaps = {
+        [17] = "t",  -- keycode for 't'
+        [13] = "w",  -- keycode for 'w'
+        [45] = "n",  -- keycode for 'n'
+      }
+
+      if remaps[keyCode] then
+        hs.eventtap.keyStroke({"cmd"}, remaps[keyCode], 0)
+        return true  -- consume the original event
+      end
+
+      return false
+    end)
+    browserRemap:start()
+
+    ---------------------------------------------------------------------------
     -- Window picker: alt+tab shows letter hints for all windows on this space
     ---------------------------------------------------------------------------
     hs.hotkey.bind({"alt"}, "tab", function()
