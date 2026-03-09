@@ -15,14 +15,15 @@
       NSAutomaticWindowAnimationsEnabled = false;
     };
 
-    # Hot corners: upper-left triggers Mission Control (workspace overview)
+    # Hot corners disabled — Mission Control doesn't work well with AeroSpace's
+    # virtual workspaces (windows appear tiny and scattered). Use alt+tab for
+    # window overview, alt+h/l for workspace switching.
     # corner values: 0=disabled, 2=Mission Control, 4=Desktop, 5=Screen Saver
-    # modifier values: 0=none, 131072=shift, 262144=ctrl, 524288=opt, 1048576=cmd
     CustomUserPreferences."com.apple.dock" = {
-      wvous-tl-corner = 2; # top-left → Mission Control
-      wvous-tl-modifier = 0; # no modifier required
+      wvous-tl-corner = 0; # disabled
+      wvous-tl-modifier = 0;
 
-      # Speed up Mission Control / space-switch animation
+      # Speed up Mission Control / space-switch animation (if triggered manually)
       expose-animation-duration = "0.1";
     };
 

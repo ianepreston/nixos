@@ -25,7 +25,8 @@ Key changes (commit `8c7705a`):
   code, kept window snapping, app launching, and window picker
 - Updated `hosts/darwin/work/system-settings.nix` — added animation reduction
   (`NSAutomaticWindowAnimationsEnabled = false`, `expose-animation-duration`),
-  hot corner (upper-left → Mission Control)
+  hot corner disabled (Mission Control doesn't work well with AeroSpace virtual
+  workspaces — windows appear tiny and scattered)
 - Added `aerospace` cask to `hosts/darwin/work/homebrew.nix`
 
 ## Original problem
@@ -61,7 +62,6 @@ it doesn't use native macOS Spaces at all.
 
 - [ ] Three-finger trackpad swipe still works for space switching
 - [x] Window animations (resize, move) still feel smooth in other apps
-- [x] Mission Control (ctrl+up or F3) still works
 - [x] cmd+tab native app switcher still works
 - [x] Hammerspoon menubar icon is present and console is accessible
 - [x] Ghostty launches and works normally (alt+Return launcher still works for
@@ -69,4 +69,4 @@ it doesn't use native macOS Spaces at all.
 - [x] Key repeat speed is unchanged (fast repeat still works in terminal/vim)
 - [x] Accented character picker remains disabled (hold a key = repeat, not
       accent menu)
-- [x] Hot corner upper-left triggers Mission Control / workspace overview
+- [x] Hot corner disabled (Mission Control overview not useful with AeroSpace)
