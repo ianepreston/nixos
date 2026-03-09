@@ -22,6 +22,7 @@
       "hashicorp/tap/terraform"
     ];
     casks = [
+      "badgeify"
       "ghostty"
       "obsidian"
       "gcloud-cli"
