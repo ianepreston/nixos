@@ -140,30 +140,30 @@ The `<leader>r` approach is fine unless you object.
 
 ### Smart-splits resize
 
-- [ ] In neovim with 2+ splits: `<Space>rh` resizes the split boundary left
-- [ ] `<Space>rj` resizes down
-- [ ] `<Space>rk` resizes up
-- [ ] `<Space>rl` resizes right
-- [ ] Old bindings `<M-h/j/k/l>` no longer trigger resize (they shouldn't
+- [x] In neovim with 2+ splits: `<Space>rh` resizes the split boundary left
+- [x] `<Space>rj` resizes down
+- [x] `<Space>rk` resizes up
+- [x] `<Space>rl` resizes right
+- [x] Old bindings `<M-h/j/k/l>` no longer trigger resize (they shouldn't
       reach neovim at all since the WM intercepts them)
 
 ### Mini-move
 
-- [ ] In visual mode, select lines then `<C-M-j>` moves selection down
-- [ ] `<C-M-k>` moves selection up
-- [ ] `<C-M-h>` moves selection left (dedent)
-- [ ] `<C-M-l>` moves selection right (indent)
-- [ ] In normal mode, `<C-M-j>` moves current line down
-- [ ] In normal mode, `<C-M-k>` moves current line up
-- [ ] If ctrl+alt combos don't register in Ghostty, note this as a finding and
+- [x] In visual mode, select lines then `<C-M-j>` moves selection down
+- [x] `<C-M-k>` moves selection up
+- [x] `<C-M-h>` moves selection left (dedent)
+- [x] `<C-M-l>` moves selection right (indent)
+- [x] In normal mode, `<C-M-k>` moves current line up
+- [x] In normal mode, `<C-M-j>` moves current line down
+- [x] If ctrl+alt combos don't register in Ghostty, note this as a finding and
       switch to `<leader>mh/j/k/l` instead
 
 ### Regression checks
 
-- [ ] `<C-h/j/k/l>` still navigate between splits (smart-splits move, unchanged)
-- [ ] `<leader>rf` still opens Spectre find & replace
-- [ ] `<leader>rb` still opens Spectre buffer replace
-- [ ] `<M-e>` still triggers FastWrapping in insert mode
-- [ ] Which-key (if installed) shows the new `<leader>r` bindings correctly
-- [ ] `:Telescope keymaps` shows updated descriptions for resize bindings
-- [ ] No "duplicate mapping" warnings on neovim startup
+- [x] `<C-h/j/k/l>` still navigate between splits (smart-splits move, unchanged)
+- [x] `<leader>rf` still opens Spectre find & replace
+- [x] `<leader>rb` still opens Spectre buffer replace
+- [x] `<M-e>` still triggers FastWrapping in insert mode
+- [x] Which-key (if installed) shows the new `<leader>r` bindings correctly
+- [x] `:Telescope keymaps` shows updated descriptions for resize bindings
+- [x] No "duplicate mapping" warnings on neovim startup
