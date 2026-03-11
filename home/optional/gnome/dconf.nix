@@ -293,6 +293,9 @@ with lib.hm.gvariant;
 
     "org/gnome/shell/keybindings" = {
       show-screenshot-ui = [ "<Shift><Super>s" ];
+      # Disable Super+v and Super+n to allow Ghostty to handle them
+      toggle-message-tray = [ "<Super>m" ]; # Keep Super+m, remove Super+v
+      focus-active-notification = [ ]; # Disable entirely
     };
 
     "org/gnome/shell/world-clocks" = {

@@ -209,15 +209,15 @@ macOS cmd+t/w/n already work natively — removed redundant ctrl keybinds.
 
 ### Terminal (Ghostty) — both platforms
 
-- [ ] super+t (D-key+t) opens a new Ghostty tab (Linux)
+- [x] super+t (D-key+t) opens a new Ghostty tab (Linux)
 - [x] cmd+t (D-key+t) opens a new Ghostty tab (macOS, native default)
-- [ ] super+w (D-key+w) closes the current Ghostty tab/surface (Linux)
+- [x] super+w (D-key+w) closes the current Ghostty tab/surface (Linux)
 - [x] cmd+w (D-key+w) closes the current Ghostty tab/surface (macOS, native)
-- [ ] super+n (D-key+n) opens a new Ghostty window (Linux)
+- [x] super+n (D-key+n) opens a new Ghostty window (Linux)
 - [x] cmd+n (D-key+n) opens a new Ghostty window (macOS, native)
 - [x] cmd+c / Super+c copies selected text in terminal (both platforms)
-- [ ] cmd+v / Super+v pastes in terminal (both platforms)
-- [ ] ctrl+shift+c/v still work on Linux (defaults not removed, just augmented)
+- [x] cmd+v / Super+v pastes in terminal (both platforms)
+- [x] ctrl+shift+c/v still work on Linux (defaults not removed, just augmented)
 - [x] ctrl+tab / ctrl+shift+tab cycle Ghostty tabs (default binding, untouched)
 
 ### Browser — macOS
@@ -232,14 +232,14 @@ macOS cmd+t/w/n already work natively — removed redundant ctrl keybinds.
 
 ### Browser — Linux
 
-- [ ] ctrl+t/w/n work as expected (native Linux browser shortcuts, unchanged)
+- [x] ctrl+t/w/n work as expected (native Linux browser shortcuts, unchanged)
 
 ### Regression checks
 
 - [x] cmd+c in non-terminal apps still copies (macOS native, unaffected)
 - [x] cmd+v in non-terminal apps still pastes
 - [x] Ghostty theme and font are unchanged
-- [ ] Ghostty clipboard read/write permissions still work
+- [x] Ghostty clipboard read/write permissions still work
 - [x] Neovim ctrl+t (tag stack) no longer conflicts — Ghostty uses super/cmd,
       not ctrl, so ctrl+t passes through to neovim normally
 - [x] Shell ctrl+c (SIGINT) is unaffected — we're binding Super+c, not ctrl+c
