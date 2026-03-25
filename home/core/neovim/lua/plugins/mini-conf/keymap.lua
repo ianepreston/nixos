@@ -1,8 +1,8 @@
--- Shift + Alt/Meta + Direction
+-- Ctrl + Alt + Direction
 local keymap = {
-  left = "<M-H>",
-  right = "<M-L>",
-  down = "<M-J>",
-  up = "<M-K>",
+  left = "<C-M-h>",
+  right = "<C-M-l>",
+  down = "<C-M-j>",
+  up = "<C-M-k>",
 }
 return keymap

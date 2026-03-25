@@ -29,17 +29,16 @@ map("n", "gY", '"+Y', { desc = "Yank line to system clipboard" })
 
 -- smart-splits plugin
 -- Resizing splits
--- Keymaps accept ranges: `5<M-h>` will grow left by 5 times the default amount
-map("n", "<M-h>", function()
+map("n", "<leader>rh", function()
   require("smart-splits").resize_left()
 end, { desc = "Grow split left" })
-map("n", "<M-j>", function()
+map("n", "<leader>rj", function()
   require("smart-splits").resize_down()
 end, { desc = "Grow split down" })
-map("n", "<M-k>", function()
+map("n", "<leader>rk", function()
   require("smart-splits").resize_up()
 end, { desc = "Grow split up" })
-map("n", "<M-l>", function()
+map("n", "<leader>rl", function()
   require("smart-splits").resize_right()
 end, { desc = "Grow split right" })
 
@@ -427,8 +426,8 @@ end, { desc = "Toggle comment" })
 -- lua/plugins/mini-files.lua
 --   `<leader>fE` and `<leader>fe` to open mini.files file explorer
 
--- lua/plugins/mini-move.lua
---   `<M-H>`, `<M-J>`, `<M-K>`, `<M-L>`: move selection or line with Alt/Meta + Shift + h/j/k/l
+-- lua/plugins/mini-move.lua (configured in mini-conf/keymap.lua)
+--   `<C-M-h>`, `<C-M-j>`, `<C-M-k>`, `<C-M-l>`: move selection or line with Ctrl+Alt + h/j/k/l
 
 -- lua/autocommands.lua
 --   `q` to close "service" buffers like man, lspinfo, help, etc
