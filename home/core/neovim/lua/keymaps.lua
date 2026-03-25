@@ -29,6 +29,7 @@ map("n", "gY", '"+Y', { desc = "Yank line to system clipboard" })
 
 -- smart-splits plugin
 -- Resizing splits
+-- Keymaps accept ranges: `5<leader>rh` will grow left by 5 times the default amount
 map("n", "<leader>rh", function()
   require("smart-splits").resize_left()
 end, { desc = "Grow split left" })
