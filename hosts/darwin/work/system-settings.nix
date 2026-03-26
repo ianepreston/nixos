@@ -52,7 +52,6 @@
       minimize-to-application = true; # keep dock tidy
       show-recents = false; # hide recent apps section
       wvous-tl-corner = 2; # Mission Control
-      wvous-tl-modifier = 0; # no modifier
     };
 
   };
