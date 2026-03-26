@@ -10,14 +10,14 @@
       font-size = "11";
       # background-opacity = "0.85";
 
-      # Unified keybindings — match macOS physical keys
-      # Super+c/v for copy/paste (cmd on Voyager = Super on Linux)
+      # Copy/paste: super+c/v (same physical key as macOS cmd+c/v)
+      # Tab/window management: ctrl+t/w/n (Linux-native convention)
       keybind = [
         "super+c=copy_to_clipboard"
         "super+v=paste_from_clipboard"
-        "super+t=new_tab"
-        "super+w=close_surface"
-        "super+n=new_window"
+        "ctrl+t=new_tab"
+        "ctrl+w=close_surface"
+        "ctrl+n=new_window"
       ];
     };
   };

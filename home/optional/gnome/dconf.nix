@@ -153,24 +153,32 @@ with lib.hm.gvariant;
     };
 
     "org/gnome/desktop/wm/keybindings" = {
-      maximize = [ "<Alt>Up" ];
+      # Window tiling with hyper key (ctrl+shift+super+alt)
+      maximize = [ "<Ctrl><Shift><Super><Alt>k" ];
       minimize = [ ];
       move-to-monitor-down = [ ];
       move-to-monitor-left = [ ];
       move-to-monitor-right = [ ];
       move-to-monitor-up = [ ];
-      move-to-workspace-left = [ "<Shift><Alt>h" ];
-      move-to-workspace-right = [ "<Shift><Alt>l" ];
+      # Workspace navigation: ctrl+arrows and ctrl+number
+      move-to-workspace-left = [ "<Shift><Ctrl>Left" ];
+      move-to-workspace-right = [ "<Shift><Ctrl>Right" ];
       switch-applications = [ ];
       switch-applications-backward = [ ];
-      switch-to-workspace-left = [ "<Alt>h" ];
-      switch-to-workspace-right = [ "<Alt>l" ];
+      switch-to-workspace-left = [ "<Ctrl>Left" ];
+      switch-to-workspace-right = [ "<Ctrl>Right" ];
+      switch-to-workspace-1 = [ "<Ctrl>1" ];
+      switch-to-workspace-2 = [ "<Ctrl>2" ];
+      switch-to-workspace-3 = [ "<Ctrl>3" ];
+      switch-to-workspace-4 = [ "<Ctrl>4" ];
+      switch-to-workspace-5 = [ "<Ctrl>5" ];
       switch-windows = [ "<Alt>Tab" ];
       switch-windows-backward = [ "<Shift><Alt>Tab" ];
     };
 
     "org/gnome/desktop/wm/preferences" = {
       button-layout = "icon:minimize,maximize,close";
+      num-workspaces = 5;
     };
 
     "org/gnome/evince/default" = {
@@ -226,9 +234,14 @@ with lib.hm.gvariant;
       window-width = 600;
     };
 
+    "org/gnome/mutter" = {
+      dynamic-workspaces = false;
+      overlay-key = ""; # disable bare Super opening Activities
+    };
+
     "org/gnome/mutter/keybindings" = {
-      toggle-tiled-left = [ "<Alt>Left" ];
-      toggle-tiled-right = [ "<Alt>Right" ];
+      toggle-tiled-left = [ "<Ctrl><Shift><Super><Alt>h" ];
+      toggle-tiled-right = [ "<Ctrl><Shift><Super><Alt>l" ];
     };
 
     "org/gnome/nautilus/preferences" = {
@@ -291,11 +304,15 @@ with lib.hm.gvariant;
       name = "Stylix";
     };
 
+    "org/gnome/desktop/interface" = {
+      enable-hot-corners = true; # top-left hot corner → Activities
+    };
+
     "org/gnome/shell/keybindings" = {
       show-screenshot-ui = [ "<Shift><Super>s" ];
-      # Disable Super+v and Super+n to allow Ghostty to handle them
-      toggle-message-tray = [ "<Super>m" ]; # Keep Super+m, remove Super+v
-      focus-active-notification = [ ]; # Disable entirely
+      toggle-overview = [ "<Super>space" "<Ctrl>Up" ]; # app launcher + Mission Control equivalent
+      toggle-message-tray = [ "<Super>m" ];
+      focus-active-notification = [ ];
     };
 
     "org/gnome/shell/world-clocks" = {
