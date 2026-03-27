@@ -20,8 +20,11 @@
     CustomUserPreferences."com.apple.dock" = {
       # Speed up Mission Control / space-switch animation
       expose-animation-duration = "0.1";
-      # Don't auto-switch to a Space when an app receives focus
-      workspaces-auto-swoosh = false;
+      # Auto-switch to a Space when an app receives focus (e.g. clicking
+      # launcher icons, opening links from Slack). Disabled briefly but
+      # re-enabled — the real culprit for unwanted switches is Obsidian CLI
+      # stealing focus; see note in workflows.md.
+      workspaces-auto-swoosh = true;
     };
 
     # ctrl+number Space switching via symbolic hotkeys

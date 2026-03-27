@@ -98,6 +98,27 @@ Alt+tab does sequential window cycling (current workspace only) on both
 platforms. GNOME does this natively. On macOS, Hammerspoon provides a sequential
 alt+tab window switcher via `hs.window.switcher`.
 
+### Obsidian CLI usage
+
+The Obsidian CLI activates/focuses the Obsidian window on every command, which
+triggers an unwanted workspace switch (auto-swoosh). Until the `&silent` URI
+parameter or `openmode=silent` (Advanced URI plugin) is fixed upstream:
+
+- **Simple markdown edits** (appending text, updating file content): write
+  directly to vault `.md` files on disk. Obsidian picks up changes via
+  filesystem watch — no focus steal.
+- **Operations requiring the Obsidian app** (creating task notes, updating
+  metadata, running plugin actions): use the CLI, but include `&silent=true`
+  on native URIs or `&openmode=silent` on Advanced URI calls. These flags
+  don't currently prevent focus stealing, but will once patched:
+  - Native: `obsidian://new?vault=...&file=...&silent=true`
+  - Advanced URI: `obsidian://advanced-uri?vault=...&openmode=silent&...`
+
+Tracked upstream:
+- [Silent option not working](https://forum.obsidian.md/t/silent-option-in-obsidian-uri-does-not-work/77730)
+- [Advanced URI openmode=silent broken](https://github.com/vinzent03/obsidian-advanced-uri/issues/201)
+- [Feature request: URI no-focus option](https://forum.obsidian.md/t/obsidian-uri-add-option-to-not-focus-on-obsidian/105958)
+
 ### App launching: native launchers
 
 Use Spotlight on macOS and GNOME Activities overview on Linux.
