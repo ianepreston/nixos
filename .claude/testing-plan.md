@@ -101,11 +101,11 @@ D+t/w/n (cmd) still works natively too.
 
 | #    | Test                                                    | Result | Notes                         |
 | ---- | ------------------------------------------------------- | ------ | ----------------------------- |
-| 2.27 | `cmd+t` opens new Ghostty tab (native)                  |        | D+t on Voyager                |
-| 2.28 | `cmd+w` closes Ghostty tab/surface (native)             |        | D+w on Voyager                |
-| 2.29 | `cmd+n` opens new Ghostty window (native)               |        | D+n on Voyager                |
-| 2.30 | `cmd+c` copies in Ghostty (native)                      |        | D+c on Voyager                |
-| 2.31 | `cmd+v` pastes in Ghostty (native)                      |        | D+v on Voyager                |
+| 2.27 | `cmd+t` opens new Ghostty tab (native)                  | pass   | D+t on Voyager                |
+| 2.28 | `cmd+w` closes Ghostty tab/surface (native)             | pass   | D+w on Voyager                |
+| 2.29 | `cmd+n` opens new Ghostty window (native)               | pass   | D+n on Voyager                |
+| 2.30 | `cmd+c` copies in Ghostty (native)                      | pass   | D+c on Voyager                |
+| 2.31 | `cmd+v` pastes in Ghostty (native)                      | pass   | D+v on Voyager                |
 | 2.32 | `ctrl+t` opens new Ghostty tab (Hammerspoon remap)      |        | A+t on Voyager, matches Linux |
 | 2.33 | `ctrl+w` closes Ghostty tab/surface (Hammerspoon remap) |        | A+w on Voyager, matches Linux |
 | 2.34 | `ctrl+n` opens new Ghostty window (Hammerspoon remap)   |        | A+n on Voyager, matches Linux |
@@ -118,70 +118,69 @@ D+t/w/n (cmd) still works natively too.
 
 | #   | Test                                                                       | Result | Notes |
 | --- | -------------------------------------------------------------------------- | ------ | ----- |
-| 3.1 | `nixos-rebuild switch` (or `home-manager switch`) completes without errors |        |       |
+| 3.1 | `nixos-rebuild switch` (or `home-manager switch`) completes without errors | pass   |       |
 
 ### 3a. Workspace navigation
 
 | #   | Test                                                 | Result | Notes |
 | --- | ---------------------------------------------------- | ------ | ----- |
-| 3.2 | `ctrl+right arrow` moves to next workspace           |        |       |
-| 3.3 | `ctrl+left arrow` moves to previous workspace        |        |       |
-| 3.4 | `ctrl+shift+right` moves window to next workspace    |        |       |
-| 3.5 | `ctrl+shift+left` moves window to previous workspace |        |       |
+| 3.2 | `ctrl+right arrow` moves to next workspace           | pass   |       |
+| 3.3 | `ctrl+left arrow` moves to previous workspace        | pass   |       |
+| 3.4 | `ctrl+shift+right` moves window to next workspace    | pass   |       |
+| 3.5 | `ctrl+shift+left` moves window to previous workspace | pass   |       |
 
 ### 3b. Workspace by number
 
 | #   | Test                                   | Result | Notes |
 | --- | -------------------------------------- | ------ | ----- |
-| 3.6 | Fixed 5 workspaces exist (not dynamic) |        |       |
-| 3.7 | `ctrl+1` switches to workspace 1       |        |       |
-| 3.8 | `ctrl+2` switches to workspace 2       |        |       |
-| 3.9 | `ctrl+3` through `ctrl+5` work         |        |       |
+| 3.6 | Fixed 5 workspaces exist (not dynamic) | pass   |       |
+| 3.7 | `ctrl+1` switches to workspace 1       | pass   |       |
+| 3.8 | `ctrl+2` switches to workspace 2       | pass   |       |
+| 3.9 | `ctrl+3` through `ctrl+5` work         | pass   |       |
 
 ### 3c. Window tiling
 
 | #    | Test                                 | Result | Notes |
 | ---- | ------------------------------------ | ------ | ----- |
-| 3.10 | `hyper+h` tiles window to left half  |        |       |
-| 3.11 | `hyper+l` tiles window to right half |        |       |
-| 3.12 | `hyper+k` maximizes window           |        |       |
-| 3.13 | Tiling works on both monitors        |        |       |
+| 3.10 | `hyper+h` tiles window to left half  | pass   |       |
+| 3.11 | `hyper+l` tiles window to right half | pass   |       |
+| 3.12 | `hyper+k` maximizes window           | pass   |       |
+| 3.13 | Tiling works on both monitors        | pass   |       |
 
 ### 3d-3e. App launcher & Mission Control
 
 | #    | Test                                      | Result | Notes                |
 | ---- | ----------------------------------------- | ------ | -------------------- |
-| 3.14 | Bare `Super` key does NOT open Activities |        | Overlay key disabled |
-| 3.15 | `Super+space` opens Activities overview   |        |                      |
-| 3.16 | `ctrl+up` opens Activities overview       |        |                      |
-| 3.17 | Top-left hot corner activates Activities  |        |                      |
+| 3.14 | Bare `Super` key does NOT open Activities | pass   | Overlay key disabled |
+| 3.15 | `Super+space` opens Activities overview   | pass   |                      |
+| 3.16 | `ctrl+up` opens Activities overview       | pass   |                      |
+| 3.17 | Top-left hot corner activates Activities  | pass   |                      |
 
 ### 3f. Window switching
 
 | #    | Test                                                           | Result | Notes |
 | ---- | -------------------------------------------------------------- | ------ | ----- |
-| 3.18 | `alt+tab` cycles windows (not app groups) on current workspace |        |       |
-| 3.19 | `shift+alt+tab` cycles backwards                               |        |       |
-| 3.20 | Windows from other workspaces do NOT appear in alt+tab         |        |       |
+| 3.18 | `alt+tab` cycles windows (not app groups) on current workspace | pass   |       |
+| 3.19 | `shift+alt+tab` cycles backwards                               | pass   |       |
+| 3.20 | Windows from other workspaces do NOT appear in alt+tab         | pass   |       |
 
 ### 3g. Ghostty GNOME
 
-| #    | Test                                              | Result | Notes                                   |
-| ---- | ------------------------------------------------- | ------ | --------------------------------------- |
-| 3.21 | `super+c` copies in Ghostty                       |        | D+c on Voyager, matches macOS cmd+c     |
-| 3.22 | `super+v` pastes in Ghostty                       |        | D+v on Voyager, matches macOS cmd+v     |
-| 3.23 | `ctrl+t` opens new Ghostty tab                    |        | A+t on Voyager, Linux-native convention |
-| 3.24 | `ctrl+w` closes Ghostty surface                   |        | A+w on Voyager                          |
-| 3.25 | `ctrl+n` opens new Ghostty window                 |        | A+n on Voyager                          |
-| 3.26 | `super+t` does NOT open a new tab (remap removed) |        | Confirms super+t/w/n dropped            |
+| #    | Test                             | Result | Notes                               |
+| ---- | -------------------------------- | ------ | ----------------------------------- |
+| 3.21 | `super+c` copies in Ghostty      | pass   | D+c on Voyager, matches macOS cmd+c |
+| 3.22 | `super+v` pastes in Ghostty      | pass   | D+v on Voyager, matches macOS cmd+v |
+| 3.23 | `cmd+t` opens new Ghostty tab    | pass   | D+t on Voyager                      |
+| 3.24 | `cmd+w` closes Ghostty surface   | pass   | D+w on Voyager                      |
+| 3.25 | `cmd+n` opens new Ghostty window | pass   | D+n on Voyager                      |
 
 ### 3h. GNOME shell keybinding conflicts
 
 | #    | Test                                                             | Result | Notes                         |
 | ---- | ---------------------------------------------------------------- | ------ | ----------------------------- |
-| 3.27 | `super+v` does NOT open notification tray                        |        | Config moves it to super+m    |
-| 3.28 | `super+n` does NOT trigger focus-active-notification             |        | Config disables it            |
-| 3.29 | `ctrl+1` through `ctrl+5` don't conflict with any GNOME shortcut |        | Check for unexpected behavior |
+| 3.27 | `super+v` does NOT open notification tray                        | pass   | Config moves it to super+m    |
+| 3.28 | `super+n` does NOT trigger focus-active-notification             | pass   | Config disables it            |
+| 3.29 | `ctrl+1` through `ctrl+5` don't conflict with any GNOME shortcut | pass   | Check for unexpected behavior |
 
 ---
 
