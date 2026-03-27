@@ -163,19 +163,16 @@ that they don't interfere with each other.
 
 ## Issue 9: Browser/tab shortcuts use different physical keys per platform
 
-**Severity**: Low — intentional design decision.
+**Severity**: Resolved.
 
-**Problem**: With the "don't fight both platforms" principle, browser and Ghostty
-tab shortcuts use each platform's native binding: `cmd+t`/`cmd+w` on macOS
-(D+t/D+w on Voyager) and `ctrl+t`/`ctrl+w` on GNOME (A+t/A+w on Voyager).
-This means different physical keys for the same action depending on platform.
+**Problem**: Browser and Ghostty tab shortcuts used each platform's native
+binding: `cmd+t`/`cmd+w` on macOS (D+t/D+w on Voyager) and `ctrl+t`/`ctrl+w`
+on GNOME (A+t/A+w on Voyager). Different physical keys for the same action.
 
-**Why this is correct**: Both platforms already have working, well-known
-defaults. The previous approach (Hammerspoon remapping ctrl→cmd in browsers on
-macOS) fought macOS defaults and would have required an equivalent remap on
-GNOME for full parity. Instead, each platform uses its native convention. The
-physical key difference (ring finger vs index finger for modifier) matches what
-any user of that platform would expect.
+**Resolution**: Hammerspoon on macOS remaps ctrl+{t,w,n} → cmd+{t,w,n}, so
+A+t/w/n (ctrl on Voyager) opens/closes tabs and windows on both platforms.
+The native cmd+t/w/n shortcuts still work on macOS too. This is a one-platform
+remap (macOS only), keeping Linux completely native.
 
 ---
 
@@ -201,19 +198,16 @@ if desired.
 
 ## Issue 11: workflows_update.md browser section assumes cross-platform remap
 
-**Severity**: Info — resolved by updated design principle.
+**Severity**: Resolved.
 
-**Problem**: The `workflows_update.md` Browser section says "`ctrl+t` opens a
-new tab in GNOME, `cmd+t` does it in MacOS. Can we set `cmd+t` to do this in
-GNOME? Ditto for `cmd/ctrl+w` mismatch for closing tabs." This implies remapping
-GNOME browsers to use `cmd+t` (super+t), which would be fighting GNOME defaults.
-Combined with the existing Hammerspoon ctrl→cmd remap on macOS, this creates
-the exact "remapping both platforms" anti-pattern.
+**Problem**: The `workflows_update.md` Browser section asked about remapping
+GNOME browsers to use `cmd+t` (super+t) to match macOS.
 
-**Resolution**: Use native defaults on each platform. macOS browsers use `cmd+t`
-(native). GNOME browsers use `ctrl+t` (native). Different physical keys on
-Voyager, but both platform-default. No remapping needed on either platform for
-browser shortcuts.
+**Resolution**: Instead of remapping Linux, Hammerspoon on macOS remaps
+ctrl+{t,w,n} → cmd+{t,w,n}. This makes ctrl+t/w/n (A+key on Voyager) the
+universal shortcut on both platforms. Linux stays completely native. Only one
+platform is remapped (macOS), and the native cmd+t/w/n shortcuts still work
+there too.
 
 ---
 

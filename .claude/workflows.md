@@ -77,17 +77,19 @@ On Linux, Ghostty binds Super+c and Super+v (which the Voyager sends as cmd)
 to copy and paste. This matches macOS native behavior — same physical key combo
 (D+c, D+v on Voyager) works identically on both platforms.
 
-### Browser/tab shortcuts: platform-native
+### Browser/tab shortcuts: ctrl+t/w/n on both platforms
 
-Each platform uses its own native shortcuts:
-- **macOS**: cmd+t/w/n (native, no remapping needed)
+Hammerspoon on macOS remaps ctrl+{t,w,n} → cmd+{t,w,n}, so that ctrl+t/w/n
+(A+t/w/n on Voyager) opens/closes tabs and windows on both platforms. The
+native cmd+t/w/n shortcuts still work on macOS too.
+
+- **macOS**: ctrl+t/w/n (via Hammerspoon remap to cmd+t/w/n), cmd+t/w/n also works natively
 - **GNOME**: ctrl+t/w/n (native)
 
-No cross-platform remapping is done — both platforms have working defaults.
+### Terminal tab management: ctrl+t/w/n on both platforms
 
-### Terminal tab management: platform-native
-
-- **macOS Ghostty**: cmd+t/w/n (native macOS shortcuts, no keybind config)
+Same approach — ctrl+t/w/n works on both platforms:
+- **macOS Ghostty**: ctrl+t/w/n (via Hammerspoon remap), cmd+t/w/n also works natively
 - **GNOME Ghostty**: ctrl+t/w/n (configured via Ghostty keybind)
 
 ### Window switching: alt+tab sequential cycling
@@ -132,22 +134,22 @@ Use Spotlight on macOS and GNOME Activities overview on Linux.
 
 ### Terminal (Ghostty)
 
-| Action     | macOS           | GNOME                  | Voyager keys |
-| ---------- | --------------- | ---------------------- | ------------ |
-| Copy       | cmd+c (native)  | Super+c (Ghostty bind) | D+c          |
-| Paste      | cmd+v (native)  | Super+v (Ghostty bind) | D+v          |
-| New tab    | cmd+t (native)  | ctrl+t (Ghostty bind)  | D+t / A+t    |
-| Close tab  | cmd+w (native)  | ctrl+w (Ghostty bind)  | D+w / A+w    |
-| New window | cmd+n (native)  | ctrl+n (Ghostty bind)  | D+n / A+n    |
+| Action     | macOS                       | GNOME                  | Voyager keys |
+| ---------- | --------------------------- | ---------------------- | ------------ |
+| Copy       | cmd+c (native)              | Super+c (Ghostty bind) | D+c          |
+| Paste      | cmd+v (native)              | Super+v (Ghostty bind) | D+v          |
+| New tab    | ctrl+t (Hammerspoon remap)  | ctrl+t (Ghostty bind)  | A+t          |
+| Close tab  | ctrl+w (Hammerspoon remap)  | ctrl+w (Ghostty bind)  | A+w          |
+| New window | ctrl+n (Hammerspoon remap)  | ctrl+n (Ghostty bind)  | A+n          |
 
 ### Browser
 
-| Action      | macOS       | GNOME    | Voyager keys |
-| ----------- | ----------- | -------- | ------------ |
-| New tab     | cmd+t       | ctrl+t   | D+t / A+t    |
-| Close tab   | cmd+w       | ctrl+w   | D+w / A+w    |
-| New window  | cmd+n       | ctrl+n   | D+n / A+n    |
-| Address bar | cmd+l       | ctrl+l   | D+l / A+l    |
+| Action      | macOS                      | GNOME    | Voyager keys |
+| ----------- | -------------------------- | -------- | ------------ |
+| New tab     | ctrl+t (Hammerspoon remap) | ctrl+t   | A+t          |
+| Close tab   | ctrl+w (Hammerspoon remap) | ctrl+w   | A+w          |
+| New window  | ctrl+n (Hammerspoon remap) | ctrl+n   | A+n          |
+| Address bar | ctrl+l (native)            | ctrl+l   | A+l          |
 
 ### Window switching
 

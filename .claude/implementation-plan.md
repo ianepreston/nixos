@@ -9,13 +9,12 @@ GNOME keybindings to match.
 **Guiding principles** (in priority order):
 1. **Consistency** — the same logical action should use the same or analogous
    physical keys where possible.
-2. **Don't fight both platforms** — if both platforms already have working
-   defaults for an action, don't remap both to a non-native alternative. Use
-   each platform's native shortcut. Remapping one platform is fine when
-   necessary (e.g., macOS tiling needs Hammerspoon because there's no globe/fn
-   key on the Voyager), but remapping both (e.g., changing browser tab creation
-   from native ctrl+t/cmd+t on each platform to something else on both) is
-   unnecessary churn.
+2. **Remap one platform, not both** — when platforms differ, pick one to remap
+   so the same physical key works everywhere. Prefer remapping the platform
+   where it's easier to do declaratively. For tab/window shortcuts,
+   Hammerspoon on macOS remaps ctrl+{t,w,n} → cmd+{t,w,n} so Linux stays
+   completely native. For copy/paste in Ghostty, GNOME binds super+c/v so
+   macOS stays completely native.
 
 ---
 
@@ -123,22 +122,20 @@ Replace the current `home/darwin/hammerspoon.nix` with a new config that handles
 
 3. **Remove**:
    - alt+arrows snap bindings (replaced by hyper+hjk)
-   - **Browser ctrl→cmd remap** — `cmd+t`/`cmd+w`/`cmd+n` are already the
-     native macOS browser shortcuts. The ctrl→cmd remap existed to unify
-     physical keys with Linux, but both platforms already have working defaults
-     (`cmd+t` on macOS, `ctrl+t` on GNOME). Remapping both is unnecessary.
    - Workspace-related comments referencing AeroSpace
+
+4. **Add cross-platform tab/window parity**:
+   - ctrl+t → cmd+t, ctrl+w → cmd+w, ctrl+n → cmd+n via `hs.hotkey.bind`
+   - This makes A+t/w/n (ctrl on Voyager) open/close tabs and windows,
+     matching Linux-native ctrl+t/w/n. The native cmd+t/w/n still works too.
 
 ### 2d. macOS Ghostty keybindings
 
 The work machine Ghostty config in `home/ian.preston/work.nix` uses a raw
 `home.file` write and does **not** include keybindings. No keybinding changes
 are needed — macOS Ghostty natively uses `cmd+t`/`cmd+w`/`cmd+n` for tab
-management and `cmd+c`/`cmd+v` for copy/paste. These are all platform defaults.
-
-Previously the plan added `ctrl+t`/`ctrl+w`/`ctrl+n` to match GNOME physical
-keys, but this fights macOS defaults. Each platform uses its own native
-shortcuts instead.
+management and `cmd+c`/`cmd+v` for copy/paste. The Hammerspoon ctrl→cmd remap
+(from Phase 2c) also applies here, so ctrl+t/w/n works in Ghostty too.
 
 ---
 
@@ -245,9 +242,9 @@ keybind = [
 ];
 ```
 
-The `super+t/w/n` bindings are removed — they existed to make macOS physical
-keys (D+t) work on Linux, but `cmd+t` on macOS and `ctrl+t` on Linux are both
-platform defaults. No need to remap both sides.
+The `super+t/w/n` bindings are removed — tab/window management uses ctrl+t/w/n
+(Linux-native) on both platforms. On macOS, Hammerspoon remaps ctrl+{t,w,n} →
+cmd+{t,w,n} so the same physical key (A+t/w/n on Voyager) works everywhere.
 
 ---
 

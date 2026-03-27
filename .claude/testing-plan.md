@@ -78,40 +78,37 @@ read it to understand current state and adjust implementation accordingly.
 | 2.17 | `alt+tab` does NOT show windows from other Spaces                  | pass   |                                          |
 | 2.18 | `shift+alt+tab` cycles backwards                                   | pass   |                                          |
 
-### 2c-browser. Browser shortcuts (native, no remap)
+### 2c-browser. Browser shortcuts (ctrl+t/w/n remapped via Hammerspoon)
 
-Browser shortcuts use each platform's native defaults — no Hammerspoon remap.
-`cmd+t`/`cmd+w`/`cmd+n` are macOS-native. `ctrl+t`/`ctrl+w`/`ctrl+n` are
-GNOME-native. Different physical keys on Voyager (D+t vs A+t), but both
-platform-default.
+Hammerspoon remaps ctrl+{t,w,n} → cmd+{t,w,n} on macOS so that A+t/w/n (ctrl on
+Voyager) opens/closes tabs and windows — matching Linux-native ctrl+t/w/n.
+D+t/w/n (cmd) still works natively too.
 
-User note, we're getting mixed up here. I **do** want these shortcuts to be
-consistent between Mac and Gnome. I don't care which one modifies, as long as
-it's consistent. Earlier write ups indicated that hammerspoon was changing Mac
-browser commands to cmd from ctrl, which would have made it not match Gnome.
-Either having hammerspoon remap MacOS chrome or having Gnome/firefox remap is
-fine, whichever can be implemented, but I want the same modifier plus t/w/n to
-do tab and window operations in both environments
+| #    | Test                                                      | Result | Notes                                                                                                             |
+| ---- | --------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
+| 2.19 | In Chrome: `cmd+t` opens new tab (native)                 | pass   |                                                                                                                   |
+| 2.20 | In Chrome: `cmd+w` closes current tab (native)            | pass   |                                                                                                                   |
+| 2.21 | In Chrome: `cmd+n` opens new window (native)              | pass   |                                                                                                                   |
+| 2.22 | In Chrome: `ctrl+l` focuses address bar (native)          | pass   | A+l, same both platforms                                                                                          |
+| 2.23 | In Chrome: `ctrl+tab` switches tabs (native)              | pass   | Same both platforms                                                                                               |
+| 2.24 | `ctrl+t` in Chrome opens a new tab (Hammerspoon remap)    | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
+| 2.25 | `ctrl+w` in Chrome closes current tab (Hammerspoon remap) | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
+| 2.26 | `ctrl+n` in Chrome opens new window (Hammerspoon remap)   | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
 
-| #    | Test                                                                            | Result | Notes                    |
-| ---- | ------------------------------------------------------------------------------- | ------ | ------------------------ |
-| 2.19 | In Chrome: `cmd+t` opens new tab (native)                                       | pass   | D+t on Voyager           |
-| 2.20 | In Chrome: `cmd+w` closes current tab (native)                                  | pass   | D+w on Voyager           |
-| 2.21 | In Chrome: `cmd+n` opens new window (native)                                    | pass   | D+n on Voyager           |
-| 2.22 | In Chrome: `ctrl+l` focuses address bar (native)                                | pass   | A+l, same both platforms |
-| 2.23 | In Chrome: `ctrl+tab` switches tabs (native)                                    | pass   | Same both platforms      |
-| 2.24 | `ctrl+t` in Chrome does NOT open a tab (no Hammerspoon remap)                   | pass   | Confirms remap removed   |
-| 2.25 | `ctrl+t` in a text field transposes characters (native Cocoa behavior restored) | skip   | I don't care about this  |
+### 2d. macOS Ghostty (native + Hammerspoon remap)
 
-### 2d. macOS Ghostty (native shortcuts, no custom keybinds)
+**Same as browser**
 
-| #    | Test                                        | Result | Notes          |
-| ---- | ------------------------------------------- | ------ | -------------- |
-| 2.26 | `cmd+t` opens new Ghostty tab (native)      | pass   | D+t on Voyager |
-| 2.27 | `cmd+w` closes Ghostty tab/surface (native) | pass   | D+w on Voyager |
-| 2.28 | `cmd+n` opens new Ghostty window (native)   | pass   | D+n on Voyager |
-| 2.29 | `cmd+c` copies in Ghostty (native)          | pass   | D+c on Voyager |
-| 2.30 | `cmd+v` pastes in Ghostty (native)          | pass   | D+v on Voyager |
+| #    | Test                                                    | Result | Notes                         |
+| ---- | ------------------------------------------------------- | ------ | ----------------------------- |
+| 2.27 | `cmd+t` opens new Ghostty tab (native)                  |        | D+t on Voyager                |
+| 2.28 | `cmd+w` closes Ghostty tab/surface (native)             |        | D+w on Voyager                |
+| 2.29 | `cmd+n` opens new Ghostty window (native)               |        | D+n on Voyager                |
+| 2.30 | `cmd+c` copies in Ghostty (native)                      |        | D+c on Voyager                |
+| 2.31 | `cmd+v` pastes in Ghostty (native)                      |        | D+v on Voyager                |
+| 2.32 | `ctrl+t` opens new Ghostty tab (Hammerspoon remap)      |        | A+t on Voyager, matches Linux |
+| 2.33 | `ctrl+w` closes Ghostty tab/surface (Hammerspoon remap) |        | A+w on Voyager, matches Linux |
+| 2.34 | `ctrl+n` opens new Ghostty window (Hammerspoon remap)   |        | A+n on Voyager, matches Linux |
 
 ---
 
@@ -192,23 +189,23 @@ do tab and window operations in both environments
 
 Run these after both macOS and GNOME phases are complete.
 
-| #    | Action            | macOS binding         | GNOME binding            | Same physical keys? | Notes                      |
-| ---- | ----------------- | --------------------- | ------------------------ | ------------------- | -------------------------- |
-| X.1  | App launcher      | cmd+space (Spotlight) | super+space (Activities) | Yes (D+space)       |                            |
-| X.2  | Window cycle      | alt+tab               | alt+tab                  | Yes (S+tab)         |                            |
-| X.3  | Next workspace    | ctrl+right            | ctrl+right               | Yes (A+right)       |                            |
-| X.4  | Prev workspace    | ctrl+left             | ctrl+left                | Yes (A+left)        |                            |
-| X.5  | Workspace N       | ctrl+N                | ctrl+N                   | Yes (A+N)           |                            |
-| X.6  | Left half         | hyper+h               | hyper+h                  | Yes (F+h)           |                            |
-| X.7  | Right half        | hyper+l               | hyper+l                  | Yes (F+l)           |                            |
-| X.8  | Maximize          | hyper+k               | hyper+k                  | Yes (F+k)           |                            |
-| X.9  | Copy (Ghostty)    | cmd+c                 | super+c                  | Yes (D+c)           | One-platform remap (GNOME) |
-| X.10 | Paste (Ghostty)   | cmd+v                 | super+v                  | Yes (D+v)           | One-platform remap (GNOME) |
-| X.11 | New browser tab   | cmd+t                 | ctrl+t                   | No (D+t vs A+t)     | Both platform-native       |
-| X.12 | Close browser tab | cmd+w                 | ctrl+w                   | No (D+w vs A+w)     | Both platform-native       |
-| X.13 | New Ghostty tab   | cmd+t                 | ctrl+t                   | No (D+t vs A+t)     | Both platform-native       |
-| X.14 | Close Ghostty tab | cmd+w                 | ctrl+w                   | No (D+w vs A+w)     | Both platform-native       |
-| X.15 | Address bar       | ctrl+l                | ctrl+l                   | Yes (A+l)           | Native both platforms      |
+| #    | Action            | macOS binding            | GNOME binding            | Same physical keys? | Notes                      |
+| ---- | ----------------- | ------------------------ | ------------------------ | ------------------- | -------------------------- |
+| X.1  | App launcher      | cmd+space (Spotlight)    | super+space (Activities) | Yes (D+space)       |                            |
+| X.2  | Window cycle      | alt+tab                  | alt+tab                  | Yes (S+tab)         |                            |
+| X.3  | Next workspace    | ctrl+right               | ctrl+right               | Yes (A+right)       |                            |
+| X.4  | Prev workspace    | ctrl+left                | ctrl+left                | Yes (A+left)        |                            |
+| X.5  | Workspace N       | ctrl+N                   | ctrl+N                   | Yes (A+N)           |                            |
+| X.6  | Left half         | hyper+h                  | hyper+h                  | Yes (F+h)           |                            |
+| X.7  | Right half        | hyper+l                  | hyper+l                  | Yes (F+l)           |                            |
+| X.8  | Maximize          | hyper+k                  | hyper+k                  | Yes (F+k)           |                            |
+| X.9  | Copy (Ghostty)    | cmd+c                    | super+c                  | Yes (D+c)           | One-platform remap (GNOME) |
+| X.10 | Paste (Ghostty)   | cmd+v                    | super+v                  | Yes (D+v)           | One-platform remap (GNOME) |
+| X.11 | New browser tab   | ctrl+t (via Hammerspoon) | ctrl+t                   | Yes (A+t)           | cmd+t also works on Mac    |
+| X.12 | Close browser tab | ctrl+w (via Hammerspoon) | ctrl+w                   | Yes (A+w)           | cmd+w also works on Mac    |
+| X.13 | New Ghostty tab   | ctrl+t (via Hammerspoon) | ctrl+t                   | Yes (A+t)           | cmd+t also works on Mac    |
+| X.14 | Close Ghostty tab | ctrl+w (via Hammerspoon) | ctrl+w                   | Yes (A+w)           | cmd+w also works on Mac    |
+| X.15 | Address bar       | ctrl+l                   | ctrl+l                   | Yes (A+l)           | Native both platforms      |
 
 ---
 
