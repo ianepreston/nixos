@@ -20,6 +20,8 @@
     CustomUserPreferences."com.apple.dock" = {
       # Speed up Mission Control / space-switch animation
       expose-animation-duration = "0.1";
+      # Don't auto-switch to a Space when an app receives focus
+      workspaces-auto-swoosh = false;
     };
 
     # ctrl+number Space switching via symbolic hotkeys
@@ -121,6 +123,7 @@
       autohide = false;
       minimize-to-application = true; # keep dock tidy
       show-recents = false; # hide recent apps section
+      mru-spaces = false; # don't rearrange Spaces based on most recent use
       wvous-tl-corner = 2; # Mission Control
     };
 
