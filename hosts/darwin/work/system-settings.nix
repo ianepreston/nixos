@@ -26,29 +26,99 @@
     CustomUserPreferences."com.apple.symbolichotkeys" = {
       AppleSymbolicHotKeys = {
         # Switch to Desktop 1: ctrl+1
-        "118" = { enabled = true; value = { type = "standard"; parameters = [ 49 18 262144 ]; }; };
+        "118" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              49
+              18
+              262144
+            ];
+          };
+        };
         # Switch to Desktop 2: ctrl+2
-        "119" = { enabled = true; value = { type = "standard"; parameters = [ 50 19 262144 ]; }; };
+        "119" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              50
+              19
+              262144
+            ];
+          };
+        };
         # Switch to Desktop 3: ctrl+3
-        "120" = { enabled = true; value = { type = "standard"; parameters = [ 51 20 262144 ]; }; };
+        "120" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              51
+              20
+              262144
+            ];
+          };
+        };
         # Switch to Desktop 4: ctrl+4
-        "121" = { enabled = true; value = { type = "standard"; parameters = [ 52 21 262144 ]; }; };
+        "121" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              52
+              21
+              262144
+            ];
+          };
+        };
         # Switch to Desktop 5: ctrl+5
-        "122" = { enabled = true; value = { type = "standard"; parameters = [ 53 23 262144 ]; }; };
+        "122" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              53
+              23
+              262144
+            ];
+          };
+        };
 
         # ctrl+left/right for workspace navigation
         # Mission Control: Move left a space (ID 79): ctrl+left
-        "79" = { enabled = true; value = { type = "standard"; parameters = [ 65535 123 262144 ]; }; };
+        "79" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              65535
+              123
+              262144
+            ];
+          };
+        };
         # Mission Control: Move right a space (ID 81): ctrl+right
-        "81" = { enabled = true; value = { type = "standard"; parameters = [ 65535 124 262144 ]; }; };
+        "81" = {
+          enabled = true;
+          value = {
+            type = "standard";
+            parameters = [
+              65535
+              124
+              262144
+            ];
+          };
+        };
       };
     };
 
-    # Dock — left side to save vertical space on wide monitor, half default size
+    # Dock — bottom, small icons, always visible
     dock = {
       orientation = "left";
-      tilesize = 64; # default is 64
-      autohide = true;
+      tilesize = 32;
+      autohide = false;
       minimize-to-application = true; # keep dock tidy
       show-recents = false; # hide recent apps section
       wvous-tl-corner = 2; # Mission Control
