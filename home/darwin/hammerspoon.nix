@@ -56,9 +56,9 @@
     hs.hotkey.bind({"alt", "shift"}, "tab", function() switcher:previous() end)
 
     ---------------------------------------------------------------------------
-    -- Cross-platform parity for tab/window management is handled on the
-    -- Linux side via keyd (super+t/w/n → ctrl+t/w/n) rather than here.
-    -- On macOS, use cmd+t/w/n (D key on Voyager) natively.
+    -- Cross-platform parity for copy/cut/paste and tab/window management is
+    -- handled on Linux via xremap (super+c/x/v/t/w/n → ctrl+c/x/v/t/w/n,
+    -- excluding terminals). On macOS, cmd+key works natively.
     ---------------------------------------------------------------------------
   '';
 }

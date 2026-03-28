@@ -286,6 +286,7 @@ with lib.hm.gvariant;
         "user-theme@gnome-shell-extensions.gcampax.github.com"
         "appindicatorsupport@rgcjonas.gmail.com"
         "dash-in-panel@fthx"
+        "xremap@k0kubun.com"
       ];
       favorite-apps = [
         "org.gnome.Nautilus.desktop"

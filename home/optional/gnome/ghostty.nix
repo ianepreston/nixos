@@ -10,15 +10,14 @@
       font-size = "11";
       # background-opacity = "0.85";
 
-      # Copy/paste: super+c/v (D key on Voyager = cmd on macOS)
-      # Tab/window management: ctrl+t/w/n (Linux-native convention)
-      # keyd maps super+t/w/n → ctrl+t/w/n so D+t also works (matching macOS cmd+t)
+      # macOS parity: super+key for all common shortcuts (D key on Voyager = cmd)
+      # xremap excludes Ghostty so we receive raw super+key presses
       keybind = [
         "super+c=copy_to_clipboard"
         "super+v=paste_from_clipboard"
-        "ctrl+t=new_tab"
-        "ctrl+w=close_surface"
-        "ctrl+n=new_window"
+        "super+t=new_tab"
+        "super+w=close_surface"
+        "super+n=new_window"
       ];
     };
   };
