@@ -174,6 +174,9 @@ with lib.hm.gvariant;
       switch-to-workspace-5 = [ "<Ctrl>5" ];
       switch-windows = [ "<Alt>Tab" ];
       switch-windows-backward = [ "<Shift><Alt>Tab" ];
+      # Remove Super+space from input source switching (conflicts with toggle-overview)
+      switch-input-source = [ ];
+      switch-input-source-backward = [ ];
     };
 
     "org/gnome/desktop/wm/preferences" = {
