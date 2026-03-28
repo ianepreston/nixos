@@ -28,7 +28,8 @@ in the nix config explaining this prerequisite.
 
 ## Issue 2: macOS app-to-Space assignment is fragile
 
-**Severity**: Low — workflows_update.md asks about this but doesn't depend on it.
+**Severity**: Low — workflows_update.md asks about this but doesn't depend on
+it.
 
 **Problem**: Assigning apps to specific Spaces requires the Space's UUID, which
 is ephemeral and changes when Spaces are recreated. The UUIDs in
@@ -61,32 +62,13 @@ handled by the application, not the DE.
 
 ---
 
-## Issue 4: App launcher parity is imperfect
-
-**Severity**: Low — the workflows_update.md acknowledges this is fine.
-
-**Problem**: macOS uses `cmd+space` for Spotlight, and the proposal is to use
-`super+space` for GNOME Activities. On the Voyager, `cmd` is the D key (ring
-finger hold) and `super` maps to the same key on Linux. So the physical keys
-are the same — `hold-D + space`. However, Spotlight and GNOME Activities are
-functionally different (Spotlight is a search bar, Activities is an overview +
-search). Bare `Super` currently opens Activities on GNOME — disabling this to
-require `Super+space` means a bare Super tap does nothing.
-
-**Proposed solution**: Implement as planned (`Super+space` for GNOME). The
-functional difference between Spotlight and Activities is acceptable. If the
-user misses bare-Super activation, it can be re-enabled by removing the
-`overlay-key = ""` setting. Note this in testing.
-
----
-
 ## Issue 5: Symbolic hotkey parameters need careful validation
 
 **Severity**: Medium — wrong values silently fail.
 
-**Problem**: The `com.apple.symbolichotkeys` plist uses `[ASCII, keycode,
-modifier_mask]` tuples. Getting any of these wrong results in the shortcut
-silently not working. The keycodes for number keys specifically:
+**Problem**: The `com.apple.symbolichotkeys` plist uses
+`[ASCII, keycode, modifier_mask]` tuples. Getting any of these wrong results in
+the shortcut silently not working. The keycodes for number keys specifically:
 
 - `1` = keycode 18, `2` = 19, `3` = 20, `4` = 21, `5` = 23 (note: NOT 22!)
 - `6` = 22, `7` = 26, `8` = 28, `9` = 25, `0` = 29
@@ -100,32 +82,6 @@ plan includes per-key verification. If a specific key doesn't work, we can debug
 by reading back the plist with `defaults read com.apple.symbolichotkeys` and
 comparing against the expected values. Start with just 3-5 Spaces to keep the
 surface area manageable.
-
----
-
-## Issue 6: Copy/paste parity is Ghostty/browser-only on GNOME
-
-**Severity**: Low — workflows_update.md mentions "configure GNOME to use them
-universally" for cmd+c/v.
-
-**Problem**: On GNOME, `super+c`/`super+v` for copy/paste only works in apps
-that are explicitly configured for it (Ghostty). There's no dconf setting for
-system-wide super→ctrl remapping. Making this truly universal would require
-a key remapping daemon like `xremap` or `keyd`, adding another system-level
-component.
-
-**Impact**: The physical keys `D+c`/`D+v` will work in Ghostty (super+c/v
-binding) and in browsers (ctrl+c/v is native, but that's `A+c` on Voyager, not
-`D+c`). This means copy/paste physical keys differ between platforms in non-
-terminal, non-Ghostty apps.
-
-**Proposed solution**: Accept this as a known limitation for now. The most
-common apps (Ghostty, browser) are covered. If this becomes a pain point, adding
-`xremap` is straightforward — it has a NixOS home-manager module. Flag it as a
-future enhancement rather than blocking the initial implementation on it. Note:
-the browser actually uses `ctrl+c`/`ctrl+v` natively on both platforms, so the
-physical key is `A+c`/`A+v` (hold index finger) — which is consistent. The
-mismatch is only in non-browser GUI apps on GNOME.
 
 ---
 
@@ -155,9 +111,9 @@ workflows_update.md says "cmd+tab to do full app cycling in MacOS is fine to
 keep as is."
 
 **Proposed solution**: Keep both. `cmd+tab` for app-level switching (native),
-`alt+tab` for window-level switching (Hammerspoon). This matches the GNOME
-model where `alt+tab` switches windows and `super+tab` could switch apps. Test
-that they don't interfere with each other.
+`alt+tab` for window-level switching (Hammerspoon). This matches the GNOME model
+where `alt+tab` switches windows and `super+tab` could switch apps. Test that
+they don't interfere with each other.
 
 ---
 
@@ -166,13 +122,14 @@ that they don't interfere with each other.
 **Severity**: Resolved.
 
 **Problem**: Browser and Ghostty tab shortcuts used each platform's native
-binding: `cmd+t`/`cmd+w` on macOS (D+t/D+w on Voyager) and `ctrl+t`/`ctrl+w`
-on GNOME (A+t/A+w on Voyager). Different physical keys for the same action.
+binding: `cmd+t`/`cmd+w` on macOS (D+t/D+w on Voyager) and `ctrl+t`/`ctrl+w` on
+GNOME (A+t/A+w on Voyager). Different physical keys for the same action.
 
-**Resolution**: Hammerspoon on macOS remaps ctrl+{t,w,n} → cmd+{t,w,n}, so
-A+t/w/n (ctrl on Voyager) opens/closes tabs and windows on both platforms.
-The native cmd+t/w/n shortcuts still work on macOS too. This is a one-platform
-remap (macOS only), keeping Linux completely native.
+**Resolution**: Use mac-native cmd+t/w/n (D+t/w/n on Voyager) and remap GNOME
+with keyd: super+{t,w,n} → ctrl+{t,w,n}. This makes D+t/w/n the universal
+physical key on both platforms. macOS is completely native, GNOME uses keyd to
+translate super → ctrl for these combos. ctrl+t/w/n still works natively on
+GNOME too (A+t/w/n on Voyager).
 
 ---
 
@@ -181,8 +138,8 @@ remap (macOS only), keeping Linux completely native.
 **Severity**: Low — technical debt, not blocking.
 
 **Problem**: The macOS Ghostty config in `home/ian.preston/work.nix` uses
-`home.file."Library/Application Support/com.mitchellh.ghostty/config"` (raw
-file write) while GNOME uses `programs.ghostty` (home-manager module). The
+`home.file."Library/Application Support/com.mitchellh.ghostty/config"` (raw file
+write) while GNOME uses `programs.ghostty` (home-manager module). The
 `workflows.md` notes this was due to past issues. Adding keybindings to the
 macOS config means appending to the raw text string rather than using the
 structured `settings.keybind` list.
@@ -194,35 +151,88 @@ if desired.
 
 ---
 
+## Issue 12: Mission Control keyboard window selection doesn't work
+
+**Severity**: Low — mouse selection still works, this is a convenience feature.
+
+**Test**: 1.8 — arrow keys do nothing when Mission Control is open.
+
+**Problem**: When Mission Control is activated (via hot corner, ctrl+up, or F3),
+arrow keys don't select between visible windows. macOS Mission Control has
+limited keyboard navigation — it's primarily a mouse/trackpad-driven interface.
+Arrow keys move between Spaces (the top row) but don't navigate individual
+windows within the current Space view.
+
+**Proposed solutions**:
+
+1. **Accept limitation** — Mission Control is inherently mouse-driven on macOS.
+   Use it for visual overview, then click the desired window. Arrow keys aren't
+   the intended interaction model.
+2. **Use alt+tab instead** — Hammerspoon's alt+tab window switcher (test 2.16)
+   already provides keyboard-driven window selection within the current Space.
+   This is the better keyboard workflow for switching windows.
+3. **Explore Hammerspoon window chooser** — Hammerspoon has a
+   `hs.window.switcher` or `hs.chooser` API that could present a searchable
+   window list on a hotkey, but this adds complexity for marginal benefit over
+   alt+tab.
+
+**Recommendation**: Accept (option 1). Alt+tab covers the keyboard use case.
+
 ---
 
-## Issue 11: workflows_update.md browser section assumes cross-platform remap
+## Issue 13: ctrl+N Space switching not working on macOS
 
-**Severity**: Resolved.
+**Severity**: Medium — blocks direct Space-by-number navigation (tests
+2.5–2.10).
 
-**Problem**: The `workflows_update.md` Browser section asked about remapping
-GNOME browsers to use `cmd+t` (super+t) to match macOS.
+**Test**: 2.5–2.9 fail (ping sound, no action), 2.10 fails (Voyager dependent).
 
-**Resolution**: Instead of remapping Linux, Hammerspoon on macOS remaps
-ctrl+{t,w,n} → cmd+{t,w,n}. This makes ctrl+t/w/n (A+key on Voyager) the
-universal shortcut on both platforms. Linux stays completely native. Only one
-platform is remapped (macOS), and the native cmd+t/w/n shortcuts still work
-there too.
+**Problem**: `ctrl+1` through `ctrl+5` don't switch to the corresponding Space.
+A system ping sound plays, indicating macOS recognizes the keypress but can't
+execute the action. Two possible causes:
+
+1. **Symbolic hotkey config not applied correctly** — The
+   `com.apple.symbolichotkeys` plist values may have wrong keycodes or modifier
+   masks, or the settings weren't activated (requires logout/login or
+   `killall Dock`). Issue 5 warned about this.
+2. **Conflict with application shortcuts** — The test notes mention "ctrl+number
+   is used by Slack." If Slack (or another app) claims ctrl+N globally or in the
+   foreground app, macOS may not pass it to the Space switcher.
+
+**Proposed solutions**:
+
+1. **Debug the symbolic hotkey config** — Run
+   `defaults read com.apple.symbolichotkeys` and verify entries 118–122 (Space
+   1–5 shortcuts) have the correct format:
+   `{enabled = 1; value = {parameters = (49, 18, 262144); type = standard;};}`
+   where 262144 = ctrl modifier. Try logout/login if values look correct.
+2. **Remap to a different modifier** — If ctrl+N conflicts are widespread, use
+   `hyper+N` (F+number on Voyager) instead. This avoids all application
+   conflicts since hyper (ctrl+alt+shift+cmd) is never used by apps. Would need
+   equivalent GNOME binding update for parity.
+3. **Use Hammerspoon for Space switching** — Hammerspoon can switch Spaces via
+   `hs.spaces.gotoSpace(N)`. Bind to hyper+N or any other combo. More reliable
+   than symbolic hotkeys and easier to debug.
+
+**Recommendation**: Start with option 1 (debug). If the config is correct but
+conflicts persist, move to option 2 (hyper+N) for both platforms.
 
 ---
 
 ## Summary
 
-| Issue | Severity | Blocks implementation? | Action |
-|-------|----------|----------------------|--------|
-| 1. Spaces can't be auto-created | Medium | No — manual step | Document prerequisite |
-| 2. App-to-Space assignment fragile | Low | No | Don't implement |
-| 3. ctrl+arrows conflicts with word nav | Low-Medium | No | Accept tradeoff |
-| 4. Launcher parity imperfect | Low | No | Accept difference |
-| 5. Symbolic hotkey params tricky | Medium | No — test carefully | Validate per-key |
-| 6. Copy/paste not universal on GNOME | Low | No | Future enhancement (xremap) |
-| 7. Homebrew won't auto-uninstall | Low | No | Manual step |
-| 8. Two tab switchers on macOS | Low | No | Keep both |
-| 9. Browser/tab key asymmetry | Low | No | Intentional — platform natives |
-| 10. Ghostty config inconsistency | Low | No | Append to raw config |
-| 11. workflows_update browser assumes remap | Info | No | Resolved by design principle |
+| Issue                                      | Severity   | Blocks implementation? | Action                              |
+| ------------------------------------------ | ---------- | ---------------------- | ----------------------------------- |
+| 1. Spaces can't be auto-created            | Medium     | No — manual step       | Document prerequisite               |
+| 2. App-to-Space assignment fragile         | Low        | No                     | Don't implement                     |
+| 3. ctrl+arrows conflicts with word nav     | Low-Medium | No                     | Accept tradeoff                     |
+| 4. Launcher parity imperfect               | Low        | No                     | Accept difference                   |
+| 5. Symbolic hotkey params tricky           | Medium     | No — test carefully    | Validate per-key                    |
+| 6. Copy/paste not universal on GNOME       | Low        | No                     | Future enhancement (xremap)         |
+| 7. Homebrew won't auto-uninstall           | Low        | No                     | Manual step                         |
+| 8. Two tab switchers on macOS              | Low        | No                     | Keep both                           |
+| 9. Browser/tab key asymmetry               | Resolved   | No                     | Native Mac + keyd on GNOME          |
+| 10. Ghostty config inconsistency           | Low        | No                     | Append to raw config                |
+| 11. workflows_update browser assumes remap | Resolved   | No                     | Native Mac + keyd on GNOME          |
+| 12. Mission Control keyboard nav           | Low        | No                     | Accept — use alt+tab instead        |
+| 13. ctrl+N Space switching broken          | Medium     | Partially              | Debug config, else remap to hyper+N |

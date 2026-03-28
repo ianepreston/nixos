@@ -84,16 +84,13 @@ Hammerspoon remaps ctrl+{t,w,n} → cmd+{t,w,n} on macOS so that A+t/w/n (ctrl o
 Voyager) opens/closes tabs and windows — matching Linux-native ctrl+t/w/n.
 D+t/w/n (cmd) still works natively too.
 
-| #    | Test                                                      | Result | Notes                                                                                                             |
-| ---- | --------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
-| 2.19 | In Chrome: `cmd+t` opens new tab (native)                 | pass   |                                                                                                                   |
-| 2.20 | In Chrome: `cmd+w` closes current tab (native)            | pass   |                                                                                                                   |
-| 2.21 | In Chrome: `cmd+n` opens new window (native)              | pass   |                                                                                                                   |
-| 2.22 | In Chrome: `ctrl+l` focuses address bar (native)          | pass   | A+l, same both platforms                                                                                          |
-| 2.23 | In Chrome: `ctrl+tab` switches tabs (native)              | pass   | Same both platforms                                                                                               |
-| 2.24 | `ctrl+t` in Chrome opens a new tab (Hammerspoon remap)    | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
-| 2.25 | `ctrl+w` in Chrome closes current tab (Hammerspoon remap) | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
-| 2.26 | `ctrl+n` in Chrome opens new window (Hammerspoon remap)   | fail   | Sometimes hitting ctrl+t works, but it's very hit and miss. Mostly doesn't work. Rapidly firing sometimes does it |
+| #    | Test                                             | Result | Notes                    |
+| ---- | ------------------------------------------------ | ------ | ------------------------ |
+| 2.19 | In Chrome: `cmd+t` opens new tab (native)        | pass   |                          |
+| 2.20 | In Chrome: `cmd+w` closes current tab (native)   | pass   |                          |
+| 2.21 | In Chrome: `cmd+n` opens new window (native)     | pass   |                          |
+| 2.22 | In Chrome: `ctrl+l` focuses address bar (native) | pass   | A+l, same both platforms |
+| 2.23 | In Chrome: `ctrl+tab` switches tabs (native)     | pass   | Same both platforms      |
 
 ### 2d. macOS Ghostty (native + Hammerspoon remap)
 
