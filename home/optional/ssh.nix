@@ -30,6 +30,10 @@
         hostname = "laconia.ipreston.net";
         user = "ipreston";
         port = 2222;
+        extraOptions = {
+          "RequestTTY" = "yes";
+          "RemoteCommand" = "TERM=xterm-256color bash -l";
+        };
       };
     };
   };
