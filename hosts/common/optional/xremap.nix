@@ -8,6 +8,9 @@
     withGnome = true;
     serviceMode = "user";
     userName = hostSpec.username;
+    # Explicitly specify keyboards to avoid selecting virtual "Keyboard passthrough" device
+    watch = true;
+    deviceNames = [ "ZSA Technology Labs Voyager" ];
     config = {
       keymap = [
         {
