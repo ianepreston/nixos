@@ -68,5 +68,7 @@ in
     alias isaac="dbexec repo run isaac"
     export I_DANGEROUSLY_OPT_IN_TO_UNSUPPORTED_ALPHA_TOOLS=true
     export MCP_PRIVACY_SUMMARIZATION_ENABLED=true
+    export JAVA_HOME="/opt/homebrew/opt/openjdk@17"
+    export PATH="$JAVA_HOME/bin:$PATH"
   '';
 }
