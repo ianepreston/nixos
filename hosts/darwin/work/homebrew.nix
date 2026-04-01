@@ -19,6 +19,7 @@
       "sf"
       "databricks/tap/databricks"
       "hashicorp/tap/terraform"
+      "openjdk@17"
     ];
     casks = [
       "ghostty"
