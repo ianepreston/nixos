@@ -33,6 +33,8 @@
         extraOptions = {
           "RequestTTY" = "yes";
           "RemoteCommand" = "TERM=xterm-256color bash -l";
+          "IgnoreUnknown" = "WarnWeakCrypto";
+          "WarnWeakCrypto" = "no-pq-kex";
         };
       };
     };
