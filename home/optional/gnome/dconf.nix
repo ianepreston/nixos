@@ -181,7 +181,6 @@ with lib.hm.gvariant;
 
     "org/gnome/desktop/wm/preferences" = {
       button-layout = "icon:minimize,maximize,close";
-      num-workspaces = 5;
     };
 
     "org/gnome/evince/default" = {
@@ -238,7 +237,7 @@ with lib.hm.gvariant;
     };
 
     "org/gnome/mutter" = {
-      dynamic-workspaces = false;
+      dynamic-workspaces = true;
       overlay-key = ""; # disable bare Super opening Activities
     };
 
