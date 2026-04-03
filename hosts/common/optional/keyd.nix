@@ -1,16 +1,17 @@
-# Cross-platform parity: super+{t,w,n} → ctrl+{t,w,n}
-# Makes D+t (super/cmd key on Voyager) open/close tabs and windows,
-# matching macOS cmd+t/w/n behavior. ctrl+t/w/n still works natively too.
+# Full Ctrl↔Super swap for macOS-like keybindings on Linux.
+# Physical Super (Cmd position) sends Ctrl for standard app shortcuts.
+# Physical Ctrl sends Super for terminal control character passthrough via ghostty.
 {
   services.keyd = {
     enable = true;
     keyboards.default = {
       ids = [ "*" ];
       settings = {
-        meta = {
-          t = "C-t";
-          w = "C-w";
-          n = "C-n";
+        main = {
+          leftcontrol = "leftmeta";
+          leftmeta = "leftcontrol";
+          rightcontrol = "rightmeta";
+          rightmeta = "rightcontrol";
         };
       };
     };

@@ -76,7 +76,6 @@
               ./hosts/nixos/${host}
               nix-flatpak.nixosModules.nix-flatpak
               stylix.nixosModules.stylix
-              inputs.xremap-flake.nixosModules.default
             ];
           };
         }) (builtins.attrNames (builtins.readDir ./hosts/nixos))
@@ -134,11 +133,6 @@
     # Secrets management. See ./docs/secretsmgmt.md
     sops-nix = {
       url = "github:mic92/sops-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-    # Key remapping with per-application rules
-    xremap-flake = {
-      url = "github:xremap/nix-flake";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     #

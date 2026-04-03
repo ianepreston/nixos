@@ -21,10 +21,8 @@
   environment.systemPackages = with pkgs; [
     gnomeExtensions.user-themes
     gnomeExtensions.appindicator
-    gnomeExtensions.xremap # Required for xremap to detect focused application
     wl-clipboard
     xclip
-
   ];
   environment.gnome.excludePackages = (
     with pkgs;

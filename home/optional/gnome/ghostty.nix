@@ -10,14 +10,27 @@
       font-size = "11";
       # background-opacity = "0.85";
 
-      # macOS parity: super+key for all common shortcuts (D key on Voyager = cmd)
-      # xremap excludes Ghostty so we receive raw super+key presses
+      # macOS parity with keyd full Ctrl↔Super swap.
+      # Physical Super → Ctrl (keyd), so ctrl+key triggers app shortcuts.
+      # Physical Ctrl → Super (keyd), so super+key sends terminal control chars.
       keybind = [
-        "super+c=copy_to_clipboard"
-        "super+v=paste_from_clipboard"
-        "super+t=new_tab"
-        "super+w=close_surface"
-        "super+n=new_window"
+        # App shortcuts (physical Super+key → Ctrl+key after keyd swap)
+        "ctrl+c=copy_to_clipboard"
+        "ctrl+v=paste_from_clipboard"
+        "ctrl+t=new_tab"
+        "ctrl+w=close_surface"
+        "ctrl+n=new_window"
+
+        # Terminal control characters (physical Ctrl+key → Super+key after keyd swap)
+        "super+c=text:\\x03" # SIGINT (Ctrl+C)
+        "super+d=text:\\x04" # EOF (Ctrl+D)
+        "super+z=text:\\x1a" # SIGTSTP - suspend (Ctrl+Z)
+
+        # Vim split navigation (physical Ctrl+hjkl → Super+hjkl after keyd swap)
+        "super+h=text:\\x08" # Ctrl+H for vim split left
+        "super+j=text:\\x0a" # Ctrl+J for vim split down
+        "super+k=text:\\x0b" # Ctrl+K for vim split up
+        "super+l=text:\\x0c" # Ctrl+L for vim split right / clear screen
       ];
     };
   };

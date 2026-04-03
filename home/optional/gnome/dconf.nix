@@ -268,7 +268,7 @@ with lib.hm.gvariant;
 
     "org/gnome/settings-daemon/plugins/media-keys" = {
       custom-keybindings = [ ];
-      home = [ "<Super>e" ];
+      home = [ "<Ctrl>e" ]; # physical Super+E after keyd swap
       magnifier = [ ];
       magnifier-zoom-in = [ ];
       magnifier-zoom-out = [ ];
@@ -288,7 +288,6 @@ with lib.hm.gvariant;
         "user-theme@gnome-shell-extensions.gcampax.github.com"
         "appindicatorsupport@rgcjonas.gmail.com"
         "dash-in-panel@fthx"
-        "xremap@k0kubun.com"
       ];
       favorite-apps = [
         "org.gnome.Nautilus.desktop"
@@ -311,10 +310,12 @@ with lib.hm.gvariant;
       enable-hot-corners = true; # top-left hot corner → Activities
     };
 
+    # After keyd Ctrl↔Super swap: physical Super sends Ctrl, physical Ctrl sends Super.
+    # So use <Ctrl> for shortcuts triggered by physical Super key.
     "org/gnome/shell/keybindings" = {
-      show-screenshot-ui = [ "<Shift><Super>s" ];
-      toggle-overview = [ "<Super>space" "<Ctrl>Up" ]; # app launcher + Mission Control equivalent
-      toggle-message-tray = [ "<Super>m" ];
+      show-screenshot-ui = [ "<Shift><Ctrl>s" ]; # physical Shift+Super+S
+      toggle-overview = [ "<Ctrl>space" "<Super>Up" ]; # physical Super+Space (Spotlight-like)
+      toggle-message-tray = [ "<Ctrl>m" ]; # physical Super+M
       focus-active-notification = [ ];
     };
 

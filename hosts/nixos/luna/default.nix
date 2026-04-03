@@ -38,7 +38,7 @@
       "hosts/common/optional/flatpak.nix"
       "hosts/common/optional/gaming.nix"
       "hosts/common/optional/gnome.nix" # WM
-      "hosts/common/optional/xremap.nix"
+      "hosts/common/optional/keyd.nix"
       "hosts/common/optional/nvidia-gtx1060.nix"
       "hosts/common/optional/obsidian.nix"
       "hosts/common/optional/smbclient.nix"
