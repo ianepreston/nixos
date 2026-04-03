@@ -15,6 +15,7 @@
           c = "C-c";
           v = "C-v";
           x = "C-x";
+          space = "C-space";
         };
       };
     };
