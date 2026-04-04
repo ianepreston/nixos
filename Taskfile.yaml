@@ -7,6 +7,13 @@ tasks:
   default:
     cmd: task --list
     silent: true
+  lint:
+    desc: Run nix linters
+    cmds:
+      - statix check . --ignore result
+      - deadnix --no-underscore --exclude result .
+      - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
+      - nix flake check
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake .
