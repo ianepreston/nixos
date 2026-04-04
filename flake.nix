@@ -55,6 +55,13 @@
               check-json.enable = true;
               trim-trailing-whitespace.enable = true;
               end-of-file-fixer.enable = true;
+              flake-check = {
+                enable = true;
+                name = "nix flake check";
+                entry = "nix flake check --all-systems";
+                language = "system";
+                pass_filenames = false;
+              };
             };
           };
         }
