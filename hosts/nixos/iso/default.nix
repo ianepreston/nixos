@@ -26,6 +26,8 @@
   # root's ssh key are mainly used for remote deployment
   users.extraUsers.root = {
     inherit (config.users.users.${hostSpec.username}) hashedPassword;
+    # Override installer's empty initialHashedPassword since we're setting a real password
+    initialHashedPassword = lib.mkForce null;
     openssh.authorizedKeys.keys = config.users.users.${hostSpec.username}.openssh.authorizedKeys.keys;
   };
 
