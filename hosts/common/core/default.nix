@@ -27,5 +27,4 @@ in
   # System-wide packages, in case we log in as root
   environment.systemPackages = [ pkgs.openssh ];
 
-
 }

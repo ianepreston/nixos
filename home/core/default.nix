@@ -5,7 +5,7 @@
   ...
 }:
 let
-    platform = if hostSpec.isDarwin then "darwin" else "nixos";
+  platform = if hostSpec.isDarwin then "darwin" else "nixos";
 in
 {
   imports = [

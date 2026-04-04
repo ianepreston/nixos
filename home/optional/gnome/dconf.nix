@@ -314,7 +314,10 @@ with lib.hm.gvariant;
     # So use <Ctrl> for shortcuts triggered by physical Super key.
     "org/gnome/shell/keybindings" = {
       show-screenshot-ui = [ "<Shift><Ctrl>s" ]; # physical Shift+Super+S
-      toggle-overview = [ "<Ctrl>space" "<Super>Up" ]; # physical Super+Space (Spotlight-like)
+      toggle-overview = [
+        "<Ctrl>space"
+        "<Super>Up"
+      ]; # physical Super+Space (Spotlight-like)
       toggle-message-tray = [ "<Ctrl>m" ]; # physical Super+M
       focus-active-notification = [ ];
     };
