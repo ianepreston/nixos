@@ -31,11 +31,14 @@
 
   environment.etc = {
     isoBuildTime = {
-      #
-      text = lib.readFile "${pkgs.runCommand "timestamp" {
-        # builtins.currentTime requires --impure
-        env.when = builtins.currentTime;
-      } "echo -n `date -d @$when  +%Y-%m-%d_%H-%M-%S` > $out"}";
+      # builtins.currentTime requires --impure, use fallback for pure evaluation
+      text =
+        if builtins ? currentTime then
+          lib.readFile "${pkgs.runCommand "timestamp" {
+            env.when = builtins.currentTime;
+          } "echo -n `date -d @$when  +%Y-%m-%d_%H-%M-%S` > $out"}"
+        else
+          "pure-eval";
     };
   };
 
