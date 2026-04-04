@@ -8,7 +8,7 @@
 }:
 let
   sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-  homeDirectory = config.home.homeDirectory;
+  inherit (config.home) homeDirectory;
 in
 {
   imports = [ inputs.sops-nix.homeManagerModules.sops ];

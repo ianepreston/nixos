@@ -269,7 +269,7 @@ EdenVim doesn't require Docker. But it provides first-class Docker support and o
   ```
 
 4. **Multiple Neovim instances at once with persistent state on the host:**
-  You can create multiple Neovim environments by mounting different state directories for each Neovim instance and use the same Docker image to simultaneously run different Neovim instances. 
+  You can create multiple Neovim environments by mounting different state directories for each Neovim instance and use the same Docker image to simultaneously run different Neovim instances.
   - Configuration: `-v ~/nvim1/config:/root/.config/nvim`
   - Plugins: `-v ~/nvim1/share:/root/.local/share/nvim`
   - History: `-v ~/nvim1/state:/root/.local/state/nvim`
@@ -279,7 +279,7 @@ EdenVim doesn't require Docker. But it provides first-class Docker support and o
 
 ### ✅ Requirements
 
-EdenVim is pre-configured to support TypeScript, Rust, Go, Lua, C/C++, Python, and other popular languages. 
+EdenVim is pre-configured to support TypeScript, Rust, Go, Lua, C/C++, Python, and other popular languages.
 
 #### Running in Docker
 - A terminal emulator with true color and UTF-8 support (Kitty, alacritty, WezTerm, foot, Ghostty, etc.)
@@ -367,7 +367,7 @@ nvim
 On first launch, EdenVim automatically:
 - Installs the plugin manager (lazy.nvim).
 - Downloads and installs Neovim plugins (versions pinned in lazy-lock.json).
-- Downloads and compiles Treesitter parsers.  
+- Downloads and compiles Treesitter parsers.
 - Sets up Mason package manager for LSP servers, linters, and formatters.
 - Installs binary dependencies requested by mason-lspconfig, mason-dap, and mason-null-ls.
 
@@ -412,7 +412,7 @@ Instead of using `mason`, `mason-lspconfig`, `mason-dap`, and `mason-null-ls` to
 This ensures all your tools are managed by Nix and are available within Neovim when it is launched. They don't pollute global environment.
 ```nix
 programs.neovim.extraPackages = with pkgs; [
-  # clang provides both LSP Server for C/C++ and a C compiler for treesitter parsers 
+  # clang provides both LSP Server for C/C++ and a C compiler for treesitter parsers
   clang
   bash-language-server
   rust-analyzer
@@ -523,7 +523,7 @@ Here's how it all comes together in your `home.nix` file, assuming you're using 
     extraPackages = with pkgs; [
       bash-language-server
       buf
-      # clang provides both LSP Server for C/C++ and a C compiler for treesitter parsers 
+      # clang provides both LSP Server for C/C++ and a C compiler for treesitter parsers
       clang
       lldb
       lua-language-server

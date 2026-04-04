@@ -96,4 +96,3 @@ For details on how this is accomplished, how to approach different scenarios, an
 - Yubikey
   - <https://wiki.nixos.org/wiki/Yubikey>
   - [DrDuh YubiKey-Guide](https://github.com/drduh/YubiKey-Guide)
-

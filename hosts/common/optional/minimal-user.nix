@@ -1,4 +1,4 @@
-{ config, hostSpec, ... }:
+{ hostSpec, ... }:
 {
 
   # Set a temp password for use by minimal builds like installer and iso

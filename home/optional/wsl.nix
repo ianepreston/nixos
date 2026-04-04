@@ -1,6 +1,4 @@
-{
-  ...
-}:
+_:
 
 {
   # Whether to enable settings that make Home Manager work better on GNU/Linux distributions other than NixOS

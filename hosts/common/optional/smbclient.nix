@@ -1,9 +1,7 @@
 # create a systemd service to automatically mount the ghost mediashare at boot
 {
   inputs,
-  config,
   pkgs,
-  hostSpec,
   ...
 }:
 let

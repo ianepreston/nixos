@@ -3,7 +3,7 @@ local opts = {
     json = {
       validate = { enable = true },
       schemas = require("schemastore").json.schemas(),
-      -- To specify your own schemas, do something like this: 
+      -- To specify your own schemas, do something like this:
       -- schemas = require("schemastore").json.schemas {
       --   extra = {
       --     {

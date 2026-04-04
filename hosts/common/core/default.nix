@@ -1,5 +1,4 @@
 {
-  config,
   customLib,
   lib,
   inputs,

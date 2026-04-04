@@ -25,26 +25,26 @@
   };
 
   # install flatpak binary
-  services.flatpak.enable = true;
-  # Add a new remote. Keep the default one (flathub)
-  services.flatpak.remotes = lib.mkOptionDefault [
-    {
-      name = "flathub-beta";
-      location = "https://flathub.org/beta-repo/flathub-beta.flatpakrepo";
-    }
-  ];
-
-  services.flatpak.update.auto.enable = false;
-  services.flatpak.uninstallUnmanaged = false;
-
-  # Add here the flatpaks you want to install
-  services.flatpak.packages = [
-    "com.discordapp.Discord"
-    "com.bambulab.BambuStudio"
-    "com.google.Chrome"
-    "io.kinvolk.Headlamp"
-    #{ appId = "com.brave.Browser"; origin = "flathub"; }
-    #"com.obsproject.Studio"
-    #"im.riot.Riot"
-  ];
+  services.flatpak = {
+    enable = true;
+    # Add a new remote. Keep the default one (flathub)
+    remotes = lib.mkOptionDefault [
+      {
+        name = "flathub-beta";
+        location = "https://flathub.org/beta-repo/flathub-beta.flatpakrepo";
+      }
+    ];
+    update.auto.enable = false;
+    uninstallUnmanaged = false;
+    # Add here the flatpaks you want to install
+    packages = [
+      "com.discordapp.Discord"
+      "com.bambulab.BambuStudio"
+      "com.google.Chrome"
+      "io.kinvolk.Headlamp"
+      #{ appId = "com.brave.Browser"; origin = "flathub"; }
+      #"com.obsproject.Studio"
+      #"im.riot.Riot"
+    ];
+  };
 }

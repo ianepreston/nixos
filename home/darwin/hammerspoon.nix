@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   home.file.".hammerspoon/init.lua".text = ''
     -- Hammerspoon config: window tiling (hyper+hjk), alt+tab window switching
     -- Workspace switching handled by native macOS Spaces (ctrl+number, ctrl+arrows).

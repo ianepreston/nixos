@@ -24,25 +24,22 @@
     wl-clipboard
     xclip
   ];
-  environment.gnome.excludePackages = (
-    with pkgs;
-    [
-      atomix
-      baobab
-      epiphany
-      geary
-      gedit
-      gnome-contacts
-      gnome-calendar
-      gnome-maps
-      gnome-music
-      gnome-photos
-      gnome-tour
-      hitori
-      iagno
-      simple-scan
-      tali
-      yelp
-    ]
-  );
+  environment.gnome.excludePackages = with pkgs; [
+    atomix
+    baobab
+    epiphany
+    geary
+    gedit
+    gnome-contacts
+    gnome-calendar
+    gnome-maps
+    gnome-music
+    gnome-photos
+    gnome-tour
+    hitori
+    iagno
+    simple-scan
+    tali
+    yelp
+  ];
 }

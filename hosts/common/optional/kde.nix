@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   services.xserver = {
     enable = true;
     xkb = {

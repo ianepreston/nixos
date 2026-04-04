@@ -19,27 +19,30 @@
 
   # Put this back when you're done with chromebook, it needs grub
   fileSystems."/boot".options = [ "umask=0077" ]; # Removes permissions and security warnings.
-  boot.loader.efi.canTouchEfiVariables = true;
-  boot.loader.systemd-boot = {
-    enable = true;
-    # we use Git for version control, so we don't need to keep too many generations.
-    configurationLimit = lib.mkDefault 3;
-    # pick the highest resolution for systemd-boot's console.
-    consoleMode = lib.mkDefault "max";
+  boot = {
+    loader = {
+      efi.canTouchEfiVariables = true;
+      systemd-boot = {
+        enable = true;
+        # we use Git for version control, so we don't need to keep too many generations.
+        configurationLimit = lib.mkDefault 3;
+        # pick the highest resolution for systemd-boot's console.
+        consoleMode = lib.mkDefault "max";
+      };
+    };
+    initrd = {
+      systemd.enable = true;
+      systemd.emergencyAccess = true; # Don't need to enter password in emergency mode
+      luks.forceLuksSupportInInitrd = true;
+    };
+    kernelParams = [
+      "systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"
+      "systemd.show_status=true"
+      #"systemd.log_level=debug"
+      "systemd.log_target=console"
+      "systemd.journald.forward_to_console=1"
+    ];
   };
-  boot.initrd = {
-    systemd.enable = true;
-    systemd.emergencyAccess = true; # Don't need to enter password in emergency mode
-    luks.forceLuksSupportInInitrd = true;
-  };
-
-  boot.kernelParams = [
-    "systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"
-    "systemd.show_status=true"
-    #"systemd.log_level=debug"
-    "systemd.log_target=console"
-    "systemd.journald.forward_to_console=1"
-  ];
 
   # allow sudo over ssh with yubikey
   security.pam = {

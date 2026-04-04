@@ -1,7 +1,6 @@
 {
   lib,
   customLib,
-  pkgs,
   inputs,
   hostSpec,
   ...

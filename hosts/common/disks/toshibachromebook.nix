@@ -1,8 +1,5 @@
 # NOTE: ... is needed because dikso passes diskoFile
-{
-  ...
-}:
-{
+_: {
   disko.devices = {
     disk = {
       disk0 = {

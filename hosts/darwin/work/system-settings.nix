@@ -2,8 +2,7 @@
 #
 # Native macOS Spaces for workspaces (ctrl+number, ctrl+arrows).
 # Hammerspoon handles window tiling (hyper+hjk) and alt+tab switching.
-{ ... }:
-{
+_: {
   system.defaults = {
     NSGlobalDomain = {
       # Fast key repeat — essential for comfortable hjkl navigation

@@ -15,16 +15,18 @@ in
   #   '';
   # };
   #
-  # enable the open source drivers if the package supports it
-  hardware.nvidia.open = lib.mkOverride 990 (nvidiaPackage ? open && nvidiaPackage ? firmware);
   services.xserver.videoDrivers = lib.mkDefault [ "nvidia" ];
-  hardware.graphics.enable = true;
-  hardware.nvidia = {
-    # package = config.boot.kernelPackages.nvidiaPackages.latest;
-    # Latest isn't building at 2025-08-18, try again later
-    package = config.boot.kernelPackages.nvidiaPackages.stable;
-    powerManagement.enable = true;
-    modesetting.enable = true;
+  hardware = {
+    graphics.enable = true;
+    # enable the open source drivers if the package supports it
+    nvidia = {
+      open = lib.mkOverride 990 (nvidiaPackage ? open && nvidiaPackage ? firmware);
+      # package = config.boot.kernelPackages.nvidiaPackages.latest;
+      # Latest isn't building at 2025-08-18, try again later
+      package = config.boot.kernelPackages.nvidiaPackages.stable;
+      powerManagement.enable = true;
+      modesetting.enable = true;
+    };
   };
   # Hopefully fix it going blank after resuming
   systemd.services = {

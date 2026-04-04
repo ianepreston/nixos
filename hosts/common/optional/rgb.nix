@@ -6,9 +6,9 @@
 }:
 let
   pkgsUnstable = import inputs.nixpkgs-unstable {
-    system = pkgs.system;
+    inherit (pkgs) system;
     # Optional but recommended: share config (allowUnfree, etc.)
-    config = pkgs.config;
+    inherit (pkgs) config;
   };
 in
 

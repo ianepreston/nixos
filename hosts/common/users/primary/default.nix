@@ -2,7 +2,6 @@
 {
   inputs,
   pkgs,
-  config,
   hostSpec,
   customLib,
   lib,
@@ -12,7 +11,7 @@
   users.users.${hostSpec.username} = {
     name = hostSpec.username;
     shell = pkgs.zsh; # default shell
-    home = hostSpec.home;
+    inherit (hostSpec) home;
 
   };
 

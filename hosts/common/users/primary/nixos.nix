@@ -1,11 +1,8 @@
 # User config applicable only to nixos
 {
-  inputs,
   config,
   lib,
   hostSpec,
-  customLib,
-  pkgs,
   ...
 }:
 let
@@ -47,7 +44,7 @@ in
   systemd.tmpfiles.rules =
     let
       user = config.users.users.${hostSpec.username}.name;
-      group = config.users.users.${hostSpec.username}.group;
+      inherit (config.users.users.${hostSpec.username}) group;
     in
     # you must set the rule for .ssh separately first, otherwise it will be automatically created as root:root and .ssh/sockects will fail
     [

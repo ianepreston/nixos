@@ -1,7 +1,6 @@
 # hosts level sops. see home/[user]/common/optional/sops.nix for home/user level
 
 {
-  pkgs,
   lib,
   inputs,
   config,
@@ -58,7 +57,7 @@ in
     let
       ageFolder = "${hostSpec.home}/.config/sops/age";
       user = config.users.users.${hostSpec.username}.name;
-      group = config.users.users.${hostSpec.username}.group;
+      inherit (config.users.users.${hostSpec.username}) group;
     in
     ''
       mkdir -p ${ageFolder} || true

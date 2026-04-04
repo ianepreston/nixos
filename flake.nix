@@ -7,7 +7,6 @@
     {
       self,
       nixpkgs,
-      nixpkgs-darwin,
       nix-flatpak,
       stylix,
       ...
@@ -17,7 +16,7 @@
 
       #
       # ========= Architectures =========
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -38,17 +37,24 @@
         specialArgs = { inherit inputs lib customLib; };
         modules = [ ./hostSpecs ];
       };
-      hostSpecs = evaluatedHostSpecs.config.hostSpecs;
+      inherit (evaluatedHostSpecs.config) hostSpecs;
 
     in
     {
       checks = forEachSupportedSystem (
-        { system, pkgs }:
+        { system, ... }:
         {
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             hooks = {
               nixfmt.enable = true;
+              statix.enable = true; # Catch anti-patterns, unused bindings, etc.
+              deadnix.enable = true; # Find dead/unreferenced nix code.
+              ripsecrets.enable = true;
+              check-yaml.enable = true;
+              check-json.enable = true;
+              trim-trailing-whitespace.enable = true;
+              end-of-file-fixer.enable = true;
             };
           };
         }
@@ -104,7 +110,7 @@
           value = inputs.nix-darwin.lib.darwinSystem {
             specialArgs = {
               inherit inputs outputs customLib;
-              lib = inputs.nixpkgs-darwin.lib;
+              inherit (inputs.nixpkgs-darwin) lib;
               hostSpec = hostSpecs.${host};
             };
             modules = [

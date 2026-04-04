@@ -1,5 +1,5 @@
 # Should probably pull some of this out to dev or whatever later
-{ config, pkgs, ... }:
+{ pkgs, ... }:
 {
 
   # The home.packages option allows you to install Nix packages into your

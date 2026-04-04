@@ -15,7 +15,7 @@
     let
       inherit (self) outputs;
 
-      lib = nixpkgs.lib;
+      inherit (nixpkgs) lib;
       customLib = import ../lib { inherit lib; };
       evaluatedHostSpecs = lib.evalModules {
         specialArgs = { inherit inputs lib customLib; };
@@ -33,38 +33,6 @@
       };
 
       # This mkHost is way better: https://github.com/linyinfeng/dotfiles/blob/8785bdb188504cfda3daae9c3f70a6935e35c4df/flake/hosts.nix#L358
-      newConfig =
-        name: disk: swapSize: useLuks: useImpermanence:
-        (
-          let
-            diskSpecPath =
-              if useLuks && useImpermanence then
-                ../hosts/common/disks/btrfs-luks-impermanence-disk.nix
-              else if !useLuks && useImpermanence then
-                ../hosts/common/disks/btrfs-impermanence-disk.nix
-              else
-                ../hosts/common/disks/btrfs-disk.nix;
-          in
-          nixpkgs.lib.nixosSystem {
-            system = "x86_64-linux";
-            specialArgs = minimalSpecialArgs;
-            modules = [
-              inputs.disko.nixosModules.disko
-              diskSpecPath
-              {
-                _module.args = {
-                  inherit disk;
-                  withSwap = swapSize > 0;
-                  swapSize = builtins.toString swapSize;
-                };
-              }
-              ./minimal-configuration.nix
-              ../hosts/nixos/${name}/hardware-configuration.nix
-
-              { networking.hostName = name; }
-            ];
-          }
-        );
     in
     {
       nixosConfigurations = {
