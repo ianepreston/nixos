@@ -13,7 +13,7 @@ tasks:
       - statix check . --ignore result
       - deadnix --no-underscore --exclude result .
       - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
-      - nix flake check
+      - nix flake check --all-systems
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake .
