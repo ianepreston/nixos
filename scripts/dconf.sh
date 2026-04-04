@@ -47,5 +47,5 @@ dconf dump /
 	| upsert 'com/github/wwmm/easyeffects/streaminputs'  { default {} | reject --ignore-errors 'input-device' }
 	| format_dump
 	| dconf2nix
-	| alejandra
+	| nixfmt
   | save  -f home/optional/gnome/dconf.nix
