@@ -20,7 +20,7 @@ in
   programs.home-manager.enable = true;
   home = {
     username = lib.mkDefault hostSpec.username;
-    homeDirectory = builtins.trace "DEBUG ${hostSpec.home}" lib.mkDefault hostSpec.home;
+    homeDirectory = lib.mkDefault hostSpec.home;
     stateVersion = lib.mkDefault "23.05";
     # sessionPath = [
     #   "$HOME/.local/bin"
