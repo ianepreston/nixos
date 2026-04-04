@@ -7,3 +7,6 @@ result-*
 
 # Ignore built isos that we copy to the project root
 *.iso
+
+# Pre-commit is auto generated in the flake
+.pre-commit-config.yaml

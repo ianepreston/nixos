@@ -29,6 +29,7 @@
         nixpkgs.lib.genAttrs supportedSystems (
           system:
           f {
+            inherit system;
             pkgs = import nixpkgs { inherit system; };
           }
         );
@@ -41,22 +42,39 @@
 
     in
     {
-      devShells = forEachSupportedSystem (
-        { pkgs }:
+      checks = forEachSupportedSystem (
+        { system, pkgs }:
         {
-          default = pkgs.mkShell {
-            packages = with pkgs; [
-              nixos-rebuild
-              pciutils
-              go-task
-              dconf2nix
-              alejandra
-              nushell
-              ssh-to-age
-              pre-commit
-              pre-commit-hook-ensure-sops
-            ];
+          pre-commit-check = inputs.git-hooks.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              nixfmt.enable = true;
+            };
           };
+        }
+      );
+
+      devShells = forEachSupportedSystem (
+        { system, pkgs }:
+        {
+          default =
+            let
+              inherit (self.checks.${system}.pre-commit-check) shellHook enabledPackages;
+            in
+            pkgs.mkShell {
+              inherit shellHook;
+              packages =
+                enabledPackages
+                ++ (with pkgs; [
+                  nixos-rebuild
+                  pciutils
+                  go-task
+                  dconf2nix
+                  nushell
+                  ssh-to-age
+                  pre-commit-hook-ensure-sops
+                ]);
+            };
         }
       );
       nixosConfigurations = builtins.listToAttrs (
@@ -135,6 +153,8 @@
       url = "github:mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    systems.url = "github:nix-systems/default";
+    git-hooks.url = "github:cachix/git-hooks.nix";
     #
     # ========= Personal Repositories =========
     #
