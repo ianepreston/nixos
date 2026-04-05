@@ -14,16 +14,54 @@
       ];
 
       imports = [
+        # ========== Flake Infrastructure ==========
         ./modules/flake/module-namespaces.nix
         ./modules/flake/git-hooks.nix
         ./modules/flake/dev-shell.nix
         ./modules/flake/host-specs.nix
         ./modules/flake/hosts.nix
+
+        # ========== Profiles ==========
         ./modules/profiles/base.nix
         ./modules/profiles/workstation.nix
-        ./modules/desktop/gnome.nix
+        ./modules/profiles/darwin-base.nix
+
+        # ========== System ==========
         ./modules/system/ssh.nix
         ./modules/system/sops.nix
+        ./modules/system/docker.nix
+        ./modules/system/smbclient.nix
+        ./modules/system/minimal-user.nix
+
+        # ========== Desktop ==========
+        ./modules/desktop/gnome.nix
+        ./modules/desktop/audio.nix
+        ./modules/desktop/flatpak.nix
+        ./modules/desktop/gaming.nix
+        ./modules/desktop/themes.nix
+        ./modules/desktop/sunshine.nix
+        ./modules/desktop/kde.nix
+
+        # ========== Hardware ==========
+        ./modules/hardware/keyd.nix
+        ./modules/hardware/nvidia-gtx1060.nix
+        ./modules/hardware/nvidia-rtx5080.nix
+        ./modules/hardware/xreal-headset.nix
+        ./modules/hardware/zsa-keeb.nix
+        ./modules/hardware/rgb.nix
+
+        # ========== Programs ==========
+        ./modules/programs/obsidian.nix
+        ./modules/programs/printing.nix
+        ./modules/programs/browser.nix
+        ./modules/programs/media.nix
+        ./modules/programs/comms.nix
+        ./modules/programs/vibes.nix
+        ./modules/programs/moonlight.nix
+        ./modules/programs/calibre.nix
+        ./modules/programs/adb.nix
+        ./modules/programs/freecad.nix
+        ./modules/programs/hammerspoon.nix
       ];
     };
 

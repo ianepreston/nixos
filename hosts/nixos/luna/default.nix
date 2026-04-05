@@ -1,4 +1,4 @@
-# Luna - Migrated to dendritic pattern
+# Luna - MSI GS43VR laptop
 # https://www.msi.com/Laptop/GS43VR-6RE-Phantom-Pro/Specification
 {
   lib,
@@ -19,44 +19,34 @@
     inputs.disko.nixosModules.disko
     (customLib.relativeToRoot "hosts/common/disks/luna.nix")
 
-    # ========== New Dendritic Modules ==========
-    inputs.self.modules.nixos.workstation # includes base + HM core
-    inputs.self.modules.nixos.gnome # includes HM gnome
-    inputs.self.modules.nixos.ssh # includes HM ssh
-    inputs.self.modules.nixos.sops # includes HM sops
-
-    # ========== Optional NixOS Configs (not yet converted) ==========
-    (map customLib.relativeToRoot [
-      "hosts/common/optional/services/printing.nix"
-      "hosts/common/optional/audio.nix"
-      "hosts/common/optional/docker.nix"
-      "hosts/common/optional/flatpak.nix"
-      "hosts/common/optional/gaming.nix"
-      "hosts/common/optional/keyd.nix"
-      "hosts/common/optional/nvidia-gtx1060.nix"
-      "hosts/common/optional/obsidian.nix"
-      "hosts/common/optional/smbclient.nix"
-      "hosts/common/optional/themes.nix"
-      "hosts/common/optional/xreal-headset.nix"
-      "hosts/common/optional/zsa-keeb.nix"
+    # ========== Dendritic Modules ==========
+    (with inputs.self.modules.nixos; [
+      workstation # includes base + HM core
+      gnome # includes HM gnome
+      ssh # includes HM ssh
+      sops # includes HM sops
+      audio
+      docker
+      flatpak
+      gaming
+      keyd
+      nvidia-gtx1060
+      obsidian
+      printing
+      smbclient
+      themes
+      xreal-headset
+      zsa-keeb
     ])
   ];
 
-  # ========== HM-only modules (not yet converted) ==========
-  # These are added via sharedModules since they don't have NixOS counterparts
-  home-manager.sharedModules = [
-    (
-      { customLib, ... }:
-      {
-        imports = map customLib.relativeToRoot [
-          "home/optional/browser.nix"
-          "home/optional/vibes.nix"
-          "home/optional/moonlight.nix"
-          "home/optional/comms.nix"
-          "home/optional/media.nix"
-        ];
-      }
-    )
+  # ========== HM-only modules ==========
+  home-manager.sharedModules = with inputs.self.modules.homeManager; [
+    browser
+    vibes
+    moonlight
+    comms
+    media
   ];
 
   # ========== Boot ==========
