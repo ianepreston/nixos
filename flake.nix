@@ -14,10 +14,13 @@
       ];
 
       imports = [
+        ./modules/flake/module-namespaces.nix
         ./modules/flake/git-hooks.nix
         ./modules/flake/dev-shell.nix
         ./modules/flake/host-specs.nix
         ./modules/flake/hosts.nix
+        ./modules/profiles/base.nix
+        ./modules/profiles/workstation.nix
       ];
     };
 
