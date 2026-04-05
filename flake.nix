@@ -29,6 +29,7 @@
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
+    flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-darwin.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     # The next two are for pinning to stable vs unstable regardless of what the above is set to
@@ -59,6 +60,7 @@
     };
     systems.url = "github:nix-systems/default";
     git-hooks.url = "github:cachix/git-hooks.nix";
+    git-hooks.inputs.nixpkgs.follows = "nixpkgs";
     #
     # ========= Personal Repositories =========
     #
