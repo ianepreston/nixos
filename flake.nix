@@ -3,78 +3,12 @@
 
   # ...
 
-  outputs =
-    inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
-
-      imports = [
-        # ========== Flake Infrastructure ==========
-        ./modules/flake/module-namespaces.nix
-        ./modules/flake/git-hooks.nix
-        ./modules/flake/dev-shell.nix
-        ./modules/flake/host-specs.nix
-
-        # ========== Profiles ==========
-        ./modules/profiles/base.nix
-        ./modules/profiles/workstation.nix
-        ./modules/profiles/darwin-base.nix
-
-        # ========== System ==========
-        ./modules/system/ssh.nix
-        ./modules/system/sops.nix
-        ./modules/system/docker.nix
-        ./modules/system/smbclient.nix
-        ./modules/system/minimal-user.nix
-
-        # ========== Desktop ==========
-        ./modules/desktop/gnome.nix
-        ./modules/desktop/audio.nix
-        ./modules/desktop/flatpak.nix
-        ./modules/desktop/gaming.nix
-        ./modules/desktop/themes.nix
-        ./modules/desktop/sunshine.nix
-        ./modules/desktop/kde.nix
-
-        # ========== Hardware ==========
-        ./modules/hardware/keyd.nix
-        ./modules/hardware/nvidia-gtx1060.nix
-        ./modules/hardware/nvidia-rtx5080.nix
-        ./modules/hardware/xreal-headset.nix
-        ./modules/hardware/zsa-keeb.nix
-        ./modules/hardware/rgb.nix
-
-        # ========== Programs ==========
-        ./modules/programs/obsidian.nix
-        ./modules/programs/printing.nix
-        ./modules/programs/browser.nix
-        ./modules/programs/media.nix
-        ./modules/programs/comms.nix
-        ./modules/programs/vibes.nix
-        ./modules/programs/moonlight.nix
-        ./modules/programs/calibre.nix
-        ./modules/programs/adb.nix
-        ./modules/programs/freecad.nix
-        ./modules/programs/hammerspoon.nix
-
-        # ========== Hosts ==========
-        ./modules/hosts/luna.nix
-        ./modules/hosts/terra.nix
-        ./modules/hosts/work.nix
-        ./modules/hosts/toshibachromebook.nix
-        ./modules/hosts/iso.nix
-        ./modules/hosts/penguin.nix
-      ];
-    };
+  outputs = inputs: inputs.flake-parts.lib.mkFlake { inherit inputs; } (inputs.import-tree ./modules);
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
     flake-parts.inputs.nixpkgs-lib.follows = "nixpkgs";
+    import-tree.url = "github:vic/import-tree";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-darwin.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     # The next two are for pinning to stable vs unstable regardless of what the above is set to

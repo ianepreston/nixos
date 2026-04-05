@@ -3,7 +3,7 @@
 { inputs, ... }:
 {
   flake.modules.nixos.themes =
-    { pkgs, customLib, ... }:
+    { pkgs, ... }:
     {
       imports = [ inputs.stylix.nixosModules.stylix ];
 
@@ -17,7 +17,7 @@
           gtk.enable = true;
         };
         base16Scheme = "${pkgs.base16-schemes}/share/themes/catppuccin-latte.yaml";
-        image = customLib.relativeToRoot "assets/wallpaper_oil_landscape.jpg";
+        image = ../../assets/wallpaper_oil_landscape.jpg;
         polarity = "light";
         fonts = {
           monospace = {

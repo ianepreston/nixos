@@ -122,7 +122,6 @@ in
         backupFileExtension = "hm-backup";
         extraSpecialArgs = {
           inherit inputs hostSpec;
-          customLib = import ../../lib { inherit (inputs.nixpkgs) lib; };
         };
         # Create the user entry - sharedModules will provide the actual config
         users.${hostSpec.username} = { };

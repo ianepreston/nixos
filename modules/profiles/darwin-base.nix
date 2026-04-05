@@ -6,7 +6,6 @@
 {
   flake.modules.darwin.base =
     {
-      lib,
       pkgs,
       hostSpec,
       ...
@@ -44,7 +43,6 @@
         backupFileExtension = "hm-backup";
         extraSpecialArgs = {
           inherit inputs hostSpec;
-          customLib = import ../../lib { inherit (inputs.nixpkgs) lib; };
         };
         users.${hostSpec.username} = { };
         sharedModules = [

@@ -2,7 +2,6 @@
 {
   inputs,
   hostSpecs,
-  customLib,
   ...
 }:
 let
@@ -13,7 +12,7 @@ in
 {
   flake.darwinConfigurations.work = inputs.nix-darwin.lib.darwinSystem {
     specialArgs = {
-      inherit inputs customLib;
+      inherit inputs;
       inherit (inputs.nixpkgs-darwin) lib;
       inherit hostSpec;
     };
