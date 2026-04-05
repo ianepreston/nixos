@@ -1,0 +1,61 @@
+# Terra - AMD desktop workstation
+{
+  inputs,
+  hostSpecs,
+  customLib,
+  ...
+}:
+{
+  flake.nixosConfigurations.terra = inputs.nixpkgs.lib.nixosSystem {
+    system = "x86_64-linux";
+    specialArgs = {
+      inherit inputs customLib;
+      hostSpec = hostSpecs.terra;
+    };
+    modules = [
+      (customLib.relativeToRoot "hosts/nixos/terra/hardware-configuration.nix")
+      inputs.hardware.nixosModules.common-cpu-amd
+      inputs.disko.nixosModules.disko
+      (customLib.relativeToRoot "hosts/common/disks/terra.nix")
+    ]
+    ++ (with inputs.self.modules.nixos; [
+      workstation
+      gnome
+      docker
+      flatpak
+      gaming
+      keyd
+      nvidia-rtx5080
+      obsidian
+      printing
+      rgb
+      smbclient
+      sunshine
+      zsa-keeb
+    ])
+    ++ [
+      {
+        home-manager.sharedModules = with inputs.self.modules.homeManager; [
+          vibes
+          adb
+          calibre
+          freecad
+        ];
+
+        boot = {
+          loader = {
+            systemd-boot.enable = true;
+            efi.canTouchEfiVariables = true;
+          };
+        };
+
+        networking = {
+          hostName = "terra";
+          networkmanager.enable = true;
+        };
+
+        system.stateVersion = "25.05";
+      }
+    ];
+  };
+}

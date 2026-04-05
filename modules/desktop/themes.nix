@@ -1,9 +1,12 @@
 # Themes - Simple Aspect
 # Stylix theming with Catppuccin Latte
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.themes =
     { pkgs, customLib, ... }:
     {
+      imports = [ inputs.stylix.nixosModules.stylix ];
+
       stylix = {
         enable = true;
         autoEnable = false;

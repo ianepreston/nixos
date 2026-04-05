@@ -40,18 +40,22 @@
       };
     };
 
-  # Workstation NixOS module - base + desktop essentials
+  # Workstation NixOS module - base + common desktop essentials
   flake.modules.nixos.workstation = _: {
-    imports = [
-      inputs.self.modules.nixos.base
+    imports = with inputs.self.modules.nixos; [
+      base
+      sops
+      ssh
+      audio
+      themes
     ];
 
-    # Common workstation packages/services would go here
-    # For now, this just imports base - audio/themes are still in optional/
-
-    # Auto-include core HM modules for all users on workstations
-    home-manager.sharedModules = [
-      inputs.self.modules.homeManager.core
+    # Home-manager modules common to all workstations
+    home-manager.sharedModules = with inputs.self.modules.homeManager; [
+      core
+      browser
+      comms
+      media
     ];
   };
 }

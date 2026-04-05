@@ -1,9 +1,12 @@
 # Flatpak - Simple Aspect
 # Flatpak runtime with Discord, BambuStudio, Chrome, Headlamp
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.flatpak =
     { lib, pkgs, ... }:
     {
+      imports = [ inputs.nix-flatpak.nixosModules.nix-flatpak ];
+
       xdg.portal = {
         enable = true;
         config = {

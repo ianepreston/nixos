@@ -19,7 +19,6 @@
         ./modules/flake/git-hooks.nix
         ./modules/flake/dev-shell.nix
         ./modules/flake/host-specs.nix
-        ./modules/flake/hosts.nix
 
         # ========== Profiles ==========
         ./modules/profiles/base.nix
@@ -62,6 +61,14 @@
         ./modules/programs/adb.nix
         ./modules/programs/freecad.nix
         ./modules/programs/hammerspoon.nix
+
+        # ========== Hosts ==========
+        ./modules/hosts/luna.nix
+        ./modules/hosts/terra.nix
+        ./modules/hosts/work.nix
+        ./modules/hosts/toshibachromebook.nix
+        ./modules/hosts/iso.nix
+        ./modules/hosts/penguin.nix
       ];
     };
 
