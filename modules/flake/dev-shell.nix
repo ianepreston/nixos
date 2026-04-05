@@ -25,9 +25,6 @@ _: {
             age
             pre-commit-hook-ensure-sops
 
-            # Linting (also available via pre-commit, but useful standalone)
-            statix
-            deadnix
           ]);
       };
     };
