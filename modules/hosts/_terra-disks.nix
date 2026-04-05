@@ -1,0 +1,58 @@
+_: {
+  disko.devices = {
+    disk = {
+      primary = {
+        type = "disk";
+        device = "/dev/nvme0n1";
+        content = {
+          type = "gpt";
+          partitions = {
+            ESP = {
+              priority = 1;
+              name = "ESP";
+              size = "512M";
+              type = "EF00";
+              content = {
+                type = "filesystem";
+                format = "vfat";
+                mountpoint = "/boot";
+                mountOptions = [ "defaults" ];
+              };
+            };
+            root = {
+              size = "100%";
+              content = {
+                type = "btrfs";
+                extraArgs = [ "-f" ]; # Override existing partition
+                # Subvolumes must set a mountpoint in order to be mounted,
+                # unless their parent is mounted
+                subvolumes = {
+                  "@root" = {
+                    mountpoint = "/";
+                    mountOptions = [
+                      "compress=zstd"
+                      "noatime"
+                    ];
+                  };
+                  "@nix" = {
+                    mountpoint = "/nix";
+                    mountOptions = [
+                      "compress=zstd"
+                      "noatime"
+                    ];
+                  };
+                  "@swap" = {
+                    mountpoint = "/.swapvol";
+                    swap.swapfile.size = "32G";
+                  };
+                };
+              };
+            };
+          };
+
+        };
+
+      };
+    };
+  };
+}

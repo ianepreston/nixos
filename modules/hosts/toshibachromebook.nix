@@ -13,10 +13,10 @@
       hostSpec = hostSpecs.toshibachromebook;
     };
     modules = [
-      (customLib.relativeToRoot "hosts/nixos/toshibachromebook/hardware-configuration.nix")
+      ./_toshibachromebook-hardware.nix
       inputs.hardware.nixosModules.common-cpu-intel
       inputs.disko.nixosModules.disko
-      (customLib.relativeToRoot "hosts/common/disks/toshibachromebook.nix")
+      ./_toshibachromebook-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
       workstation

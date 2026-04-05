@@ -14,12 +14,12 @@
       hostSpec = hostSpecs.luna;
     };
     modules = [
-      (customLib.relativeToRoot "hosts/nixos/luna/hardware-configuration.nix")
+      ./_luna-hardware.nix
       inputs.hardware.nixosModules.common-cpu-intel
       inputs.hardware.nixosModules.common-gpu-intel
       inputs.hardware.nixosModules.common-gpu-nvidia
       inputs.disko.nixosModules.disko
-      (customLib.relativeToRoot "hosts/common/disks/luna.nix")
+      ./_luna-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
       workstation

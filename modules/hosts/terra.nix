@@ -13,10 +13,10 @@
       hostSpec = hostSpecs.terra;
     };
     modules = [
-      (customLib.relativeToRoot "hosts/nixos/terra/hardware-configuration.nix")
+      ./_terra-hardware.nix
       inputs.hardware.nixosModules.common-cpu-amd
       inputs.disko.nixosModules.disko
-      (customLib.relativeToRoot "hosts/common/disks/terra.nix")
+      ./_terra-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
       workstation
