@@ -21,6 +21,9 @@
         ./modules/flake/hosts.nix
         ./modules/profiles/base.nix
         ./modules/profiles/workstation.nix
+        ./modules/desktop/gnome.nix
+        ./modules/system/ssh.nix
+        ./modules/system/sops.nix
       ];
     };
 

@@ -1,43 +1,37 @@
+# Luna - Migrated to dendritic pattern
 # https://www.msi.com/Laptop/GS43VR-6RE-Phantom-Pro/Specification
-
 {
   lib,
-  customLib,
   pkgs,
   inputs,
+  customLib,
   ...
 }:
-
 {
   imports = lib.flatten [
-    #
     # ========== Hardware ==========
-    #
     ./hardware-configuration.nix
     inputs.hardware.nixosModules.common-cpu-intel
     inputs.hardware.nixosModules.common-gpu-intel
     inputs.hardware.nixosModules.common-gpu-nvidia
-    #
+
     # ========== Disk Layout ==========
-    #
     inputs.disko.nixosModules.disko
     (customLib.relativeToRoot "hosts/common/disks/luna.nix")
 
-    (map customLib.relativeToRoot [
-      #
-      # ========== Required Configs ==========
-      #
-      "hosts/common/core"
+    # ========== New Dendritic Modules ==========
+    inputs.self.modules.nixos.workstation # includes base + HM core
+    inputs.self.modules.nixos.gnome # includes HM gnome
+    inputs.self.modules.nixos.ssh # includes HM ssh
+    inputs.self.modules.nixos.sops # includes HM sops
 
-      #
-      # ========== Optional Configs ==========
-      #
-      "hosts/common/optional/services/printing.nix" # Do I need this to print to PDF? Otherwise disable
-      "hosts/common/optional/audio.nix" # WM
+    # ========== Optional NixOS Configs (not yet converted) ==========
+    (map customLib.relativeToRoot [
+      "hosts/common/optional/services/printing.nix"
+      "hosts/common/optional/audio.nix"
       "hosts/common/optional/docker.nix"
       "hosts/common/optional/flatpak.nix"
       "hosts/common/optional/gaming.nix"
-      "hosts/common/optional/gnome.nix" # WM
       "hosts/common/optional/keyd.nix"
       "hosts/common/optional/nvidia-gtx1060.nix"
       "hosts/common/optional/obsidian.nix"
@@ -47,38 +41,38 @@
       "hosts/common/optional/zsa-keeb.nix"
     ])
   ];
-  # Bootloader.
+
+  # ========== HM-only modules (not yet converted) ==========
+  # These are added via sharedModules since they don't have NixOS counterparts
+  home-manager.sharedModules = [
+    (
+      { customLib, ... }:
+      {
+        imports = map customLib.relativeToRoot [
+          "home/optional/browser.nix"
+          "home/optional/vibes.nix"
+          "home/optional/moonlight.nix"
+          "home/optional/comms.nix"
+          "home/optional/media.nix"
+        ];
+      }
+    )
+  ];
+
+  # ========== Boot ==========
   boot = {
     loader = {
       systemd-boot.enable = true;
       efi.canTouchEfiVariables = true;
     };
-    # Use latest kernel.
     kernelPackages = pkgs.linuxPackages_latest;
   };
 
-  networking.hostName = "luna"; # Define your hostname.
-  # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
+  # ========== Networking ==========
+  networking = {
+    hostName = "luna";
+    networkmanager.enable = true;
+  };
 
-  # Configure network proxy if necessary
-  # networking.proxy.default = "http://user:password@proxy:port/";
-  # networking.proxy.noProxy = "127.0.0.1,localhost,internal.domain";
-
-  # Enable networking
-  networking.networkmanager.enable = true;
-
-  # Install neovim - just while I'm getting dotfiles sorted out
-  # programs.neovim = {
-  #   enable = true;
-  #   defaultEditor = true;
-  # };
-
-  # This value determines the NixOS release from which the default
-  # settings for stateful data, like file locations and database versions
-  # on your system were taken. It‘s perfectly fine and recommended to leave
-  # this value at the release version of the first install of this system.
-  # Before changing this value read the documentation for this option
-  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
-  system.stateVersion = "25.05"; # Did you read the comment?
-
+  system.stateVersion = "25.05";
 }

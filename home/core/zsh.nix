@@ -29,6 +29,10 @@ _:
          fi
          eval `cat $HOME/.ssh/ssh-agent`
       fi
+      # Graceful starship init - handles transition between generations
+      if command -v starship &> /dev/null; then
+        eval "$(starship init zsh)"
+      fi
     '';
   };
   home.file.".bashrc".text = ''

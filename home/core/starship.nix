@@ -1,7 +1,8 @@
 _: {
   programs.starship = {
     enable = true;
-    enableZshIntegration = true;
+    # Disable auto-integration - we'll do it manually with a graceful fallback in zsh.nix
+    enableZshIntegration = false;
     settings = {
       git_metrics.disabled = false;
       git_status = {
