@@ -10,3 +10,6 @@ result-*
 
 # Pre-commit is auto generated in the flake
 .pre-commit-config.yaml
+
+# Just load latest plugins
+lazy-lock.json
