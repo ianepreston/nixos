@@ -39,6 +39,7 @@
           adb
           calibre
           freecad
+          browser
         ];
 
         boot = {

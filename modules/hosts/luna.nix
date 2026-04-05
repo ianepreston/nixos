@@ -41,6 +41,7 @@
           home-manager.sharedModules = with inputs.self.modules.homeManager; [
             vibes
             moonlight
+            browser
           ];
 
           boot = {

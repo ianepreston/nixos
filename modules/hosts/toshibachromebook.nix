@@ -29,6 +29,11 @@
       (
         { pkgs, ... }:
         {
+          home-manager.sharedModules = with inputs.self.modules.homeManager; [
+            vibes
+            moonlight
+            browser
+          ];
           boot = {
             loader.grub.extraConfig = "cros_legacy";
             kernelPackages = pkgs.linuxPackages_latest;
