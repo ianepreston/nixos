@@ -19,9 +19,9 @@ in
     };
     modules = [
       inputs.self.modules.darwin.base
-      (customLib.relativeToRoot "hosts/darwin/work/homebrew.nix")
-      (customLib.relativeToRoot "hosts/darwin/work/system-settings.nix")
-      (customLib.relativeToRoot "hosts/darwin/work/yubikey.nix")
+      ./_work-homebrew.nix
+      ./_work-system-settings.nix
+      ./_work-yubikey.nix
       {
         system.primaryUser = hostSpec.username;
 

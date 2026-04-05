@@ -4,6 +4,11 @@
 # This is a flake-parts module that registers flake.modules.nixos.base
 # Hosts import this module to get essential NixOS configuration
 { inputs, ... }:
+let
+  pubKeys = builtins.attrValues (
+    builtins.mapAttrs (name: _: builtins.readFile ./_ssh-keys/${name}) (builtins.readDir ./_ssh-keys)
+  );
+in
 {
   flake.modules.nixos.base =
     {
@@ -44,6 +49,7 @@
         Defaults timestamp_timeout=120
         Defaults env_keep+=SSH_AUTH_SOCK
       '';
+      security.sudo.wheelNeedsPassword = false;
 
       # ========== Nix Settings ==========
       nix = {
@@ -67,16 +73,48 @@
       };
 
       # ========== User & Home-Manager ==========
+      users.mutableUsers = false;
       users.users.${hostSpec.username} = {
         name = hostSpec.username;
         shell = pkgs.zsh;
         inherit (hostSpec) home;
         isNormalUser = true;
-        extraGroups = [ "wheel" ];
         hashedPasswordFile = config.sops.secrets."passwords/${hostSpec.username}".path;
+        description = hostSpec.userFullName;
+        openssh.authorizedKeys.keys = pubKeys;
+        extraGroups =
+          let
+            ifTheyExist = groups: builtins.filter (group: builtins.hasAttr group config.users.groups) groups;
+          in
+          lib.flatten [
+            "wheel"
+            (ifTheyExist [
+              "audio"
+              "video"
+              "docker"
+              "git"
+              "networkmanager"
+              "plugdev"
+              "scanner"
+              "lp"
+              "render"
+            ])
+          ];
       };
 
       programs.zsh.enable = true;
+      programs.git.enable = true;
+
+      # Create ssh sockets directory
+      systemd.tmpfiles.rules =
+        let
+          user = config.users.users.${hostSpec.username}.name;
+          inherit (config.users.users.${hostSpec.username}) group;
+        in
+        [
+          "d /home/${hostSpec.username}/.ssh 0750 ${user} ${group} -"
+          "d /home/${hostSpec.username}/.ssh/sockets 0750 ${user} ${group} -"
+        ];
 
       home-manager = {
         useGlobalPkgs = true;

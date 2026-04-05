@@ -15,13 +15,13 @@
     in
     {
       imports = [
-        ../../home/core/direnv.nix
-        ../../home/core/git.nix
-        ../../home/core/neovim.nix
-        ../../home/core/packages.nix
-        ../../home/core/starship.nix
-        ../../home/core/zsh.nix
-        ../../home/core/${platform}.nix
+        ./_hm-core/direnv.nix
+        ./_hm-core/git.nix
+        ./_hm-core/neovim.nix
+        ./_hm-core/packages.nix
+        ./_hm-core/starship.nix
+        ./_hm-core/zsh.nix
+        ./_hm-core/${platform}.nix
       ];
 
       programs.home-manager.enable = true;
