@@ -12,8 +12,32 @@ tasks:
     cmds:
       - statix check . --ignore result
       - deadnix --no-underscore --exclude result .
+  fmt:
+    desc: Format all Nix files
+    cmds:
       - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
+  fmt-check:
+    desc: Check formatting without modifying
+    cmds:
+      - find . -name '*.nix' -not -path './result/*' -exec nixfmt --check {} +
+  check:
+    desc: Full pre-push check (format, lint, flake check)
+    cmds:
+      - task: fmt-check
+      - task: lint
       - nix flake check --all-systems
+  build:
+    desc: Build a specific host (default luna)
+    vars:
+      HOST: '{{.HOST | default "luna"}}'
+    cmds:
+      - nix build .#nixosConfigurations.{{.HOST}}.config.system.build.toplevel
+  build-all:
+    desc: Build all NixOS host configurations
+    cmds:
+      - nix build .#nixosConfigurations.luna.config.system.build.toplevel
+      - nix build .#nixosConfigurations.terra.config.system.build.toplevel
+      - nix build .#nixosConfigurations.toshibachromebook.config.system.build.toplevel
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake .
