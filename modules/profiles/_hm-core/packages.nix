@@ -1,4 +1,3 @@
-# Should probably pull some of this out to dev or whatever later
 { pkgs, ... }:
 {
 
