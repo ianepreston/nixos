@@ -42,6 +42,7 @@
             moonlight
             browser
             obsidian
+            ssh-homelan
           ];
 
           boot = {

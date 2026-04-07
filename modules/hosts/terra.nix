@@ -40,6 +40,7 @@
           freecad
           obsidian
           browser
+          ssh-homelan
         ];
 
         boot = {
