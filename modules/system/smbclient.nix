@@ -20,7 +20,7 @@ in
       };
 
       fileSystems."/mnt/content" = {
-        device = "//laconiatrust/content";
+        device = "//laconia/content";
         fsType = "cifs";
         options =
           let
@@ -31,7 +31,7 @@ in
           [ "${automount_options},${useroptions},${secoptions}" ];
       };
       fileSystems."/mnt/laconiahome" = {
-        device = "//laconiatrust/home";
+        device = "//laconia/home";
         fsType = "cifs";
         options =
           let
