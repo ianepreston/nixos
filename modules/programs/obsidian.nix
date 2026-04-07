@@ -1,8 +1,12 @@
 # Obsidian - Simple Aspect
 _: {
-  flake.modules.nixos.obsidian =
+  flake.modules.homeManager.obsidian =
     { pkgs, ... }:
     {
-      environment.systemPackages = [ pkgs.obsidian ];
+      home.packages = builtins.attrValues {
+        inherit (pkgs)
+          obsidian
+          ;
+      };
     };
 }

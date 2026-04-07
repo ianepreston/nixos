@@ -25,7 +25,6 @@
       gaming
       keyd
       nvidia-rtx5080
-      obsidian
       printing
       rgb
       smbclient
@@ -39,6 +38,7 @@
           adb
           calibre
           freecad
+          obsidian
           browser
         ];
 

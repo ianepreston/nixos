@@ -28,7 +28,6 @@
       gaming
       keyd
       nvidia-gtx1060
-      obsidian
       printing
       smbclient
       xreal-headset
@@ -42,6 +41,7 @@
             vibes
             moonlight
             browser
+            obsidian
           ];
 
           boot = {

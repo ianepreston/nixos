@@ -21,7 +21,6 @@
       workstation
       gnome
       flatpak
-      obsidian
       printing
       zsa-keeb
     ])
@@ -33,6 +32,7 @@
             vibes
             moonlight
             browser
+            obsidian
           ];
           boot = {
             loader.grub.extraConfig = "cros_legacy";
