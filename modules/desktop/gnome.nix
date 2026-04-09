@@ -60,7 +60,6 @@
     imports = [
       ./_gnome/dconf.nix
       ./_gnome/cursor.nix
-      ./_gnome/ghostty.nix
       ./_gnome/stylix.nix
     ];
   };

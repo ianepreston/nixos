@@ -55,6 +55,7 @@
       core
       browser
       comms
+      ghostty
       media
     ];
   };
