@@ -18,26 +18,19 @@ in
     };
     modules = [
       inputs.self.modules.darwin.base
+      inputs.self.modules.darwin.desktop
+      inputs.self.modules.darwin.homebrew
+      inputs.self.modules.darwin.yubikey
       ./_work-homebrew.nix
-      ./_work-system-settings.nix
-      ./_work-yubikey.nix
       {
         system.primaryUser = hostSpec.username;
 
         home-manager.sharedModules = [
           inputs.self.modules.homeManager.hammerspoon
+          inputs.self.modules.homeManager.ghostty
 
           # Work-specific HM config
           (_: {
-            home.file."Library/Application Support/com.mitchellh.ghostty/config" = {
-              text = ''
-                theme = Catppuccin Latte
-                font-family = FiraCode Nerd Font Mono
-                clipboard-read = allow
-                clipboard-write = allow
-                font-size = 14
-              '';
-            };
             programs.git.settings = {
               includeIf = {
                 "hasconfig:remote.*.url:git@github.com-emu:databricks-field-eng/**".path = workGitConfig;
