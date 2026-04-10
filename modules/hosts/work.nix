@@ -77,6 +77,10 @@ in
               [github]
                 name = "ian-preston_data"
             '';
+            home.file.".config/uv/uv.toml".text = ''
+              [[index]]
+              url = "https://pypi-proxy.dev.databricks.com/simple"
+            '';
             programs.zsh.initContent = ''
               alias llm="dbexec repo run llm"
               alias isaac="dbexec repo run isaac"
