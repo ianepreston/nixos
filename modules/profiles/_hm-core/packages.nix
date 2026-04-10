@@ -1,4 +1,10 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
+let
+  pkgsUnstable = import inputs.nixpkgs-unstable {
+    inherit (pkgs.stdenv.hostPlatform) system;
+    inherit (pkgs) config;
+  };
+in
 {
 
   # The home.packages option allows you to install Nix packages into your
@@ -19,6 +25,7 @@
     nixfmt-rfc-style
     sops
     age
+    pkgsUnstable.prek
   ];
 
 }

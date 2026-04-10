@@ -2,11 +2,18 @@
 # Claude Code
 _: {
   flake.modules.homeManager.vibes =
-    { pkgs, ... }:
+    { pkgs, inputs, ... }:
+    let
+      pkgsUnstable = import inputs.nixpkgs-unstable {
+        inherit (pkgs.stdenv.hostPlatform) system;
+        inherit (pkgs) config;
+      };
+    in
     {
       home.packages = builtins.attrValues {
-        inherit (pkgs)
+        inherit (pkgsUnstable)
           claude-code
+          gemini-cli
           ;
       };
     };
