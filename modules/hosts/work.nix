@@ -74,8 +74,13 @@ in
               [user]
                 name = "ian-preston_data"
                 email = "${workGitEmail}"
+                signingkey = /Users/ian.preston/.ssh/github_emu_key.pub
               [github]
                 name = "ian-preston_data"
+              [gpg]
+                format = ssh
+              [commit]
+                gpgsign = true
             '';
             home.file.".config/uv/uv.toml".text = ''
               [[index]]
