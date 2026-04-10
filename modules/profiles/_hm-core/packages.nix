@@ -19,6 +19,7 @@
     nixfmt-rfc-style
     sops
     age
+    prek
   ];
 
 }
