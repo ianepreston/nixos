@@ -16,6 +16,7 @@ _: {
       ];
       casks = [
         "ghostty"
+        "cmux"
         "obsidian"
         "hammerspoon"
       ];
