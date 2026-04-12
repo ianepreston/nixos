@@ -89,14 +89,15 @@ tasks:
         read -r
       - task: bootstrap:hwconfig
         vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:hostkey
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
       - |
         echo ""
         echo "===  Complete the secrets setup in nix-secrets before continuing  ==="
         echo "    1. Update nix-secrets/.sops.yaml (age key was printed above)"
         echo "    2. Create nix-secrets/sops/{{.HOST}}.yaml with ssh/ed25519 key"
         echo "    3. sops updatekeys sops/shared.yaml"
-        echo "    4. git add -A && git commit && git push  (in nix-secrets)"
-        echo "    5. nix flake update nix-secrets         (in this repo)"
+        echo "    4. git add -A && git commit  (in nix-secrets)"
         echo ""
         echo "    Press Enter when done."
         read -r
@@ -138,8 +139,9 @@ tasks:
         temp=$(mktemp -d)
         trap "rm -rf $temp" EXIT
 
-        echo -e "\x1B[32m[+] Wiping known_hosts entries for {{.DEST}}\x1B[0m"
-        sed -i '/{{.DEST}}/d' ~/.ssh/known_hosts 2>/dev/null || true
+        echo -e "\x1B[32m[+] Wiping known_hosts entries for {{.DEST}} (port {{.SSH_PORT}})\x1B[0m"
+        ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
 
         echo -e "\x1B[32m[+] Generating SSH host key for {{.HOST}}\x1B[0m"
         install -d -m755 "$temp/etc/ssh"

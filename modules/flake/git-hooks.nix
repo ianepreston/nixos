@@ -16,7 +16,7 @@
       };
       deadnix = {
         enable = true;
-        settings.exclude = [ "modules/hosts/_*-hardware.nix" ];
+        excludes = [ "modules/hosts/_.*-hardware\\.nix$" ];
       };
 
       # Prevent secrets from leaking

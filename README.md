@@ -73,6 +73,7 @@ This is a tweaked version of the repo originally provided by [EmergentMind](http
 | **work** | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config |
 | **penguin** | x86_64-linux | `homeConfigurations` | Standalone home-manager (WSL / non-NixOS Linux) |
 | **toshibachromebook** | x86_64-linux | `nixosConfigurations` | Minimal ChromeBook config |
+| **testvm** | x86_64-linux | `nixosConfigurations` | Minimal VM for bootstrap testing (quickemu) |
 | **iso** | x86_64-linux | `nixosConfigurations` | Custom NixOS installer/recovery ISO |
 
 ## Module System
@@ -148,7 +149,7 @@ Before bootstrapping, the target host needs configuration in this repo:
 - `hostSpecs/newhostname.nix` — host specification (copy from an existing host)
 - `modules/hosts/_newhostname-disks.nix` — disko disk layout
 - `modules/hosts/newhostname.nix` — host module (which modules to compose)
-- A placeholder `modules/hosts/_newhostname-hardware.nix` (copy from `testvm`, replaced post-install)
+- A placeholder `modules/hosts/_newhostname-hardware.nix` (copy from an existing host, replaced post-install)
 
 Also add the new host to `hostSpecs/default.nix` imports list, then `git add` all new files — the
 flake uses `git+file://` and won't see untracked files.
@@ -165,8 +166,9 @@ task bootstrap:new HOST=newhostname DEST=192.168.1.50
 task bootstrap:new HOST=newhostname DEST=192.168.1.50 LUKS_PASS=temp-passphrase
 ```
 
-`bootstrap:install` prints the host's age public key and SOPS instructions at the end, so you
-have everything you need for the secrets step when the pipeline pauses.
+The pipeline pauses twice: once for the target to reboot after install, and once for secrets
+setup. The age public key and SOPS instructions are printed right before the secrets pause
+(via `bootstrap:hostkey`).
 
 Individual steps can be run independently for partial re-runs after failures:
 
@@ -180,7 +182,8 @@ task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebui
 
 ### 3. Post-install: add secrets
 
-After `bootstrap:hostkey` prints the age public key, follow these steps:
+After the pipeline prints the age public key (or after running `bootstrap:hostkey` manually),
+follow these steps:
 
 1. Add the host key under `keys.hosts` with an anchor in `nix-secrets/.sops.yaml`
 2. Add the host to `shared.yaml`'s creation rule
@@ -195,9 +198,11 @@ After `bootstrap:hostkey` prints the age public key, follow these steps:
    sops sops/newhostname.yaml
    ```
 5. Run `sops updatekeys sops/shared.yaml` to re-encrypt shared secrets for the new host
-6. Commit and push nix-secrets
-7. Run `nix flake update nix-secrets` in this repo
-8. Re-run `task bootstrap:sync` and `task bootstrap:rebuild`
+6. Commit in nix-secrets (`git add -A && git commit`)
+7. Press Enter in the `bootstrap:new` prompt to continue with sync + rebuild
+
+The rebuild uses `--override-input nix-secrets path:../nix-secrets`, so the local commit
+is sufficient — you don't need to push nix-secrets or update the flake lock until later.
 
 Note: `bootstrap:new` is not fully automated for new hosts — it pauses after install but
 the secrets steps above must be completed manually before the final sync/rebuild will succeed.
@@ -218,6 +223,7 @@ A `testvm` host config is included for bootstrap testing. Build the ISO if neede
 
 ```bash
 # Create a quickemu config (adjust paths as needed)
+mkdir -p ~/vms/testvm
 cat > ~/vms/testvm.conf <<'EOF'
 guest_os="linux"
 disk_img="/home/ipreston/vms/testvm/testvm.qcow2"
@@ -231,16 +237,29 @@ EOF
 quickemu --vm ~/vms/testvm.conf --display none --ssh-port 22222
 ```
 
-Then run bootstrap tasks using `127.0.0.1` (not `localhost` — QEMU only forwards IPv4):
+Then run the full bootstrap pipeline using `127.0.0.1` (not `localhost` — QEMU only forwards
+IPv4):
 
 ```bash
-task bootstrap:install HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+task bootstrap:new HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+```
+
+Or run individual steps for debugging:
+
+```bash
+task bootstrap:install  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
 # Wait for reboot, then:
 task bootstrap:hwconfig HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
 task bootstrap:hostkey  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
 # Follow the secrets steps above, then:
 task bootstrap:sync     HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
 task bootstrap:rebuild  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+```
+
+To start fresh, delete the VM disk and OVMF vars:
+
+```bash
+rm -f ~/vms/testvm/testvm.qcow2 ~/vms/testvm/OVMF_VARS.fd
 ```
 
 ## Guidance and Resources
