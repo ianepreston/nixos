@@ -125,10 +125,11 @@ Common operations are automated via `Taskfile.yaml`:
 | `task check` | Full pre-push check (format + lint + flake check) |
 | `task iso` | Build the installer/recovery ISO |
 | `task garbage_collect` | Remove store objects older than 7 days |
-| `task bootstrap:new HOST=x DEST=ip` | Full bootstrap pipeline (install + hwconfig + hostkey + sync + rebuild) |
-| `task bootstrap:install HOST=x DEST=ip` | Run nixos-anywhere to install NixOS on target |
+| `task bootstrap:new HOST=x DEST=ip` | New host pipeline: install (prints age key) + hwconfig, pause for secrets, sync + rebuild |
+| `task bootstrap:reinstall HOST=x DEST=ip` | Reinstall existing host: install + sync + rebuild (no secrets pause) |
+| `task bootstrap:install HOST=x DEST=ip` | Run nixos-anywhere to install NixOS; prints age key at end |
 | `task bootstrap:hwconfig HOST=x DEST=ip` | Extract hardware-configuration.nix from target |
-| `task bootstrap:hostkey HOST=x DEST=ip` | Derive age key from target SSH key, print SOPS instructions |
+| `task bootstrap:hostkey HOST=x DEST=ip` | Re-derive age key from live host SSH key (fallback if install output was missed) |
 | `task bootstrap:sync HOST=x DEST=ip` | Rsync nixos and nix-secrets to target |
 | `task bootstrap:rebuild HOST=x DEST=ip` | Run nixos-rebuild switch on target |
 
@@ -157,19 +158,22 @@ The real hardware config is extracted after installation via `task bootstrap:hwc
 ### 2. Run the bootstrap
 
 ```bash
-# Full pipeline — installs, extracts hardware config, shows SOPS instructions, syncs, rebuilds:
+# Full pipeline for a new host — pauses twice: once for reboot, once for secrets setup:
 task bootstrap:new HOST=newhostname DEST=192.168.1.50
 
 # With LUKS encryption:
 task bootstrap:new HOST=newhostname DEST=192.168.1.50 LUKS_PASS=temp-passphrase
 ```
 
+`bootstrap:install` prints the host's age public key and SOPS instructions at the end, so you
+have everything you need for the secrets step when the pipeline pauses.
+
 Individual steps can be run independently for partial re-runs after failures:
 
 ```bash
-task bootstrap:install  HOST=newhostname DEST=192.168.1.50  # nixos-anywhere only
+task bootstrap:install  HOST=newhostname DEST=192.168.1.50  # nixos-anywhere + prints age key
 task bootstrap:hwconfig HOST=newhostname DEST=192.168.1.50  # extract hardware config
-task bootstrap:hostkey  HOST=newhostname DEST=192.168.1.50  # derive age key, print instructions
+task bootstrap:hostkey  HOST=newhostname DEST=192.168.1.50  # re-derive age key from live host
 task bootstrap:sync     HOST=newhostname DEST=192.168.1.50  # rsync configs to target
 task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebuild switch
 ```
@@ -200,13 +204,11 @@ the secrets steps above must be completed manually before the final sync/rebuild
 
 ### Reinstalling an existing host
 
-For hosts that already have keys and configs, only the install and sync/rebuild steps are needed:
+For hosts that already have keys and secrets configured, use `bootstrap:reinstall` — it skips
+the secrets setup pause:
 
 ```bash
-task bootstrap:install HOST=existinghost DEST=192.168.1.50
-# Wait for reboot, then:
-task bootstrap:sync    HOST=existinghost DEST=192.168.1.50
-task bootstrap:rebuild HOST=existinghost DEST=192.168.1.50
+task bootstrap:reinstall HOST=existinghost DEST=192.168.1.50
 ```
 
 ### VM testing

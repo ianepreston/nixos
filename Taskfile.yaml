@@ -10,8 +10,8 @@ tasks:
   lint:
     desc: Run nix linters
     cmds:
-      - statix check . --ignore result
-      - deadnix --no-underscore --exclude result .
+      - statix check . --ignore result 'modules/hosts/_*-hardware.nix'
+      - deadnix --no-underscore --exclude result 'modules/hosts/_*-hardware.nix' .
   fmt:
     desc: Format all Nix files
     cmds:
@@ -73,24 +73,57 @@ tasks:
   # Optional vars: SSH_PORT (default 22), LUKS_PASS (LUKS passphrase, omit if no LUKS)
 
   bootstrap:new:
-    desc: Full bootstrap pipeline for a new host (install + hwconfig + hostkey + sync + rebuild)
+    desc: Full pipeline for a brand-new host (install + hwconfig, pause for secrets setup, then sync + rebuild)
     requires:
       vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
     cmds:
       - task: bootstrap:install
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}' }
-      - echo ""
-      - echo "===  Installation complete. Waiting for target to reboot.  ==="
-      - echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
-      - read -r
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+      - |
+        echo ""
+        echo "===  Installation complete. Waiting for target to reboot.  ==="
+        echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
+        read -r
       - task: bootstrap:hwconfig
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}' }
-      - task: bootstrap:hostkey
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}' }
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - |
+        echo ""
+        echo "===  Complete the secrets setup in nix-secrets before continuing  ==="
+        echo "    1. Update nix-secrets/.sops.yaml (age key was printed above)"
+        echo "    2. Create nix-secrets/sops/{{.HOST}}.yaml with ssh/ed25519 key"
+        echo "    3. sops updatekeys sops/shared.yaml"
+        echo "    4. git add -A && git commit && git push  (in nix-secrets)"
+        echo "    5. nix flake update nix-secrets         (in this repo)"
+        echo ""
+        echo "    Press Enter when done."
+        read -r
       - task: bootstrap:sync
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}' }
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
       - task: bootstrap:rebuild
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}' }
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  bootstrap:reinstall:
+    desc: Reinstall an existing host that already has secrets configured (install + sync + rebuild)
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+    cmds:
+      - task: bootstrap:install
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+      - |
+        echo ""
+        echo "===  Installation complete. Waiting for target to reboot.  ==="
+        echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
+        read -r
+      - task: bootstrap:sync
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:rebuild
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
   bootstrap:install:
     desc: Run nixos-anywhere to install NixOS on the target
@@ -129,6 +162,27 @@ tasks:
           $luks_args \
           --flake .#{{.HOST}} \
           root@{{.DEST}}
+
+        host_age_key=$(ssh-to-age < "$temp/etc/ssh/ssh_host_ed25519_key.pub")
+        echo ""
+        echo "========================================================"
+        echo "  Age public key for {{.HOST}}:"
+        echo "  $host_age_key"
+        echo "========================================================"
+        echo ""
+        echo "Update nix-secrets/.sops.yaml with the following:"
+        echo ""
+        echo "  Under keys.hosts:"
+        echo "    - &{{.HOST}} $host_age_key"
+        echo ""
+        echo "  Under creation_rules, add *{{.HOST}} to shared.yaml's age list."
+        echo ""
+        echo "  Add a new creation rule for {{.HOST}}:"
+        echo "    - path_regex: {{.HOST}}\\.yaml\$"
+        echo "      key_groups:"
+        echo "        - age:"
+        echo "            - *ipreston"
+        echo "            - *{{.HOST}}"
 
   bootstrap:hwconfig:
     desc: Extract hardware-configuration.nix from the target and save it locally
