@@ -12,11 +12,11 @@
       # conform to the usual style rules, so exclude them from both linters.
       statix = {
         enable = true;
-        excludes = [ "modules/hosts/_.*-hardware\\.nix" ];
+        settings.ignore = [ "modules/hosts/_*-hardware.nix" ];
       };
       deadnix = {
         enable = true;
-        excludes = [ "modules/hosts/_.*-hardware\\.nix" ];
+        settings.exclude = [ "modules/hosts/_*-hardware.nix" ];
       };
 
       # Prevent secrets from leaking
