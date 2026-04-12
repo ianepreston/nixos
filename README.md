@@ -147,15 +147,12 @@ Before bootstrapping, the target host needs configuration in this repo:
 - `hostSpecs/newhostname.nix` — host specification (copy from an existing host)
 - `modules/hosts/_newhostname-disks.nix` — disko disk layout
 - `modules/hosts/newhostname.nix` — host module (which modules to compose)
+- A placeholder `modules/hosts/_newhostname-hardware.nix` (copy from `testvm`, replaced post-install)
 
-If you don't have a hardware config yet, boot the ISO on the target and run:
+Also add the new host to `hostSpecs/default.nix` imports list, then `git add` all new files — the
+flake uses `git+file://` and won't see untracked files.
 
-```bash
-ssh root@TARGET "nixos-generate-config --no-filesystems --show-hardware-config" \
-  > modules/hosts/_newhostname-hardware.nix
-```
-
-Or use `task bootstrap:hwconfig` after installation to extract it.
+The real hardware config is extracted after installation via `task bootstrap:hwconfig`.
 
 ### 2. Run the bootstrap
 
@@ -179,14 +176,27 @@ task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebui
 
 ### 3. Post-install: add secrets
 
-After `bootstrap:hostkey` prints the age public key, update `nix-secrets/.sops.yaml`:
+After `bootstrap:hostkey` prints the age public key, follow these steps:
 
-1. Add the host key under `keys.hosts` with an anchor
+1. Add the host key under `keys.hosts` with an anchor in `nix-secrets/.sops.yaml`
 2. Add the host to `shared.yaml`'s creation rule
 3. Create a creation rule for `newhostname.yaml`
-4. Run `sops updatekeys sops/*.yaml`, commit, and push nix-secrets
-5. Run `nix flake update nix-secrets` in this repo
-6. Re-run `task bootstrap:sync` and `task bootstrap:rebuild`
+4. Create `nix-secrets/sops/newhostname.yaml` with at minimum an `ssh/ed25519` private key:
+   ```bash
+   cd ../nix-secrets
+   # Create plaintext file, then encrypt in-place:
+   echo 'ssh:\n    ed25519: |' > sops/newhostname.yaml   # paste the private key content
+   sops --encrypt --in-place sops/newhostname.yaml
+   # Or just open sops editor directly:
+   sops sops/newhostname.yaml
+   ```
+5. Run `sops updatekeys sops/shared.yaml` to re-encrypt shared secrets for the new host
+6. Commit and push nix-secrets
+7. Run `nix flake update nix-secrets` in this repo
+8. Re-run `task bootstrap:sync` and `task bootstrap:rebuild`
+
+Note: `bootstrap:new` is not fully automated for new hosts — it pauses after install but
+the secrets steps above must be completed manually before the final sync/rebuild will succeed.
 
 ### Reinstalling an existing host
 
@@ -201,9 +211,35 @@ task bootstrap:rebuild HOST=existinghost DEST=192.168.1.50
 
 ### VM testing
 
-Use quickemu on terra to test the bootstrap against VMs before touching real hardware.
-Build a custom ISO with `task iso`, then create a VM pointing at `latest.iso` and run
-the bootstrap tasks against the VM's IP.
+A `testvm` host config is included for bootstrap testing. Build the ISO if needed
+(`task iso`), then:
+
+```bash
+# Create a quickemu config (adjust paths as needed)
+cat > ~/vms/testvm.conf <<'EOF'
+guest_os="linux"
+disk_img="/home/ipreston/vms/testvm/testvm.qcow2"
+iso="/home/ipreston/src/nixos/latest.iso"
+disk_size="20G"
+ram="4G"
+cpu_cores="2"
+EOF
+
+# Boot the VM headlessly with a fixed SSH port
+quickemu --vm ~/vms/testvm.conf --display none --ssh-port 22222
+```
+
+Then run bootstrap tasks using `127.0.0.1` (not `localhost` — QEMU only forwards IPv4):
+
+```bash
+task bootstrap:install HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+# Wait for reboot, then:
+task bootstrap:hwconfig HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+task bootstrap:hostkey  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+# Follow the secrets steps above, then:
+task bootstrap:sync     HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+task bootstrap:rebuild  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
+```
 
 ## Guidance and Resources
 
