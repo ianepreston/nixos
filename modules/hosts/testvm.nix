@@ -23,10 +23,6 @@
     ])
     ++ [
       {
-        home-manager.sharedModules = [
-          { home.stateVersion = "25.11"; }
-        ];
-
         boot.loader = {
           systemd-boot.enable = true;
           efi.canTouchEfiVariables = true;

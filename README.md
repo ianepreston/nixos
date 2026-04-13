@@ -126,11 +126,12 @@ Common operations are automated via `Taskfile.yaml`:
 | `task check` | Full pre-push check (format + lint + flake check) |
 | `task iso` | Build the installer/recovery ISO |
 | `task garbage_collect` | Remove store objects older than 7 days |
-| `task bootstrap:new HOST=x DEST=ip` | New host pipeline: install (prints age key) + hwconfig, pause for secrets, sync + rebuild |
+| `task bootstrap:new HOST=x DEST=ip` | New host pipeline: install, hwconfig, secrets setup, sync + rebuild |
 | `task bootstrap:reinstall HOST=x DEST=ip` | Reinstall existing host: install + sync + rebuild (no secrets pause) |
 | `task bootstrap:install HOST=x DEST=ip` | Run nixos-anywhere to install NixOS; prints age key at end |
 | `task bootstrap:hwconfig HOST=x DEST=ip` | Extract hardware-configuration.nix from target |
 | `task bootstrap:hostkey HOST=x DEST=ip` | Re-derive age key from live host SSH key (fallback if install output was missed) |
+| `task bootstrap:secrets HOST=x DEST=ip` | Add host age key to nix-secrets, create host secrets, commit |
 | `task bootstrap:sync HOST=x DEST=ip` | Rsync nixos and nix-secrets to target |
 | `task bootstrap:rebuild HOST=x DEST=ip` | Run nixos-rebuild switch on target |
 
@@ -166,9 +167,8 @@ task bootstrap:new HOST=newhostname DEST=192.168.1.50
 task bootstrap:new HOST=newhostname DEST=192.168.1.50 LUKS_PASS=temp-passphrase
 ```
 
-The pipeline pauses twice: once for the target to reboot after install, and once for secrets
-setup. The age public key and SOPS instructions are printed right before the secrets pause
-(via `bootstrap:hostkey`).
+The pipeline pauses once for the target to reboot after install, then automatically configures
+secrets in nix-secrets via `bootstrap:secrets`.
 
 Individual steps can be run independently for partial re-runs after failures:
 
@@ -176,36 +176,30 @@ Individual steps can be run independently for partial re-runs after failures:
 task bootstrap:install  HOST=newhostname DEST=192.168.1.50  # nixos-anywhere + prints age key
 task bootstrap:hwconfig HOST=newhostname DEST=192.168.1.50  # extract hardware config
 task bootstrap:hostkey  HOST=newhostname DEST=192.168.1.50  # re-derive age key from live host
+task bootstrap:secrets  HOST=newhostname DEST=192.168.1.50  # configure nix-secrets for host
 task bootstrap:sync     HOST=newhostname DEST=192.168.1.50  # rsync configs to target
 task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebuild switch
 ```
 
-### 3. Post-install: add secrets
+### 3. Secrets setup
 
-After the pipeline prints the age public key (or after running `bootstrap:hostkey` manually),
-follow these steps:
+`bootstrap:new` handles secrets automatically via `bootstrap:secrets`, which:
 
-1. Add the host key under `keys.hosts` with an anchor in `nix-secrets/.sops.yaml`
-2. Add the host to `shared.yaml`'s creation rule
-3. Create a creation rule for `newhostname.yaml`
-4. Create `nix-secrets/sops/newhostname.yaml` with at minimum an `ssh/ed25519` private key:
-   ```bash
-   cd ../nix-secrets
-   # Create plaintext file, then encrypt in-place:
-   echo 'ssh:\n    ed25519: |' > sops/newhostname.yaml   # paste the private key content
-   sops --encrypt --in-place sops/newhostname.yaml
-   # Or just open sops editor directly:
-   sops sops/newhostname.yaml
-   ```
-5. Run `sops updatekeys sops/shared.yaml` to re-encrypt shared secrets for the new host
-6. Commit in nix-secrets (`git add -A && git commit`)
-7. Press Enter in the `bootstrap:new` prompt to continue with sync + rebuild
+1. Derives the host's age key from its SSH host key
+2. Adds the key to `nix-secrets/.sops.yaml` (host anchor + creation rules)
+3. Creates `nix-secrets/sops/newhostname.yaml` with a generated SSH key
+4. Re-encrypts shared secrets for the new host
+5. Commits nix-secrets (locally — not pushed)
+
+To run this step manually (e.g. after a partial re-run):
+
+```bash
+task bootstrap:secrets HOST=newhostname DEST=192.168.1.50
+```
 
 The rebuild uses `--override-input nix-secrets path:../nix-secrets`, so the local commit
-is sufficient — you don't need to push nix-secrets or update the flake lock until later.
-
-Note: `bootstrap:new` is not fully automated for new hosts — it pauses after install but
-the secrets steps above must be completed manually before the final sync/rebuild will succeed.
+is sufficient during bootstrap. After the host is up, push nix-secrets and run
+`nix flake update nix-secrets` in this repo so normal rebuilds work without the override.
 
 ### Reinstalling an existing host
 
