@@ -1,4 +1,5 @@
 {
+  lib,
   pkgs,
   hostSpec,
   ...
@@ -11,8 +12,8 @@ in
     enable = true;
     package = pkgs.gitFull;
     settings = {
-      user.name = hostSpec.gh_user;
-      user.email = "${publicGitEmail}";
+      user.name = lib.mkDefault hostSpec.gh_user;
+      user.email = lib.mkDefault "${publicGitEmail}";
       init.defaultBranch = "main";
       pull.ff = "only";
       push.default = "current";
