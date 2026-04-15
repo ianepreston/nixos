@@ -10,6 +10,7 @@ _: {
     ./penguin.nix
     ./terra.nix
     ./testvm.nix
+    ./d-nix-1.nix
     ./toshibachromebook.nix
     ./work.nix
   ];
