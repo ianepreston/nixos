@@ -174,8 +174,9 @@ Before bootstrapping, the target host needs configuration in this repo:
 Also add the new host to `hostSpecs/default.nix` imports list, then `git add`
 all new files — the flake uses `git+file://` and won't see untracked files.
 
-The real hardware config is extracted after installation via
-`task bootstrap:hwconfig`.
+The hardware config is automatically fetched from the target during
+`bootstrap:install` if the file doesn't exist yet. It gets refreshed from
+the installed OS by `bootstrap:hwconfig` after reboot.
 
 ### 2. Run the bootstrap
 

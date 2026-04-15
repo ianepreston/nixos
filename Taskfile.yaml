@@ -126,6 +126,16 @@ tasks:
     cmds:
       - |
         set -euo pipefail
+        hwfile="modules/hosts/_{{.HOST}}-hardware.nix"
+        if [ ! -f "$hwfile" ]; then
+          echo -e "\x1B[32m[+] No hardware config found — fetching from {{.DEST}}\x1B[0m"
+          ssh -p {{.SSH_PORT}} -oStrictHostKeyChecking=accept-new root@{{.DEST}} \
+            "nixos-generate-config --no-filesystems --show-hardware-config" > "$hwfile"
+          git add "$hwfile"
+          echo -e "\x1B[32m[+] Saved and staged $hwfile\x1B[0m"
+        fi
+      - |
+        set -euo pipefail
         temp=$(mktemp -d)
         trap "rm -rf $temp" EXIT
 
