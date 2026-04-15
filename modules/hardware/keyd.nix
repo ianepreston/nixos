@@ -19,6 +19,18 @@ _: {
             x = "C-x";
             space = "C-space";
           };
+
+          # Reverse side of the swap: physical Ctrl+key → Super+key
+          # so Ghostty can map super+c/d/z/etc to terminal control chars
+          control = {
+            c = "M-c";
+            d = "M-d";
+            z = "M-z";
+            h = "M-h";
+            j = "M-j";
+            k = "M-k";
+            l = "M-l";
+          };
         };
       };
     };
