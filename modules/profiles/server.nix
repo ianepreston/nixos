@@ -35,6 +35,7 @@
   # Server NixOS module - base + essentials
   flake.modules.nixos.server = _: {
     imports = with inputs.self.modules.nixos; [
+      auto-rebuild
       base
       sops
       ssh
