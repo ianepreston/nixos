@@ -7,11 +7,21 @@
       inherit inputs;
       hostSpec = hostSpecs.penguin;
     };
-    modules = with inputs.self.modules.homeManager; [
-      core
-      ssh
-      ssh-homelan
-      vibes
-    ];
+    modules =
+      (with inputs.self.modules.homeManager; [
+        core
+        ssh
+        ssh-homelan
+        vibes
+      ])
+      ++ [
+        {
+          home = {
+            inherit (hostSpecs.penguin) username;
+            homeDirectory = hostSpecs.penguin.home;
+            stateVersion = "23.05";
+          };
+        }
+      ];
   };
 }

@@ -125,6 +125,15 @@ in
         };
         # Create the user entry - sharedModules will provide the actual config
         users.${hostSpec.username} = { };
+        sharedModules = [
+          {
+            home = {
+              username = lib.mkDefault hostSpec.username;
+              homeDirectory = lib.mkDefault hostSpec.home;
+              stateVersion = lib.mkDefault "23.05";
+            };
+          }
+        ];
       };
     };
 }

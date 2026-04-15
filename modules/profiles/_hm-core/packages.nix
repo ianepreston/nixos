@@ -25,6 +25,7 @@ in
     nixfmt-rfc-style
     sops
     age
+    ssh-to-age
     pkgsUnstable.prek
   ];
 

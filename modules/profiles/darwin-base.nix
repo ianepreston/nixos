@@ -47,6 +47,13 @@
         users.${hostSpec.username} = { };
         sharedModules = [
           inputs.self.modules.homeManager.core
+          {
+            home = {
+              inherit (hostSpec) username;
+              homeDirectory = hostSpec.home;
+              stateVersion = "23.05";
+            };
+          }
         ];
       };
     };

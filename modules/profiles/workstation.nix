@@ -9,7 +9,7 @@
   # Core home-manager module - git, zsh, starship, neovim, direnv, packages
   # This wraps the existing home/core modules
   flake.modules.homeManager.core =
-    { lib, hostSpec, ... }:
+    { hostSpec, ... }:
     let
       platform = if hostSpec.isDarwin then "darwin" else "nixos";
     in
@@ -27,9 +27,6 @@
       programs.home-manager.enable = true;
 
       home = {
-        username = lib.mkDefault hostSpec.username;
-        homeDirectory = lib.mkDefault hostSpec.home;
-        stateVersion = lib.mkDefault "23.05";
         sessionVariables = {
           FLAKE = "$HOME/nixos";
           SHELL = "zsh";

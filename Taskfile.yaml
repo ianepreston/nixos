@@ -10,8 +10,8 @@ tasks:
   lint:
     desc: Run nix linters
     cmds:
-      - statix check . --ignore result
-      - deadnix --no-underscore --exclude result .
+      - statix check . --ignore result 'modules/hosts/_*-hardware.nix'
+      - deadnix --no-underscore --exclude result 'modules/hosts/_*-hardware.nix' .
   fmt:
     desc: Format all Nix files
     cmds:
@@ -65,3 +65,277 @@ tasks:
       # If we dont remove this folder, libvirtd VM doesnt run with the new iso...
       rm -rf result
       nix build --impure .#nixosConfigurations.iso.config.system.build.isoImage && ln -sf result/iso/*.iso latest.iso
+
+  # ---------------------------------------------------------------------------
+  # Bootstrap tasks — install NixOS on a remote target using nixos-anywhere
+  # ---------------------------------------------------------------------------
+  # Required vars: HOST (hostname), DEST (IP or domain of target)
+  # Optional vars: SSH_PORT (default 22), LUKS_PASS (LUKS passphrase, omit if no LUKS)
+
+  bootstrap:new:
+    desc: Full pipeline for a brand-new host (install + hwconfig, pause for secrets setup, then sync + rebuild)
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+    cmds:
+      - task: bootstrap:install
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+      - |
+        echo ""
+        echo "===  Installation complete. Waiting for target to reboot.  ==="
+        echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
+        read -r
+      - task: bootstrap:hwconfig
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:secrets
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:sync
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:rebuild
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  bootstrap:reinstall:
+    desc: Reinstall an existing host that already has secrets configured (install + sync + rebuild)
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+    cmds:
+      - task: bootstrap:install
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+      - |
+        echo ""
+        echo "===  Installation complete. Waiting for target to reboot.  ==="
+        echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
+        read -r
+      - task: bootstrap:sync
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+      - task: bootstrap:rebuild
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  bootstrap:install:
+    desc: Run nixos-anywhere to install NixOS on the target
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+    cmds:
+      - |
+        set -euo pipefail
+        temp=$(mktemp -d)
+        trap "rm -rf $temp" EXIT
+
+        echo -e "\x1B[32m[+] Wiping known_hosts entries for {{.DEST}} (port {{.SSH_PORT}})\x1B[0m"
+        ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+
+        echo -e "\x1B[32m[+] Generating SSH host key for {{.HOST}}\x1B[0m"
+        install -d -m755 "$temp/etc/ssh"
+        ssh-keygen -t ed25519 -f "$temp/etc/ssh/ssh_host_ed25519_key" -C "root@{{.HOST}}" -N ""
+        chmod 600 "$temp/etc/ssh/ssh_host_ed25519_key"
+
+        luks_args=""
+        if [ -n "{{.LUKS_PASS}}" ]; then
+          echo -e "\x1B[32m[+] Setting LUKS passphrase via --disk-encryption-keys\x1B[0m"
+          echo "{{.LUKS_PASS}}" > "$temp/luks-passphrase"
+          luks_args="--disk-encryption-keys /tmp/disko-password $temp/luks-passphrase"
+        fi
+
+        echo -e "\x1B[32m[+] Running nixos-anywhere for {{.HOST}} at {{.DEST}}\x1B[0m"
+        # shellcheck disable=SC2086
+        nix run github:nix-community/nixos-anywhere -- \
+          --ssh-port {{.SSH_PORT}} \
+          --post-kexec-ssh-port {{.SSH_PORT}} \
+          --extra-files "$temp" \
+          $luks_args \
+          --flake .#{{.HOST}} \
+          root@{{.DEST}}
+
+        host_age_key=$(ssh-to-age < "$temp/etc/ssh/ssh_host_ed25519_key.pub")
+        echo ""
+        echo "========================================================"
+        echo "  Age public key for {{.HOST}}:"
+        echo "  $host_age_key"
+        echo "========================================================"
+        echo ""
+        echo "Update nix-secrets/.sops.yaml with the following:"
+        echo ""
+        echo "  Under keys.hosts:"
+        echo "    - &{{.HOST}} $host_age_key"
+        echo ""
+        echo "  Under creation_rules, add *{{.HOST}} to shared.yaml's age list."
+        echo ""
+        echo "  Add a new creation rule for {{.HOST}}:"
+        echo "    - path_regex: {{.HOST}}\\.yaml\$"
+        echo "      key_groups:"
+        echo "        - age:"
+        echo "            - *ipreston"
+        echo "            - *{{.HOST}}"
+
+  bootstrap:hwconfig:
+    desc: Extract hardware-configuration.nix from the target and save it locally
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        outfile="modules/hosts/_{{.HOST}}-hardware.nix"
+        echo -e "\x1B[32m[+] Generating hardware config from {{.DEST}} -> $outfile\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oStrictHostKeyChecking=accept-new {{.TARGET_USER}}@{{.DEST}} \
+          "sudo nixos-generate-config --no-filesystems --show-hardware-config" > "$outfile"
+        echo -e "\x1B[32m[+] Saved to $outfile\x1B[0m"
+
+  bootstrap:hostkey:
+    desc: Derive age public key from target's SSH host key and print SOPS update instructions
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Scanning SSH host key from {{.DEST}}\x1B[0m"
+        host_age_key=$(ssh-keyscan -4 -p {{.SSH_PORT}} -t ed25519 {{.DEST}} 2>/dev/null \
+          | grep ssh-ed25519 | cut -f2- -d" " | ssh-to-age)
+
+        if ! echo "$host_age_key" | grep -q '^age1'; then
+          echo -e "\x1B[31m[!] Failed to derive age key. Is the target up and SSH accessible?\x1B[0m"
+          exit 1
+        fi
+
+        echo ""
+        echo "========================================================"
+        echo "  Age public key for {{.HOST}}:"
+        echo "  $host_age_key"
+        echo "========================================================"
+        echo ""
+        echo "Update nix-secrets/.sops.yaml with the following:"
+        echo ""
+        echo "  Under keys.hosts:"
+        echo "    - &{{.HOST}} $host_age_key"
+        echo ""
+        echo "  Under creation_rules, add *{{.HOST}} to shared.yaml's age list."
+        echo ""
+        echo "  Add a new creation rule for {{.HOST}}:"
+        echo "    - path_regex: {{.HOST}}\\.yaml\$"
+        echo "      key_groups:"
+        echo "        - age:"
+        echo "            - *ipreston"
+        echo "            - *{{.HOST}}"
+        echo ""
+        echo "Then: cd ../nix-secrets && sops updatekeys sops/*.yaml && git add -A && git commit -m 'add {{.HOST}} keys' && git push"
+        echo "Then: nix flake update nix-secrets  (back in this repo)"
+
+  bootstrap:secrets:
+    desc: Add host age key to nix-secrets, create host secrets file, and commit
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        git_root=$(git rev-parse --show-toplevel)
+        secrets_dir="$git_root/../nix-secrets"
+        sops_yaml="$secrets_dir/.sops.yaml"
+        host="{{.HOST}}"
+
+        # Derive age key from the live host
+        echo -e "\x1B[32m[+] Deriving age key from {{.DEST}}\x1B[0m"
+        host_age_key=$(ssh-keyscan -4 -p {{.SSH_PORT}} -t ed25519 {{.DEST}} 2>/dev/null \
+          | grep ssh-ed25519 | cut -f2- -d" " | ssh-to-age)
+
+        if ! echo "$host_age_key" | grep -q '^age1'; then
+          echo -e "\x1B[31m[!] Failed to derive age key. Is the target up and SSH accessible?\x1B[0m"
+          exit 1
+        fi
+        echo "  Age key: $host_age_key"
+
+        # Update .sops.yaml
+        if grep -q "&${host} " "$sops_yaml"; then
+          echo -e "\x1B[33m[~] $host already in .sops.yaml — updating key\x1B[0m"
+          sed -i "s|&${host} age1.*|\&${host} $host_age_key|" "$sops_yaml"
+        else
+          echo -e "\x1B[32m[+] Adding $host to .sops.yaml\x1B[0m"
+          # Add host key anchor under keys.hosts (before creation_rules)
+          sed -i "/^creation_rules:/i\\    - \&${host} $host_age_key" "$sops_yaml"
+          # Add *host to shared.yaml's age list (after the last existing entry)
+          sed -i "/path_regex: shared/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
+          # Deduplicate the shared block in case of double-insertion
+          awk -v pat="          - *${host}" 'BEGIN{c=0} $0==pat{c++;if(c>1)next} {print}' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
+          # Append creation rule for host.yaml
+          printf '  - path_regex: %s\\.yaml$\n    key_groups:\n      - age:\n          - *ipreston\n          - *%s\n' "$host" "$host" >> "$sops_yaml"
+        fi
+
+        # Create host secrets file with a generated SSH key
+        host_secrets="$secrets_dir/sops/${host}.yaml"
+        if [ -f "$host_secrets" ]; then
+          echo -e "\x1B[33m[~] $host_secrets already exists — skipping\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Creating $host_secrets with generated SSH key\x1B[0m"
+          temp=$(mktemp -d)
+          trap "rm -rf $temp" EXIT
+          ssh-keygen -t ed25519 -f "$temp/id_ed25519" -C "${host}" -N "" -q
+          printf 'ssh:\n    ed25519: |\n' > "$host_secrets"
+          sed 's/^/        /' "$temp/id_ed25519" >> "$host_secrets"
+          sops --config "$sops_yaml" --encrypt --in-place "$host_secrets"
+        fi
+
+        # Re-encrypt shared secrets for the new host
+        echo -e "\x1B[32m[+] Updating shared secrets keys\x1B[0m"
+        cd "$secrets_dir"
+        sops updatekeys --yes sops/shared.yaml
+
+        # Commit
+        echo -e "\x1B[32m[+] Committing nix-secrets changes\x1B[0m"
+        git add -A
+        git diff --cached --quiet && echo -e "\x1B[33m[~] No changes to commit\x1B[0m" \
+          || { git commit -m "add ${host} host key and secrets"; echo -e "\x1B[32m[+] Done. nix-secrets committed (not pushed).\x1B[0m"; }
+
+  bootstrap:sync:
+    desc: Rsync nixos and nix-secrets configs to the target
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        git_root=$(git rev-parse --show-toplevel)
+
+        echo -e "\x1B[32m[+] Updating known_hosts for {{.DEST}}\x1B[0m"
+        ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keyscan -p {{.SSH_PORT}} {{.DEST}} 2>/dev/null | grep -v '^#' >> ~/.ssh/known_hosts || true
+
+        echo -e "\x1B[32m[+] Syncing nixos config to {{.DEST}}\x1B[0m"
+        rsync -av --mkpath --filter=':- .gitignore' \
+          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}}" \
+          "$git_root"/../nixos "{{.TARGET_USER}}@{{.DEST}}:src/"
+
+        echo -e "\x1B[32m[+] Syncing nix-secrets to {{.DEST}}\x1B[0m"
+        rsync -av --mkpath --filter=':- .gitignore' \
+          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}}" \
+          "$git_root"/../nix-secrets "{{.TARGET_USER}}@{{.DEST}}:src/"
+
+  bootstrap:rebuild:
+    desc: Run nixos-rebuild switch on the target
+    requires:
+      vars: [HOST, DEST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Rebuilding {{.HOST}} on {{.DEST}}\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          "cd src/nixos && sudo nixos-rebuild switch --flake .#{{.HOST}} --override-input nix-secrets path:../nix-secrets"

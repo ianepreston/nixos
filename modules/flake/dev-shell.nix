@@ -23,6 +23,7 @@ _: {
             sops
             ssh-to-age
             age
+            yq-go
             pre-commit-hook-ensure-sops
 
           ]);

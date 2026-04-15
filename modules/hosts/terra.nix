@@ -28,6 +28,7 @@
       printing
       rgb
       smbclient
+      quickemu
       sunshine
       zsa-keeb
     ])
