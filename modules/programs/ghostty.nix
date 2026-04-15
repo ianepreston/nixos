@@ -45,11 +45,8 @@ _: {
               "super+d=text:\\x04" # EOF (Ctrl+D)
               "super+z=text:\\x1a" # SIGTSTP - suspend (Ctrl+Z)
 
-              # Vim split navigation (physical Ctrl+hjkl → Super+hjkl after keyd swap)
-              "super+h=text:\\x08" # Ctrl+H for vim split left
-              "super+j=text:\\x0a" # Ctrl+J for vim split down
-              "super+k=text:\\x0b" # Ctrl+K for vim split up
-              "super+l=text:\\x0c" # Ctrl+L for vim split right / clear screen
+              # Vim split navigation: physical Ctrl+hjkl passes through as Ctrl+hjkl
+              # (no keyd remap needed — terminal handles these control chars natively)
             ];
           };
         };
