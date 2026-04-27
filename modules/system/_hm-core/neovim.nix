@@ -55,7 +55,7 @@
 
   # Symlink your Neovim configuration (or delete the line to manage .config/nvim directly)
   xdg.configFile."nvim".source =
-    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/src/nixos/modules/profiles/_hm-core/neovim";
+    config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/src/nixos/modules/system/_hm-core/neovim";
 
   # Make yamlfmt not fight with yamllint
   xdg.configFile."yamlfmt/.yamlfmt".text = ''
