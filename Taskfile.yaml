@@ -44,6 +44,9 @@ tasks:
   rebuild:*:
     desc: Rebuild a particular config, pass :[hostname] for the target
     cmd: sudo nixos-rebuild switch --flake .#{{ index .MATCH 0 }}
+  deploy:*:
+    desc: Build locally and deploy to a live remote host, pass :[hostname] for the target
+    cmd: nixos-rebuild switch --flake .#{{ index .MATCH 0 }} --target-host ipreston@{{ index .MATCH 0 }} --sudo --override-input nix-secrets path:../nix-secrets
   build_home:*:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}
