@@ -17,6 +17,7 @@
       ./_d-nix-1-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
+      mealie
       server
     ])
     ++ [
