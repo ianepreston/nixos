@@ -11,5 +11,10 @@ _: {
       };
       oci-containers.backend = "podman";
     };
+
+    # Containers on the default podman bridge reach host services
+    # (postgres, etc.) via host.containers.internal -> 10.88.0.1.
+    # Trust the bridge so the firewall doesn't drop those packets.
+    networking.firewall.trustedInterfaces = [ "podman0" ];
   };
 }
