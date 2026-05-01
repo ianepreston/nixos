@@ -10,6 +10,7 @@
     imports = with inputs.self.modules.nixos; [
       auto-rebuild
       base
+      oci-containers
       server-users
       sops
       ssh
