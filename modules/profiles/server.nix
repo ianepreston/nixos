@@ -13,6 +13,7 @@
       caddy
       nfsclient
       oci-containers
+      postgresql
       server-users
       sops
       ssh
