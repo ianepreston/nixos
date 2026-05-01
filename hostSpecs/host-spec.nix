@@ -46,6 +46,16 @@
               default = false;
               description = "Used to indicate a minimal host";
             };
+            serverEnvironment = lib.mkOption {
+              type = lib.types.nullOr (
+                lib.types.enum [
+                  "dev"
+                  "prod"
+                ]
+              );
+              default = null;
+              description = "Server environment: \"dev\" => server-dev (1029), \"prod\" => server-prod (1030). null on non-server hosts.";
+            };
             isWork = lib.mkOption {
               type = lib.types.bool;
               default = false;
