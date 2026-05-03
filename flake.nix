@@ -49,5 +49,10 @@
       url = "git+ssh://git@github.com/ianepreston/nix-secrets.git?ref=main&shallow=1";
       inputs = { };
     };
+    # Native NixOS module for authentik (server, worker, outposts).
+    # Upstream warns against overriding nixpkgs via follows because
+    # python deps in the lockfile are pinned together; let it use its
+    # own locked nixpkgs.
+    authentik-nix.url = "github:nix-community/authentik-nix";
   };
 }

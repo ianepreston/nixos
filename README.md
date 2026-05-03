@@ -8,6 +8,7 @@
 - [Hosts](#hosts)
 - [Module System](#module-system)
 - [Server App Pattern](#server-app-pattern)
+- [Authentik (SSO)](#authentik-sso)
 - [Secrets Management](#secrets-management)
 - [Task Automation](#task-automation)
 - [Bootstrapping a New Host](#bootstrapping-a-new-host)
@@ -283,6 +284,133 @@ The short version: stop `postgresql.service`, run the
 `upgrade-pg-cluster` script (made available by temporarily setting both the
 old and new packages in a shell), bump `package = pkgs.postgresql_<new>` in
 this repo, rebuild, and verify before deleting the old data directory.
+
+## Authentik (SSO)
+
+`modules/apps/authentik.nix` deploys Authentik as native systemd units via
+the [`nix-community/authentik-nix`](https://github.com/nix-community/authentik-nix)
+flake input — *not* containers. The module's `services.authentik` runs three
+units (`authentik`, `authentik-worker`, `authentik-migrate`) under
+`DynamicUser=true`, talks to the shared postgres over the unix socket via
+peer auth (so no role password is needed), and uses the unnamed NixOS
+`services.redis.servers.""` instance on `localhost:6379`. Caddy fronts it
+at `authentik.${hostSpec.serverDomain}`.
+
+### Declarative configuration via blueprints
+
+Groups, users, applications, OAuth/proxy providers, and group bindings are
+all managed as Authentik **blueprints** (YAML, applied idempotently by the
+worker on a periodic Celery task and on startup). No terraform, no UI
+clicks. Two starter blueprints live under `modules/apps/authentik-blueprints/`:
+
+- `groups.yaml` — homelab groups (Downloads, Grafana Admins, Home,
+  Infrastructure, Media, Monitoring, Users).
+- `users.yaml` — the `ian` admin user, in all groups + built-in
+  `authentik Admins`. The password reads from `!Env IAN_PASSWORD`, which
+  is rendered into the systemd `EnvironmentFile` from sops.
+
+The module merges its blueprints with the upstream-bundled set into a
+single `blueprints_dir` via `pkgs.runCommandLocal` + `cp -rL`. **Do not
+use `pkgs.symlinkJoin`** here: authentik's `retrieve_file` calls
+`Path(...).resolve()` and rejects anything that resolves outside
+`blueprints_dir`, so symlink-joined entries (which dereference back to
+their original store paths) all fail with "Invalid blueprint path".
+Real files via `cp -L` are required.
+
+### Adding an app to Authentik
+
+Each app module that wants SSO drops its own blueprint(s) and any new
+secrets via `myAuthentik.extraBlueprints` and an `lib.mkAfter` chunk on
+`sops.templates."authentik.env"`. Blueprint secrets (`client_secret`,
+token `key`, user `password`) **must** be passed via `!Env VAR_NAME` so
+they never land in `/nix/store`; add the matching env line to the
+authentik env template.
+
+Sketch (Grafana OIDC):
+
+```nix
+# modules/apps/grafana.nix
+{ inputs, ... }: {
+  flake.modules.nixos.grafana = { config, lib, ... }: {
+    sops.secrets."grafana/oidc_client_secret" = {
+      sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+      restartUnits = [ "authentik.service" "authentik-worker.service" ];
+    };
+    sops.templates."authentik.env".content = lib.mkAfter ''
+      GRAFANA_OIDC_CLIENT_ID=${config.sops.placeholder."grafana/oidc_client_id"}
+      GRAFANA_OIDC_CLIENT_SECRET=${config.sops.placeholder."grafana/oidc_client_secret"}
+    '';
+    myAuthentik.extraBlueprints = [ ./grafana-blueprints ];
+    # ... grafana-the-app config
+  };
+}
+```
+
+```yaml
+# modules/apps/grafana-blueprints/grafana.yaml
+version: 1
+metadata: { name: grafana }
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-grafana
+    identifiers: { name: grafana }
+    attrs:
+      client_type: confidential
+      client_id: !Env GRAFANA_OIDC_CLIENT_ID
+      client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow:  !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow:   !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      redirect_uris:
+        - { matching_mode: strict, url: "https://grafana.dnix.ipreston.net/login/generic_oauth" }
+  - model: authentik_core.application
+    id: app-grafana
+    identifiers: { slug: grafana }
+    attrs:
+      name: Grafana
+      provider: !KeyOf prov-grafana
+      meta_launch_url: https://grafana.dnix.ipreston.net
+  - model: authentik_policies.policybinding
+    identifiers: { target: !KeyOf app-grafana, order: 0 }
+    attrs:
+      group: !Find [authentik_core.group, [name, Grafana Admins]]
+      enabled: true
+```
+
+Reference: [model fields](https://docs.goauthentik.io/customize/blueprints/v1/models),
+[YAML tags](https://docs.goauthentik.io/customize/blueprints/v1/tags).
+
+### Forward-auth via Caddy
+
+For apps that don't speak OIDC themselves (AlertManager, Prometheus,
+Longhorn-style admin UIs), gate them via Authentik's embedded outpost +
+Caddy's `forward_auth`. The authentik module exports a reusable Caddy
+snippet `(authentik_forward_auth)` that protected virtualHosts can
+import:
+
+```nix
+services.caddy.virtualHosts."alertmanager.${hostSpec.serverDomain}".extraConfig = ''
+  reverse_proxy localhost:9093
+  import authentik_forward_auth
+'';
+```
+
+The matching proxy provider + application + binding go in that app's
+blueprint. The snippet handles both the `forward_auth` directive (auth
+check on every request) and the `handle_path /outpost.goauthentik.io/*`
+block (callback routes).
+
+### YAML lint exclusion
+
+Authentik's custom YAML tags (`!Env`, `!Find`, `!KeyOf`) aren't accepted
+by pyyaml's safe loader, so `modules/apps/authentik-blueprints/` is
+excluded from the `check-yaml` pre-commit hook in
+`modules/flake/git-hooks.nix`. Add new blueprint paths under that prefix
+or extend the excludes list.
 
 ## Secrets Management
 

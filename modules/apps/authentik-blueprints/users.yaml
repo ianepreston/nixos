@@ -1,0 +1,21 @@
+version: 1
+metadata:
+  name: homelab-users
+entries:
+  - model: authentik_core.user
+    identifiers:
+      username: ian
+    attrs:
+      name: Ian Preston
+      email: ian@example.com
+      password: !Env IAN_PASSWORD
+      is_active: true
+      groups:
+        - !Find [authentik_core.group, [name, "authentik Admins"]]
+        - !Find [authentik_core.group, [name, Downloads]]
+        - !Find [authentik_core.group, [name, Grafana Admins]]
+        - !Find [authentik_core.group, [name, Home]]
+        - !Find [authentik_core.group, [name, Infrastructure]]
+        - !Find [authentik_core.group, [name, Media]]
+        - !Find [authentik_core.group, [name, Monitoring]]
+        - !Find [authentik_core.group, [name, Users]]

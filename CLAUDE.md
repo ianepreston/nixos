@@ -31,4 +31,38 @@ When in doubt: `task --list`.
   email). Schema lives in `hostSpecs/host-spec.nix`.
 
 New modules need to be tracked by git (even just `git add -N`) before flake
-evaluation will see them.
+evaluation will see them. This applies to non-`.nix` files referenced from
+modules too (e.g. blueprint YAMLs under `modules/apps/authentik-blueprints/`)
+— `nix eval` will error with "path … does not exist" until they're tracked.
+
+## Authentik notes
+
+- Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`),
+  *not* containers — see README "Authentik (SSO)" for the rationale and
+  the per-app onboarding pattern.
+- **Don't use `pkgs.symlinkJoin` for `blueprints_dir`.** Authentik's
+  `retrieve_file` resolves paths and rejects anything outside the
+  configured `blueprints_dir`; symlinkJoin's top-level entries dereference
+  back to upstream / source store paths and every blueprint apply fails
+  with "Invalid blueprint path". `modules/apps/authentik.nix` uses
+  `pkgs.runCommandLocal` + `cp -rL` to materialize real files.
+- Blueprint secrets (`password`, `client_secret`, token `key`) go through
+  `!Env VAR_NAME`. The var must be present in the `EnvironmentFile`
+  consumed by the *worker* (the worker is what applies blueprints, not
+  just the server). The authentik-nix module already wires the same
+  `environmentFile` to all three units, so adding to
+  `sops.templates."authentik.env"` is sufficient.
+- Don't override `authentik-nix`'s `nixpkgs` via `inputs.follows` — its
+  README warns this breaks pinned python deps. Let it use its own
+  locked nixpkgs.
+- Authentik blueprints use custom YAML tags pyyaml can't safe-load.
+  `modules/flake/git-hooks.nix` excludes `^modules/apps/authentik-blueprints/`
+  from the `check-yaml` hook; extend the `excludes` list when adding new
+  blueprint dirs.
+- `services.authentik.createDatabase = true` (default) merges
+  `authentik` into the shared postgres via `ensureDatabases` /
+  `ensureUsers` and connects over the unix socket with peer auth — no
+  password required for the role. Don't add a `db_password` sops secret
+  for it.
+- Reference: [model fields](https://docs.goauthentik.io/customize/blueprints/v1/models),
+  [YAML tags](https://docs.goauthentik.io/customize/blueprints/v1/tags).

@@ -22,8 +22,13 @@
       # Prevent secrets from leaking
       ripsecrets.enable = true;
 
-      # YAML/JSON validation
-      check-yaml.enable = true;
+      # YAML/JSON validation. Authentik blueprints use custom YAML tags
+      # (`!Env`, `!Find`, `!KeyOf`) that pyyaml's safe loader rejects, so
+      # exclude that directory from this hook.
+      check-yaml = {
+        enable = true;
+        excludes = [ "^modules/apps/authentik-blueprints/" ];
+      };
       check-json.enable = true;
 
       # Whitespace hygiene
