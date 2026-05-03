@@ -6,21 +6,23 @@
 #      Synology share at /mnt/backups/restic/<hostname>.
 #
 # Restore is a manual operator action; see README "Server App Pattern".
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+#
+# The restic password lives in shared.yaml (not per-host) so any server
+# can decrypt any other server's repo for cross-host recovery testing.
+_: {
   flake.modules.nixos.server-backups =
     {
       config,
       hostSpec,
+      pkgs,
       ...
     }:
     {
-      sops.secrets."restic/password" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-      };
+      # Operator-facing CLI for ad-hoc snapshot/restore work
+      # (e.g. cross-host recovery from /mnt/<env>-backups/restic/<host>).
+      environment.systemPackages = [ pkgs.restic ];
+
+      sops.secrets."restic/password" = { };
 
       services.postgresqlBackup = {
         enable = true;

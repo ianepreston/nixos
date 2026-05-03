@@ -183,10 +183,18 @@ Only server-local app state is in scope. NAS-resident media under
 `/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
 not by restic.
 
-The restic repo path is read-write from the host, so a compromised server
-or fat-fingered `rm` could in principle delete its own backups. Mitigate
-by enabling **Synology snapshots** on the `server-{dev,prod}-backups`
-shares — that's an out-of-band, client-immutable copy.
+The restic password lives in `shared.yaml` (one value, all servers), so
+any host can decrypt any other host's repo for cross-host recovery
+testing. Each host still mounts the *other* environment's backup share
+read-only at `/mnt/<otherEnv>-backups` (see `nfsclient.nix`), so e.g.
+restoring prod state onto a dev host is a one-liner pointing restic at
+`/mnt/prod-backups/restic/<prod-host>` — no extra credentials needed.
+
+The restic repo path is read-write from the host that owns it, so a
+compromised server or fat-fingered `rm` could in principle delete its
+own backups. Mitigate by enabling **Synology snapshots** on the
+`server-{dev,prod}-backups` shares — that's an out-of-band,
+client-immutable copy.
 
 #### Restore runbook (catastrophic rebuild)
 
@@ -247,6 +255,20 @@ after data loss" are different decisions.
 For per-app restores (e.g. just mealie), point `restic restore` at
 `--include /var/lib/containers/mealie` and skip the postgres step unless
 the database is also wrecked.
+
+#### Cross-host recovery testing (prod → dev)
+
+Same flow, but pointed at the other env's repo via the cross-mount:
+
+```bash
+sudo restic -r /mnt/prod-backups/restic/<prod-host> \
+  --password-file /run/secrets/restic/password \
+  restore latest --target /tmp/prod-restore
+```
+
+`--target /tmp/prod-restore` keeps the prod data sandboxed instead of
+overwriting dev's live `/var/lib/containers`. From there you can spot-check
+files, replay the postgres dump into a scratch database, etc.
 
 ### PostgreSQL major-version upgrades
 
