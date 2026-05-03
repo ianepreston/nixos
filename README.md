@@ -165,6 +165,20 @@ root-owned, so use `sudo podman ps`, `sudo podman logs <name>`, etc. for
 inspection. Rootless podman as your user works for ad-hoc containers you
 start yourself, but it can't see the system-managed ones.
 
+### PostgreSQL major-version upgrades
+
+`services.postgresql.package` is pinned to a specific major
+(`postgresql_17` at time of writing) in `modules/system/postgresql.nix` so
+that rebuilds never silently dump-and-restore the cluster. Major upgrades
+are a manual operation, following the canonical NixOS recipe:
+
+- [NixOS manual — Upgrading PostgreSQL](https://nixos.org/manual/nixos/stable/#module-services-postgres-upgrading)
+
+The short version: stop `postgresql.service`, run the
+`upgrade-pg-cluster` script (made available by temporarily setting both the
+old and new packages in a shell), bump `package = pkgs.postgresql_<new>` in
+this repo, rebuild, and verify before deleting the old data directory.
+
 ## Secrets Management
 
 Secrets are stored in a private `nix-secrets` repository pulled in as a flake
