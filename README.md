@@ -7,6 +7,7 @@
 - [Structure](#structure-quick-reference)
 - [Hosts](#hosts)
 - [Module System](#module-system)
+- [Server App Pattern](#server-app-pattern)
 - [Secrets Management](#secrets-management)
 - [Task Automation](#task-automation)
 - [Bootstrapping a New Host](#bootstrapping-a-new-host)
@@ -62,10 +63,11 @@ and resources if you want to build your own.
 │   └── iso.nix
 ├── modules/               # All configuration modules, auto-imported by import-tree
 │   ├── flake/             # Flake infrastructure (host-specs, module namespaces, dev shell, git hooks)
-│   ├── profiles/          # Composable profiles (base, darwin-base, workstation)
+│   ├── profiles/          # Composable profiles (base, darwin-base, server, workstation)
 │   │   ├── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv)
 │   │   └── _ssh-keys/    # Public SSH keys
 │   ├── system/            # System-level modules (sops, ssh, docker, homebrew, smbclient)
+│   ├── apps/              # Server-app modules (containerized services + reverse proxy + secrets)
 │   ├── hardware/          # Hardware-specific modules (nvidia, yubikey, keyboards, rgb)
 │   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes)
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
@@ -112,6 +114,56 @@ modules = with inputs.self.modules.nixos; [
 
 Home-manager modules are wired in via `home-manager.sharedModules` at the
 profile level, so they automatically apply to all users on a host.
+
+## Server App Pattern
+
+Server-side applications (web apps hosted behind Caddy) live in
+`modules/apps/<appname>.nix` and are composed into the `server` profile. Each
+app module is self-contained: it declares the OCI container, its reverse-proxy
+virtualHost, any database/user it needs, and its sops secrets in one place.
+`modules/apps/mealie.nix` is the canonical example.
+
+### Conventions
+
+- **Registration:** `flake.modules.nixos.<appname>`, then add the name to the
+  `imports` list in `modules/profiles/server.nix`.
+- **Container runtime:** `virtualisation.oci-containers` with the podman
+  backend (rootful — see `modules/system/oci-containers.nix`). Containers
+  drop privileges via `user = "${serverUid}:${serverGid}"` so files on
+  NFS-mounted volumes line up with the Synology UID/GID (1029/1030 + 65536).
+- **Networking:** bind container ports to `127.0.0.1` only — Caddy fronts
+  everything externally. Containers reach host services (e.g. postgres) via
+  `host.containers.internal`, which resolves to the podman bridge gateway;
+  the bridge is in `networking.firewall.trustedInterfaces`.
+- **Reverse proxy:** add a `services.caddy.virtualHosts.<appHost>.extraConfig`
+  entry inside the same module. Hostnames are derived from
+  `hostSpec.serverDomain`, e.g. `"mealie.${hostSpec.serverDomain}"`.
+- **Image versions:** pin the tag in the module and put a renovate annotation
+  above it so updates are automated:
+  ```nix
+  # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
+  image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
+  ```
+- **Volumes:** create the host directory via `systemd.tmpfiles.rules` owned by
+  the server UID/GID; bind-mount it into the container.
+- **Postgres:** add the database/user via `services.postgresql.ensureDatabases`
+  / `ensureUsers`. Set the role's password from a sops secret in a small
+  oneshot service that runs `after = [ "postgresql-setup.service" ]` and
+  `before = [ "podman-<app>.service" ]` — don't use
+  `postgresql-setup.postStart`, since the secret may not be decrypted yet
+  when that runs.
+- **Secrets:** declare per-app entries under `sops.secrets."<app>/..."` with
+  `sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml"`. For env vars the
+  container needs, render a `sops.templates."<app>.env"` and pass it via
+  `environmentFiles`; set `restartUnits = [ "podman-<app>.service" ]` so the
+  container picks up rotated secrets.
+
+### Operating containers
+
+The systemd services that run containers (e.g. `podman-mealie.service`) are
+root-owned, so use `sudo podman ps`, `sudo podman logs <name>`, etc. for
+inspection. Rootless podman as your user works for ad-hoc containers you
+start yourself, but it can't see the system-managed ones.
 
 ## Secrets Management
 
