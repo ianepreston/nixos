@@ -56,6 +56,11 @@
               default = null;
               description = "Server environment: \"dev\" => server-dev (1029), \"prod\" => server-prod (1030). null on non-server hosts.";
             };
+            serverDomain = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Base domain under which this host exposes apps (e.g. \"dnix.ipreston.net\"). Apps compose \"<app>.\${serverDomain}\". null on non-server hosts.";
+            };
             isWork = lib.mkOption {
               type = lib.types.bool;
               default = false;

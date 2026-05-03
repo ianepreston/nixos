@@ -16,6 +16,7 @@ in
     let
       serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
       serverGid = config.users.groups.servers.gid;
+      mealieHost = "mealie.${hostSpec.serverDomain}";
     in
     {
       sops.secrets."mealie/db_password" = {
@@ -83,7 +84,7 @@ in
         user = "${toString serverUid}:${toString serverGid}";
         environment = {
           ALLOW_SIGNUP = "false";
-          BASE_URL = "http://mealie.dnix.ipreston.net";
+          BASE_URL = "http://${mealieHost}";
           DB_ENGINE = "postgres";
           POSTGRES_USER = "mealie";
           POSTGRES_SERVER = "host.containers.internal";
@@ -94,7 +95,7 @@ in
         environmentFiles = [ config.sops.templates."mealie.env".path ];
       };
 
-      services.caddy.virtualHosts."http://mealie.dnix.ipreston.net".extraConfig = ''
+      services.caddy.virtualHosts."http://${mealieHost}".extraConfig = ''
         reverse_proxy localhost:9925
       '';
     };
