@@ -1,20 +1,65 @@
 # Caddy - Simple Aspect
 # Reverse proxy for server apps. App modules contribute their own
-# services.caddy.virtualHosts entries; this module just enables Caddy
-# and opens the HTTP/HTTPS firewall ports.
+# services.caddy.virtualHosts entries; this module enables Caddy,
+# opens HTTP/HTTPS in the firewall, and configures ACME with Let's
+# Encrypt via the Cloudflare DNS-01 challenge.
 #
-# HTTP-only for now: site addresses should be prefixed with "http://"
-# (e.g. "http://mealie.dnix.ipreston.net") so Caddy doesn't try to
-# provision Let's Encrypt certs for internal-only domains. Wildcard
-# DNS (*.dnix.ipreston.net -> dev server, etc.) lives outside this
-# repo. TLS is future work.
-_: {
-  flake.modules.nixos.caddy = _: {
-    services.caddy.enable = true;
+# App virtualHosts should be declared without an "http://" prefix so
+# Caddy auto-provisions a TLS cert. The Cloudflare API token comes
+# from the host's sops file at cloudflare.acme_token.
+{ inputs, ... }:
+let
+  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
+in
+{
+  flake.modules.nixos.caddy =
+    {
+      config,
+      pkgs,
+      hostSpec,
+      ...
+    }:
+    {
+      services.caddy = {
+        enable = true;
+        email = hostSpec.email.personal;
+        # Caddy with the Cloudflare DNS plugin so the ACME DNS-01
+        # challenge can create _acme-challenge TXT records. The hash
+        # pins the plugin closure; bump it when the plugin version
+        # changes (build will print the expected value).
+        package = pkgs.caddy.withPlugins {
+          plugins = [
+            # renovate: datasource=github-releases depName=caddy-dns/cloudflare
+            "github.com/caddy-dns/cloudflare@v0.2.4"
+          ];
+          hash = "sha256-4WF7tIx8d6O/Bd0q9GhMch8lS3nlR5N3Zg4ApA3hrKw=";
+        };
+        globalConfig = ''
+          acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+        '';
+      };
 
-    networking.firewall.allowedTCPPorts = [
-      80
-      443
-    ];
-  };
+      sops.secrets."cloudflare/acme_token" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        owner = "caddy";
+        restartUnits = [ "caddy.service" ];
+      };
+
+      sops.templates."caddy.env" = {
+        content = ''
+          CLOUDFLARE_API_TOKEN=${config.sops.placeholder."cloudflare/acme_token"}
+        '';
+        owner = "caddy";
+        restartUnits = [ "caddy.service" ];
+      };
+
+      systemd.services.caddy.serviceConfig.EnvironmentFile = [
+        config.sops.templates."caddy.env".path
+      ];
+
+      networking.firewall.allowedTCPPorts = [
+        80
+        443
+      ];
+    };
 }
