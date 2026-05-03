@@ -14,6 +14,7 @@
       nfsclient
       oci-containers
       postgresql
+      mealie
       server-users
       sops
       ssh
