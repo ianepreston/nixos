@@ -84,7 +84,7 @@ in
         user = "${toString serverUid}:${toString serverGid}";
         environment = {
           ALLOW_SIGNUP = "false";
-          BASE_URL = "http://${mealieHost}";
+          BASE_URL = "https://${mealieHost}";
           DB_ENGINE = "postgres";
           POSTGRES_USER = "mealie";
           POSTGRES_SERVER = "host.containers.internal";
@@ -95,7 +95,7 @@ in
         environmentFiles = [ config.sops.templates."mealie.env".path ];
       };
 
-      services.caddy.virtualHosts."http://${mealieHost}".extraConfig = ''
+      services.caddy.virtualHosts.${mealieHost}.extraConfig = ''
         reverse_proxy localhost:9925
       '';
     };
