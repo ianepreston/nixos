@@ -144,8 +144,10 @@ virtualHost, any database/user it needs, and its sops secrets in one place.
   # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
   image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
   ```
-- **Volumes:** create the host directory via `systemd.tmpfiles.rules` owned by
-  the server UID/GID; bind-mount it into the container.
+- **Volumes:** state lives under `/var/lib/containers/<appname>` (single
+  prefix lets the backup module cover every app automatically). Create the
+  directory via `systemd.tmpfiles.rules` owned by the server UID/GID and
+  bind-mount it into the container.
 - **Postgres:** add the database/user via `services.postgresql.ensureDatabases`
   / `ensureUsers`. Set the role's password from a sops secret in a small
   oneshot service that runs `after = [ "postgresql-setup.service" ]` and
@@ -164,6 +166,87 @@ The systemd services that run containers (e.g. `podman-mealie.service`) are
 root-owned, so use `sudo podman ps`, `sudo podman logs <name>`, etc. for
 inspection. Rootless podman as your user works for ad-hoc containers you
 start yourself, but it can't see the system-managed ones.
+
+### Backups and restore
+
+Server hosts run `modules/system/server-backups.nix`, which composes:
+
+- `services.postgresqlBackup` — daily `pg_dumpall` to
+  `/var/backup/postgresql` (gzip, runs at 02:00).
+- `services.restic.backups.server` — daily restic snapshot of
+  `/var/backup/postgresql` and `/var/lib/containers` to
+  `/mnt/backups/restic/${hostName}` on the NFS-mounted Synology share
+  (runs at 03:00 with a randomized delay). Retention:
+  `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
+
+Only server-local app state is in scope. NAS-resident media under
+`/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
+not by restic.
+
+The restic repo path is read-write from the host, so a compromised server
+or fat-fingered `rm` could in principle delete its own backups. Mitigate
+by enabling **Synology snapshots** on the `server-{dev,prod}-backups`
+shares — that's an out-of-band, client-immutable copy.
+
+#### Restore runbook (catastrophic rebuild)
+
+Recovery is an explicit operator action — there's intentionally no
+automatic restore on container start, since "first boot" and "restore
+after data loss" are different decisions.
+
+1. **Reinstall the host:**
+   ```bash
+   task bootstrap:reinstall HOST=<host> DEST=<ip>
+   ```
+   NixOS comes back up with the same module set; container services will
+   fail because their state directories are empty.
+
+2. **Pull state back from restic:**
+   ```bash
+   sudo restic -r /mnt/backups/restic/<host> \
+     --password-file /run/secrets/restic/password \
+     restore latest --target /
+   ```
+   This repopulates `/var/lib/containers/*` and `/var/backup/postgresql`.
+
+3. **Restore PostgreSQL.** With the default `services.postgresqlBackup`
+   config, the dump is a single `pg_dumpall` output at
+   `/var/backup/postgresql/all.sql.gz` (roles + every database). Replay
+   it into the running cluster:
+
+   ```bash
+   sudo -u postgres bash -c 'zcat /var/backup/postgresql/all.sql.gz | psql -v ON_ERROR_STOP=0 postgres'
+   ```
+
+   Expect benign errors for roles/databases that NixOS's `ensureUsers` /
+   `ensureDatabases` has already created (`role "mealie" already exists`,
+   etc.) — they don't stop the data-loading `\connect` blocks that follow.
+   `ON_ERROR_STOP=0` keeps psql going past those.
+
+   If you'd rather start clean (and you're sure no other apps' data is in
+   the cluster), stop postgres, wipe its data dir, and let NixOS reinit
+   before replaying:
+
+   ```bash
+   sudo systemctl stop postgresql
+   sudo rm -rf /var/lib/postgresql/<major>/*
+   sudo systemctl start postgresql        # creates empty cluster + roles
+   sudo -u postgres bash -c 'zcat /var/backup/postgresql/all.sql.gz | psql postgres'
+   ```
+
+   App-specific role passwords (the sops-managed `ALTER USER ... WITH
+   PASSWORD ...` flow used by mealie) re-apply on the next service start
+   via the per-app `<app>-db-password.service` units, so you don't need
+   to set them by hand.
+
+4. **Restart the app containers:**
+   ```bash
+   sudo systemctl restart 'podman-*.service'
+   ```
+
+For per-app restores (e.g. just mealie), point `restic restore` at
+`--include /var/lib/containers/mealie` and skip the postgres step unless
+the database is also wrecked.
 
 ### PostgreSQL major-version upgrades
 

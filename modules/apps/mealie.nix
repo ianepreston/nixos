@@ -73,14 +73,14 @@ in
       };
 
       systemd.tmpfiles.rules = [
-        "d /var/lib/mealie 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/mealie 0750 ${toString serverUid} ${toString serverGid} -"
       ];
 
       virtualisation.oci-containers.containers.mealie = {
         # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
         image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
         ports = [ "127.0.0.1:9925:9000" ];
-        volumes = [ "/var/lib/mealie:/app/data" ];
+        volumes = [ "/var/lib/containers/mealie:/app/data" ];
         user = "${toString serverUid}:${toString serverGid}";
         environment = {
           ALLOW_SIGNUP = "false";

@@ -15,6 +15,7 @@
       oci-containers
       postgresql
       mealie
+      server-backups
       server-users
       sops
       ssh
