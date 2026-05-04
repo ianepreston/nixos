@@ -30,7 +30,7 @@ in
         package = pkgs.caddy.withPlugins {
           plugins = [
             # renovate: datasource=github-tags depName=caddy-dns/cloudflare
-            "github.com/caddy-dns/cloudflare@v0.2.3"
+            "github.com/caddy-dns/cloudflare@v0.2.4"
           ];
           hash = "sha256-/ooi0fP9zYzNnafaQqMnr6RmGh2onHrxDWiLE/aYNKI=";
         };
