@@ -19,6 +19,7 @@ in
       push.default = "current";
       rebase.autostash = "true";
       core.editor = "nvim";
+      url."git@github.com:ianepreston/".insteadOf = "https://github.com/ianepreston/";
     };
   };
 }
