@@ -471,10 +471,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1777859109,
-        "narHash": "sha256-pKbKnOsYB+yfMogLu6FD9TTTLQLBSXhskmQb3WBOVCM=",
+        "lastModified": 1777863298,
+        "narHash": "sha256-V+IqXya2tJXoDta58MnCrNVvqBt7cPmQp/B8lHEEvWk=",
         "ref": "main",
-        "rev": "f9c2cd5d43ebab2054518a5dd55c4297e5d94de5",
+        "rev": "0ccdff1013e58c3ad26399561e0b58ca7d374ef3",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/ianepreston/nix-secrets.git"
@@ -504,11 +504,11 @@
     },
     "nixpkgs-darwin": {
       "locked": {
-        "lastModified": 1777721675,
-        "narHash": "sha256-i9ceHh6k8DUa9Rb0Yab3+TDuqu2gWg9AdndP1f3DCtQ=",
+        "lastModified": 1777805331,
+        "narHash": "sha256-jINoZUP2tJEBLuVoMEhJn9qWQgpriGorwlgnBc1QAPg=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "8d9115013055db4f9507d49a3a148ed82c718983",
+        "rev": "8cbe20ad0f64f9f9619b871dfdf57022beccef65",
         "type": "github"
       },
       "original": {
