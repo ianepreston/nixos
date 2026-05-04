@@ -1,0 +1,19 @@
+---
+# Tweaks to bundled stages. Each entry matches an upstream blueprint's
+# identifiers so reconciliation upserts the existing record instead of
+# creating a new one.
+version: 1
+metadata:
+  name: homelab-hardening
+entries:
+  # Drop password-stage lockout from the upstream default of 5 to 3 to
+  # tighten brute-force protection on the bundled authentication flow.
+  # The `configure_flow` reference must be preserved (otherwise upstream
+  # would lose the link to the password-change flow on next reconcile),
+  # so we set both attrs explicitly.
+  - model: authentik_stages_password.passwordstage
+    identifiers:
+      name: default-authentication-password
+    attrs:
+      failed_attempts_before_cancel: 3
+      configure_flow: !Find [authentik_flows.flow, [slug, default-password-change]]

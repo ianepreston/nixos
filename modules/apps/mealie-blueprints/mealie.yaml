@@ -38,7 +38,10 @@ entries:
       open_in_new_tab: true
       meta_launch_url: https://mealie.dnix.ipreston.net
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/mealie.png
-      policy_engine_mode: any
+      # `all` is fail-secure if a second policy binding ever lands here:
+      # ANY would let either binding admit a user, ALL requires every
+      # binding to pass.
+      policy_engine_mode: all
 
   # Restrict the application to members of the Home group. Mealie also
   # gates login at its end via OIDC_USER_GROUP, but pinning the binding
