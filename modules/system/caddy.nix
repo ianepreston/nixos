@@ -30,9 +30,9 @@ in
         package = pkgs.caddy.withPlugins {
           plugins = [
             # renovate: datasource=github-releases depName=caddy-dns/cloudflare
-            "github.com/caddy-dns/cloudflare@v0.2.4"
+            "github.com/caddy-dns/cloudflare@v0.2.3"
           ];
-          hash = "sha256-4WF7tIx8d6O/Bd0q9GhMch8lS3nlR5N3Zg4ApA3hrKw=";
+          hash = "sha256-/ooi0fP9zYzNnafaQqMnr6RmGh2onHrxDWiLE/aYNKI=";
         };
         globalConfig = ''
           acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
