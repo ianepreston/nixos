@@ -29,7 +29,7 @@ in
         # changes (build will print the expected value).
         package = pkgs.caddy.withPlugins {
           plugins = [
-            # renovate: datasource=github-releases depName=caddy-dns/cloudflare
+            # renovate: datasource=github-tags depName=caddy-dns/cloudflare
             "github.com/caddy-dns/cloudflare@v0.2.3"
           ];
           hash = "sha256-/ooi0fP9zYzNnafaQqMnr6RmGh2onHrxDWiLE/aYNKI=";
