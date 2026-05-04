@@ -20,6 +20,7 @@
       server-users
       sops
       ssh
+      tailscale
     ];
 
     # Home-manager modules common to all servers
