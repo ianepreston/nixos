@@ -1,17 +1,8 @@
+---
 version: 1
 metadata:
   name: homelab-groups
 entries:
-  - model: authentik_core.group
-    identifiers:
-      name: Downloads
-    attrs:
-      is_superuser: false
-  - model: authentik_core.group
-    identifiers:
-      name: Grafana Admins
-    attrs:
-      is_superuser: false
   - model: authentik_core.group
     identifiers:
       name: Home
@@ -20,16 +11,6 @@ entries:
   - model: authentik_core.group
     identifiers:
       name: Infrastructure
-    attrs:
-      is_superuser: false
-  - model: authentik_core.group
-    identifiers:
-      name: Media
-    attrs:
-      is_superuser: false
-  - model: authentik_core.group
-    identifiers:
-      name: Monitoring
     attrs:
       is_superuser: false
   - model: authentik_core.group
