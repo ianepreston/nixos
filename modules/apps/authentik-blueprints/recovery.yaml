@@ -1,0 +1,175 @@
+---
+# Password recovery flow for admin-issued recovery links.
+#
+# We don't run an MTA, so this flow has no email stage. Onboarding /
+# password reset is driven from the admin UI's "Set recovery link" action
+# on a user — that produces a one-shot URL containing a flow token. When
+# the user opens the URL, authentik restores the flow with their identity
+# already pinned, so the identification stage is skipped via the
+# `is_restored` expression policy below. If anyone hits the flow without
+# a token (e.g. typing /if/flow/default-recovery-flow/ directly), they
+# fall through to the identification stage instead and have to identify
+# themselves first.
+#
+# Flow shape: identification → password prompt → user-write → user-login.
+# Wired onto the default brand's `flow_recovery` field at the bottom so
+# `ak_user_recovery_url` and the admin "Set recovery link" button know
+# which flow to use.
+version: 1
+metadata:
+  name: homelab-recovery
+entries:
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-recovery-flow
+    id: flow
+    attrs:
+      name: Default recovery flow
+      title: Reset your password
+      designation: recovery
+      authentication: require_unauthenticated
+
+  - model: authentik_policies_password.passwordpolicy
+    identifiers:
+      name: default-recovery-password-policy
+    id: default-recovery-password-policy
+    attrs:
+      check_static_rules: true
+      check_zxcvbn: true
+      length_min: 8
+      password_field: password
+      zxcvbn_score_threshold: 2
+      error_message: Password needs to be 8 characters or longer.
+
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: default-recovery-field-password
+    id: prompt-field-password
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      placeholder_expression: false
+      order: 0
+
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: default-recovery-field-password-repeat
+    id: prompt-field-password-repeat
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      placeholder_expression: false
+      order: 1
+
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: default-recovery-password-prompt
+    id: default-recovery-password-prompt
+    attrs:
+      fields:
+        - !KeyOf prompt-field-password
+        - !KeyOf prompt-field-password-repeat
+      validation_policies:
+        - !KeyOf default-recovery-password-policy
+
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: default-recovery-identification
+    id: default-recovery-identification
+    attrs:
+      user_fields:
+        - username
+        - email
+
+  - model: authentik_stages_user_write.userwritestage
+    identifiers:
+      name: default-recovery-user-write
+    id: default-recovery-user-write
+    attrs:
+      user_creation_mode: never_create
+
+  - model: authentik_stages_user_login.userloginstage
+    identifiers:
+      name: default-recovery-user-login
+    id: default-recovery-user-login
+
+  # Skip identification when the flow plan was restored from a token
+  # (admin-generated recovery URL). When the user types the flow URL
+  # directly there is no restored plan and identification runs.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: default-recovery-skip-if-restored
+    id: default-recovery-skip-if-restored
+    attrs:
+      expression: |
+        return bool(request.context.get('is_restored', False))
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf default-recovery-identification
+      order: 10
+    id: flow-binding-identification
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: true
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf default-recovery-password-prompt
+      order: 20
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf default-recovery-user-write
+      order: 30
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf default-recovery-user-login
+      order: 40
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      policy: !KeyOf default-recovery-skip-if-restored
+      target: !KeyOf flow-binding-identification
+      order: 0
+    attrs:
+      negate: false
+      enabled: true
+      timeout: 30
+
+  # Extend the bundled default brand (created by Default - Brand) with
+  # the recovery flow. Identifiers match the upstream entry so this is
+  # an upsert against the same record.
+  - model: authentik_brands.brand
+    identifiers:
+      domain: authentik-default
+    attrs:
+      flow_recovery: !KeyOf flow
