@@ -32,6 +32,13 @@
           uid = uidByEnv.${hostSpec.serverEnvironment};
           isSystemUser = true;
           group = "servers";
+          # Hardware-accelerated transcoding (jellyfin and friends)
+          # needs read/write access to /dev/dri. Render-only access
+          # is the modern split; keep `video` for legacy nodes.
+          extraGroups = [
+            "render"
+            "video"
+          ];
         };
       };
     };
