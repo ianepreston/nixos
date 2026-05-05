@@ -13,6 +13,7 @@
       base
       caddy
       homepage
+      jellyfin
       nfsclient
       oci-containers
       postgresql
