@@ -626,6 +626,30 @@ in
         };
       };
 
+      myHomepage.services.Infrastructure = [
+        {
+          Grafana = {
+            href = "https://${grafanaHost}";
+            icon = "grafana";
+            description = "dashboards";
+          };
+        }
+        {
+          Prometheus = {
+            href = "https://${prometheusHost}";
+            icon = "prometheus";
+            description = "metrics";
+          };
+        }
+        {
+          Alertmanager = {
+            href = "https://${alertmanagerHost}";
+            icon = "prometheus";
+            description = "alerts";
+          };
+        }
+      ];
+
       # Promtail needs to read the journal — the upstream NixOS module
       # already runs it as `promtail`, but doesn't add the user to the
       # `systemd-journal` group, so without this it can only see its own

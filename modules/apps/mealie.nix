@@ -173,5 +173,15 @@ in
           reverse_proxy localhost:9925
         '';
       };
+
+      myHomepage.services.Consumption = [
+        {
+          Mealie = {
+            href = "https://${mealieHost}";
+            icon = "mealie";
+            description = "Recipe manager";
+          };
+        }
+      ];
     };
 }

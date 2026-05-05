@@ -12,6 +12,7 @@
       authentik
       base
       caddy
+      homepage
       nfsclient
       oci-containers
       postgresql

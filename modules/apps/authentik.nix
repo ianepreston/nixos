@@ -143,6 +143,16 @@ in
             reverse_proxy localhost:${toString authentikPort}
           '';
         };
+
+        myHomepage.services.Infrastructure = [
+          {
+            Authentik = {
+              href = "https://${authentikHost}";
+              icon = "authentik";
+              description = "SSO";
+            };
+          }
+        ];
       };
     };
 }

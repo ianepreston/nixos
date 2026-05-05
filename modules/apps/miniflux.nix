@@ -106,5 +106,15 @@ in
           reverse_proxy localhost:8089
         '';
       };
+
+      myHomepage.services.Consumption = [
+        {
+          Miniflux = {
+            href = "https://${minifluxHost}";
+            icon = "miniflux";
+            description = "RSS reader";
+          };
+        }
+      ];
     };
 }
