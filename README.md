@@ -132,6 +132,18 @@ virtualHost, any database/user it needs, and its sops secrets in one place.
   backend (rootful — see `modules/system/oci-containers.nix`). Containers
   drop privileges via `user = "${serverUid}:${serverGid}"` so files on
   NFS-mounted volumes line up with the Synology UID/GID (1029/1030 + 65536).
+- **NFS UID alignment (containers AND native services):** anything that
+  reads or writes the NFS-mounted Synology share (under `/mnt/content`,
+  `/mnt/backups`, etc.) must run as `server-${env}:servers`
+  (1029/1030 + 65536). The NAS enforces UID-based access — a service
+  running as its own per-package system user (e.g. the upstream
+  jellyfin module's default `jellyfin:jellyfin`) will silently see an
+  empty directory listing on the NFS mount. For native modules that
+  expose `user`/`group` options (jellyfin, etc.), pin them to
+  `server-${hostSpec.serverEnvironment}` and `servers`. Existing
+  `/var/lib/<app>` state created with the wrong owner needs a one-time
+  `sudo chown -R server-<env>:servers` on first deploy — `tmpfiles`
+  rules with type `d` won't re-chown an existing directory.
 - **Networking:** bind container ports to `127.0.0.1` only — Caddy fronts
   everything externally. Containers reach host services (e.g. postgres) via
   `host.containers.internal`, which resolves to the podman bridge gateway;

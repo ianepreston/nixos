@@ -35,6 +35,19 @@ evaluation will see them. This applies to non-`.nix` files referenced from
 modules too (e.g. blueprint YAMLs under `modules/apps/authentik-blueprints/`)
 — `nix eval` will error with "path … does not exist" until they're tracked.
 
+## NFS UID alignment
+
+Any service touching the NFS-mounted Synology share (`/mnt/content`,
+`/mnt/backups`, …) must run as `server-${env}:servers` (UID 1029/1030,
+GID 65536) — the NAS enforces UID-based access and a service running
+under its own per-package user will silently see empty listings even
+when the directory is mode 0777. This applies to native NixOS modules
+too, not just containers: pin `services.<app>.user`/`.group` when the
+module exposes them. After flipping ownership, `chown -R` any
+pre-existing `/var/lib/<app>` state on the host once — the upstream
+`tmpfiles` rules use type `d` and won't re-chown existing directories.
+See `modules/apps/jellyfin.nix` for the pattern.
+
 ## Authentik notes
 
 - Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`),

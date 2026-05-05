@@ -23,7 +23,15 @@ _: {
       sqliteBackupDir = "/var/backup/jellyfin";
     in
     {
-      services.jellyfin.enable = true;
+      services.jellyfin = {
+        enable = true;
+        # Run as the shared server-env user so jellyfin can read media
+        # off the NFS-mounted Synology share at /mnt/content. UIDs are
+        # pinned to match the NAS (server-dev=1029, server-prod=1030,
+        # group servers=65536) so NFS doesn't have to translate.
+        user = "server-${hostSpec.serverEnvironment}";
+        group = "servers";
+      };
 
       # Append jellyfin's persistent state + the sqlite staging dir to
       # the restic snapshot. listOf merges via concat so the existing
