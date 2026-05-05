@@ -167,8 +167,11 @@ in
         environmentFiles = [ config.sops.templates."mealie.env".path ];
       };
 
-      services.caddy.virtualHosts.${mealieHost}.extraConfig = ''
-        reverse_proxy localhost:9925
-      '';
+      myCaddy.apps.mealie = {
+        host = mealieHost;
+        routeConfig = ''
+          reverse_proxy localhost:9925
+        '';
+      };
     };
 }

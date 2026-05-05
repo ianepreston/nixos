@@ -117,29 +117,31 @@ in
             port = 6379;
           };
 
-          caddy = {
-            # Reusable snippet for protected apps on this host: a virtualHost
-            # can `import authentik_forward_auth` and the embedded outpost
-            # gates the request. The /outpost.goauthentik.io/* routes also
-            # need to be reverse-proxied, which `handle_path` covers in the
-            # consuming app's virtualHost.
-            extraConfig = ''
-              (authentik_forward_auth) {
-                forward_auth localhost:${toString authentikPort} {
-                  uri /outpost.goauthentik.io/auth/caddy
-                  copy_headers X-authentik-username X-authentik-groups X-authentik-entitlements X-authentik-email X-authentik-name X-authentik-uid X-authentik-jwt X-authentik-meta-jwks X-authentik-meta-outpost X-authentik-meta-provider X-authentik-meta-app X-authentik-meta-version
-                  trusted_proxies private_ranges
-                }
-                handle_path /outpost.goauthentik.io/* {
-                  reverse_proxy localhost:${toString authentikPort}
-                }
+          # Reusable snippet for protected apps on this host: a route
+          # block can `import authentik_forward_auth` and the embedded
+          # outpost gates the request. The /outpost.goauthentik.io/*
+          # routes are reverse-proxied with `handle` (not `handle_path`)
+          # so the path prefix is preserved when forwarded to authentik
+          # — the outpost serves its login flow at the original URI.
+          caddy.extraConfig = ''
+            (authentik_forward_auth) {
+              forward_auth localhost:${toString authentikPort} {
+                uri /outpost.goauthentik.io/auth/caddy
+                copy_headers X-authentik-username X-authentik-groups X-authentik-entitlements X-authentik-email X-authentik-name X-authentik-uid X-authentik-jwt X-authentik-meta-jwks X-authentik-meta-outpost X-authentik-meta-provider X-authentik-meta-app X-authentik-meta-version
+                trusted_proxies private_ranges
               }
-            '';
+              handle /outpost.goauthentik.io/* {
+                reverse_proxy localhost:${toString authentikPort}
+              }
+            }
+          '';
+        };
 
-            virtualHosts.${authentikHost}.extraConfig = ''
-              reverse_proxy localhost:${toString authentikPort}
-            '';
-          };
+        myCaddy.apps.authentik = {
+          host = authentikHost;
+          routeConfig = ''
+            reverse_proxy localhost:${toString authentikPort}
+          '';
         };
       };
     };
