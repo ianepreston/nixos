@@ -1,0 +1,135 @@
+version: 1
+metadata:
+  name: observability
+entries:
+  # ========== Grafana — OIDC ==========
+  # Grafana speaks OIDC natively. We use generic_oauth on the grafana
+  # side (see modules/system/observability.nix) and a stock OAuth2
+  # provider here. Same shape as the mealie blueprint; client creds
+  # come from sops via the authentik worker's EnvironmentFile.
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-grafana
+    identifiers:
+      name: grafana
+    attrs:
+      client_type: confidential
+      client_id: !Env GRAFANA_OIDC_CLIENT_ID
+      client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: strict
+          url: https://grafana.dnix.ipreston.net/login/generic_oauth
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+
+  - model: authentik_core.application
+    id: app-grafana
+    identifiers:
+      slug: grafana
+    attrs:
+      name: Grafana
+      provider: !KeyOf prov-grafana
+      group: Infrastructure
+      open_in_new_tab: true
+      meta_launch_url: https://grafana.dnix.ipreston.net
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/grafana.png
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-grafana
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Infrastructure]]
+      enabled: true
+
+  # ========== Prometheus — proxy / forward_auth ==========
+  # Prometheus has no auth of its own. forward_single mode tells the
+  # embedded outpost which application this is when Caddy hits
+  # /outpost.goauthentik.io/auth/caddy.
+  - model: authentik_providers_proxy.proxyprovider
+    id: prov-prometheus
+    identifiers:
+      name: prometheus
+    attrs:
+      mode: forward_single
+      external_host: https://prometheus.dnix.ipreston.net
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+
+  - model: authentik_core.application
+    id: app-prometheus
+    identifiers:
+      slug: prometheus
+    attrs:
+      name: Prometheus
+      provider: !KeyOf prov-prometheus
+      group: Infrastructure
+      open_in_new_tab: true
+      meta_launch_url: https://prometheus.dnix.ipreston.net
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/prometheus.png
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-prometheus
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Infrastructure]]
+      enabled: true
+
+  # ========== Alertmanager — proxy / forward_auth ==========
+  - model: authentik_providers_proxy.proxyprovider
+    id: prov-alertmanager
+    identifiers:
+      name: alertmanager
+    attrs:
+      mode: forward_single
+      external_host: https://alertmanager.dnix.ipreston.net
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+
+  - model: authentik_core.application
+    id: app-alertmanager
+    identifiers:
+      slug: alertmanager
+    attrs:
+      name: Alertmanager
+      provider: !KeyOf prov-alertmanager
+      group: Infrastructure
+      open_in_new_tab: true
+      meta_launch_url: https://alertmanager.dnix.ipreston.net
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/prometheus.png
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-alertmanager
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Infrastructure]]
+      enabled: true
+
+  # ========== Embedded outpost ==========
+  # Attach both proxy providers to the bundled embedded outpost so the
+  # `authentik_forward_auth` Caddy snippet (defined in
+  # modules/apps/authentik.nix) can authenticate requests for them.
+  # The outpost is identified by its `managed` UUID so this entry
+  # upserts onto the existing record rather than creating a second one.
+  - model: authentik_outposts.outpost
+    identifiers:
+      managed: goauthentik.io/outposts/embedded
+    attrs:
+      providers:
+        - !KeyOf prov-prometheus
+        - !KeyOf prov-alertmanager

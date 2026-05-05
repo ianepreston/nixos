@@ -16,6 +16,7 @@
       oci-containers
       postgresql
       mealie
+      observability
       server-backups
       server-users
       sops

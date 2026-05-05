@@ -27,7 +27,7 @@
       # exclude that directory from this hook.
       check-yaml = {
         enable = true;
-        excludes = [ "^modules/apps/[^/]*-blueprints/" ];
+        excludes = [ "^modules/(apps|system)/[^/]*-blueprints/" ];
       };
       check-json.enable = true;
 
