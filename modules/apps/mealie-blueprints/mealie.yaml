@@ -34,7 +34,7 @@ entries:
     attrs:
       name: Mealie
       provider: !KeyOf prov-mealie
-      group: Home
+      group: Users
       open_in_new_tab: true
       meta_launch_url: https://mealie.dnix.ipreston.net
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/mealie.png
@@ -43,7 +43,7 @@ entries:
       # binding to pass.
       policy_engine_mode: all
 
-  # Restrict the application to members of the Home group. Mealie also
+  # Restrict the application to members of the Users group. Mealie also
   # gates login at its end via OIDC_USER_GROUP, but pinning the binding
   # here keeps the launcher tile hidden for users who can't use it.
   - model: authentik_policies.policybinding
@@ -51,5 +51,5 @@ entries:
       target: !KeyOf app-mealie
       order: 0
     attrs:
-      group: !Find [authentik_core.group, [name, Home]]
+      group: !Find [authentik_core.group, [name, Users]]
       enabled: true

@@ -158,7 +158,7 @@ in
           OIDC_AUTH_ENABLED = "true";
           OIDC_PROVIDER_NAME = "Authentik";
           OIDC_CONFIGURATION_URL = "https://${authentikHost}/application/o/mealie/.well-known/openid-configuration";
-          OIDC_USER_GROUP = "Home";
+          OIDC_USER_GROUP = "Users";
           OIDC_ADMIN_GROUP = "authentik Admins";
           OIDC_AUTO_REDIRECT = "false";
           OIDC_REMEMBER_ME = "true";
