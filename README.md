@@ -8,6 +8,7 @@
 - [Hosts](#hosts)
 - [Module System](#module-system)
 - [Server App Pattern](#server-app-pattern)
+- [Jellyfin](#jellyfin)
 - [Authentik (SSO)](#authentik-sso)
 - [Secrets Management](#secrets-management)
 - [Task Automation](#task-automation)
@@ -296,6 +297,53 @@ The short version: stop `postgresql.service`, run the
 `upgrade-pg-cluster` script (made available by temporarily setting both the
 old and new packages in a shell), bump `package = pkgs.postgresql_<new>` in
 this repo, rebuild, and verify before deleting the old data directory.
+
+## Jellyfin
+
+`modules/apps/jellyfin.nix` deploys jellyfin as a native systemd unit
+(no container) pinned to the `server-${env}:servers` UID/GID so it
+can read media off the NFS-mounted Synology share. Restic snapshots
+`/var/lib/jellyfin` and an extra staging dir at `/var/backup/jellyfin`
+that holds `sqlite3 .backup` dumps of `library.db` / `jellyfin.db`,
+written by a pre-hook before each restic run.
+
+### Hardware-accelerated transcoding
+
+The host needs `modules/hardware/intel-quicksync.nix` (Intel iGPU)
+included in its host module — see `modules/hosts/hpp-1.nix`.
+`server-${env}` already has `video` and `render` supplementary groups
+from `modules/system/server-users.nix`, so once the QSV module is
+loaded `/dev/dri/renderD128` is reachable by jellyfin.
+
+The remaining setup is **manual in the jellyfin web UI** (the
+resulting config lives in `/var/lib/jellyfin/config/encoding.xml` and
+is captured by restic, so this is a one-time-per-host step):
+
+1. Dashboard → Playback → Transcoding.
+2. **Hardware acceleration:** Intel QuickSync (QSV).
+3. **VA-API device:** `/dev/dri/renderD128`.
+4. Enable hardware decoding for the codecs you care about (H.264,
+   HEVC, VP9 are safe on HD 630 and newer).
+5. Enable hardware encoding.
+6. Enable Tone mapping (works because `intel-compute-runtime` ships
+   the OpenCL runtime via `intel-quicksync.nix`).
+
+To verify the host stack before configuring the UI:
+
+```bash
+ssh <host> 'nix-shell -p libva-utils --run "vainfo --display drm --device /dev/dri/renderD128"'
+```
+
+Should report `Driver version: Intel iHD driver` and a list of
+`VAProfile*` entries. To confirm the GPU is actually doing work
+during a transcode, watch `intel_gpu_top` while jellyfin transcodes
+a stream:
+
+```bash
+ssh <host> 'nix-shell -p intel-gpu-tools --run "sudo intel_gpu_top"'
+```
+
+The Render/3D and Video engines should show activity.
 
 ## Authentik (SSO)
 
