@@ -23,6 +23,7 @@
       nix-maintenance
       observability
       prowlarr
+      radarr
       server-backups
       server-users
       sonarr
