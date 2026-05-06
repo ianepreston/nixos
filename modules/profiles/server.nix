@@ -9,6 +9,7 @@
   flake.modules.nixos.server = _: {
     imports = with inputs.self.modules.nixos; [
       arr-auth
+      audiobookshelf
       auto-rebuild
       authentik
       base
