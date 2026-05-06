@@ -19,6 +19,7 @@
       postgresql
       mealie
       miniflux
+      nix-maintenance
       observability
       server-backups
       server-users

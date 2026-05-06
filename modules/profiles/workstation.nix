@@ -12,6 +12,7 @@
       sops
       ssh
       audio
+      nix-maintenance
       themes
     ];
 

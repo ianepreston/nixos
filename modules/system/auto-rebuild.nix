@@ -19,14 +19,5 @@ _: {
       systemd.services.nixos-upgrade.serviceConfig.Environment = [
         "GIT_SSH_COMMAND=ssh -i ${hostSpec.home}/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new"
       ];
-
-      nix.gc = {
-        automatic = true;
-        dates = "weekly";
-        options = "--delete-older-than 7d";
-        persistent = true;
-      };
-
-      nix.optimise.automatic = true;
     };
 }
