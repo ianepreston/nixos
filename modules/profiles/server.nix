@@ -16,6 +16,7 @@
       caddy
       homepage
       jellyfin
+      kapowarr
       nfsclient
       oci-containers
       postgresql
