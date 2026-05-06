@@ -18,6 +18,7 @@
       homepage
       jellyfin
       kapowarr
+      komga
       nfsclient
       oci-containers
       postgresql
