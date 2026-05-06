@@ -15,6 +15,7 @@
       base
       bazarr
       caddy
+      homeassistant
       homepage
       jellyfin
       kapowarr
