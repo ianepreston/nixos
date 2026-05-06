@@ -62,7 +62,12 @@ _: {
             group: !Find [authentik_core.group, [name, Infrastructure]]
             enabled: true'';
 
-      outpostProviders = lib.concatMapStringsSep "\n        " (
+      # The separator must match the column the first item lands at
+      # after the indented-string strip. `${outpostProviders}` sits at
+      # column 6 in the rendered output, so subsequent items need six
+      # leading spaces to share that column — using anything else makes
+      # the second item parse as a child of the first.
+      outpostProviders = lib.concatMapStringsSep "\n      " (
         n: "- !Find [authentik_providers_proxy.proxyprovider, [name, ${n}]]"
       ) appNames;
 

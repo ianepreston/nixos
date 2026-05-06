@@ -25,6 +25,7 @@
       prowlarr
       server-backups
       server-users
+      sonarr
       sops
       ssh
       tailscale
