@@ -12,6 +12,7 @@
       auto-rebuild
       authentik
       base
+      bazarr
       caddy
       homepage
       jellyfin
