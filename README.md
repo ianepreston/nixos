@@ -266,9 +266,127 @@ after data loss" are different decisions.
    sudo systemctl restart 'podman-*.service'
    ```
 
-For per-app restores (e.g. just mealie), point `restic restore` at
-`--include /var/lib/containers/mealie` and skip the postgres step unless
-the database is also wrecked.
+#### Per-app restore
+
+The catastrophic rebuild restores everything. To recover just one app
+without touching the rest of the host, scope both the restic include
+and the postgres replay. The three apps in this repo each illustrate a
+different shape — pick the one that matches what you're restoring.
+
+The postgres examples below replay the *current* on-disk dump at
+`/var/backup/postgresql/all.sql.gz` (refreshed nightly at 02:00). To
+restore from an *older* snapshot, pull that snapshot's dump to a temp
+path first:
+
+```bash
+sudo restic -r /mnt/backups/restic/<host> \
+  --password-file /run/secrets/restic/password \
+  restore <snapshot-id> --target /tmp/restore \
+  --include /var/backup/postgresql
+# then point zcat at /tmp/restore/var/backup/postgresql/all.sql.gz
+```
+
+`pg_dumpall` writes one combined file with every database and role.
+The awk filter below extracts a single database's section by tracking
+`\connect <name>` markers. Roles are managed by NixOS `ensureUsers`
+and don't need to be replayed.
+
+##### Containerized app with volume + postgres database (mealie)
+
+Mealie has both on-disk state (`/var/lib/containers/mealie` — uploaded
+recipe images, user assets) and database state (the `mealie` postgres
+db — recipes, users, OIDC mappings). The two reference each other, so
+**restore both from the same restic snapshot** — mixing eras leaves
+broken image references in recipe rows.
+
+```bash
+# 1. Stop the container so nothing writes during restore.
+sudo systemctl stop podman-mealie.service
+
+# 2. Restore the volume from restic.
+sudo restic -r /mnt/backups/restic/<host> \
+  --password-file /run/secrets/restic/password \
+  restore latest --target / --include /var/lib/containers/mealie
+
+# 3. Drop and recreate the database, then replay just the mealie
+#    section of the pg_dumpall output. The mealie role already exists
+#    (NixOS ensureUsers); its password is unchanged.
+sudo -u postgres dropdb --if-exists mealie
+sudo -u postgres createdb -O mealie mealie
+zcat /var/backup/postgresql/all.sql.gz | awk '
+  /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "mealie"); next }
+  in_target { print }
+' | sudo -u postgres psql -v ON_ERROR_STOP=1 mealie
+
+# 4. Restart. mealie-db-password.service is wantedBy podman-mealie
+#    and re-applies the sops-managed role password before the
+#    container comes up, so authentication keeps working.
+sudo systemctl start podman-mealie.service
+```
+
+Same pattern for any future containerized app with a postgres
+database: substitute the unit name, volume path, and database name.
+
+##### 12-factor app with all state in postgres (miniflux)
+
+Miniflux is a single Go binary running under `DynamicUser=true` with
+no persistent on-disk state — feeds, entries, read/unread flags, and
+OIDC user mappings all live in the `miniflux` postgres database.
+Restore is just the database half of the mealie flow:
+
+```bash
+sudo systemctl stop miniflux.service
+sudo -u postgres dropdb --if-exists miniflux
+sudo -u postgres createdb -O miniflux miniflux
+zcat /var/backup/postgresql/all.sql.gz | awk '
+  /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "miniflux"); next }
+  in_target { print }
+' | sudo -u postgres psql -v ON_ERROR_STOP=1 miniflux
+sudo systemctl start miniflux.service
+```
+
+Authentik fits the same shape (everything in the `authentik` postgres
+db, no host state worth restoring) — same recipe with the names
+swapped.
+
+##### Native service with on-disk state (jellyfin)
+
+Jellyfin keeps everything under `/var/lib/jellyfin` — XML config,
+plugins, metadata cache, and the library SQLite databases at
+`/var/lib/jellyfin/data/{library,jellyfin}.db`. There's no postgres
+to restore. The wrinkle is that the live SQLite files can be torn
+mid-write inside a restic snapshot; `jellyfin-sqlite-backup.service`
+runs `sqlite3 .backup` into `/var/backup/jellyfin/` immediately
+before each restic run, and **those staged copies — not the live
+ones — are the authoritative recovery source.**
+
+```bash
+# 1. Stop the service so nothing writes during restore.
+sudo systemctl stop jellyfin.service
+
+# 2. Restore both the live tree and the staging dir from the same
+#    snapshot.
+sudo restic -r /mnt/backups/restic/<host> \
+  --password-file /run/secrets/restic/password \
+  restore latest --target / \
+  --include /var/lib/jellyfin \
+  --include /var/backup/jellyfin
+
+# 3. Swap the live SQLite files for the consistent staged copies.
+#    Use the env from the host's hostSpec (server-dev or server-prod);
+#    `id server-prod` / `id server-dev` confirms which one exists.
+sudo install -o server-prod -g servers -m 0640 \
+  /var/backup/jellyfin/library.db  /var/lib/jellyfin/data/library.db
+sudo install -o server-prod -g servers -m 0640 \
+  /var/backup/jellyfin/jellyfin.db /var/lib/jellyfin/data/jellyfin.db
+
+# 4. Restart. Jellyfin will reopen the databases and reuse the
+#    cached metadata; no library rescan is needed.
+sudo systemctl start jellyfin.service
+```
+
+Media files themselves live on the NAS under `/mnt/content` and are
+out of scope for restic — Synology snapshots cover them.
 
 #### Cross-host recovery testing (prod → dev)
 
