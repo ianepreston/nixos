@@ -137,7 +137,7 @@ in
 
       virtualisation.oci-containers.containers.mealie = {
         # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
-        image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
+        image = "ghcr.io/mealie-recipes/mealie:v3.17.0";
         ports = [ "127.0.0.1:9925:9000" ];
         volumes = [ "/var/lib/containers/mealie:/app/data" ];
         user = "${toString serverUid}:${toString serverGid}";
