@@ -25,6 +25,7 @@
       observability
       prowlarr
       radarr
+      sabnzbd
       server-backups
       server-users
       sonarr
