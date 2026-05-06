@@ -21,6 +21,7 @@
       postgresql
       mealie
       miniflux
+      mylar3
       nix-maintenance
       observability
       prowlarr
