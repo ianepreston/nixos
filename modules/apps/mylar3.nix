@@ -28,7 +28,7 @@ _: {
 
       virtualisation.oci-containers.containers.mylar3 = {
         # renovate: datasource=docker depName=lscr.io/linuxserver/mylar3
-        image = "lscr.io/linuxserver/mylar3:0.9.0";
+        image = "lscr.io/linuxserver/mylar3:5.9.5";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/mylar3:/config"
