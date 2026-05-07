@@ -471,10 +471,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1777863298,
-        "narHash": "sha256-V+IqXya2tJXoDta58MnCrNVvqBt7cPmQp/B8lHEEvWk=",
+        "lastModified": 1778119333,
+        "narHash": "sha256-sU3KV99RVCiwNTti6MjuLV+U0rEHFsQJE4WCD0cLNRs=",
         "ref": "main",
-        "rev": "0ccdff1013e58c3ad26399561e0b58ca7d374ef3",
+        "rev": "be67b3358fc997d9b119baf6c48a9d92bff53042",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/ianepreston/nix-secrets.git"
@@ -504,11 +504,11 @@
     },
     "nixpkgs-darwin": {
       "locked": {
-        "lastModified": 1777933422,
-        "narHash": "sha256-WpfZLatstZKZV43HtpK4cbEdQZvHhwVRVtW/rc6YTRU=",
+        "lastModified": 1778030758,
+        "narHash": "sha256-8TXoMiLNpcYoKtglB6VK3zgcFw2elthUOL/1bmLBTkA=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "41a7bd591bc47320390c829b9f16bfc59b25843c",
+        "rev": "e3f3598f6dcc165901cf6e07d0f7c22a09df6b1c",
         "type": "github"
       },
       "original": {
@@ -732,11 +732,11 @@
         "tinted-zed": "tinted-zed"
       },
       "locked": {
-        "lastModified": 1777581180,
-        "narHash": "sha256-JcDBTZkkz68WlZKYDoD+MZG8b3dnIJXqMvyuVx3Wkdg=",
+        "lastModified": 1778105055,
+        "narHash": "sha256-SWz0cVHEGFb2rSszCaQ7nmuM9q7Cq3xbsg+DAg0N9jo=",
         "owner": "danth",
         "repo": "stylix",
-        "rev": "a2538cd28ae2140ffce9cee9108b8d569a9c4fed",
+        "rev": "68b1ff44196f4f593d0cd837ffb2a088c2870055",
         "type": "github"
       },
       "original": {
