@@ -31,6 +31,7 @@
       prowlarr
       radarr
       sabnzbd
+      seerr
       server-backups
       server-users
       sonarr
