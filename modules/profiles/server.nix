@@ -41,6 +41,7 @@
       ssh
       tailscale
       tandoor
+      watchstate
     ];
 
     # Home-manager modules common to all servers
