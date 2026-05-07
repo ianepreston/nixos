@@ -19,6 +19,7 @@
       homepage
       jellyfin
       kapowarr
+      kavita
       komga
       nfsclient
       oci-containers
@@ -34,10 +35,12 @@
       seerr
       server-backups
       server-users
+      shelfmark
       sonarr
       sops
       ssh
       tailscale
+      tandoor
     ];
 
     # Home-manager modules common to all servers
