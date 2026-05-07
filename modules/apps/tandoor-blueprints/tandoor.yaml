@@ -1,0 +1,49 @@
+version: 1
+metadata:
+  name: tandoor
+entries:
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-tandoor
+    identifiers:
+      name: tandoor
+    attrs:
+      client_type: confidential
+      client_id: !Env TANDOOR_OIDC_CLIENT_ID
+      client_secret: !Env TANDOOR_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: strict
+          url: https://tandoor.dnix.ipreston.net/accounts/oidc/authentik/login/callback/
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+
+  - model: authentik_core.application
+    id: app-tandoor
+    identifiers:
+      slug: tandoor
+    attrs:
+      name: Tandoor
+      provider: !KeyOf prov-tandoor
+      group: Users
+      open_in_new_tab: true
+      meta_launch_url: https://tandoor.dnix.ipreston.net
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/tandoor.png
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-tandoor
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Users]]
+      enabled: true
