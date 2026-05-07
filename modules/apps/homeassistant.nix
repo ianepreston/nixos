@@ -177,7 +177,7 @@ in
 
       virtualisation.oci-containers.containers.homeassistant = {
         # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-        image = "ghcr.io/home-assistant/home-assistant:2025.11";
+        image = "ghcr.io/home-assistant/home-assistant:2026.5";
         # Two NICs: the default podman bridge for Caddy/host port
         # mapping, and the macvlan on vlan30 for IoT discovery.
         networks = [
