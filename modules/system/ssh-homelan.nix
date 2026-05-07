@@ -14,6 +14,11 @@ _: {
             "Ciphers" = "+3des-cbc";
           };
         };
+        "behemoth" = {
+          hostname = "192.168.10.1";
+          user = "admin";
+          port = 2222;
+        };
         "laconia" = {
           hostname = "laconia.ipreston.net";
           user = "ipreston";
