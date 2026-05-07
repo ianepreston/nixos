@@ -31,6 +31,7 @@
       observability
       prowlarr
       radarr
+      readeck
       sabnzbd
       seerr
       server-backups

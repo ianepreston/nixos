@@ -48,7 +48,7 @@ _: {
           attrs:
             name: ${app.displayName}
             provider: !KeyOf prov-${name}
-            group: Infrastructure
+            group: ${app.authentikGroup}
             open_in_new_tab: true
             meta_launch_url: https://${app.host}
             meta_icon: ${app.iconUrl}
@@ -59,7 +59,7 @@ _: {
             target: !KeyOf app-${name}
             order: 0
           attrs:
-            group: !Find [authentik_core.group, [name, Infrastructure]]
+            group: !Find [authentik_core.group, [name, ${app.authentikGroup}]]
             enabled: true'';
 
       # The separator must match the column the first item lands at
@@ -95,8 +95,11 @@ _: {
         default = { };
         description = ''
           Apps gated by authentik forward-auth. Each entry generates a
-          proxy provider + application + Infrastructure-group policy
-          binding, plus a caddy route and a homepage tile.
+          proxy provider + application + group policy binding (default
+          group: Infrastructure), plus a caddy route and a homepage tile.
+          One blueprint owns the embedded outpost's `providers` list, so
+          every forward-auth app on the host must register through this
+          option rather than emitting its own outpost block.
         '';
         type = lib.types.attrsOf (
           lib.types.submodule (
@@ -135,6 +138,25 @@ _: {
                   type = lib.types.str;
                   description = "Short blurb shown beneath the app on the homepage tile.";
                 };
+                authentikGroup = lib.mkOption {
+                  type = lib.types.str;
+                  default = "Infrastructure";
+                  description = ''
+                    Authentik group whose members can access this app via
+                    the policy binding. Defaults to Infrastructure (admin
+                    tools); set to Users for end-user-facing apps.
+                  '';
+                };
+                proxyConfig = lib.mkOption {
+                  type = lib.types.lines;
+                  default = "";
+                  description = ''
+                    Extra directives spliced into the caddy `reverse_proxy`
+                    body. Use this to inject `header_up` lines for apps
+                    that consume authentik headers (e.g. readeck reading
+                    Remote-User from X-authentik-username).
+                  '';
+                };
               };
             }
           )
@@ -146,10 +168,19 @@ _: {
 
         myCaddy.apps = lib.mapAttrs (_name: app: {
           inherit (app) host;
-          routeConfig = ''
-            import authentik_forward_auth
-            reverse_proxy localhost:${toString app.port}
-          '';
+          routeConfig =
+            if app.proxyConfig == "" then
+              ''
+                import authentik_forward_auth
+                reverse_proxy localhost:${toString app.port}
+              ''
+            else
+              ''
+                import authentik_forward_auth
+                reverse_proxy localhost:${toString app.port} {
+                  ${app.proxyConfig}
+                }
+              '';
         }) apps;
 
         myHomepage.services = lib.foldl' (
