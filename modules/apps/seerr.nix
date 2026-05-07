@@ -71,7 +71,7 @@ in
 
       virtualisation.oci-containers.containers.seerr = {
         # renovate: datasource=docker depName=ghcr.io/seerr-team/seerr
-        image = "ghcr.io/seerr-team/seerr:v3.0.1";
+        image = "ghcr.io/seerr-team/seerr:v3.2.0";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
