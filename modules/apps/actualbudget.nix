@@ -38,7 +38,7 @@ _: {
 
       virtualisation.oci-containers.containers.actualbudget = {
         # renovate: datasource=docker depName=actualbudget/actual-server
-        image = "actualbudget/actual-server:26.5.1";
+        image = "actualbudget/actual-server:26.5.2";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
