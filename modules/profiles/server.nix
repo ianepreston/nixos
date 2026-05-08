@@ -34,6 +34,7 @@
       prowlarr
       radarr
       readeck
+      readmeabook
       sabnzbd
       seerr
       server-backups
