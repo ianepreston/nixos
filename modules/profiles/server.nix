@@ -15,12 +15,14 @@
       base
       bazarr
       caddy
+      grimmory
       homeassistant
       homepage
       jellyfin
       kapowarr
       kavita
       komga
+      mariadb
       nfsclient
       oci-containers
       postgresql
