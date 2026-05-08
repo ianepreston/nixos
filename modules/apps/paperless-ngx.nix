@@ -28,63 +28,35 @@ in
       paperlessHost = "paperless-ngx.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 8010;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "paperless-ngx/db_password" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          owner = "postgres";
-          restartUnits = [ "paperless-ngx-db-password.service" ];
-        };
-        "paperless-ngx/secret_key" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = [ "podman-paperless-ngx.service" ];
-        };
-        "paperless-ngx/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-paperless-ngx.service" ];
-        };
-        "paperless-ngx/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-paperless-ngx.service" ];
-        };
+      myPostgresApp.paperless-ngx.consumerService = "podman-paperless-ngx.service";
+
+      sops.secrets."paperless-ngx/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "podman-paperless-ngx.service" ];
       };
 
-      sops.templates = {
-        "paperless-ngx.env" = {
-          content = ''
-            PAPERLESS_DBPASS=${config.sops.placeholder."paperless-ngx/db_password"}
-            PAPERLESS_SECRET_KEY=${config.sops.placeholder."paperless-ngx/secret_key"}
-            PAPERLESS_SOCIALACCOUNT_PROVIDERS={"openid_connect":{"OAUTH_PKCE_ENABLED":true,"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"${
-              config.sops.placeholder."paperless-ngx/oidc_client_id"
-            }","secret":"${
-              config.sops.placeholder."paperless-ngx/oidc_client_secret"
-            }","settings":{"server_url":"https://${authentikHost}/application/o/paperless-ngx/.well-known/openid-configuration","fetch_userinfo":true}}],"SCOPE":["openid","profile","email"]}}
-          '';
-          restartUnits = [ "podman-paperless-ngx.service" ];
+      myAuthentik.oidcApps.paperless-ngx = {
+        blueprintsDir = ./paperless-ngx-blueprints;
+        appRestartUnit = "podman-paperless-ngx.service";
+        clientCredsInAppEnv = false;
+        extraEnvLines = ''
+          PAPERLESS_DBPASS=${config.sops.placeholder."paperless-ngx/db_password"}
+          PAPERLESS_SECRET_KEY=${config.sops.placeholder."paperless-ngx/secret_key"}
+          PAPERLESS_SOCIALACCOUNT_PROVIDERS={"openid_connect":{"OAUTH_PKCE_ENABLED":true,"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"${
+            config.sops.placeholder."paperless-ngx/oidc_client_id"
+          }","secret":"${
+            config.sops.placeholder."paperless-ngx/oidc_client_secret"
+          }","settings":{"server_url":"https://${authentikHost}/application/o/paperless-ngx/.well-known/openid-configuration","fetch_userinfo":true}}],"SCOPE":["openid","profile","email"]}}
+        '';
+        homepage = {
+          group = "Infrastructure";
+          icon = "paperless-ngx";
+          description = "Documents";
         };
-        "paperless-ngx-authentik.env" = {
-          content = ''
-            PAPERLESS_NGX_OIDC_CLIENT_ID=${config.sops.placeholder."paperless-ngx/oidc_client_id"}
-            PAPERLESS_NGX_OIDC_CLIENT_SECRET=${config.sops.placeholder."paperless-ngx/oidc_client_secret"}
-          '';
-          restartUnits = restartAuthentik;
-        };
-      };
-
-      services.postgresql = {
-        ensureDatabases = [ "paperless_ngx" ];
-        ensureUsers = [
-          {
-            name = "paperless_ngx";
-            ensureDBOwnership = true;
-          }
-        ];
+        homepageDisplayName = "Paperless-ngx";
+        homepageHref = "https://${paperlessHost}";
       };
 
       systemd = {
@@ -98,40 +70,6 @@ in
         ];
 
         services = {
-          paperless-ngx-db-password = {
-            description = "Set paperless-ngx postgres role password from sops secret";
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
-            wantedBy = [ "podman-paperless-ngx.service" ];
-            before = [ "podman-paperless-ngx.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-              Group = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER paperless_ngx WITH PASSWORD '$(cat ${
-                  config.sops.secrets."paperless-ngx/db_password".path
-                })'"
-            '';
-          };
-
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."paperless-ngx-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."paperless-ngx-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."paperless-ngx-authentik.env".path
-          ];
-
           # Paperless waits on its dedicated redis sidecar so the
           # broker is up before Django attempts to connect.
           podman-paperless-ngx = {
@@ -140,8 +78,6 @@ in
           };
         };
       };
-
-      myAuthentik.extraBlueprints = [ ./paperless-ngx-blueprints ];
 
       virtualisation.oci-containers.containers = {
         paperless-ngx-redis = {
@@ -210,15 +146,5 @@ in
           reverse_proxy localhost:${toString port}
         '';
       };
-
-      myHomepage.services.Infrastructure = [
-        {
-          "Paperless-ngx" = {
-            href = "https://${paperlessHost}";
-            icon = "paperless-ngx";
-            description = "Documents";
-          };
-        }
-      ];
     };
 }

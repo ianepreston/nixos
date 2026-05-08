@@ -3,11 +3,7 @@
 # reads OIDC config straight from env vars (ACTUAL_OPENID_*) so the
 # whole flow is wired here — first OIDC user to log in becomes the
 # server owner.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.actualbudget =
     {
       config,
@@ -20,60 +16,25 @@ in
       actualHost = "actualbudget.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 5006;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "actualbudget/client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-actualbudget.service" ];
+      myAuthentik.oidcApps.actualbudget = {
+        blueprintsDir = ./actualbudget-blueprints;
+        appRestartUnit = "podman-actualbudget.service";
+        clientIdVar = "ACTUAL_OPENID_CLIENT_ID";
+        clientSecretVar = "ACTUAL_OPENID_CLIENT_SECRET";
+        homepage = {
+          group = "Infrastructure";
+          icon = "actual";
+          description = "Personal finance";
         };
-        "actualbudget/client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-actualbudget.service" ];
-        };
+        homepageDisplayName = "Actual Budget";
+        homepageHref = "https://${actualHost}";
       };
 
-      sops.templates = {
-        "actualbudget-authentik.env" = {
-          content = ''
-            ACTUALBUDGET_OIDC_CLIENT_ID=${config.sops.placeholder."actualbudget/client_id"}
-            ACTUALBUDGET_OIDC_CLIENT_SECRET=${config.sops.placeholder."actualbudget/client_secret"}
-          '';
-          restartUnits = restartAuthentik;
-        };
-        "actualbudget.env" = {
-          content = ''
-            ACTUAL_OPENID_CLIENT_ID=${config.sops.placeholder."actualbudget/client_id"}
-            ACTUAL_OPENID_CLIENT_SECRET=${config.sops.placeholder."actualbudget/client_secret"}
-          '';
-          restartUnits = [ "podman-actualbudget.service" ];
-        };
-      };
-
-      myAuthentik.extraBlueprints = [ ./actualbudget-blueprints ];
-
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/actualbudget 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-
-        services = {
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."actualbudget-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."actualbudget-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."actualbudget-authentik.env".path
-          ];
-        };
-      };
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/actualbudget 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.actualbudget = {
         # renovate: datasource=docker depName=actualbudget/actual-server
@@ -101,15 +62,5 @@ in
           reverse_proxy localhost:${toString port}
         '';
       };
-
-      myHomepage.services.Infrastructure = [
-        {
-          "Actual Budget" = {
-            href = "https://${actualHost}";
-            icon = "actual";
-            description = "Personal finance";
-          };
-        }
-      ];
     };
 }

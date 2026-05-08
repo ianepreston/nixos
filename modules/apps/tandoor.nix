@@ -6,11 +6,11 @@
 # pins the redirect URI to /accounts/oidc/authentik/login/callback/ —
 # allauth derives that path from `provider_id: authentik`.
 #
-# OIDC client creds live in sops once and feed two env files: tandoor
-# itself reads SOCIALACCOUNT_PROVIDERS (constructed inline so the
-# secret values land in the JSON), the authentik worker reads
-# TANDOOR_OIDC_CLIENT_* so the blueprint's `!Env` placeholders resolve
-# at apply time.
+# OIDC creds, the secret key, and the postgres password all flow into
+# tandoor's env file. clientCredsInAppEnv stays false because the
+# canonical `client_id` / `client_secret` env vars are spliced inline
+# into SOCIALACCOUNT_PROVIDERS via extraEnvLines instead — Tandoor
+# only reads creds from the JSON blob.
 #
 # Nginx in the upstream image listens on TANDOOR_PORT; we set it to
 # 8080 so the container can run as the unprivileged servers UID
@@ -31,108 +31,42 @@ in
       serverGid = config.users.groups.servers.gid;
       tandoorHost = "tandoor.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "tandoor/db_password" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          owner = "postgres";
-          restartUnits = [ "tandoor-db-password.service" ];
-        };
-        "tandoor/secret_key" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = [ "podman-tandoor.service" ];
-        };
-        "tandoor/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-tandoor.service" ];
-        };
-        "tandoor/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-tandoor.service" ];
-        };
+      myPostgresApp.tandoor.consumerService = "podman-tandoor.service";
+
+      sops.secrets."tandoor/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "podman-tandoor.service" ];
       };
 
-      sops.templates = {
-        "tandoor.env" = {
-          content = ''
-            POSTGRES_PASSWORD=${config.sops.placeholder."tandoor/db_password"}
-            SECRET_KEY=${config.sops.placeholder."tandoor/secret_key"}
-            SOCIALACCOUNT_PROVIDERS={"openid_connect":{"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"${
-              config.sops.placeholder."tandoor/oidc_client_id"
-            }","secret":"${
-              config.sops.placeholder."tandoor/oidc_client_secret"
-            }","settings":{"server_url":"https://${authentikHost}/application/o/tandoor/.well-known/openid-configuration"}}]}}
-          '';
-          restartUnits = [ "podman-tandoor.service" ];
+      myAuthentik.oidcApps.tandoor = {
+        blueprintsDir = ./tandoor-blueprints;
+        appRestartUnit = "podman-tandoor.service";
+        clientCredsInAppEnv = false;
+        extraEnvLines = ''
+          POSTGRES_PASSWORD=${config.sops.placeholder."tandoor/db_password"}
+          SECRET_KEY=${config.sops.placeholder."tandoor/secret_key"}
+          SOCIALACCOUNT_PROVIDERS={"openid_connect":{"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"${
+            config.sops.placeholder."tandoor/oidc_client_id"
+          }","secret":"${
+            config.sops.placeholder."tandoor/oidc_client_secret"
+          }","settings":{"server_url":"https://${authentikHost}/application/o/tandoor/.well-known/openid-configuration"}}]}}
+        '';
+        homepage = {
+          group = "Consumption";
+          icon = "tandoor";
+          description = "Recipe manager";
         };
-        "tandoor-authentik.env" = {
-          content = ''
-            TANDOOR_OIDC_CLIENT_ID=${config.sops.placeholder."tandoor/oidc_client_id"}
-            TANDOOR_OIDC_CLIENT_SECRET=${config.sops.placeholder."tandoor/oidc_client_secret"}
-          '';
-          restartUnits = restartAuthentik;
-        };
+        homepageDisplayName = "Tandoor";
+        homepageHref = "https://${tandoorHost}";
       };
 
-      services.postgresql = {
-        ensureDatabases = [ "tandoor" ];
-        ensureUsers = [
-          {
-            name = "tandoor";
-            ensureDBOwnership = true;
-          }
-        ];
-      };
-
-      systemd = {
-        services = {
-          tandoor-db-password = {
-            description = "Set tandoor postgres role password from sops secret";
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
-            wantedBy = [ "podman-tandoor.service" ];
-            before = [ "podman-tandoor.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-              Group = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER tandoor WITH PASSWORD '$(cat ${config.sops.secrets."tandoor/db_password".path})'"
-            '';
-          };
-
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."tandoor-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."tandoor-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."tandoor-authentik.env".path
-          ];
-        };
-
-        tmpfiles.rules = [
-          "d /var/lib/containers/tandoor 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/tandoor/staticfiles 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/tandoor/mediafiles 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-      };
-
-      myAuthentik.extraBlueprints = [ ./tandoor-blueprints ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/tandoor 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/tandoor/staticfiles 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/tandoor/mediafiles 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.tandoor = {
         # renovate: datasource=docker depName=vabene1111/recipes
@@ -173,15 +107,5 @@ in
           reverse_proxy localhost:8083
         '';
       };
-
-      myHomepage.services.Consumption = [
-        {
-          Tandoor = {
-            href = "https://${tandoorHost}";
-            icon = "tandoor";
-            description = "Recipe manager";
-          };
-        }
-      ];
     };
 }

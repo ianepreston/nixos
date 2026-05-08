@@ -34,11 +34,7 @@
 # the host kernel can't talk to HA's vlan30 IP (only other vlan30
 # devices can). Non-issue for Caddy (uses the bridge); revisit if a
 # host-side service ever needs to probe HA on that interface.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.homeassistant =
     {
       config,
@@ -49,33 +45,19 @@ in
     let
       homeassistantHost = "homeassistant.${hostSpec.serverDomain}";
       port = 8123;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "homeassistant/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik;
+      myAuthentik.oidcApps.homeassistant = {
+        blueprintsDir = ./homeassistant-blueprints;
+        clientCredsInAppEnv = false;
+        homepage = {
+          group = "Infrastructure";
+          icon = "home-assistant";
+          description = "Smart home";
         };
-        "homeassistant/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik;
-        };
+        homepageDisplayName = "Home Assistant";
+        homepageHref = "https://${homeassistantHost}";
       };
-
-      sops.templates."homeassistant-authentik.env" = {
-        content = ''
-          HOMEASSISTANT_OIDC_CLIENT_ID=${config.sops.placeholder."homeassistant/oidc_client_id"}
-          HOMEASSISTANT_OIDC_CLIENT_SECRET=${config.sops.placeholder."homeassistant/oidc_client_secret"}
-        '';
-        restartUnits = restartAuthentik;
-      };
-
-      myAuthentik.extraBlueprints = [ ./homeassistant-blueprints ];
 
       networking = {
         # Tagged sub-interface for vlan30 on the host trunk. Host gets
@@ -98,16 +80,6 @@ in
         ];
 
         services = {
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."homeassistant-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."homeassistant-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."homeassistant-authentik.env".path
-          ];
-
           # netavark ships dhcp-proxy as a subcommand; no NixOS module
           # for it yet, so we run it directly. Listens on
           # /run/podman/nv-proxy.sock and brokers DHCP leases for
@@ -200,15 +172,5 @@ in
           reverse_proxy localhost:${toString port}
         '';
       };
-
-      myHomepage.services.Infrastructure = [
-        {
-          "Home Assistant" = {
-            href = "https://${homeassistantHost}";
-            icon = "home-assistant";
-            description = "Smart home";
-          };
-        }
-      ];
     };
 }

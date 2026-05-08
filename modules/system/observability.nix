@@ -677,29 +677,26 @@ in
         };
       };
 
-      myHomepage.services.Infrastructure = [
-        {
-          Grafana = {
-            href = "https://${grafanaHost}";
-            icon = "grafana";
-            description = "dashboards";
-          };
-        }
-        {
-          Prometheus = {
-            href = "https://${prometheusHost}";
-            icon = "prometheus";
-            description = "metrics";
-          };
-        }
-        {
-          Alertmanager = {
-            href = "https://${alertmanagerHost}";
-            icon = "prometheus";
-            description = "alerts";
-          };
-        }
-      ];
+      myHomepage.tiles = {
+        Grafana = {
+          group = "Infrastructure";
+          href = "https://${grafanaHost}";
+          icon = "grafana";
+          description = "dashboards";
+        };
+        Prometheus = {
+          group = "Infrastructure";
+          href = "https://${prometheusHost}";
+          icon = "prometheus";
+          description = "metrics";
+        };
+        Alertmanager = {
+          group = "Infrastructure";
+          href = "https://${alertmanagerHost}";
+          icon = "prometheus";
+          description = "alerts";
+        };
+      };
 
       # Promtail needs to read the journal — the upstream NixOS module
       # already runs it as `promtail`, but doesn't add the user to the

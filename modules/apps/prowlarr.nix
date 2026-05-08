@@ -1,6 +1,6 @@
 # Prowlarr - indexer aggregator for the *arr stack
 # Container only; auth/caddy/homepage wiring is generated from
-# `myArrAuth.apps.prowlarr` by modules/apps/arr-auth.nix.
+# `myAuthentik.forwardAuthApps.prowlarr` by modules/platform/authentik.nix.
 #
 # Runs as the shared server-${env}:servers user so any future config
 # pointed at the NFS share lines up with NAS-side UID checks. Image
@@ -20,10 +20,14 @@ _: {
       port = 9696;
     in
     {
-      myArrAuth.apps.prowlarr = {
+      myAuthentik.forwardAuthApps.prowlarr = {
         inherit port;
         displayName = "Prowlarr";
-        homepageDescription = "Indexer manager";
+        homepage = {
+          group = "Acquisition";
+          icon = "prowlarr";
+          description = "Indexer manager";
+        };
       };
 
       systemd.tmpfiles.rules = [

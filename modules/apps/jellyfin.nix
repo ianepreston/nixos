@@ -84,14 +84,11 @@ _: {
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Jellyfin = {
-            href = "https://${jellyfinHost}";
-            icon = "jellyfin";
-            description = "Media server";
-          };
-        }
-      ];
+      myHomepage.tiles.Jellyfin = {
+        group = "Consumption";
+        href = "https://${jellyfinHost}";
+        icon = "jellyfin";
+        description = "Media server";
+      };
     };
 }
