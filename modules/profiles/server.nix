@@ -32,6 +32,7 @@
       mylar3
       nix-maintenance
       observability
+      paperless-ngx
       prowlarr
       radarr
       readeck
