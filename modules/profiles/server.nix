@@ -1,53 +1,30 @@
-# Server profile - just enough to host other services
-# Imports base + common desktop modules
+# Server profile - core infra for hosting other services.
+# Hosts that actually run user-facing apps additionally extend
+# `server-apps` (see profiles/server-apps.nix). This profile only
+# carries the foundation: SSO, reverse proxy, databases, observability,
+# container runtime, backups, etc.
 #
 # This is a flake-parts module that registers:
 # - flake.modules.nixos.server (NixOS server config)
 { inputs, ... }:
 {
-  # Server NixOS module - base + essentials
   flake.modules.nixos.server = _: {
     imports = with inputs.self.modules.nixos; [
-      actualbudget
-      arr-auth
-      audiobookshelf
       auto-rebuild
       authentik
       base
-      bazarr
       caddy
-      grimmory
-      homeassistant
-      homepage
-      jellyfin
-      kapowarr
-      kavita
-      komga
       mariadb
       nfsclient
-      oci-containers
-      postgresql
-      mealie
-      miniflux
-      mylar3
       nix-maintenance
       observability
-      paperless-ngx
-      prowlarr
-      radarr
-      readeck
-      readmeabook
-      sabnzbd
-      seerr
+      oci-containers
+      postgresql
       server-backups
       server-users
-      shelfmark
-      sonarr
       sops
       ssh
       tailscale
-      tandoor
-      watchstate
     ];
 
     # Home-manager modules common to all servers

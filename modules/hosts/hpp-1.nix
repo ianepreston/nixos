@@ -19,6 +19,7 @@
     ++ (with inputs.self.modules.nixos; [
       intel-quicksync
       server
+      server-apps
     ])
     ++ [
       {
