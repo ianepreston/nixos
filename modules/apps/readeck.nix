@@ -32,12 +32,15 @@ _: {
       port = 8000;
     in
     {
-      myArrAuth.apps.readeck = {
+      myAuthentik.forwardAuthApps.readeck = {
         inherit port;
         displayName = "Readeck";
         authentikGroup = "Users";
-        homepageGroup = "Consumption";
-        homepageDescription = "Read-it-later";
+        homepage = {
+          group = "Consumption";
+          icon = "readeck";
+          description = "Read-it-later";
+        };
         proxyConfig = ''
           header_up Remote-User {http.request.header.X-authentik-username}
           header_up Remote-Email {http.request.header.X-authentik-email}

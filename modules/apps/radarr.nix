@@ -1,5 +1,5 @@
 # Radarr - Movie management
-# Container only; auth/caddy/homepage wired by arr-auth.nix. Image
+# Container only; auth/caddy/homepage wired by platform/authentik.nix. Image
 # baked-in user is `nobody:nogroup`; we override via `user` so the
 # process runs as the shared server-${env}:servers user that the NAS
 # expects on the NFS-mounted Movies share.
@@ -16,10 +16,14 @@ _: {
       port = 7878;
     in
     {
-      myArrAuth.apps.radarr = {
+      myAuthentik.forwardAuthApps.radarr = {
         inherit port;
         displayName = "Radarr";
-        homepageDescription = "Movie manager";
+        homepage = {
+          group = "Acquisition";
+          icon = "radarr";
+          description = "Movie manager";
+        };
       };
 
       systemd.tmpfiles.rules = [

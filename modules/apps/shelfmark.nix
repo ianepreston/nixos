@@ -1,5 +1,5 @@
 # Shelfmark - book search + request hub (calibrain/shelfmark)
-# Container only; auth/caddy/homepage wired by arr-auth.nix. Mounts
+# Container only; auth/caddy/homepage wired by platform/authentik.nix. Mounts
 # /mnt/content/books for downloaded books and /mnt/content/Downloads
 # at the same path the *arr / sabnzbd containers see — shelfmark
 # requires the torrent/usenet client volume to match exactly so it
@@ -17,10 +17,14 @@ _: {
       port = 8084;
     in
     {
-      myArrAuth.apps.shelfmark = {
+      myAuthentik.forwardAuthApps.shelfmark = {
         inherit port;
         displayName = "Shelfmark";
-        homepageDescription = "Book search + requests";
+        homepage = {
+          group = "Acquisition";
+          icon = "shelfmark";
+          description = "Book search + requests";
+        };
       };
 
       systemd.tmpfiles.rules = [

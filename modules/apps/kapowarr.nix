@@ -1,5 +1,5 @@
 # Kapowarr - comics manager (alternative to mylar3)
-# Container only; auth/caddy/homepage wired by arr-auth.nix. Upstream
+# Container only; auth/caddy/homepage wired by platform/authentik.nix. Upstream
 # image isn't a linuxserver build, so we set the runtime user via
 # `--user` directly rather than via PUID/PGID env vars.
 _: {
@@ -15,13 +15,16 @@ _: {
       port = 5656;
     in
     {
-      myArrAuth.apps.kapowarr = {
+      myAuthentik.forwardAuthApps.kapowarr = {
         inherit port;
         displayName = "Kapowarr";
-        homepageDescription = "Comics manager";
-        # No upstream icon in dashboard-icons yet; fall back to generic.
-        homepageIcon = "https://raw.githubusercontent.com/Casvt/Kapowarr/master/frontend/static/img/favicon.svg";
+        # No upstream icon in dashboard-icons yet; fall back to repo favicon.
         iconUrl = "https://raw.githubusercontent.com/Casvt/Kapowarr/master/frontend/static/img/favicon.svg";
+        homepage = {
+          group = "Acquisition";
+          icon = "https://raw.githubusercontent.com/Casvt/Kapowarr/master/frontend/static/img/favicon.svg";
+          description = "Comics manager";
+        };
       };
 
       # `/app/logs` inside the image is owned by kapowarr's bundled

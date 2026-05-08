@@ -1,5 +1,5 @@
 # Sabnzbd - usenet downloader
-# Container only; auth/caddy/homepage wired by arr-auth.nix.
+# Container only; auth/caddy/homepage wired by platform/authentik.nix.
 #
 # Sabnzbd refuses any HTTP request whose Host header doesn't match the
 # local hostname or an entry in `host_whitelist`. With Caddy in front,
@@ -25,10 +25,14 @@ _: {
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
     in
     {
-      myArrAuth.apps.sabnzbd = {
+      myAuthentik.forwardAuthApps.sabnzbd = {
         inherit port;
         displayName = "Sabnzbd";
-        homepageDescription = "Usenet downloader";
+        homepage = {
+          group = "Acquisition";
+          icon = "sabnzbd";
+          description = "Usenet downloader";
+        };
       };
 
       systemd.tmpfiles.rules = [

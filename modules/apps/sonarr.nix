@@ -1,5 +1,6 @@
 # Sonarr - TV management
-# Container only; auth/caddy/homepage wiring lives in arr-auth.nix.
+# Container only; auth/caddy/homepage wiring is generated from
+# `myAuthentik.forwardAuthApps.sonarr` by modules/platform/authentik.nix.
 # Bind-mounts /mnt/content/TV (NFS share) so library scans land in the
 # right place. Image baked-in user is `nobody:nogroup`; we override via
 # `user` so the process runs as server-${env}:servers (the UID/GID the
@@ -17,10 +18,14 @@ _: {
       port = 8989;
     in
     {
-      myArrAuth.apps.sonarr = {
+      myAuthentik.forwardAuthApps.sonarr = {
         inherit port;
         displayName = "Sonarr";
-        homepageDescription = "TV manager";
+        homepage = {
+          group = "Acquisition";
+          icon = "sonarr";
+          description = "TV manager";
+        };
       };
 
       systemd.tmpfiles.rules = [

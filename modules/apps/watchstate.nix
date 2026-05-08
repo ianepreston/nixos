@@ -1,6 +1,6 @@
 # Watchstate - sync media-server play state across Jellyfin/Plex/Emby
 # (https://github.com/arabcoders/watchstate). Container only;
-# auth/caddy/homepage wired by arr-auth.nix. The host-native Jellyfin
+# auth/caddy/homepage wired by platform/authentik.nix. The host-native Jellyfin
 # is reachable from inside the podman bridge at
 # host.containers.internal:8096 — that URL is registered through the
 # webui on first boot, not via this module. State lives at
@@ -19,13 +19,15 @@ _: {
       port = 8088;
     in
     {
-      myArrAuth.apps.watchstate = {
+      myAuthentik.forwardAuthApps.watchstate = {
         inherit port;
         displayName = "Watchstate";
-        homepageDescription = "Sync media play state";
-        homepageGroup = "Consumption";
-        homepageIcon = "https://raw.githubusercontent.com/arabcoders/watchstate/master/frontend/public/images/logo_nobg.png";
         iconUrl = "https://raw.githubusercontent.com/arabcoders/watchstate/master/frontend/public/images/logo_nobg.png";
+        homepage = {
+          group = "Consumption";
+          icon = "https://raw.githubusercontent.com/arabcoders/watchstate/master/frontend/public/images/logo_nobg.png";
+          description = "Sync media play state";
+        };
       };
 
       systemd.tmpfiles.rules = [

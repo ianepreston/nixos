@@ -10,7 +10,6 @@
   flake.modules.nixos.server-apps = _: {
     imports = with inputs.self.modules.nixos; [
       actualbudget
-      arr-auth
       audiobookshelf
       bazarr
       grimmory
