@@ -1,19 +1,11 @@
 # Mealie - recipe manager
 # Composes the OCI container, its caddy virtualHost, a postgres
-# database/user with a sops-managed password, and an authentik OIDC
-# integration via myAuthentik.oidcApps. Mealie speaks OIDC natively;
-# the provider/application/policy binding live in
-# modules/apps/mealie-blueprints/ and are wired into authentik via the
-# aggregator's blueprintsDir option.
-#
-# OIDC client creds are env-fed; postgres password is also env-fed
-# (for the container) and rotated against the postgres role via a
-# small oneshot.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+# database/user with a sops-managed password (via myPostgresApp), and
+# an authentik OIDC integration (via myAuthentik.oidcApps). Mealie
+# speaks OIDC natively; the provider/application/policy binding live
+# in modules/apps/mealie-blueprints/ and are wired into authentik via
+# the aggregator's blueprintsDir option.
+_: {
   flake.modules.nixos.mealie =
     {
       config,
@@ -27,20 +19,14 @@ in
       authentikHost = "authentik.${hostSpec.serverDomain}";
     in
     {
+      myPostgresApp.mealie.consumerService = "podman-mealie.service";
+
       myAuthentik.oidcApps.mealie = {
         blueprintsDir = ./mealie-blueprints;
         appRestartUnit = "podman-mealie.service";
         extraEnvLines = ''
           POSTGRES_PASSWORD=${config.sops.placeholder."mealie/db_password"}
         '';
-        extraSecrets = {
-          "mealie/db_password" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-            owner = "postgres";
-            # Re-apply the password to postgres whenever the secret changes.
-            restartUnits = [ "mealie-db-password.service" ];
-          };
-        };
         homepage = {
           group = "Consumption";
           icon = "mealie";
@@ -50,52 +36,9 @@ in
         homepageHref = "https://${mealieHost}";
       };
 
-      services.postgresql = {
-        ensureDatabases = [ "mealie" ];
-        ensureUsers = [
-          {
-            name = "mealie";
-            ensureDBOwnership = true;
-          }
-        ];
-      };
-
-      systemd = {
-        services = {
-          # Sets mealie's postgres password from the sops secret. Runs after
-          # the role exists (postgresql-setup creates it via ensureUsers) and
-          # before the container starts, so mealie never tries to connect
-          # with a password that doesn't match what postgres has on file.
-          # Splitting this out of postgresql-setup.postStart avoids the
-          # failure mode where the secret hasn't been decrypted yet and
-          # postgres clears the password.
-          mealie-db-password = {
-            description = "Set mealie postgres role password from sops secret";
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
-            wantedBy = [ "podman-mealie.service" ];
-            before = [ "podman-mealie.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-              Group = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER mealie WITH PASSWORD '$(cat ${config.sops.secrets."mealie/db_password".path})'"
-            '';
-          };
-        };
-
-        tmpfiles.rules = [
-          "d /var/lib/containers/mealie 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-      };
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/mealie 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.mealie = {
         # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie

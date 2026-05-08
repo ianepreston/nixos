@@ -30,6 +30,13 @@ in
       port = 8010;
     in
     {
+      myPostgresApp.paperless-ngx.consumerService = "podman-paperless-ngx.service";
+
+      sops.secrets."paperless-ngx/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "podman-paperless-ngx.service" ];
+      };
+
       myAuthentik.oidcApps.paperless-ngx = {
         blueprintsDir = ./paperless-ngx-blueprints;
         appRestartUnit = "podman-paperless-ngx.service";
@@ -43,17 +50,6 @@ in
             config.sops.placeholder."paperless-ngx/oidc_client_secret"
           }","settings":{"server_url":"https://${authentikHost}/application/o/paperless-ngx/.well-known/openid-configuration","fetch_userinfo":true}}],"SCOPE":["openid","profile","email"]}}
         '';
-        extraSecrets = {
-          "paperless-ngx/db_password" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-            owner = "postgres";
-            restartUnits = [ "paperless-ngx-db-password.service" ];
-          };
-          "paperless-ngx/secret_key" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-            restartUnits = [ "podman-paperless-ngx.service" ];
-          };
-        };
         homepage = {
           group = "Infrastructure";
           icon = "paperless-ngx";
@@ -61,16 +57,6 @@ in
         };
         homepageDisplayName = "Paperless-ngx";
         homepageHref = "https://${paperlessHost}";
-      };
-
-      services.postgresql = {
-        ensureDatabases = [ "paperless_ngx" ];
-        ensureUsers = [
-          {
-            name = "paperless_ngx";
-            ensureDBOwnership = true;
-          }
-        ];
       };
 
       systemd = {
@@ -84,30 +70,6 @@ in
         ];
 
         services = {
-          paperless-ngx-db-password = {
-            description = "Set paperless-ngx postgres role password from sops secret";
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
-            wantedBy = [ "podman-paperless-ngx.service" ];
-            before = [ "podman-paperless-ngx.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-              Group = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER paperless_ngx WITH PASSWORD '$(cat ${
-                  config.sops.secrets."paperless-ngx/db_password".path
-                })'"
-            '';
-          };
-
           # Paperless waits on its dedicated redis sidecar so the
           # broker is up before Django attempts to connect.
           podman-paperless-ngx = {

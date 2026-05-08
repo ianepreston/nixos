@@ -33,6 +33,13 @@ in
       authentikHost = "authentik.${hostSpec.serverDomain}";
     in
     {
+      myPostgresApp.tandoor.consumerService = "podman-tandoor.service";
+
+      sops.secrets."tandoor/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "podman-tandoor.service" ];
+      };
+
       myAuthentik.oidcApps.tandoor = {
         blueprintsDir = ./tandoor-blueprints;
         appRestartUnit = "podman-tandoor.service";
@@ -46,17 +53,6 @@ in
             config.sops.placeholder."tandoor/oidc_client_secret"
           }","settings":{"server_url":"https://${authentikHost}/application/o/tandoor/.well-known/openid-configuration"}}]}}
         '';
-        extraSecrets = {
-          "tandoor/db_password" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-            owner = "postgres";
-            restartUnits = [ "tandoor-db-password.service" ];
-          };
-          "tandoor/secret_key" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-            restartUnits = [ "podman-tandoor.service" ];
-          };
-        };
         homepage = {
           group = "Consumption";
           icon = "tandoor";
@@ -66,47 +62,11 @@ in
         homepageHref = "https://${tandoorHost}";
       };
 
-      services.postgresql = {
-        ensureDatabases = [ "tandoor" ];
-        ensureUsers = [
-          {
-            name = "tandoor";
-            ensureDBOwnership = true;
-          }
-        ];
-      };
-
-      systemd = {
-        services = {
-          tandoor-db-password = {
-            description = "Set tandoor postgres role password from sops secret";
-            after = [
-              "postgresql.service"
-              "postgresql-setup.service"
-            ];
-            requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
-            wantedBy = [ "podman-tandoor.service" ];
-            before = [ "podman-tandoor.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-              User = "postgres";
-              Group = "postgres";
-            };
-            script = ''
-              ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER tandoor WITH PASSWORD '$(cat ${config.sops.secrets."tandoor/db_password".path})'"
-            '';
-          };
-        };
-
-        tmpfiles.rules = [
-          "d /var/lib/containers/tandoor 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/tandoor/staticfiles 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/tandoor/mediafiles 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-      };
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/tandoor 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/tandoor/staticfiles 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/tandoor/mediafiles 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.tandoor = {
         # renovate: datasource=docker depName=vabene1111/recipes

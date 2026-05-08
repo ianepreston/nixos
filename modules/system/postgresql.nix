@@ -1,12 +1,16 @@
 # PostgreSQL - Simple Aspect
 # Single shared native PostgreSQL instance for server apps. App modules
 # extend ensureDatabases / ensureUsers and set scram-sha-256 passwords
-# from sops via a postgresql.postStart hook.
+# from sops; the boilerplate for the password-rotation oneshot is
+# handled by myPostgresApp (modules/platform/postgres-app.nix), which
+# this module pulls in so the option surface is available wherever
+# postgres is enabled.
 #
 # Major version is pinned: upgrades are a manual operation
 # (`nix-shell -p postgresql_<new>` + `upgrade-pg-cluster`) so we never
 # get a silent dump/restore on rebuild.
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.postgresql =
     {
       lib,
@@ -14,6 +18,8 @@ _: {
       ...
     }:
     {
+      imports = [ inputs.self.modules.nixos.myPostgresApp ];
+
       services.postgresql = {
         enable = true;
         package = pkgs.postgresql_17;
