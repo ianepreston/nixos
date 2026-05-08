@@ -1,15 +1,14 @@
 # Mealie - recipe manager
 # Composes the OCI container, its caddy virtualHost, a postgres
 # database/user with a sops-managed password, and an authentik OIDC
-# integration. Mealie speaks OIDC natively; the OAuth2 provider /
-# application / policy binding live in modules/apps/mealie-blueprints/
-# and are wired into authentik via myAuthentik.extraBlueprints.
+# integration via myAuthentik.oidcApps. Mealie speaks OIDC natively;
+# the provider/application/policy binding live in
+# modules/apps/mealie-blueprints/ and are wired into authentik via the
+# aggregator's blueprintsDir option.
 #
-# OIDC client credentials live in sops once and feed two systemd units
-# under different env-var names: the mealie container needs
-# OIDC_CLIENT_ID/OIDC_CLIENT_SECRET, the authentik worker needs
-# MEALIE_OIDC_CLIENT_ID/MEALIE_OIDC_CLIENT_SECRET so the blueprint's
-# `!Env` placeholders resolve when the worker applies the YAML.
+# OIDC client creds are env-fed; postgres password is also env-fed
+# (for the container) and rotated against the postgres role via a
+# small oneshot.
 { inputs, ... }:
 let
   sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
@@ -26,50 +25,29 @@ in
       serverGid = config.users.groups.servers.gid;
       mealieHost = "mealie.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "mealie/db_password" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          owner = "postgres";
-          # Re-apply the password to postgres whenever the secret changes.
-          restartUnits = [ "mealie-db-password.service" ];
+      myAuthentik.oidcApps.mealie = {
+        blueprintsDir = ./mealie-blueprints;
+        appRestartUnit = "podman-mealie.service";
+        extraEnvLines = ''
+          POSTGRES_PASSWORD=${config.sops.placeholder."mealie/db_password"}
+        '';
+        extraSecrets = {
+          "mealie/db_password" = {
+            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+            owner = "postgres";
+            # Re-apply the password to postgres whenever the secret changes.
+            restartUnits = [ "mealie-db-password.service" ];
+          };
         };
-        "mealie/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-mealie.service" ];
+        homepage = {
+          group = "Consumption";
+          icon = "mealie";
+          description = "Recipe manager";
         };
-        "mealie/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-mealie.service" ];
-        };
-      };
-
-      sops.templates = {
-        "mealie.env" = {
-          content = ''
-            POSTGRES_PASSWORD=${config.sops.placeholder."mealie/db_password"}
-            OIDC_CLIENT_ID=${config.sops.placeholder."mealie/oidc_client_id"}
-            OIDC_CLIENT_SECRET=${config.sops.placeholder."mealie/oidc_client_secret"}
-          '';
-          # Re-render env + restart container when the secret changes.
-          restartUnits = [ "podman-mealie.service" ];
-        };
-        # Same secret values, exposed under MEALIE_OIDC_* names so the
-        # authentik worker can substitute them into the blueprint at
-        # apply time.
-        "mealie-authentik.env" = {
-          content = ''
-            MEALIE_OIDC_CLIENT_ID=${config.sops.placeholder."mealie/oidc_client_id"}
-            MEALIE_OIDC_CLIENT_SECRET=${config.sops.placeholder."mealie/oidc_client_secret"}
-          '';
-          restartUnits = restartAuthentik;
-        };
+        homepageDisplayName = "Mealie";
+        homepageHref = "https://${mealieHost}";
       };
 
       services.postgresql = {
@@ -112,28 +90,12 @@ in
                 "ALTER USER mealie WITH PASSWORD '$(cat ${config.sops.secrets."mealie/db_password".path})'"
             '';
           };
-
-          # Append the mealie-authentik env file to the authentik units so
-          # the worker has MEALIE_OIDC_* in scope when applying blueprints.
-          # NixOS merges listOf path definitions, so this stacks on top of
-          # the EnvironmentFile authentik-nix already sets.
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."mealie-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."mealie-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."mealie-authentik.env".path
-          ];
         };
 
         tmpfiles.rules = [
           "d /var/lib/containers/mealie 0750 ${toString serverUid} ${toString serverGid} -"
         ];
       };
-
-      myAuthentik.extraBlueprints = [ ./mealie-blueprints ];
 
       virtualisation.oci-containers.containers.mealie = {
         # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
@@ -172,13 +134,6 @@ in
         routeConfig = ''
           reverse_proxy localhost:9925
         '';
-      };
-
-      myHomepage.tiles.Mealie = {
-        group = "Consumption";
-        href = "https://${mealieHost}";
-        icon = "mealie";
-        description = "Recipe manager";
       };
     };
 }

@@ -2,11 +2,9 @@
 # Container; OIDC against authentik gated to the Users group. Grimmory
 # is a Spring Boot app that stores OIDC settings in its own MariaDB
 # database (configured once via Settings → OIDC in the UI), so this
-# module only stages the authentik side (provider/application/policy
-# binding via the blueprint, plus the env-file for the worker so
-# `!Env` substitutions resolve). Grimmory only supports public OIDC
-# clients with PKCE — the blueprint sets `client_type: public` and
-# omits the client_secret.
+# module registers via myAuthentik.oidcApps with clientCredsInAppEnv
+# = false. Grimmory only supports public OIDC clients with PKCE — set
+# `publicClient = true` so no client_secret is provisioned.
 #
 # Grimmory requires MariaDB (the JDBC URL in the upstream image is
 # pinned to `jdbc:mariadb://...`). It connects to the shared native
@@ -34,44 +32,34 @@ in
       serverGid = config.users.groups.servers.gid;
       grimmoryHost = "grimmory.${hostSpec.serverDomain}";
       port = 6060;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "grimmory/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik;
+      myAuthentik.oidcApps.grimmory = {
+        blueprintsDir = ./grimmory-blueprints;
+        appRestartUnit = "podman-grimmory.service";
+        publicClient = true;
+        clientCredsInAppEnv = false;
+        extraEnvLines = ''
+          DATABASE_PASSWORD=${config.sops.placeholder."grimmory/db_password"}
+        '';
+        extraSecrets = {
+          "grimmory/db_password" = {
+            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+            owner = "mysql";
+            restartUnits = [
+              "grimmory-db-password.service"
+              "podman-grimmory.service"
+            ];
+          };
         };
-        "grimmory/db_password" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          owner = "mysql";
-          restartUnits = [
-            "grimmory-db-password.service"
-            "podman-grimmory.service"
-          ];
+        homepage = {
+          group = "Consumption";
+          icon = "booklore";
+          description = "Digital library";
         };
+        homepageDisplayName = "Grimmory";
+        homepageHref = "https://${grimmoryHost}";
       };
-
-      sops.templates = {
-        "grimmory-authentik.env" = {
-          content = ''
-            GRIMMORY_OIDC_CLIENT_ID=${config.sops.placeholder."grimmory/oidc_client_id"}
-          '';
-          restartUnits = restartAuthentik;
-        };
-        "grimmory.env" = {
-          content = ''
-            DATABASE_PASSWORD=${config.sops.placeholder."grimmory/db_password"}
-          '';
-          restartUnits = [ "podman-grimmory.service" ];
-        };
-      };
-
-      myAuthentik.extraBlueprints = [ ./grimmory-blueprints ];
 
       services.mysql = {
         ensureDatabases = [ "grimmory" ];
@@ -85,16 +73,6 @@ in
         ];
 
         services = {
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."grimmory-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."grimmory-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."grimmory-authentik.env".path
-          ];
-
           # Sets up the grimmory mariadb role with a sops-managed password
           # and grants on the grimmory database. ensureUsers can't help
           # here because it provisions unix_socket auth only, but the
@@ -153,13 +131,6 @@ in
         routeConfig = ''
           reverse_proxy localhost:${toString port}
         '';
-      };
-
-      myHomepage.tiles.Grimmory = {
-        group = "Consumption";
-        href = "https://${grimmoryHost}";
-        icon = "booklore";
-        description = "Digital library";
       };
     };
 }

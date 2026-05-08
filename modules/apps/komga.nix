@@ -11,11 +11,7 @@
 # up. To onboard new users, log in once as the Komga admin and
 # pre-create their accounts (email-only is fine), or flip the
 # auto-create flag in the Komga admin UI.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.komga =
     {
       config,
@@ -28,64 +24,25 @@ in
       komgaHost = "komga.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 25600;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "komga/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-komga.service" ];
+      myAuthentik.oidcApps.komga = {
+        blueprintsDir = ./komga-blueprints;
+        appRestartUnit = "podman-komga.service";
+        clientIdVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_ID";
+        clientSecretVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_SECRET";
+        homepage = {
+          group = "Consumption";
+          icon = "komga";
+          description = "Comics + manga";
         };
-        "komga/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik ++ [ "podman-komga.service" ];
-        };
+        homepageDisplayName = "Komga";
+        homepageHref = "https://${komgaHost}";
       };
 
-      sops.templates = {
-        "komga.env" = {
-          content = ''
-            SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_ID=${
-              config.sops.placeholder."komga/oidc_client_id"
-            }
-            SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_SECRET=${
-              config.sops.placeholder."komga/oidc_client_secret"
-            }
-          '';
-          restartUnits = [ "podman-komga.service" ];
-        };
-        "komga-authentik.env" = {
-          content = ''
-            KOMGA_OIDC_CLIENT_ID=${config.sops.placeholder."komga/oidc_client_id"}
-            KOMGA_OIDC_CLIENT_SECRET=${config.sops.placeholder."komga/oidc_client_secret"}
-          '';
-          restartUnits = restartAuthentik;
-        };
-      };
-
-      myAuthentik.extraBlueprints = [ ./komga-blueprints ];
-
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/komga 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-
-        services = {
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."komga-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."komga-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."komga-authentik.env".path
-          ];
-        };
-      };
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/komga 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.komga = {
         # renovate: datasource=docker depName=gotson/komga
@@ -113,13 +70,6 @@ in
         routeConfig = ''
           reverse_proxy localhost:${toString port}
         '';
-      };
-
-      myHomepage.tiles.Komga = {
-        group = "Consumption";
-        href = "https://${komgaHost}";
-        icon = "komga";
-        description = "Comics + manga";
       };
     };
 }

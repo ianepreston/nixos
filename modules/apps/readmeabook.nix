@@ -5,9 +5,8 @@
 # startup, so the container runs as root and we set PUID/PGID rather
 # than `--user`. ReadMeABook stores OIDC settings in its own bundled
 # postgres (configured via Settings → Authentication in the UI), so
-# this module only stages the authentik side (provider/application/
-# policy binding via the blueprint, plus the env-file for the worker
-# so `!Env` substitutions resolve).
+# this module registers via myAuthentik.oidcApps with
+# clientCredsInAppEnv = false.
 #
 # On first boot, complete the local-admin setup wizard, then under
 # Settings → Authentication enable OIDC with Issuer
@@ -19,11 +18,7 @@
 # Audiobook library lives under `/mnt/content/audiobooks` to share
 # with audiobookshelf. Downloads go to `/mnt/content/Downloads` so
 # the *arr/sabnzbd containers see the same paths.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.readmeabook =
     {
       config,
@@ -35,33 +30,19 @@ in
       serverGid = config.users.groups.servers.gid;
       readmeabookHost = "readmeabook.${hostSpec.serverDomain}";
       port = 3030;
-      restartAuthentik = [
-        "authentik.service"
-        "authentik-worker.service"
-        "authentik-migrate.service"
-      ];
     in
     {
-      sops.secrets = {
-        "readmeabook/oidc_client_id" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik;
+      myAuthentik.oidcApps.readmeabook = {
+        blueprintsDir = ./readmeabook-blueprints;
+        clientCredsInAppEnv = false;
+        homepage = {
+          group = "Consumption";
+          icon = "audiobookshelf";
+          description = "Audiobook requests";
         };
-        "readmeabook/oidc_client_secret" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-          restartUnits = restartAuthentik;
-        };
+        homepageDisplayName = "ReadMeABook";
+        homepageHref = "https://${readmeabookHost}";
       };
-
-      sops.templates."readmeabook-authentik.env" = {
-        content = ''
-          READMEABOOK_OIDC_CLIENT_ID=${config.sops.placeholder."readmeabook/oidc_client_id"}
-          READMEABOOK_OIDC_CLIENT_SECRET=${config.sops.placeholder."readmeabook/oidc_client_secret"}
-        '';
-        restartUnits = restartAuthentik;
-      };
-
-      myAuthentik.extraBlueprints = [ ./readmeabook-blueprints ];
 
       systemd = {
         # Container runs as root and uses gosu to drop to PUID/PGID
@@ -75,18 +56,6 @@ in
           "d /var/lib/containers/readmeabook/pgdata 0750 root root -"
           "d /var/lib/containers/readmeabook/redis 0750 root root -"
         ];
-
-        services = {
-          authentik.serviceConfig.EnvironmentFile = [
-            config.sops.templates."readmeabook-authentik.env".path
-          ];
-          authentik-worker.serviceConfig.EnvironmentFile = [
-            config.sops.templates."readmeabook-authentik.env".path
-          ];
-          authentik-migrate.serviceConfig.EnvironmentFile = [
-            config.sops.templates."readmeabook-authentik.env".path
-          ];
-        };
       };
 
       virtualisation.oci-containers.containers.readmeabook = {
@@ -118,13 +87,6 @@ in
         routeConfig = ''
           reverse_proxy localhost:${toString port}
         '';
-      };
-
-      myHomepage.tiles.ReadMeABook = {
-        group = "Consumption";
-        href = "https://${readmeabookHost}";
-        icon = "audiobookshelf";
-        description = "Audiobook requests";
       };
     };
 }
