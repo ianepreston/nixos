@@ -1,23 +1,23 @@
-# Radarr - Movie management
-# Container only; auth/caddy/homepage wired by platform/authentik.nix. Image
-# baked-in user is `nobody:nogroup`; we override via `user` so the
-# process runs as the shared server-${env}:servers user that the NAS
-# expects on the NFS-mounted Movies share.
+# Radarr - movie management
+# Native services.radarr from nixpkgs (system user `radarr` overridden
+# to the shared server-${env}:servers user so writes back to the
+# NFS-mounted Movies share land with the UID/GID the NAS expects).
+# auth/caddy/homepage wiring is generated from
+# `myAuthentik.forwardAuthApps.radarr` by modules/platform/authentik.nix.
+#
+# `dataDir` is pinned to /var/lib/radarr (instead of the upstream
+# default /var/lib/radarr/.config/Radarr) to match the container's
+# /config layout 1:1 — see modules/apps/sonarr.nix for the same
+# rationale.
+#
+# Cross-app URL after migration: containerized peers reach radarr at
+# `host.containers.internal:7878`; native peers use `localhost:7878`.
 _: {
   flake.modules.nixos.radarr =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
-    let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
-      port = 7878;
-    in
+    { hostSpec, ... }:
     {
       myAuthentik.forwardAuthApps.radarr = {
-        inherit port;
+        port = 7878;
         displayName = "Radarr";
         homepage = {
           group = "Acquisition";
@@ -26,23 +26,30 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/radarr 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      services.radarr = {
+        enable = true;
+        user = "server-${hostSpec.serverEnvironment}";
+        group = "servers";
+        dataDir = "/var/lib/radarr";
+      };
 
-      virtualisation.oci-containers.containers.radarr = {
-        # renovate: datasource=docker depName=ghcr.io/home-operations/radarr
-        image = "ghcr.io/home-operations/radarr:6.2.0.10390";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [
-          "/var/lib/containers/radarr:/config"
-          "/mnt/content/Movies:/movies"
-          "/mnt/content/Downloads:/downloads"
-        ];
-        environment = {
-          TZ = config.time.timeZone;
+      services.restic.backups.server.paths = [ "/var/lib/radarr" ];
+
+      systemd.services.radarr-migrate-state = {
+        description = "Migrate radarr state from container layout";
+        before = [ "radarr.service" ];
+        wantedBy = [ "radarr.service" ];
+        unitConfig.ConditionPathExists = "/var/lib/containers/radarr";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
         };
+        script = ''
+          if [ ! -e /var/lib/radarr ] || [ -z "$(ls -A /var/lib/radarr 2>/dev/null)" ]; then
+            rm -rf /var/lib/radarr
+            mv /var/lib/containers/radarr /var/lib/radarr
+          fi
+        '';
       };
     };
 }
