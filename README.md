@@ -65,17 +65,18 @@ and resources if you want to build your own.
 │   └── iso.nix
 ├── modules/               # All configuration modules, auto-imported by import-tree
 │   ├── flake/             # Flake infrastructure (host-specs, module namespaces, dev shell, git hooks)
-│   ├── profiles/          # Composable profiles (base, darwin-base, server, workstation)
-│   │   ├── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv)
+│   ├── profiles/          # Composable profiles (base, darwin-base, server, server-apps, workstation)
 │   │   └── _ssh-keys/    # Public SSH keys
-│   ├── system/            # System-level modules (sops, ssh, docker, homebrew, smbclient)
-│   ├── apps/              # Server-app modules (containerized services + reverse proxy + secrets)
-│   ├── hardware/          # Hardware-specific modules (nvidia, yubikey, keyboards, rgb)
-│   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes)
+│   ├── platform/          # Option-only platform-tier modules (myCaddy, myPostgresApp, myAuthentik, myHomepage)
+│   ├── system/            # System-level modules (sops, ssh, caddy, postgresql, mariadb, oci-containers, server-backups, observability, tailscale, …)
+│   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
+│   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
+│   ├── hardware/          # Hardware-specific modules (intel-quicksync, nvidia, yubikey, keyboards, rgb, xreal-headset)
+│   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes, sunshine, quickemu)
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
 │   ├── programs/          # Application modules (browser, ghostty, comms, media, obsidian, etc.)
 │   └── hosts/             # Per-host configurations and hardware/disk definitions
-├── scripts/               # Utility scripts (dconf, sops check)
+├── scripts/               # Utility scripts (dconf capture, sops check, system-install)
 └── assets/                # Static assets (wallpapers)
 ```
 
@@ -85,6 +86,7 @@ and resources if you want to build your own.
 | --------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------ |
 | **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060       |
 | **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming |
+| **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding      |
 | **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config     |
 | **penguin**           | x86_64-linux   | `homeConfigurations`   | Standalone home-manager (WSL / non-NixOS Linux)                          |
 | **toshibachromebook** | x86_64-linux   | `nixosConfigurations`  | Minimal ChromeBook config                                                |
@@ -120,15 +122,41 @@ profile level, so they automatically apply to all users on a host.
 ## Server App Pattern
 
 Server-side applications (web apps hosted behind Caddy) live in
-`modules/apps/<appname>.nix` and are composed into the `server` profile. Each
-app module is self-contained: it declares the OCI container, its reverse-proxy
-virtualHost, any database/user it needs, and its sops secrets in one place.
-`modules/apps/mealie.nix` is the canonical example.
+`modules/apps/<appname>.nix` and are composed into the `server-apps`
+profile (which is itself layered on top of `server` — the core
+infra profile that owns caddy, postgres, authentik, observability,
+backups, etc.). Each app module is self-contained: it declares the
+OCI container or native service, contributes a Caddy route, any
+database/user it needs, its sops secrets, an authentik blueprint
+(if SSO-protected), and a homepage tile — all in one place.
+`modules/apps/mealie.nix` is the canonical example for a
+containerized, postgres-backed, OIDC-integrated app.
+
+App modules contribute to a small set of platform-tier aggregators
+declared in `modules/platform/`:
+
+- `myCaddy.apps.<name>` — hands a route block to the wildcard
+  `*.${serverDomain}` virtualHost (one wildcard cert covers every
+  app, dodging Let's Encrypt rate limits).
+- `myPostgresApp.<name>` — provisions the database/role plus a
+  sops-managed password rotation oneshot, so containerized apps
+  connecting over TCP get a passworded role without per-app
+  boilerplate.
+- `myAuthentik.oidcApps.<name>` — for apps that speak OIDC: declares
+  the sops secret pair, contributes a blueprint dir, stacks the
+  necessary worker-side env vars onto authentik, and optionally
+  renders a per-app env file consumed by the upstream image.
+- `myAuthentik.forwardAuthApps.<name>` — for apps that don't speak
+  OIDC: generates the proxy provider/application/policy binding
+  blueprint and a Caddy `forward_auth` route in one go (the embedded
+  outpost's `providers` list is owned by a single merged blueprint
+  per host so apps don't clobber each other).
+- `myHomepage.tiles.<name>` — adds a tile to the homepage dashboard.
 
 ### Conventions
 
 - **Registration:** `flake.modules.nixos.<appname>`, then add the name to the
-  `imports` list in `modules/profiles/server.nix`.
+  `imports` list in `modules/profiles/server-apps.nix`.
 - **Container runtime:** `virtualisation.oci-containers` with the podman
   backend (rootful — see `modules/system/oci-containers.nix`). Containers
   drop privileges via `user = "${serverUid}:${serverGid}"` so files on
@@ -149,9 +177,12 @@ virtualHost, any database/user it needs, and its sops secrets in one place.
   everything externally. Containers reach host services (e.g. postgres) via
   `host.containers.internal`, which resolves to the podman bridge gateway;
   the bridge is in `networking.firewall.trustedInterfaces`.
-- **Reverse proxy:** add a `services.caddy.virtualHosts.<appHost>.extraConfig`
-  entry inside the same module. Hostnames are derived from
-  `hostSpec.serverDomain`, e.g. `"mealie.${hostSpec.serverDomain}"`.
+- **Reverse proxy:** add a `myCaddy.apps.<name>` entry inside the same
+  module — `host` defaults to `<name>.${hostSpec.serverDomain}` and
+  `routeConfig` is the body of the `handle` block (typically a
+  `reverse_proxy localhost:<port>` directive). The wildcard vhost in
+  `modules/system/caddy.nix` folds these into one matcher per app, so
+  one wildcard cert (DNS-01 via Cloudflare) covers them all.
 - **Image versions:** pin the tag in the module and put a renovate annotation
   above it so updates are automated:
   ```nix
@@ -162,12 +193,16 @@ virtualHost, any database/user it needs, and its sops secrets in one place.
   prefix lets the backup module cover every app automatically). Create the
   directory via `systemd.tmpfiles.rules` owned by the server UID/GID and
   bind-mount it into the container.
-- **Postgres:** add the database/user via `services.postgresql.ensureDatabases`
-  / `ensureUsers`. Set the role's password from a sops secret in a small
-  oneshot service that runs `after = [ "postgresql-setup.service" ]` and
-  `before = [ "podman-<app>.service" ]` — don't use
-  `postgresql-setup.postStart`, since the secret may not be decrypted yet
-  when that runs.
+- **Postgres:** declare `myPostgresApp.<name>.consumerService =
+  "podman-<app>.service"` (or whatever unit consumes the role). The
+  helper in `modules/platform/postgres-app.nix` handles the
+  database/role via `ensureDatabases`/`ensureUsers`, the sops secret,
+  and the rotate-on-secret-change oneshot wired `before` the consumer
+  unit. The app is responsible for plumbing
+  `${config.sops.placeholder."<app>/db_password"}` into its own env
+  file (e.g. as `POSTGRES_PASSWORD`) and pointing the upstream
+  service at `host.containers.internal:5432` with the matching role
+  + db name.
 - **Secrets:** declare per-app entries under `sops.secrets."<app>/..."` with
   `sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml"`. For env vars the
   container needs, render a `sops.templates."<app>.env"` and pass it via
@@ -187,11 +222,20 @@ Server hosts run `modules/system/server-backups.nix`, which composes:
 
 - `services.postgresqlBackup` — daily `pg_dumpall` to
   `/var/backup/postgresql` (gzip, runs at 02:00).
+- `services.mysqlBackup` — daily mariadb dump to `/var/backup/mysql`
+  (also at 02:00). Same restic snapshot picks both engines up.
 - `services.restic.backups.server` — daily restic snapshot of
-  `/var/backup/postgresql` and `/var/lib/containers` to
-  `/mnt/backups/restic/${hostName}` on the NFS-mounted Synology share
-  (runs at 03:00 with a randomized delay). Retention:
+  `/var/backup/postgresql`, `/var/backup/mysql`, and
+  `/var/lib/containers` to `/mnt/backups/restic/${hostName}` on the
+  NFS-mounted Synology share (runs at 03:00 with a 30-minute
+  randomized delay). Retention:
   `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
+
+Apps that keep state outside `/var/lib/containers` (e.g. jellyfin's
+native `/var/lib/jellyfin` tree plus its `/var/backup/jellyfin`
+sqlite-staging dir) extend `services.restic.backups.server.paths`
+themselves; the listOf merges via concat so the base paths stay
+intact.
 
 Only server-local app state is in scope. NAS-resident media under
 `/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
@@ -481,11 +525,14 @@ all managed as Authentik **blueprints** (YAML, applied idempotently by the
 worker on a periodic Celery task and on startup). No terraform, no UI
 clicks. Two starter blueprints live under `modules/apps/authentik-blueprints/`:
 
-- `groups.yaml` — homelab groups (Downloads, Grafana Admins, Home,
-  Infrastructure, Media, Monitoring, Users).
-- `users.yaml` — the `ian` admin user, in all groups + built-in
-  `authentik Admins`. The password reads from `!Env IAN_PASSWORD`, which
-  is rendered into the systemd `EnvironmentFile` from sops.
+- `groups.yaml` — homelab groups (Home, Infrastructure, Users).
+- `users.yaml` — the `ian` admin user (in `authentik Admins`, Home,
+  Infrastructure, Users) plus a few "Pattern A" onboarding users that
+  have no `password` attr yet and authenticate after running through
+  the recovery flow. `ian`'s password reads from `!Env IAN_PASSWORD`,
+  which is rendered into the systemd `EnvironmentFile` from sops.
+- `hardening.yaml` / `recovery.yaml` — bundled hardening and recovery
+  flow tweaks.
 
 The module merges its blueprints with the upstream-bundled set into a
 single `blueprints_dir` via `pkgs.runCommandLocal` + `cp -rL`. **Do not
@@ -495,67 +542,78 @@ use `pkgs.symlinkJoin`** here: authentik's `retrieve_file` calls
 their original store paths) all fail with "Invalid blueprint path".
 Real files via `cp -L` are required.
 
-### Adding an app to Authentik
+### Adding an OIDC app to Authentik
 
-Each app module that wants SSO drops its own blueprint(s) and any new
-secrets via `myAuthentik.extraBlueprints` and an `lib.mkAfter` chunk on
-`sops.templates."authentik.env"`. Blueprint secrets (`client_secret`,
-token `key`, user `password`) **must** be passed via `!Env VAR_NAME` so
-they never land in `/nix/store`; add the matching env line to the
-authentik env template.
+Apps that speak OIDC natively register via the `myAuthentik.oidcApps`
+aggregator from `modules/platform/authentik.nix`. The aggregator
+generates the sops secret pair, contributes the per-app blueprint
+dir, and stacks one merged worker-side env file onto authentik so
+blueprint `!Env` placeholders resolve. Apps that read OIDC creds
+from env vars (mealie, miniflux, paperless-ngx, tandoor, komga,
+actualbudget) get their own per-app env file too; apps that store
+creds in their own DB/UI (audiobookshelf, kavita, seerr) opt out via
+`clientCredsInAppEnv = false`.
 
-Sketch (Grafana OIDC):
+Blueprint secrets must reference `!Env <APP>_OIDC_CLIENT_ID` /
+`<APP>_OIDC_CLIENT_SECRET` (uppercased app name with hyphens →
+underscores) so they never land in `/nix/store`.
+
+Sketch (Mealie — see `modules/apps/mealie.nix` for the real thing):
 
 ```nix
-# modules/apps/grafana.nix
-{ inputs, ... }: {
-  flake.modules.nixos.grafana = { config, lib, ... }: {
-    sops.secrets."grafana/oidc_client_secret" = {
-      sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-      restartUnits = [ "authentik.service" "authentik-worker.service" ];
+# modules/apps/mealie.nix
+_: {
+  flake.modules.nixos.mealie = { config, hostSpec, ... }: {
+    myPostgresApp.mealie.consumerService = "podman-mealie.service";
+
+    myAuthentik.oidcApps.mealie = {
+      blueprintsDir = ./mealie-blueprints;
+      appRestartUnit = "podman-mealie.service";
+      extraEnvLines = ''
+        POSTGRES_PASSWORD=${config.sops.placeholder."mealie/db_password"}
+      '';
+      homepage = {
+        group = "Consumption";
+        icon = "mealie";
+        description = "Recipe manager";
+      };
     };
-    sops.templates."authentik.env".content = lib.mkAfter ''
-      GRAFANA_OIDC_CLIENT_ID=${config.sops.placeholder."grafana/oidc_client_id"}
-      GRAFANA_OIDC_CLIENT_SECRET=${config.sops.placeholder."grafana/oidc_client_secret"}
-    '';
-    myAuthentik.extraBlueprints = [ ./grafana-blueprints ];
-    # ... grafana-the-app config
+
+    myCaddy.apps.mealie = {
+      # host defaults to "mealie.${hostSpec.serverDomain}"
+      routeConfig = "reverse_proxy localhost:9925";
+    };
+
+    # ... oci-container declaration that consumes
+    # config.sops.templates."mealie.env".path
   };
 }
 ```
 
 ```yaml
-# modules/apps/grafana-blueprints/grafana.yaml
+# modules/apps/mealie-blueprints/mealie.yaml
 version: 1
-metadata: { name: grafana }
+metadata: { name: mealie }
 entries:
   - model: authentik_providers_oauth2.oauth2provider
-    id: prov-grafana
-    identifiers: { name: grafana }
+    id: prov-mealie
+    identifiers: { name: mealie }
     attrs:
       client_type: confidential
-      client_id: !Env GRAFANA_OIDC_CLIENT_ID
-      client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
+      client_id: !Env MEALIE_OIDC_CLIENT_ID
+      client_secret: !Env MEALIE_OIDC_CLIENT_SECRET
       authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
       authorization_flow:  !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow:   !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-      property_mappings:
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
-      redirect_uris:
-        - { matching_mode: strict, url: "https://grafana.dnix.ipreston.net/login/generic_oauth" }
+      # ... property_mappings, redirect_uris, etc.
   - model: authentik_core.application
-    id: app-grafana
-    identifiers: { slug: grafana }
-    attrs:
-      name: Grafana
-      provider: !KeyOf prov-grafana
-      meta_launch_url: https://grafana.dnix.ipreston.net
+    id: app-mealie
+    identifiers: { slug: mealie }
+    attrs: { name: Mealie, provider: !KeyOf prov-mealie }
   - model: authentik_policies.policybinding
-    identifiers: { target: !KeyOf app-grafana, order: 0 }
+    identifiers: { target: !KeyOf app-mealie, order: 0 }
     attrs:
-      group: !Find [authentik_core.group, [name, Grafana Admins]]
+      group: !Find [authentik_core.group, [name, Users]]
       enabled: true
 ```
 
@@ -566,21 +624,29 @@ Reference: [model fields](https://docs.goauthentik.io/customize/blueprints/v1/mo
 
 For apps that don't speak OIDC themselves (AlertManager, Prometheus,
 Longhorn-style admin UIs), gate them via Authentik's embedded outpost +
-Caddy's `forward_auth`. The authentik module exports a reusable Caddy
-snippet `(authentik_forward_auth)` that protected virtualHosts can
-import:
+Caddy's `forward_auth`. Register the app via
+`myAuthentik.forwardAuthApps.<name>` — the aggregator emits the
+proxy provider + application + policy binding into a single merged
+blueprint per host (so two forward-auth apps don't clobber the
+embedded outpost's global `providers` list) **and** wires a Caddy
+route that imports the reusable `(authentik_forward_auth)` snippet:
 
 ```nix
-services.caddy.virtualHosts."alertmanager.${hostSpec.serverDomain}".extraConfig = ''
-  reverse_proxy localhost:9093
-  import authentik_forward_auth
-'';
+myAuthentik.forwardAuthApps.alertmanager = {
+  port = 9093;
+  displayName = "Alertmanager";
+  authentikGroup = "Infrastructure";   # default
+  homepage = {                          # optional
+    group = "Infrastructure";
+    icon = "alertmanager";
+    description = "Alert routing";
+  };
+};
 ```
 
-The matching proxy provider + application + binding go in that app's
-blueprint. The snippet handles both the `forward_auth` directive (auth
-check on every request) and the `handle_path /outpost.goauthentik.io/*`
-block (callback routes).
+The snippet (defined in `modules/apps/authentik.nix`) handles both
+the `forward_auth` directive (auth check on every request) and the
+`handle /outpost.goauthentik.io/*` block (callback routes).
 
 ### YAML lint exclusion
 
@@ -611,14 +677,17 @@ Common operations are automated via `Taskfile.yaml`:
 | ----------------------------------------- | -------------------------------------------------------------------------------- |
 | `task rebuild`                            | Rebuild current NixOS host                                                       |
 | `task rebuild:<host>`                     | Rebuild a specific NixOS host                                                    |
+| `task deploy:<host>`                      | Build locally and push the closure to a live remote host (`switch` over SSH)     |
 | `task build_darwin:<host>`                | Rebuild a nix-darwin host                                                        |
 | `task build_home:<target>`                | Rebuild standalone home-manager                                                  |
 | `task build`                              | Build a host without switching (default: luna)                                   |
 | `task build-all`                          | Build all NixOS host configurations                                              |
 | `task update`                             | Update flake inputs                                                              |
+| `task update_dconf`                       | Capture host dconf config into the repo via `scripts/dconf.sh`                   |
 | `task lint`                               | Run statix and deadnix                                                           |
 | `task fmt`                                | Format all Nix files with nixfmt                                                 |
-| `task check`                              | Full pre-push check (format + lint + flake check)                                |
+| `task fmt-check`                          | Check formatting without modifying files                                         |
+| `task check`                              | Full pre-push check (fmt-check + lint + flake check)                             |
 | `task iso`                                | Build the installer/recovery ISO                                                 |
 | `task garbage_collect`                    | Remove store objects older than 7 days                                           |
 | `task bootstrap:new HOST=x DEST=ip`       | New host pipeline: install, hwconfig, secrets setup, sync + rebuild              |

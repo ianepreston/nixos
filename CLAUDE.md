@@ -24,8 +24,20 @@ When in doubt: `task --list`.
 - `modules/system/*.nix` — NixOS modules, registered as
   `flake.modules.nixos.<name>` and consumed via
   `inputs.self.modules.nixos.<name>`.
-- `modules/profiles/*.nix` — composed bundles (e.g. `server.nix` imports
-  `base`, `auto-rebuild`, `server-users`, `oci-containers`, `sops`, `ssh`).
+- `modules/platform/*.nix` — option-only "platform-tier" modules that
+  define cross-cutting option surfaces (`myCaddy.apps`,
+  `myPostgresApp`, `myAuthentik.{oidcApps,forwardAuthApps,extraBlueprints}`,
+  `myHomepage.tiles`) which app modules contribute into.
+- `modules/apps/*.nix` — server-app modules (jellyfin, mealie, miniflux,
+  authentik, homepage, …). Each is self-contained: container/service,
+  caddy route via `myCaddy.apps`, postgres via `myPostgresApp`, SSO via
+  `myAuthentik.{oidcApps,forwardAuthApps}`.
+- `modules/profiles/*.nix` — composed bundles. Two server-side profiles:
+  `server` (core infra: `base`, `auto-rebuild`, `authentik`, `caddy`,
+  `mariadb`, `nfsclient`, `nix-maintenance`, `observability`,
+  `oci-containers`, `postgresql`, `server-backups`, `server-users`,
+  `sops`, `ssh`, `tailscale`) and `server-apps` (the user-facing app
+  bundle on top of `server`). Hosts that run apps import both.
 - `modules/hosts/<host>.nix` — per-host `nixosConfiguration` wiring.
 - `hostSpecs/<host>.nix` — declarative host metadata (hostname, environment,
   email). Schema lives in `hostSpecs/host-spec.nix`.
