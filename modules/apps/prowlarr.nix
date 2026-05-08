@@ -1,22 +1,19 @@
 # Prowlarr - indexer aggregator for the *arr stack
-# Container only; auth/caddy/homepage wiring is generated from
-# `myAuthentik.forwardAuthApps.prowlarr` by modules/platform/authentik.nix.
+# Native services.prowlarr from nixpkgs (DynamicUser systemd unit,
+# state under /var/lib/prowlarr). auth/caddy/homepage wiring is
+# generated from `myAuthentik.forwardAuthApps.prowlarr` by
+# modules/platform/authentik.nix.
 #
-# Runs as the shared server-${env}:servers user so any future config
-# pointed at the NFS share lines up with NAS-side UID checks. Image
-# baked-in user is `nobody:nogroup`; we override via `user`. Other
-# *arr containers reach prowlarr via the default podman bridge using
-# the container name (DNS is enabled in modules/system/oci-containers.nix).
+# Cross-app URL after migration: other *arr containers (sonarr/radarr/
+# bazarr/sabnzbd) that referenced this service via the podman DNS name
+# `prowlarr` need their connection settings updated to
+# `host.containers.internal:9696` until they themselves migrate to
+# native (then plain `localhost:9696`). The host firewall already
+# trusts the podman bridge, so containers can reach the native port.
 _: {
   flake.modules.nixos.prowlarr =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
+    _:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 9696;
     in
     {
@@ -30,19 +27,32 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/prowlarr 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      services.prowlarr = {
+        enable = true;
+        settings.server.port = port;
+      };
 
-      virtualisation.oci-containers.containers.prowlarr = {
-        # renovate: datasource=docker depName=ghcr.io/home-operations/prowlarr
-        image = "ghcr.io/home-operations/prowlarr:2.3.7.5365";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [ "/var/lib/containers/prowlarr:/config" ];
-        environment = {
-          TZ = config.time.timeZone;
+      services.restic.backups.server.paths = [ "/var/lib/prowlarr" ];
+
+      # One-shot migration from the previous container layout
+      # (/var/lib/containers/prowlarr -> /var/lib/prowlarr). DynamicUser
+      # services rechown the StateDirectory tree on first start, so the
+      # move is enough; no chown needed here.
+      systemd.services.prowlarr-migrate-state = {
+        description = "Migrate prowlarr state from container layout";
+        before = [ "prowlarr.service" ];
+        wantedBy = [ "prowlarr.service" ];
+        unitConfig.ConditionPathExists = "/var/lib/containers/prowlarr";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
         };
+        script = ''
+          if [ ! -e /var/lib/prowlarr ] || [ -z "$(ls -A /var/lib/prowlarr 2>/dev/null)" ]; then
+            rm -rf /var/lib/prowlarr
+            mv /var/lib/containers/prowlarr /var/lib/prowlarr
+          fi
+        '';
       };
     };
 }
