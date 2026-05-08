@@ -146,7 +146,7 @@ in
       virtualisation.oci-containers.containers = {
         paperless-ngx-redis = {
           # renovate: datasource=docker depName=redis
-          image = "redis:7-alpine";
+          image = "redis:7.4.9-alpine";
           cmd = [
             "redis-server"
             "--save"

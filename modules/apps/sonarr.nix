@@ -1,8 +1,9 @@
 # Sonarr - TV management
 # Container only; auth/caddy/homepage wiring lives in arr-auth.nix.
 # Bind-mounts /mnt/content/TV (NFS share) so library scans land in the
-# right place. Runs as server-${env}:servers via PUID/PGID — that's the
-# UID/GID the NAS expects on the share.
+# right place. Image baked-in user is `nobody:nogroup`; we override via
+# `user` so the process runs as server-${env}:servers (the UID/GID the
+# NAS expects on the share).
 _: {
   flake.modules.nixos.sonarr =
     {
@@ -27,17 +28,16 @@ _: {
       ];
 
       virtualisation.oci-containers.containers.sonarr = {
-        # renovate: datasource=docker depName=lscr.io/linuxserver/sonarr
-        image = "lscr.io/linuxserver/sonarr:4.0.17";
+        # renovate: datasource=docker depName=ghcr.io/home-operations/sonarr
+        image = "ghcr.io/home-operations/sonarr:4.0.17.2967";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
+        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/sonarr:/config"
           "/mnt/content/TV:/tv"
           "/mnt/content/Downloads:/downloads"
         ];
         environment = {
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           TZ = config.time.timeZone;
         };
       };
