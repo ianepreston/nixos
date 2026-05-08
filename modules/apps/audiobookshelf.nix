@@ -96,14 +96,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Audiobookshelf = {
-            href = "https://${audiobookshelfHost}";
-            icon = "audiobookshelf";
-            description = "Audiobooks";
-          };
-        }
-      ];
+      myHomepage.tiles.Audiobookshelf = {
+        group = "Consumption";
+        href = "https://${audiobookshelfHost}";
+        icon = "audiobookshelf";
+        description = "Audiobooks";
+      };
     };
 }

@@ -174,14 +174,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Mealie = {
-            href = "https://${mealieHost}";
-            icon = "mealie";
-            description = "Recipe manager";
-          };
-        }
-      ];
+      myHomepage.tiles.Mealie = {
+        group = "Consumption";
+        href = "https://${mealieHost}";
+        icon = "mealie";
+        description = "Recipe manager";
+      };
     };
 }

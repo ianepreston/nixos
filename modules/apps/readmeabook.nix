@@ -120,14 +120,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          ReadMeABook = {
-            href = "https://${readmeabookHost}";
-            icon = "audiobookshelf";
-            description = "Audiobook requests";
-          };
-        }
-      ];
+      myHomepage.tiles.ReadMeABook = {
+        group = "Consumption";
+        href = "https://${readmeabookHost}";
+        icon = "audiobookshelf";
+        description = "Audiobook requests";
+      };
     };
 }

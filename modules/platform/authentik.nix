@@ -219,27 +219,11 @@ _: {
               '';
         }) apps;
 
-        myHomepage.services = lib.foldl' (
-          acc: name:
-          let
-            app = apps.${name};
-          in
-          if app.homepage == null then
-            acc
-          else
-            let
-              entry = {
-                ${app.displayName} = {
-                  href = "https://${app.host}";
-                  inherit (app.homepage) icon description;
-                };
-              };
-            in
-            acc
-            // {
-              ${app.homepage.group} = (acc.${app.homepage.group} or [ ]) ++ [ entry ];
-            }
-        ) { } appNames;
+        myHomepage.tiles = lib.mapAttrs (_name: app: {
+          inherit (app.homepage) group icon description;
+          inherit (app) displayName;
+          href = "https://${app.host}";
+        }) (lib.filterAttrs (_: app: app.homepage != null) apps);
       };
     };
 }

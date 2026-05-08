@@ -2,10 +2,12 @@
 # Native services.homepage-dashboard from nixpkgs (DynamicUser systemd
 # unit), not a container.
 #
-# App entries are *distributed*: each app module appends to
-# `myHomepage.services."<Group>"`. The option itself lives in
-# modules/platform/homepage.nix; this module just consumes the
-# accumulated contributions and feeds them into the upstream service.
+# App entries are *distributed*: each app module sets one
+# `myHomepage.tiles.<name> = { group; href; icon; description; ... }`
+# entry. The option itself lives in modules/platform/homepage.nix; this
+# module groups the accumulated tiles by `group`, sorts each group by
+# (weight, displayName), and feeds the result into the upstream
+# `services.homepage-dashboard.services` list-of-single-key shape.
 #
 # No auth in front of homepage. Per-app links go to apps that gate
 # their own access (Authentik OIDC or forward_auth), so the dashboard
@@ -112,50 +114,30 @@
           ];
 
           services =
-            # Convert attrsOf-listOf wrapper into the list-of-single-key-map
-            # shape upstream expects. mapAttrsToList yields alphabetical
-            # group order; the settings.layout above overrides display order.
-            lib.mapAttrsToList (group: items: { ${group} = items; }) (
-              lib.recursiveUpdate config.myHomepage.services {
-                Infrastructure = (config.myHomepage.services.Infrastructure or [ ]) ++ [
-                  {
-                    pfsense = {
-                      href = "https://behemoth.ipreston.net:10443";
-                      icon = "pfsense";
-                      description = "router";
-                    };
-                  }
-                  {
-                    laconia = {
-                      href = "http://laconia.ipreston.net:5001";
-                      icon = "synology";
-                      description = "NAS";
-                    };
-                  }
-                  {
-                    unifi = {
-                      href = "https://192.168.10.41:8443";
-                      icon = "unifi";
-                      description = "WiFi controller";
-                    };
-                  }
-                  {
-                    xo = {
-                      href = "http://xo.ipreston.net";
-                      icon = "https://xcp-ng.org/assets/img/mainlogo.png";
-                      description = "hypervisor";
-                    };
-                  }
-                  {
-                    blikvm = {
-                      href = "http://blikvm.ipreston.net";
-                      icon = "pikvm";
-                      description = "KVM over IP";
-                    };
-                  }
-                ];
-              }
-            );
+            # Group tiles by `group`, sort within each group by (weight,
+            # displayName), then collapse to the list-of-single-key-map
+            # shape the upstream module expects. mapAttrsToList yields
+            # groups in alphabetical order; settings.layout above pins
+            # display order.
+            let
+              tiles = lib.attrValues (
+                lib.mapAttrs (name: tile: tile // { _name = name; }) config.myHomepage.tiles
+              );
+              byGroup = lib.groupBy (t: t.group) tiles;
+              sortedGroup =
+                items:
+                lib.sort (
+                  a: b: if a.weight != b.weight then a.weight < b.weight else a.displayName < b.displayName
+                ) items;
+              tileToEntry = t: {
+                ${t.displayName} = {
+                  inherit (t) href icon description;
+                };
+              };
+            in
+            lib.mapAttrsToList (group: items: {
+              ${group} = map tileToEntry (sortedGroup items);
+            }) byGroup;
 
           bookmarks = [
             {
@@ -286,6 +268,42 @@
           routeConfig = ''
             reverse_proxy localhost:${toString homepagePort}
           '';
+        };
+
+        # Hard-wired network gear tiles. These aren't deployed by this
+        # flake (they're appliances on the LAN) but live on the homepage
+        # for convenience. Same option surface as every other tile.
+        myHomepage.tiles = {
+          pfsense = {
+            group = "Infrastructure";
+            href = "https://behemoth.ipreston.net:10443";
+            icon = "pfsense";
+            description = "router";
+          };
+          laconia = {
+            group = "Infrastructure";
+            href = "http://laconia.ipreston.net:5001";
+            icon = "synology";
+            description = "NAS";
+          };
+          unifi = {
+            group = "Infrastructure";
+            href = "https://192.168.10.41:8443";
+            icon = "unifi";
+            description = "WiFi controller";
+          };
+          xo = {
+            group = "Infrastructure";
+            href = "http://xo.ipreston.net";
+            icon = "https://xcp-ng.org/assets/img/mainlogo.png";
+            description = "hypervisor";
+          };
+          blikvm = {
+            group = "Infrastructure";
+            href = "http://blikvm.ipreston.net";
+            icon = "pikvm";
+            description = "KVM over IP";
+          };
         };
       };
     };

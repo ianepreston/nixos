@@ -102,14 +102,12 @@ in
         '';
       };
 
-      myHomepage.services.Infrastructure = [
-        {
-          "Actual Budget" = {
-            href = "https://${actualHost}";
-            icon = "actual";
-            description = "Personal finance";
-          };
-        }
-      ];
+      myHomepage.tiles.actualbudget = {
+        group = "Infrastructure";
+        displayName = "Actual Budget";
+        href = "https://${actualHost}";
+        icon = "actual";
+        description = "Personal finance";
+      };
     };
 }

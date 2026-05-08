@@ -115,14 +115,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Komga = {
-            href = "https://${komgaHost}";
-            icon = "komga";
-            description = "Comics + manga";
-          };
-        }
-      ];
+      myHomepage.tiles.Komga = {
+        group = "Consumption";
+        href = "https://${komgaHost}";
+        icon = "komga";
+        description = "Comics + manga";
+      };
     };
 }

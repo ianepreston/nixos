@@ -94,14 +94,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Kavita = {
-            href = "https://${kavitaHost}";
-            icon = "kavita";
-            description = "Manga + books";
-          };
-        }
-      ];
+      myHomepage.tiles.Kavita = {
+        group = "Consumption";
+        href = "https://${kavitaHost}";
+        icon = "kavita";
+        description = "Manga + books";
+      };
     };
 }

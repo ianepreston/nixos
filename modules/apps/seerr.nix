@@ -90,14 +90,11 @@ in
         '';
       };
 
-      myHomepage.services.Acquisition = [
-        {
-          Seerr = {
-            href = "https://${seerrHost}";
-            icon = "jellyseerr";
-            description = "Media requests";
-          };
-        }
-      ];
+      myHomepage.tiles.Seerr = {
+        group = "Acquisition";
+        href = "https://${seerrHost}";
+        icon = "jellyseerr";
+        description = "Media requests";
+      };
     };
 }

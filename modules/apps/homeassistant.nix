@@ -201,14 +201,12 @@ in
         '';
       };
 
-      myHomepage.services.Infrastructure = [
-        {
-          "Home Assistant" = {
-            href = "https://${homeassistantHost}";
-            icon = "home-assistant";
-            description = "Smart home";
-          };
-        }
-      ];
+      myHomepage.tiles.homeassistant = {
+        group = "Infrastructure";
+        displayName = "Home Assistant";
+        href = "https://${homeassistantHost}";
+        icon = "home-assistant";
+        description = "Smart home";
+      };
     };
 }

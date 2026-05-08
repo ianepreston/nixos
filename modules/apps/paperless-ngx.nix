@@ -211,14 +211,12 @@ in
         '';
       };
 
-      myHomepage.services.Infrastructure = [
-        {
-          "Paperless-ngx" = {
-            href = "https://${paperlessHost}";
-            icon = "paperless-ngx";
-            description = "Documents";
-          };
-        }
-      ];
+      myHomepage.tiles.paperless-ngx = {
+        group = "Infrastructure";
+        displayName = "Paperless-ngx";
+        href = "https://${paperlessHost}";
+        icon = "paperless-ngx";
+        description = "Documents";
+      };
     };
 }

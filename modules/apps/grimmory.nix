@@ -155,14 +155,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Grimmory = {
-            href = "https://${grimmoryHost}";
-            icon = "booklore";
-            description = "Digital library";
-          };
-        }
-      ];
+      myHomepage.tiles.Grimmory = {
+        group = "Consumption";
+        href = "https://${grimmoryHost}";
+        icon = "booklore";
+        description = "Digital library";
+      };
     };
 }

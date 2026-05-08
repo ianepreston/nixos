@@ -174,14 +174,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Tandoor = {
-            href = "https://${tandoorHost}";
-            icon = "tandoor";
-            description = "Recipe manager";
-          };
-        }
-      ];
+      myHomepage.tiles.Tandoor = {
+        group = "Consumption";
+        href = "https://${tandoorHost}";
+        icon = "tandoor";
+        description = "Recipe manager";
+      };
     };
 }

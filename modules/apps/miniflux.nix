@@ -107,14 +107,11 @@ in
         '';
       };
 
-      myHomepage.services.Consumption = [
-        {
-          Miniflux = {
-            href = "https://${minifluxHost}";
-            icon = "miniflux";
-            description = "RSS reader";
-          };
-        }
-      ];
+      myHomepage.tiles.Miniflux = {
+        group = "Consumption";
+        href = "https://${minifluxHost}";
+        icon = "miniflux";
+        description = "RSS reader";
+      };
     };
 }
