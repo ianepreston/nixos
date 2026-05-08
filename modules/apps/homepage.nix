@@ -3,15 +3,15 @@
 # unit), not a container.
 #
 # App entries are *distributed*: each app module appends to
-# `myHomepage.services."<Group>"`. This module collapses the
-# attrsOf-listOf wrapper into the list-of-single-key-map shape that the
-# upstream option expects, so adding a new app is a one-attr line in
-# the app's own module rather than a central edit.
+# `myHomepage.services."<Group>"`. The option itself lives in
+# modules/platform/homepage.nix; this module just consumes the
+# accumulated contributions and feeds them into the upstream service.
 #
 # No auth in front of homepage. Per-app links go to apps that gate
 # their own access (Authentik OIDC or forward_auth), so the dashboard
 # itself only exposes link metadata.
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.homepage =
     {
       config,
@@ -24,25 +24,7 @@ _: {
       homepagePort = 8082;
     in
     {
-      options.myHomepage = {
-        services = lib.mkOption {
-          type = lib.types.attrsOf (lib.types.listOf (lib.types.attrsOf lib.types.anything));
-          default = { };
-          example = lib.literalExpression ''
-            {
-              Consumption = [
-                { Mealie = { href = "https://mealie.example"; icon = "mealie"; description = "Recipes"; }; }
-              ];
-            }
-          '';
-          description = ''
-            App entries for the homepage dashboard, keyed by group name.
-            Each list item is a single-key attrset whose key is the
-            display name; module-system list merging concatenates entries
-            from every contributor under the same group.
-          '';
-        };
-      };
+      imports = [ inputs.self.modules.nixos.myHomepage ];
 
       config = {
         services.homepage-dashboard = {

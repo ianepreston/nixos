@@ -58,19 +58,10 @@ in
       '';
     in
     {
-      imports = [ inputs.authentik-nix.nixosModules.default ];
-
-      options.myAuthentik.extraBlueprints = lib.mkOption {
-        type = lib.types.listOf lib.types.path;
-        default = [ ];
-        description = ''
-          Extra blueprint directories or files to merge into authentik's
-          blueprints_dir alongside the bundled defaults. Each entry is a
-          path containing one or more *.yaml blueprint files. Other app
-          modules can append their own blueprints here so each app stays
-          self-contained.
-        '';
-      };
+      imports = [
+        inputs.authentik-nix.nixosModules.default
+        inputs.self.modules.nixos.myAuthentik
+      ];
 
       config = {
         sops.secrets = builtins.listToAttrs (
