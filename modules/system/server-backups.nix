@@ -1,9 +1,12 @@
 # Server backups - Simple Aspect
 # Two-phase backup strategy for server hosts:
-#   1. services.postgresqlBackup dumps every database to /var/backup/postgresql.
-#   2. services.restic.backups.server snapshots /var/backup/postgresql and
-#      /var/lib/containers (all containerized app state) to the NFS-mounted
-#      Synology share at /mnt/backups/restic/<hostname>.
+#   1. services.postgresqlBackup dumps every postgres database to
+#      /var/backup/postgresql; services.mysqlBackup dumps every mariadb
+#      database to /var/backup/mysql.
+#   2. services.restic.backups.server snapshots /var/backup/postgresql,
+#      /var/backup/mysql, and /var/lib/containers (all containerized app
+#      state) to the NFS-mounted Synology share at
+#      /mnt/backups/restic/<hostname>.
 #
 # Restore is a manual operator action; see README "Server App Pattern".
 #
@@ -24,48 +27,60 @@ _: {
 
       sops.secrets."restic/password" = { };
 
-      services.postgresqlBackup = {
-        enable = true;
-        location = "/var/backup/postgresql";
-        compression = "gzip";
-        startAt = "*-*-* 02:00:00";
-      };
-
-      services.restic.backups.server = {
-        repository = "/mnt/backups/restic/${hostSpec.hostName}";
-        passwordFile = config.sops.secrets."restic/password".path;
-        initialize = true;
-
-        paths = [
-          "/var/backup/postgresql"
-          "/var/lib/containers"
-        ];
-
-        exclude = [
-          "/var/lib/containers/*/cache"
-          "/var/lib/containers/*/Cache"
-          "/var/lib/containers/*/tmp"
-        ];
-
-        timerConfig = {
-          OnCalendar = "*-*-* 03:00:00";
-          Persistent = true;
-          RandomizedDelaySec = "30m";
+      services = {
+        postgresqlBackup = {
+          enable = true;
+          location = "/var/backup/postgresql";
+          compression = "gzip";
+          startAt = "*-*-* 02:00:00";
         };
 
-        pruneOpts = [
-          "--keep-daily 7"
-          "--keep-weekly 4"
-          "--keep-monthly 6"
-        ];
+        mysqlBackup = {
+          enable = true;
+          location = "/var/backup/mysql";
+          # Same daily cadence as postgres; restic ordering below picks up
+          # both dumps in the same morning's snapshot.
+          calendar = "*-*-* 02:00:00";
+        };
+
+        restic.backups.server = {
+          repository = "/mnt/backups/restic/${hostSpec.hostName}";
+          passwordFile = config.sops.secrets."restic/password".path;
+          initialize = true;
+
+          paths = [
+            "/var/backup/postgresql"
+            "/var/backup/mysql"
+            "/var/lib/containers"
+          ];
+
+          exclude = [
+            "/var/lib/containers/*/cache"
+            "/var/lib/containers/*/Cache"
+            "/var/lib/containers/*/tmp"
+          ];
+
+          timerConfig = {
+            OnCalendar = "*-*-* 03:00:00";
+            Persistent = true;
+            RandomizedDelaySec = "30m";
+          };
+
+          pruneOpts = [
+            "--keep-daily 7"
+            "--keep-weekly 4"
+            "--keep-monthly 6"
+          ];
+        };
       };
 
-      # Restic timer fires after postgresqlBackup so each daily snapshot
-      # contains the dumps from the same morning.
+      # Restic timer fires after the database dumps so each daily snapshot
+      # contains the morning's dumps from both engines.
       systemd.services.restic-backups-server = {
         after = [
           "mnt-backups.mount"
           "postgresqlBackup.service"
+          "mysql-backup.service"
         ];
         requires = [ "mnt-backups.mount" ];
       };

@@ -126,7 +126,27 @@ in
         authentik-migrate.serviceConfig.EnvironmentFile = [
           config.sops.templates."grafana-authentik.env".path
         ];
+
+        # Wait for mariadb's socket before the exporter tries to connect;
+        # without this it crashloops at boot until mysql.service is up.
+        prometheus-mysqld-exporter = {
+          after = [ "mysql.service" ];
+          requires = [ "mysql.service" ];
+        };
       };
+
+      # Provision the exporter's mariadb role. ensureUsers gives it
+      # unix_socket auth, which matches the OS user the prometheus
+      # mysqld_exporter unit runs as ("mysqld-exporter") so no password
+      # is needed.
+      services.mysql.ensureUsers = [
+        {
+          name = "mysqld-exporter";
+          ensurePermissions = {
+            "*.*" = "PROCESS, REPLICATION CLIENT, SELECT";
+          };
+        }
+      ];
 
       services = {
         # ========== Caddy admin metrics ==========
@@ -167,6 +187,19 @@ in
               # provision in modules/system/postgresql.nix.
               runAsLocalSuperUser = true;
             };
+            mysqld = {
+              enable = true;
+              # Connect over the Unix socket as the `mysqld-exporter` OS
+              # user; MariaDB matches that to the `'mysqld-exporter'@'localhost'`
+              # role provisioned via ensureUsers below (unix_socket plugin),
+              # so no password to manage. The role gets PROCESS / REPLICATION
+              # CLIENT / SELECT — the minimum mysqld_exporter needs.
+              configFile = pkgs.writeText "mysqld-exporter.cnf" ''
+                [client]
+                socket = /run/mysqld/mysqld.sock
+                user = mysqld-exporter
+              '';
+            };
             redis = {
               enable = true;
             };
@@ -187,6 +220,12 @@ in
               job_name = "postgres";
               static_configs = [
                 { targets = [ "127.0.0.1:${toString config.services.prometheus.exporters.postgres.port}" ]; }
+              ];
+            }
+            {
+              job_name = "mysqld";
+              static_configs = [
+                { targets = [ "127.0.0.1:${toString config.services.prometheus.exporters.mysqld.port}" ]; }
               ];
             }
             {
@@ -306,6 +345,18 @@ in
                         annotations = {
                           summary = "PostgreSQL is down on {{ $labels.instance }}";
                           description = "postgres_exporter reports pg_up=0 for 2m. All apps using shared postgres are broken.";
+                        };
+                      }
+                      {
+                        alert = "MariadbDown";
+                        # Same shape as PostgresDown — all mariadb-backed
+                        # apps (grimmory, …) are broken when this fires.
+                        expr = "mysql_up == 0";
+                        for = "2m";
+                        labels.severity = "critical";
+                        annotations = {
+                          summary = "MariaDB is down on {{ $labels.instance }}";
+                          description = "mysqld_exporter reports mysql_up=0 for 2m. All apps using shared mariadb are broken.";
                         };
                       }
                       {
