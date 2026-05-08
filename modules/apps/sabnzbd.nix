@@ -4,11 +4,12 @@
 # Sabnzbd refuses any HTTP request whose Host header doesn't match the
 # local hostname or an entry in `host_whitelist`. With Caddy in front,
 # the Host header arriving at sabnzbd is the FQDN of the public site,
-# which the default config rejects. Seed the ini once on first start
-# with that hostname in `host_whitelist` so the very first request
-# through caddy isn't denied. Subsequent edits via sabnzbd's UI persist
-# and aren't clobbered — the bootstrap script is a no-op when the file
-# already exists.
+# which the default config rejects. The home-operations image's
+# entrypoint applies SABNZBD__HOST_WHITELIST_ENTRIES on every start —
+# so we set the FQDN there instead of seeding the ini ourselves.
+# (Image baked-in user is `nobody:nogroup`; we override via `user` so
+# writes to /mnt/content/Downloads land with the UID/GID the NAS
+# expects.)
 _: {
   flake.modules.nixos.sabnzbd =
     {
@@ -30,39 +31,22 @@ _: {
         homepageDescription = "Usenet downloader";
       };
 
-      systemd = {
-        tmpfiles.rules = [
-          "d ${stateDir} 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
-
-        services.podman-sabnzbd.preStart = ''
-          ini=${stateDir}/sabnzbd.ini
-          if [ ! -f "$ini" ]; then
-            cat > "$ini" <<EOF
-          __version__ = 19
-          [misc]
-          host = 0.0.0.0
-          port = ${toString port}
-          host_whitelist = ${sabnzbdHost}
-          api_key =
-          EOF
-            chown ${toString serverUid}:${toString serverGid} "$ini"
-            chmod 0600 "$ini"
-          fi
-        '';
-      };
+      systemd.tmpfiles.rules = [
+        "d ${stateDir} 0750 ${toString serverUid} ${toString serverGid} -"
+      ];
 
       virtualisation.oci-containers.containers.sabnzbd = {
-        # renovate: datasource=docker depName=lscr.io/linuxserver/sabnzbd
-        image = "lscr.io/linuxserver/sabnzbd:5.0.1";
+        # renovate: datasource=docker depName=ghcr.io/home-operations/sabnzbd
+        image = "ghcr.io/home-operations/sabnzbd:5.0.1";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
+        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "${stateDir}:/config"
           "/mnt/content/Downloads:/downloads"
         ];
         environment = {
-          PUID = toString serverUid;
-          PGID = toString serverGid;
+          SABNZBD__PORT = toString port;
+          SABNZBD__HOST_WHITELIST_ENTRIES = sabnzbdHost;
           TZ = config.time.timeZone;
         };
       };

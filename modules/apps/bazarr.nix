@@ -1,7 +1,9 @@
 # Bazarr - subtitles for sonarr/radarr libraries
 # Container only; auth/caddy/homepage wired by arr-auth.nix. Reads from
 # both /mnt/content/TV and /mnt/content/Movies so it can write subtitle
-# files alongside the video files sonarr and radarr manage.
+# files alongside the video files sonarr and radarr manage. Image
+# baked-in user is `nobody:nogroup`; we override via `user` so writes
+# back to the NFS share land with the UID/GID the NAS expects.
 _: {
   flake.modules.nixos.bazarr =
     {
@@ -26,17 +28,16 @@ _: {
       ];
 
       virtualisation.oci-containers.containers.bazarr = {
-        # renovate: datasource=docker depName=lscr.io/linuxserver/bazarr
-        image = "lscr.io/linuxserver/bazarr:1.5.6";
+        # renovate: datasource=docker depName=ghcr.io/home-operations/bazarr
+        image = "ghcr.io/home-operations/bazarr:1.5.6";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
+        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/bazarr:/config"
           "/mnt/content/TV:/tv"
           "/mnt/content/Movies:/movies"
         ];
         environment = {
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           TZ = config.time.timeZone;
         };
       };

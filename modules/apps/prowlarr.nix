@@ -3,7 +3,8 @@
 # `myArrAuth.apps.prowlarr` by modules/apps/arr-auth.nix.
 #
 # Runs as the shared server-${env}:servers user so any future config
-# pointed at the NFS share lines up with NAS-side UID checks. Other
+# pointed at the NFS share lines up with NAS-side UID checks. Image
+# baked-in user is `nobody:nogroup`; we override via `user`. Other
 # *arr containers reach prowlarr via the default podman bridge using
 # the container name (DNS is enabled in modules/system/oci-containers.nix).
 _: {
@@ -30,13 +31,12 @@ _: {
       ];
 
       virtualisation.oci-containers.containers.prowlarr = {
-        # renovate: datasource=docker depName=lscr.io/linuxserver/prowlarr
-        image = "lscr.io/linuxserver/prowlarr:2.3.5";
+        # renovate: datasource=docker depName=ghcr.io/home-operations/prowlarr
+        image = "ghcr.io/home-operations/prowlarr:2.3.7.5365";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
+        user = "${toString serverUid}:${toString serverGid}";
         volumes = [ "/var/lib/containers/prowlarr:/config" ];
         environment = {
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           TZ = config.time.timeZone;
         };
       };
