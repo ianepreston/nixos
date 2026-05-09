@@ -51,12 +51,15 @@ _: {
         };
       };
 
-      # The kavita module unconditionally sets `users.users.${cfg.user}
-      # .group = cfg.user`, which collides with server-users.nix's
-      # `group = "servers"` on the shared server-${env} user. Force the
-      # NAS-aligned `servers` group; kavita's empty server-${env} group
-      # ends up dangling but is harmless since user-perm checks always
-      # win when EUID matches the file owner.
+      # Unlike jellyfin (whose nixpkgs module gates `users.users.${cfg
+      # .user} = {...}` on `mkIf (cfg.user == "jellyfin")`), the kavita
+      # module unconditionally writes `users.users.${cfg.user}.group =
+      # cfg.user`. With cfg.user = server-${env}, that collides with
+      # server-users.nix's `group = "servers"` on the same UID-pinned
+      # user. Force the NAS-aligned `servers` group; the empty
+      # `server-${env}` group kavita also creates is dangling but
+      # harmless since user-perm checks always win when EUID matches
+      # the file owner.
       users.users.${kavitaUser}.group = lib.mkForce "servers";
 
       services.restic.backups.server.paths = [ "/var/lib/kavita" ];
