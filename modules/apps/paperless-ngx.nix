@@ -9,17 +9,17 @@
 # (constructed inline so secrets never leave sops). The blueprint
 # pins the redirect URI to /accounts/oidc/authentik/login/callback/.
 #
-# Postgres lives on the shared native instance and the existing
-# paperless_ngx role/db are kept as-is — the upstream module's
-# `database.createLocally = true` would force a rename to
-# `paperless`, so we leave createLocally off and point at the
-# existing role over TCP+password instead.
+# Postgres uses the existing `paperless_ngx` role/db over TCP +
+# password (myPostgresApp helper). The upstream module's
+# `database.createLocally = true` path would force the role/db to
+# rename to `paperless`, so we point at the existing role over TCP
+# instead.
 #
-# Migration secret-key handling: paperless-web's runtime script reads
-# its key from /var/lib/paperless-ngx/nixos-paperless-secret-key (auto-
+# Secret-key handling: paperless-web's runtime script reads its key
+# from /var/lib/paperless-ngx/nixos-paperless-secret-key (auto-
 # generated on first start), while the other three units read
-# PAPERLESS_SECRET_KEY from the env file. A oneshot pre-seeds the file
-# from sops on first run so all four agree on the same key.
+# PAPERLESS_SECRET_KEY from the env file. A oneshot pre-seeds the
+# file from sops on first run so all four agree on the same key.
 { inputs, ... }:
 let
   sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
@@ -118,7 +118,6 @@ in
         description = "Seed paperless web secret key from sops";
         before = paperlessUnits;
         wantedBy = paperlessUnits;
-        after = [ "paperless-ngx-migrate-state.service" ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -130,47 +129,6 @@ in
               ${config.sops.secrets."paperless-ngx/secret_key".path} \
               ${dataDir}/nixos-paperless-secret-key
           fi
-        '';
-      };
-
-      # Bulk rename + reorganize from the container's volume layout:
-      #   <containers>/paperless-ngx/data/*  -> <dataDir>/*
-      #   <containers>/paperless-ngx/{media,export,consume}/  -> <dataDir>/<sub>/
-      #   <containers>/paperless-ngx/redis/  -> dropped (sidecar leftover)
-      # Idempotent: each step checks before acting, so re-runs after a
-      # crash or partial migration converge to the right shape.
-      systemd.services.paperless-ngx-migrate-state = {
-        description = "Migrate paperless-ngx state from container layout";
-        before = paperlessUnits;
-        wantedBy = paperlessUnits;
-        unitConfig.ConditionPathExists = "/var/lib/containers/paperless-ngx";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          set -e
-          src=/var/lib/containers/paperless-ngx
-          dst=${dataDir}
-
-          if [ -d "$src" ] && [ ! -e "$dst" ]; then
-            mv "$src" "$dst"
-          fi
-
-          if [ -d "$dst/data" ]; then
-            shopt -s dotglob nullglob
-            for f in "$dst/data"/*; do
-              name=$(basename "$f")
-              if [ ! -e "$dst/$name" ]; then
-                mv "$f" "$dst/$name"
-              fi
-            done
-            rmdir "$dst/data" 2>/dev/null || true
-          fi
-
-          rm -rf "$dst/redis"
-
-          chown -R paperless:paperless "$dst"
         '';
       };
 

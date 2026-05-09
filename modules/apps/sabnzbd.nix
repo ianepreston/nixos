@@ -41,23 +41,6 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
-      systemd.services.sabnzbd-migrate-state = {
-        description = "Migrate sabnzbd state from container layout";
-        before = [ "sabnzbd.service" ];
-        wantedBy = [ "sabnzbd.service" ];
-        unitConfig.ConditionPathExists = "/var/lib/containers/sabnzbd";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          if [ ! -e /var/lib/sabnzbd ] || [ -z "$(ls -A /var/lib/sabnzbd 2>/dev/null)" ]; then
-            rm -rf /var/lib/sabnzbd
-            mv /var/lib/containers/sabnzbd /var/lib/sabnzbd
-          fi
-        '';
-      };
-
       # Reapplies host_whitelist on every start (idempotent), matching
       # what the home-operations entrypoint used to do via
       # SABNZBD__HOST_WHITELIST_ENTRIES. Creates a minimal [misc] block
@@ -66,7 +49,6 @@ _: {
         description = "Pin sabnzbd host_whitelist to the public FQDN";
         before = [ "sabnzbd.service" ];
         wantedBy = [ "sabnzbd.service" ];
-        after = [ "sabnzbd-migrate-state.service" ];
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;

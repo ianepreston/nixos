@@ -3,17 +3,12 @@
 # overridden to server-${env}:servers so reads against
 # /mnt/content/{comics,books} land with the NFS UID the NAS expects).
 # OIDC against authentik via Spring's relaxed-binding env vars
-# (SPRING_SECURITY_OAUTH2_CLIENT_*) — same wiring as before, now
-# applied via systemd.services.komga.environment + EnvironmentFile.
+# (SPRING_SECURITY_OAUTH2_CLIENT_*).
 #
 # Komga doesn't have a sign-up toggle for OAuth — first OIDC login
 # creates an account, but only if the email address matches an
 # already-existing Komga user. To onboard new users, log in once as
 # the Komga admin and pre-create their accounts (email-only is fine).
-#
-# Library paths after migration: update the komga library locations in
-# the UI from `/data/comics` / `/data/books` (the container bind-mount
-# aliases) to `/mnt/content/comics` / `/mnt/content/books`.
 _: {
   flake.modules.nixos.komga =
     {
@@ -59,23 +54,6 @@ _: {
       };
 
       services.restic.backups.server.paths = [ "/var/lib/komga" ];
-
-      systemd.services.komga-migrate-state = {
-        description = "Migrate komga state from container layout";
-        before = [ "komga.service" ];
-        wantedBy = [ "komga.service" ];
-        unitConfig.ConditionPathExists = "/var/lib/containers/komga";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          if [ ! -e /var/lib/komga ] || [ -z "$(ls -A /var/lib/komga 2>/dev/null)" ]; then
-            rm -rf /var/lib/komga
-            mv /var/lib/containers/komga /var/lib/komga
-          fi
-        '';
-      };
 
       myCaddy.apps.komga = {
         host = komgaHost;

@@ -10,11 +10,6 @@
 # Kavita's preStart rewrites appsettings.json on every restart, so
 # `services.kavita.settings` is the source of truth for everything
 # inside that file (TokenKey gets templated in via @TOKEN@).
-#
-# Library paths after migration: the container exposed the shares at
-# /comics and /books via bind-mounts; the native service runs in the
-# host namespace, so update each library in the kavita UI to
-# /mnt/content/comics and /mnt/content/books.
 _: {
   flake.modules.nixos.kavita =
     {
@@ -78,29 +73,6 @@ _: {
           umask 0177
           head -c 64 /dev/urandom | base64 --wrap=0 > ${tokenKeyFile}
           chown ${kavitaUser}:servers ${tokenKeyFile}
-        '';
-      };
-
-      systemd.services.kavita-migrate-state = {
-        description = "Migrate kavita state from container layout";
-        before = [ "kavita.service" ];
-        wantedBy = [ "kavita.service" ];
-        unitConfig.ConditionPathExists = "/var/lib/containers/kavita";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        # Container had /var/lib/containers/kavita/config; native
-        # expects /var/lib/kavita/config — same subdir name, different
-        # parent. Move the whole tree, then drop the appsettings.json
-        # that the container wrote (kavita's preStart will rewrite it
-        # on next start, and the old TokenKey is now stale anyway).
-        script = ''
-          if [ ! -e /var/lib/kavita ] || [ -z "$(ls -A /var/lib/kavita 2>/dev/null)" ]; then
-            rm -rf /var/lib/kavita
-            mv /var/lib/containers/kavita /var/lib/kavita
-            rm -f /var/lib/kavita/config/appsettings.json
-          fi
         '';
       };
 

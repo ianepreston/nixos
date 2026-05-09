@@ -64,23 +64,6 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/mealie" ];
 
-      systemd.services.mealie-migrate-state = {
-        description = "Migrate mealie state from container layout";
-        before = [ "mealie.service" ];
-        wantedBy = [ "mealie.service" ];
-        unitConfig.ConditionPathExists = "/var/lib/containers/mealie";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          if [ ! -e /var/lib/mealie ] || [ -z "$(ls -A /var/lib/mealie 2>/dev/null)" ]; then
-            rm -rf /var/lib/mealie
-            mv /var/lib/containers/mealie /var/lib/mealie
-          fi
-        '';
-      };
-
       myCaddy.apps.mealie = {
         host = mealieHost;
         routeConfig = ''

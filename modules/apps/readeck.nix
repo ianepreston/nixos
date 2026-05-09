@@ -42,10 +42,10 @@ _: {
 
       services.readeck.enable = true;
 
-      # Readeck reads env vars on top of its TOML config; reuse the
-      # same READECK_* keys that worked under the container so the
-      # behaviour is identical (and the migration unit doesn't need
-      # to translate semantics into the toml settings format).
+      # Readeck reads env vars on top of its TOML config; using
+      # READECK_* keys keeps the wiring identical to what worked
+      # under the container without re-expressing the semantics in
+      # the toml settings format.
       systemd.services.readeck.environment = {
         READECK_SERVER_HOST = "127.0.0.1";
         READECK_SERVER_PORT = toString port;
@@ -54,25 +54,5 @@ _: {
       };
 
       services.restic.backups.server.paths = [ "/var/lib/readeck" ];
-
-      # Readeck uses DynamicUser, so systemd reowns the StateDirectory
-      # tree to the freshly-allocated UID on first start; the move is
-      # all we need to do here.
-      systemd.services.readeck-migrate-state = {
-        description = "Migrate readeck state from container layout";
-        before = [ "readeck.service" ];
-        wantedBy = [ "readeck.service" ];
-        unitConfig.ConditionPathExists = "/var/lib/containers/readeck";
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          if [ ! -e /var/lib/readeck ] || [ -z "$(ls -A /var/lib/readeck 2>/dev/null)" ]; then
-            rm -rf /var/lib/readeck
-            mv /var/lib/containers/readeck /var/lib/readeck
-          fi
-        '';
-      };
     };
 }
