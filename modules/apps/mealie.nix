@@ -21,7 +21,13 @@ _: {
     let
       mealieHost = "mealie.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
-      port = 9000;
+      # 9000 is authentik's port (authentik-nix pins it). Mealie's
+      # upstream default is also 9000, so leaving it default would
+      # race authentik for the bind: whichever loses falls back to
+      # HTTPS-only and Caddy's forward_auth + the authentik vhost
+      # both end up pointing at the wrong upstream. 9925 is mealie's
+      # common alt-port (used by some compose templates).
+      port = 9925;
     in
     {
       myAuthentik.oidcApps.mealie = {
