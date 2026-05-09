@@ -29,8 +29,9 @@ When in doubt: `task --list`.
   `myPostgresApp`, `myAuthentik.{oidcApps,forwardAuthApps,extraBlueprints}`,
   `myHomepage.tiles`) which app modules contribute into.
 - `modules/apps/*.nix` — server-app modules (jellyfin, mealie, miniflux,
-  authentik, homepage, …). Each is self-contained: container/service,
-  caddy route via `myCaddy.apps`, postgres via `myPostgresApp`, SSO via
+  authentik, homepage, …). Each is self-contained: service (or
+  container — see "App packaging" below), caddy route via
+  `myCaddy.apps`, postgres via `myPostgresApp`, SSO via
   `myAuthentik.{oidcApps,forwardAuthApps}`.
 - `modules/profiles/*.nix` — composed bundles. Two server-side profiles:
   `server` (core infra: `base`, `auto-rebuild`, `authentik`, `caddy`,
@@ -46,6 +47,77 @@ New modules need to be tracked by git (even just `git add -N`) before flake
 evaluation will see them. This applies to non-`.nix` files referenced from
 modules too (e.g. blueprint YAMLs under `modules/apps/authentik-blueprints/`)
 — `nix eval` will error with "path … does not exist" until they're tracked.
+
+## App packaging: prefer nixpkgs services over containers
+
+Default to a native NixOS module (`services.<app>`) when one exists in
+nixpkgs. Containers are the fallback, not the baseline — they add a
+podman runtime layer, separate volume bookkeeping under
+`/var/lib/containers/<app>`, and inter-app DNS that doesn't exist
+between native services. Reach for a container only when one of the
+exceptions below applies.
+
+When evaluating a candidate, check the version in both `nixos-25.11`
+and `nixos-unstable`:
+
+```sh
+nix eval --raw "github:NixOS/nixpkgs/nixos-25.11#<app>.version"
+nix eval --raw "github:NixOS/nixpkgs/nixos-unstable#<app>.version"
+```
+
+Acceptable lag is a couple of minor versions on stable; a major-version
+regression or a five-plus minor gap on both branches is a skip signal
+(historical examples: sabnzbd 4.5 vs upstream 5.0, mealie 3.9 vs 3.17 —
+both originally skipped, then taken anyway because the apps weren't in
+production). If unstable is significantly closer than stable and you
+need it, wire a per-package overlay rather than flipping the whole
+flake to unstable.
+
+Stay on the container path when:
+
+- **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3,
+  readmeabook, shelfmark, tandoor, watchstate, grimmory.)
+- **The container is a fork or variant the nix module doesn't track.**
+  Seerr is the seerr-team fork at v3.x; nixpkgs ships jellyseerr.
+  They share lineage but aren't drop-in.
+- **Upstream image bakes in behaviour the nix package doesn't.**
+  home-operations sabnzbd applies `SABNZBD__HOST_WHITELIST_ENTRIES` on
+  every entrypoint run; the nix package doesn't, so the module fakes
+  it with a oneshot — that worked, but if the missing behaviour is
+  deeper than a sed-script, container is fine.
+- **The app is upstream-hostile to native packaging.** Home Assistant
+  is the canonical case — its add-on ecosystem and version churn
+  don't fit the nixpkgs cadence.
+
+When you do switch to a nix module, watch for these gotchas (all
+encountered on the containerize-to-nixos-modules branch):
+
+- **User/group override gating.** Jellyfin gates user creation behind
+  `mkIf (cfg.user == "jellyfin")`, so overriding to `server-${env}`
+  cleanly skips the module's user block. Kavita writes
+  `users.users.${cfg.user}.group = cfg.user` unconditionally; with
+  `cfg.user = "server-${env}"` that collides with `server-users.nix`
+  setting `group = "servers"` on the same UID-pinned user. Resolve
+  with `users.users.${kavitaUser}.group = lib.mkForce "servers";`.
+  Read each module's `users.users` block before assuming the jellyfin
+  pattern works.
+- **Postgres connection style.** Mealie's
+  `database.createLocally = true` + `DynamicUser=mealie` gets unix-socket
+  peer auth for free (the dynamic username matches the role name); no
+  password to plumb. Use this when the module's expected role name
+  doesn't conflict with anything pre-existing. When it does (paperless's
+  module wants role `paperless` but our existing role is `paperless_ngx`),
+  keep `myPostgresApp` + TCP + sops password rather than triggering a
+  destructive rename.
+- **Multi-unit apps and OIDC env file restarts.** Apps that ship
+  several systemd units consuming the same env file (paperless-{web,
+  scheduler,task-queue,consumer}) need every unit listed in
+  `myAuthentik.oidcApps.<app>.appRestartUnit` so all of them bounce on
+  credential rotation. The option accepts a list.
+- **Module-imposed `PrivateNetwork`.** Paperless's `database.createLocally`
+  enables `PrivateNetwork=true` on scheduler/consumer. That's fine for
+  workers (no OIDC traffic) but check what each unit actually does
+  before relying on it.
 
 ## NFS UID alignment
 
