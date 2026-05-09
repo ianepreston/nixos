@@ -1,16 +1,25 @@
 # Paperless-ngx - document management + OCR
-# Container; OIDC against authentik gated to the Home group. Paperless
-# speaks OIDC via django-allauth with the openid_connect provider:
-# PAPERLESS_APPS pulls in the Django app, PAPERLESS_SOCIALACCOUNT_PROVIDERS
-# is a single-line JSON blob with the client credentials and discovery
-# URL (constructed inline so secrets never leave sops). The blueprint
-# pins the redirect URI to /accounts/oidc/authentik/login/callback/ —
-# allauth derives that path from `provider_id: authentik`.
+# Native services.paperless from nixpkgs (4 systemd units:
+# paperless-{scheduler,task-queue,consumer,web}; the module also wires
+# a private redis instance on a unix socket via
+# services.redis.servers.paperless). OIDC against authentik gated to
+# the Home group; speaks OIDC via django-allauth with the
+# openid_connect provider, so PAPERLESS_SOCIALACCOUNT_PROVIDERS is a
+# single-line JSON blob with the client credentials and discovery URL
+# (constructed inline so secrets never leave sops). The blueprint
+# pins the redirect URI to /accounts/oidc/authentik/login/callback/.
 #
-# Postgres lives on the shared native instance (tandoor pattern) and
-# the password is rotated from sops via a `paperless-ngx-db-password`
-# oneshot. Redis runs as a sidecar container on the default podman
-# bridge so paperless and authentik don't share a broker.
+# Postgres uses the existing `paperless_ngx` role/db over TCP +
+# password (myPostgresApp helper). The upstream module's
+# `database.createLocally = true` path would force the role/db to
+# rename to `paperless`, so we point at the existing role over TCP
+# instead.
+#
+# Secret-key handling: paperless-web's runtime script reads its key
+# from /var/lib/paperless-ngx/nixos-paperless-secret-key (auto-
+# generated on first start), while the other three units read
+# PAPERLESS_SECRET_KEY from the env file. A oneshot pre-seeds the
+# file from sops on first run so all four agree on the same key.
 { inputs, ... }:
 let
   sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
@@ -23,23 +32,28 @@ in
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       paperlessHost = "paperless-ngx.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 8010;
+      dataDir = "/var/lib/paperless-ngx";
+      paperlessUnits = [
+        "paperless-scheduler.service"
+        "paperless-task-queue.service"
+        "paperless-consumer.service"
+        "paperless-web.service"
+      ];
     in
     {
-      myPostgresApp.paperless-ngx.consumerService = "podman-paperless-ngx.service";
+      myPostgresApp.paperless-ngx.consumerService = "paperless-scheduler.service";
 
       sops.secrets."paperless-ngx/secret_key" = {
         sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
-        restartUnits = [ "podman-paperless-ngx.service" ];
+        restartUnits = paperlessUnits;
       };
 
       myAuthentik.oidcApps.paperless-ngx = {
         blueprintsDir = ./paperless-ngx-blueprints;
-        appRestartUnit = "podman-paperless-ngx.service";
+        appRestartUnit = paperlessUnits;
         clientCredsInAppEnv = false;
         extraEnvLines = ''
           PAPERLESS_DBPASS=${config.sops.placeholder."paperless-ngx/db_password"}
@@ -59,85 +73,63 @@ in
         homepageHref = "https://${paperlessHost}";
       };
 
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/paperless-ngx 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/paperless-ngx/data 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/paperless-ngx/media 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/paperless-ngx/export 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/paperless-ngx/consume 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/paperless-ngx/redis 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
+      services.paperless = {
+        enable = true;
+        inherit dataDir port;
+        address = "127.0.0.1";
+        environmentFile = config.sops.templates."paperless-ngx.env".path;
+        settings = {
+          # Reuse the existing paperless_ngx role/db — the module's
+          # `database.createLocally` path would rename them to
+          # `paperless`, which would mean a destructive SQL migration.
+          PAPERLESS_DBENGINE = "postgresql";
+          PAPERLESS_DBHOST = "127.0.0.1";
+          PAPERLESS_DBPORT = "5432";
+          PAPERLESS_DBNAME = "paperless_ngx";
+          PAPERLESS_DBUSER = "paperless_ngx";
 
-        services = {
-          # Paperless waits on its dedicated redis sidecar so the
-          # broker is up before Django attempts to connect.
-          podman-paperless-ngx = {
-            after = [ "podman-paperless-ngx-redis.service" ];
-            requires = [ "podman-paperless-ngx-redis.service" ];
-          };
+          PAPERLESS_URL = "https://${paperlessHost}";
+          PAPERLESS_OCR_LANGUAGE = "eng";
+          PAPERLESS_USE_X_FORWARD_HOST = true;
+          PAPERLESS_USE_X_FORWARD_PORT = true;
+          PAPERLESS_PROXY_SSL_HEADER = [
+            "HTTP_X_FORWARDED_PROTO"
+            "https"
+          ];
+
+          # OIDC via django-allauth — same wiring as the container.
+          PAPERLESS_ENABLE_ALLAUTH = true;
+          PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
+          PAPERLESS_SOCIAL_AUTO_SIGNUP = true;
+          PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS = true;
+          PAPERLESS_LOGOUT_REDIRECT_URL = "https://${authentikHost}/application/o/paperless-ngx/end-session/";
         };
       };
 
-      virtualisation.oci-containers.containers = {
-        paperless-ngx-redis = {
-          # renovate: datasource=docker depName=redis
-          image = "redis:8.6.3-alpine";
-          cmd = [
-            "redis-server"
-            "--save"
-            "60"
-            "1"
-            "--loglevel"
-            "warning"
-          ];
-          user = "${toString serverUid}:${toString serverGid}";
-          volumes = [
-            "/var/lib/containers/paperless-ngx/redis:/data"
-          ];
-        };
+      services.restic.backups.server.paths = [ dataDir ];
 
-        paperless-ngx = {
-          # renovate: datasource=docker depName=ghcr.io/paperless-ngx/paperless-ngx
-          image = "ghcr.io/paperless-ngx/paperless-ngx:2.20.15";
-          ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-          user = "${toString serverUid}:${toString serverGid}";
-          volumes = [
-            "/var/lib/containers/paperless-ngx/data:/usr/src/paperless/data"
-            "/var/lib/containers/paperless-ngx/media:/usr/src/paperless/media"
-            "/var/lib/containers/paperless-ngx/export:/usr/src/paperless/export"
-            "/var/lib/containers/paperless-ngx/consume:/usr/src/paperless/consume"
-          ];
-          dependsOn = [ "paperless-ngx-redis" ];
-          environment = {
-            TZ = config.time.timeZone;
-            USERMAP_UID = toString serverUid;
-            USERMAP_GID = toString serverGid;
-            PAPERLESS_PORT = toString port;
-            PAPERLESS_URL = "https://${paperlessHost}";
-            PAPERLESS_REDIS = "redis://paperless-ngx-redis:6379";
-            PAPERLESS_DBHOST = "host.containers.internal";
-            PAPERLESS_DBPORT = "5432";
-            PAPERLESS_DBNAME = "paperless_ngx";
-            PAPERLESS_DBUSER = "paperless_ngx";
-            PAPERLESS_OCR_LANGUAGE = "eng";
-            PAPERLESS_TIME_ZONE = config.time.timeZone;
-            PAPERLESS_USE_X_FORWARD_HOST = "true";
-            PAPERLESS_USE_X_FORWARD_PORT = "true";
-            PAPERLESS_PROXY_SSL_HEADER = ''["HTTP_X_FORWARDED_PROTO","https"]'';
-
-            # OIDC via django-allauth: enable allauth, pull in the
-            # openid_connect Django app, auto-create accounts on first
-            # login, and redirect logout back through authentik so SSO
-            # state stays in sync.
-            PAPERLESS_ENABLE_ALLAUTH = "true";
-            PAPERLESS_APPS = "allauth.socialaccount.providers.openid_connect";
-            PAPERLESS_SOCIAL_AUTO_SIGNUP = "true";
-            PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS = "true";
-            PAPERLESS_LOGOUT_REDIRECT_URL = "https://${authentikHost}/application/o/paperless-ngx/end-session/";
-          };
-          environmentFiles = [ config.sops.templates."paperless-ngx.env".path ];
+      # paperless-web persists its secret key into the data dir and
+      # ignores PAPERLESS_SECRET_KEY from the env. The other three
+      # units read the env. Without this oneshot the four units would
+      # disagree on the key — fine in normal operation (workers don't
+      # sign user-facing tokens) but an unnecessary footgun. Seed the
+      # file from sops on first run so they agree.
+      systemd.services.paperless-secret-key-init = {
+        description = "Seed paperless web secret key from sops";
+        before = paperlessUnits;
+        wantedBy = paperlessUnits;
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
         };
+        script = ''
+          install -d -m 0700 -o paperless -g paperless ${dataDir}
+          if [ ! -f ${dataDir}/nixos-paperless-secret-key ]; then
+            install -m 0400 -o paperless -g paperless \
+              ${config.sops.secrets."paperless-ngx/secret_key".path} \
+              ${dataDir}/nixos-paperless-secret-key
+          fi
+        '';
       };
 
       myCaddy.apps.paperless-ngx = {

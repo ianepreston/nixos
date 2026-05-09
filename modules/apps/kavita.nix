@@ -1,25 +1,27 @@
 # Kavita - reading server (manga, comics, books)
-# Container; OIDC against authentik gated to the Users group. Kavita
-# doesn't read OIDC settings from env vars — they live in the
-# Settings → Authentication → OpenID Connect UI — so this module
-# registers via myAuthentik.oidcApps with clientCredsInAppEnv = false.
-# On first boot, complete owner setup, then enter Authority
-# `https://authentik.dnix.ipreston.net/application/o/kavita/` plus the
-# client_id / client_secret from `kavita/oidc_client_*` in sops; the
-# blueprint already pins the redirect URIs to /signin-oidc and
-# /signout-callback-oidc.
+# Native services.kavita from nixpkgs (.NET service running as the
+# shared server-${env}:servers user so reads against /mnt/content/
+# {comics,books} keep their NFS UID alignment). OIDC against authentik
+# is configured in Settings → Authentication → OpenID Connect in the
+# kavita UI; this module only stages the authentik side.
+#
+# Token key (JWT signing secret) is generated locally by a one-shot
+# the first time the unit comes up and persisted under the data dir.
+# Kavita's preStart rewrites appsettings.json on every restart, so
+# `services.kavita.settings` is the source of truth for everything
+# inside that file (TokenKey gets templated in via @TOKEN@).
 _: {
   flake.modules.nixos.kavita =
     {
-      config,
       hostSpec,
+      lib,
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       kavitaHost = "kavita.${hostSpec.serverDomain}";
       port = 5000;
+      tokenKeyFile = "/var/lib/kavita/token-key";
+      kavitaUser = "server-${hostSpec.serverEnvironment}";
     in
     {
       myAuthentik.oidcApps.kavita = {
@@ -34,24 +36,44 @@ _: {
         homepageHref = "https://${kavitaHost}";
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/kavita 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/kavita/config 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
-
-      virtualisation.oci-containers.containers.kavita = {
-        # renovate: datasource=docker depName=jvmilazz0/kavita
-        image = "jvmilazz0/kavita:0.9.0";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [
-          "/var/lib/containers/kavita/config:/kavita/config"
-          "/mnt/content/comics:/comics"
-          "/mnt/content/books:/books"
-        ];
-        environment = {
-          TZ = config.time.timeZone;
+      services.kavita = {
+        enable = true;
+        user = kavitaUser;
+        inherit tokenKeyFile;
+        settings = {
+          Port = port;
+          IpAddresses = "127.0.0.1";
         };
+      };
+
+      # Unlike jellyfin (whose nixpkgs module gates `users.users.${cfg
+      # .user} = {...}` on `mkIf (cfg.user == "jellyfin")`), the kavita
+      # module unconditionally writes `users.users.${cfg.user}.group =
+      # cfg.user`. With cfg.user = server-${env}, that collides with
+      # server-users.nix's `group = "servers"` on the same UID-pinned
+      # user. Force the NAS-aligned `servers` group; the empty
+      # `server-${env}` group kavita also creates is dangling but
+      # harmless since user-perm checks always win when EUID matches
+      # the file owner.
+      users.users.${kavitaUser}.group = lib.mkForce "servers";
+
+      services.restic.backups.server.paths = [ "/var/lib/kavita" ];
+
+      systemd.services.kavita-token-init = {
+        description = "Generate kavita JWT signing key on first boot";
+        before = [ "kavita.service" ];
+        wantedBy = [ "kavita.service" ];
+        unitConfig.ConditionPathExists = "!${tokenKeyFile}";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+        };
+        script = ''
+          install -d -m 0750 -o ${kavitaUser} -g servers /var/lib/kavita
+          umask 0177
+          head -c 64 /dev/urandom | base64 --wrap=0 > ${tokenKeyFile}
+          chown ${kavitaUser}:servers ${tokenKeyFile}
+        '';
       };
 
       myCaddy.apps.kavita = {

@@ -1,28 +1,26 @@
 # Sabnzbd - usenet downloader
-# Container only; auth/caddy/homepage wired by platform/authentik.nix.
+# Native services.sabnzbd from nixpkgs (Python service; user/group
+# overridden to the shared server-${env}:servers user so writes
+# against /mnt/content/Downloads keep their NFS UID alignment).
+# auth/caddy/homepage wiring is generated from
+# `myAuthentik.forwardAuthApps.sabnzbd` by modules/platform/authentik.nix.
 #
 # Sabnzbd refuses any HTTP request whose Host header doesn't match the
-# local hostname or an entry in `host_whitelist`. With Caddy in front,
-# the Host header arriving at sabnzbd is the FQDN of the public site,
-# which the default config rejects. The home-operations image's
-# entrypoint applies SABNZBD__HOST_WHITELIST_ENTRIES on every start —
-# so we set the FQDN there instead of seeding the ini ourselves.
-# (Image baked-in user is `nobody:nogroup`; we override via `user` so
-# writes to /mnt/content/Downloads land with the UID/GID the NAS
-# expects.)
+# local hostname or an entry in `host_whitelist`. The home-operations
+# container baked an entrypoint that re-applied
+# SABNZBD__HOST_WHITELIST_ENTRIES to the .ini on every start; we
+# reproduce that behaviour with a one-shot that patches sabnzbd.ini
+# before sabnzbd.service comes up. Once the file exists, the user can
+# edit host_whitelist freely from the UI — this oneshot only enforces
+# the FQDN entry on the [misc] section, leaving everything else alone.
 _: {
   flake.modules.nixos.sabnzbd =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
+    { hostSpec, ... }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 8080;
-      stateDir = "/var/lib/containers/sabnzbd";
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
+      sabnzbdUser = "server-${hostSpec.serverEnvironment}";
+      iniFile = "/var/lib/sabnzbd/sabnzbd.ini";
     in
     {
       myAuthentik.forwardAuthApps.sabnzbd = {
@@ -35,24 +33,49 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d ${stateDir} 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      services.sabnzbd = {
+        enable = true;
+        user = sabnzbdUser;
+        group = "servers";
+      };
 
-      virtualisation.oci-containers.containers.sabnzbd = {
-        # renovate: datasource=docker depName=ghcr.io/home-operations/sabnzbd
-        image = "ghcr.io/home-operations/sabnzbd:5.0.1";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [
-          "${stateDir}:/config"
-          "/mnt/content/Downloads:/downloads"
-        ];
-        environment = {
-          SABNZBD__PORT = toString port;
-          SABNZBD__HOST_WHITELIST_ENTRIES = sabnzbdHost;
-          TZ = config.time.timeZone;
+      services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
+
+      # Reapplies host_whitelist on every start (idempotent), matching
+      # what the home-operations entrypoint used to do via
+      # SABNZBD__HOST_WHITELIST_ENTRIES. Creates a minimal [misc] block
+      # if the .ini is missing entirely (clean install).
+      systemd.services.sabnzbd-host-whitelist = {
+        description = "Pin sabnzbd host_whitelist to the public FQDN";
+        before = [ "sabnzbd.service" ];
+        wantedBy = [ "sabnzbd.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
         };
+        script = ''
+          set -e
+          ini=${iniFile}
+          if [ -f "$ini" ]; then
+            if grep -q '^\[misc\]' "$ini"; then
+              if grep -q '^host_whitelist' "$ini"; then
+                sed -i 's|^host_whitelist.*|host_whitelist = ${sabnzbdHost}|' "$ini"
+              else
+                sed -i '/^\[misc\]/a host_whitelist = ${sabnzbdHost}' "$ini"
+              fi
+            else
+              printf '\n[misc]\nhost_whitelist = ${sabnzbdHost}\n' >> "$ini"
+            fi
+          else
+            install -d -m 0750 -o ${sabnzbdUser} -g servers /var/lib/sabnzbd
+            cat > "$ini" <<EOF
+          [misc]
+          host_whitelist = ${sabnzbdHost}
+          EOF
+            chown ${sabnzbdUser}:servers "$ini"
+            chmod 0640 "$ini"
+          fi
+        '';
       };
     };
 }

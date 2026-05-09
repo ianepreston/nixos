@@ -1,25 +1,32 @@
 # Readeck - read-it-later / bookmark archive
-# Container; gated by authentik forward-auth (Users group). Readeck
-# does not implement OIDC as of 0.22 — its only SSO hook is
-# Forwarded Authentication via Remote-User / Remote-Email /
-# Remote-Groups headers. Caddy translates the X-authentik-* headers
-# the embedded outpost copies in into those Remote-* names, and
-# READECK_AUTH_FORWARDED_PROVISIONING auto-creates a readeck account
-# the first time each authentik user lands on the app.
+# Native services.readeck from nixpkgs (Go binary under DynamicUser);
+# gated by authentik forward-auth (Users group). Readeck does not
+# implement OIDC as of 0.22 — its only SSO hook is Forwarded
+# Authentication via Remote-User / Remote-Email / Remote-Groups
+# headers. Caddy translates the X-authentik-* headers into those
+# Remote-* names, and READECK_AUTH_FORWARDED_PROVISIONING auto-creates
+# a readeck account the first time each authentik user lands on the
+# app.
 #
 # Remote-Groups is pinned to "user" because readeck only accepts its
 # own group names ("user" / "staff" / "admin"); forwarding the raw
 # X-authentik-groups value (e.g. "Users") would be rejected. Bootstrap
-# an admin account once via `podman exec readeck readeck user add -u
-# <name> -g admin -p <pass>` if you need elevated access in the UI.
+# an admin account once via the readeck CLI if you need elevated
+# access in the UI.
 #
-# Trusted_proxies is left at the upstream default (RFC1918 + loopback).
-# Caddy talks to the container over the podman bridge so its source IP
-# is the bridge gateway (e.g. 10.88.0.1), not 127.0.0.1; pinning
-# trusted_proxies to 127.0.0.1 made readeck 403 every forwarded-auth
-# request. The container's published port is already locked to
-# 127.0.0.1:8000 on the host, so non-local clients can't reach it.
-_: {
+# Trusted_proxies is left at the upstream default (RFC1918 + loopback);
+# caddy talks to readeck on 127.0.0.1, so the Remote-* headers are
+# honoured.
+#
+# READECK_SECRET_KEY is sourced from sops via environmentFile. Without
+# it readeck generates a key on first run and tries to persist it back
+# to its config TOML — but the nixpkgs module passes the toml from
+# /nix/store, so the write fails (EROFS) and the service crashloops.
+{ inputs, ... }:
+let
+  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
+in
+{
   flake.modules.nixos.readeck =
     {
       config,
@@ -27,11 +34,21 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 8000;
     in
     {
+      sops.secrets."readeck/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "readeck.service" ];
+      };
+
+      sops.templates."readeck.env" = {
+        content = ''
+          READECK_SECRET_KEY=${config.sops.placeholder."readeck/secret_key"}
+        '';
+        restartUnits = [ "readeck.service" ];
+      };
+
       myAuthentik.forwardAuthApps.readeck = {
         inherit port;
         displayName = "Readeck";
@@ -48,25 +65,22 @@ _: {
         '';
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/readeck 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
-
-      virtualisation.oci-containers.containers.readeck = {
-        # renovate: datasource=docker depName=codeberg.org/readeck/readeck
-        image = "codeberg.org/readeck/readeck:0.22.3";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [
-          "/var/lib/containers/readeck:/readeck"
-        ];
-        environment = {
-          TZ = config.time.timeZone;
-          READECK_SERVER_HOST = "0.0.0.0";
-          READECK_SERVER_PORT = toString port;
-          READECK_AUTH_FORWARDED_ENABLED = "true";
-          READECK_AUTH_FORWARDED_PROVISIONING = "true";
-        };
+      services.readeck = {
+        enable = true;
+        environmentFile = config.sops.templates."readeck.env".path;
       };
+
+      # Readeck reads env vars on top of its TOML config; using
+      # READECK_* keys keeps the wiring identical to what worked
+      # under the container without re-expressing the semantics in
+      # the toml settings format.
+      systemd.services.readeck.environment = {
+        READECK_SERVER_HOST = "127.0.0.1";
+        READECK_SERVER_PORT = toString port;
+        READECK_AUTH_FORWARDED_ENABLED = "true";
+        READECK_AUTH_FORWARDED_PROVISIONING = "true";
+      };
+
+      services.restic.backups.server.paths = [ "/var/lib/readeck" ];
     };
 }

@@ -123,7 +123,7 @@
               tiles = lib.attrValues (
                 lib.mapAttrs (name: tile: tile // { _name = name; }) config.myHomepage.tiles
               );
-              byGroup = lib.groupBy (t: t.group) tiles;
+              byGroup = builtins.groupBy (t: t.group) tiles;
               sortedGroup =
                 items:
                 lib.sort (

@@ -1,25 +1,15 @@
 # Sonarr - TV management
-# Container only; auth/caddy/homepage wiring is generated from
+# Native services.sonarr from nixpkgs (system user `sonarr` overridden
+# to the shared server-${env}:servers user so writes back to the
+# NFS-mounted TV share land with the UID/GID the NAS expects).
+# auth/caddy/homepage wiring is generated from
 # `myAuthentik.forwardAuthApps.sonarr` by modules/platform/authentik.nix.
-# Bind-mounts /mnt/content/TV (NFS share) so library scans land in the
-# right place. Image baked-in user is `nobody:nogroup`; we override via
-# `user` so the process runs as server-${env}:servers (the UID/GID the
-# NAS expects on the share).
 _: {
   flake.modules.nixos.sonarr =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
-    let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
-      port = 8989;
-    in
+    { hostSpec, ... }:
     {
       myAuthentik.forwardAuthApps.sonarr = {
-        inherit port;
+        port = 8989;
         displayName = "Sonarr";
         homepage = {
           group = "Acquisition";
@@ -28,23 +18,12 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/sonarr 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
-
-      virtualisation.oci-containers.containers.sonarr = {
-        # renovate: datasource=docker depName=ghcr.io/home-operations/sonarr
-        image = "ghcr.io/home-operations/sonarr:4.0.17.2967";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
-        volumes = [
-          "/var/lib/containers/sonarr:/config"
-          "/mnt/content/TV:/tv"
-          "/mnt/content/Downloads:/downloads"
-        ];
-        environment = {
-          TZ = config.time.timeZone;
-        };
+      services.sonarr = {
+        enable = true;
+        user = "server-${hostSpec.serverEnvironment}";
+        group = "servers";
       };
+
+      services.restic.backups.server.paths = [ "/var/lib/sonarr" ];
     };
 }
