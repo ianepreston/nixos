@@ -19,10 +19,12 @@
       kapowarr
       kavita
       komga
+      maintainerr
       mealie
       miniflux
       mylar3
       paperless-ngx
+      profilarr
       prowlarr
       radarr
       readeck
