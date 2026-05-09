@@ -17,13 +17,38 @@
 # Trusted_proxies is left at the upstream default (RFC1918 + loopback);
 # caddy talks to readeck on 127.0.0.1, so the Remote-* headers are
 # honoured.
-_: {
+#
+# READECK_SECRET_KEY is sourced from sops via environmentFile. Without
+# it readeck generates a key on first run and tries to persist it back
+# to its config TOML — but the nixpkgs module passes the toml from
+# /nix/store, so the write fails (EROFS) and the service crashloops.
+{ inputs, ... }:
+let
+  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
+in
+{
   flake.modules.nixos.readeck =
-    _:
+    {
+      config,
+      hostSpec,
+      ...
+    }:
     let
       port = 8000;
     in
     {
+      sops.secrets."readeck/secret_key" = {
+        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        restartUnits = [ "readeck.service" ];
+      };
+
+      sops.templates."readeck.env" = {
+        content = ''
+          READECK_SECRET_KEY=${config.sops.placeholder."readeck/secret_key"}
+        '';
+        restartUnits = [ "readeck.service" ];
+      };
+
       myAuthentik.forwardAuthApps.readeck = {
         inherit port;
         displayName = "Readeck";
@@ -40,7 +65,10 @@ _: {
         '';
       };
 
-      services.readeck.enable = true;
+      services.readeck = {
+        enable = true;
+        environmentFile = config.sops.templates."readeck.env".path;
+      };
 
       # Readeck reads env vars on top of its TOML config; using
       # READECK_* keys keeps the wiring identical to what worked
