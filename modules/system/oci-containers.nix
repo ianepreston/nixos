@@ -16,6 +16,9 @@ _: {
     # (postgres, etc.) via host.containers.internal -> 10.88.0.1.
     # Trust the bridge so the firewall doesn't drop those packets.
     networking.firewall.trustedInterfaces = [ "podman0" ];
+    # Podman isn't allowed to forward packets from podman0 to the actual NIC by default
+    boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+    boot.kernel.sysctl."net.ipv6.conf.all.forwarding" = 1;
 
     # Parent directory for all containerized app state. Apps create their
     # own subdirs (/var/lib/containers/<app>) owned by the server user,
