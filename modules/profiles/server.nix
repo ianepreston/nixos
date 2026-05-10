@@ -14,6 +14,7 @@
       authentik
       base
       caddy
+      homepage
       mariadb
       nfsclient
       nix-maintenance
