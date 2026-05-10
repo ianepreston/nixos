@@ -10,9 +10,12 @@
 # container baked an entrypoint that re-applied
 # SABNZBD__HOST_WHITELIST_ENTRIES to the .ini on every start; we
 # reproduce that behaviour with a one-shot that patches sabnzbd.ini
-# before sabnzbd.service comes up. Once the file exists, the user can
-# edit host_whitelist freely from the UI — this oneshot only enforces
-# the FQDN entry on the [misc] section, leaving everything else alone.
+# before sabnzbd.service comes up. The oneshot also pins
+# `host = 0.0.0.0` so co-located containers (e.g. shelfmark) can reach
+# sabnzbd via `host.containers.internal:8080` — without that the
+# service binds to 127.0.0.1 only and bridge traffic gets refused at
+# the TCP layer. `host.containers.internal` is whitelisted alongside
+# the public FQDN for the same reason.
 _: {
   flake.modules.nixos.sabnzbd =
     { hostSpec, ... }:
@@ -41,12 +44,12 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
-      # Reapplies host_whitelist on every start (idempotent), matching
-      # what the home-operations entrypoint used to do via
+      # Reapplies host + host_whitelist on every start (idempotent),
+      # matching what the home-operations entrypoint used to do via
       # SABNZBD__HOST_WHITELIST_ENTRIES. Creates a minimal [misc] block
       # if the .ini is missing entirely (clean install).
       systemd.services.sabnzbd-host-whitelist = {
-        description = "Pin sabnzbd host_whitelist to the public FQDN";
+        description = "Pin sabnzbd bind host and host_whitelist";
         before = [ "sabnzbd.service" ];
         wantedBy = [ "sabnzbd.service" ];
         serviceConfig = {
@@ -56,21 +59,31 @@ _: {
         script = ''
           set -e
           ini=${iniFile}
-          if [ -f "$ini" ]; then
-            if grep -q '^\[misc\]' "$ini"; then
-              if grep -q '^host_whitelist' "$ini"; then
-                sed -i 's|^host_whitelist.*|host_whitelist = ${sabnzbdHost}|' "$ini"
-              else
-                sed -i '/^\[misc\]/a host_whitelist = ${sabnzbdHost}' "$ini"
-              fi
+          # Scope substitution to the [misc] section — sabnzbd's
+          # `[servers]` subsections also use `host = …` (the upstream
+          # usenet provider), and an unscoped sed would overwrite
+          # those.
+          pin_kv() {
+            key=$1
+            val=$2
+            if sed -n '/^\[misc\]/,/^\[/p' "$ini" | grep -q "^$key *="; then
+              sed -i "/^\[misc\]/,/^\[/{s|^$key *=.*|$key = $val|}" "$ini"
             else
-              printf '\n[misc]\nhost_whitelist = ${sabnzbdHost}\n' >> "$ini"
+              sed -i "/^\[misc\]/a $key = $val" "$ini"
             fi
+          }
+          if [ -f "$ini" ]; then
+            if ! grep -q '^\[misc\]' "$ini"; then
+              printf '\n[misc]\n' >> "$ini"
+            fi
+            pin_kv host 0.0.0.0
+            pin_kv host_whitelist '${sabnzbdHost},host.containers.internal'
           else
             install -d -m 0750 -o ${sabnzbdUser} -g servers /var/lib/sabnzbd
             cat > "$ini" <<EOF
           [misc]
-          host_whitelist = ${sabnzbdHost}
+          host = 0.0.0.0
+          host_whitelist = ${sabnzbdHost},host.containers.internal
           EOF
             chown ${sabnzbdUser}:servers "$ini"
             chmod 0640 "$ini"
