@@ -21,7 +21,7 @@ _: {
         displayName = "Mylar3";
         homepage = {
           group = "Acquisition";
-          icon = "mylar3";
+          icon = "mylar";
           description = "Comics manager";
         };
       };

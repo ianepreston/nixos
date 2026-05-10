@@ -25,7 +25,7 @@ _: {
         inherit port;
         displayName = "Profilarr";
         homepage = {
-          group = "Infrastructure";
+          group = "Acquisition";
           icon = "profilarr";
           description = "Sync *arr quality profiles";
         };

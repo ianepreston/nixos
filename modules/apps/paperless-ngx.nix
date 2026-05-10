@@ -65,7 +65,7 @@ in
           }","settings":{"server_url":"https://${authentikHost}/application/o/paperless-ngx/.well-known/openid-configuration","fetch_userinfo":true}}],"SCOPE":["openid","profile","email"]}}
         '';
         homepage = {
-          group = "Infrastructure";
+          group = "Home";
           icon = "paperless-ngx";
           description = "Documents";
         };

@@ -50,13 +50,6 @@
             # from layout still render, just appended after.
             layout = [
               {
-                General = {
-                  header = true;
-                  style = "row";
-                  columns = 4;
-                };
-              }
-              {
                 Consumption = {
                   header = true;
                   style = "row";
@@ -64,14 +57,21 @@
                 };
               }
               {
-                Acquisition = {
+                Requests = {
                   header = true;
                   style = "row";
                   columns = 4;
                 };
               }
               {
-                Developer = {
+                Home = {
+                  header = true;
+                  style = "row";
+                  columns = 4;
+                };
+              }
+              {
+                Acquisition = {
                   header = true;
                   style = "row";
                   columns = 4;
@@ -139,123 +139,6 @@
               ${group} = map tileToEntry (sortedGroup items);
             }) byGroup;
 
-          bookmarks = [
-            {
-              Developer = [
-                {
-                  "Azure Portal" = [
-                    {
-                      abbr = "Az";
-                      icon = "azure";
-                      href = "https://portal.azure.com/";
-                    }
-                  ];
-                }
-                {
-                  blog = [
-                    {
-                      abbr = "ip";
-                      href = "http://blog.ianpreston.ca/";
-                    }
-                  ];
-                }
-                {
-                  "Databricks Academy" = [
-                    {
-                      abbr = "db";
-                      icon = "https://www.svgrepo.com/show/330261/databricks.svg";
-                      href = "https://customer-academy.databricks.com/learn/signin";
-                    }
-                  ];
-                }
-                {
-                  Github = [
-                    {
-                      abbr = "GH";
-                      icon = "github";
-                      href = "https://github.com/";
-                    }
-                  ];
-                }
-                {
-                  HackerNews = [
-                    {
-                      abbr = "HN";
-                      href = "https://news.ycombinator.com";
-                    }
-                  ];
-                }
-              ];
-            }
-            {
-              General = [
-                {
-                  ambiphone = [
-                    {
-                      abbr = "ap";
-                      href = "https://ambiph.one/";
-                    }
-                  ];
-                }
-                {
-                  calendar = [
-                    {
-                      href = "https://calendar.google.com/calendar/";
-                      icon = "google-calendar";
-                    }
-                  ];
-                }
-                {
-                  chatGPT = [
-                    {
-                      href = "https://chat.openai.com/";
-                      icon = "chatgpt";
-                    }
-                  ];
-                }
-                {
-                  drive = [
-                    {
-                      href = "https://drive.google.com/";
-                      icon = "google-drive";
-                    }
-                  ];
-                }
-                {
-                  gmail = [
-                    {
-                      href = "https://mail.google.com/mail/u/0/#inbox";
-                      icon = "gmail";
-                    }
-                  ];
-                }
-                {
-                  openslum = [
-                    {
-                      href = "https://open-slum.org/";
-                      icon = "google-play-books";
-                    }
-                  ];
-                }
-                {
-                  annas-archive = [
-                    {
-                      href = "https://annas-archive.org/";
-                      icon = "google-play-books";
-                    }
-                  ];
-                }
-                {
-                  maps = [
-                    {
-                      href = "https://google.com/maps";
-                      icon = "google-maps";
-                    }
-                  ];
-                }
-              ];
-            }
-          ];
         };
 
         # cpu widget needs ProcSubset=all and the upstream module already
@@ -285,18 +168,6 @@
             href = "http://laconia.ipreston.net:5001";
             icon = "synology";
             description = "NAS";
-          };
-          unifi = {
-            group = "Infrastructure";
-            href = "https://192.168.10.41:8443";
-            icon = "unifi";
-            description = "WiFi controller";
-          };
-          xo = {
-            group = "Infrastructure";
-            href = "http://xo.ipreston.net";
-            icon = "https://xcp-ng.org/assets/img/mainlogo.png";
-            description = "hypervisor";
           };
           blikvm = {
             group = "Infrastructure";

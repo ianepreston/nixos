@@ -21,7 +21,7 @@ _: {
         inherit port;
         displayName = "Maintainerr";
         homepage = {
-          group = "Infrastructure";
+          group = "Acquisition";
           icon = "maintainerr";
           description = "Media library cleanup";
         };

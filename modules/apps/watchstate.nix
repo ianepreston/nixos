@@ -24,7 +24,7 @@ _: {
         displayName = "Watchstate";
         iconUrl = "https://raw.githubusercontent.com/arabcoders/watchstate/master/frontend/public/images/logo_nobg.png";
         homepage = {
-          group = "Consumption";
+          group = "Acquisition";
           icon = "https://raw.githubusercontent.com/arabcoders/watchstate/master/frontend/public/images/logo_nobg.png";
           description = "Sync media play state";
         };

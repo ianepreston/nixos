@@ -34,7 +34,7 @@ _: {
         blueprintsDir = ./mealie-blueprints;
         appRestartUnit = "mealie.service";
         homepage = {
-          group = "Consumption";
+          group = "Home";
           icon = "mealie";
           description = "Recipe manager";
         };

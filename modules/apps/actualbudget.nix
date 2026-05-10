@@ -24,8 +24,8 @@ _: {
         clientIdVar = "ACTUAL_OPENID_CLIENT_ID";
         clientSecretVar = "ACTUAL_OPENID_CLIENT_SECRET";
         homepage = {
-          group = "Infrastructure";
-          icon = "actual";
+          group = "Home";
+          icon = "actual-budget";
           description = "Personal finance";
         };
         homepageDisplayName = "Actual Budget";

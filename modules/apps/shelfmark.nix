@@ -21,7 +21,7 @@ _: {
         inherit port;
         displayName = "Shelfmark";
         homepage = {
-          group = "Acquisition";
+          group = "Requests";
           icon = "shelfmark";
           description = "Book search + requests";
         };

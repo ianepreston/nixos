@@ -36,7 +36,7 @@ _: {
         blueprintsDir = ./readmeabook-blueprints;
         clientCredsInAppEnv = false;
         homepage = {
-          group = "Consumption";
+          group = "Requests";
           icon = "audiobookshelf";
           description = "Audiobook requests";
         };

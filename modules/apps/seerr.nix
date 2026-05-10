@@ -25,7 +25,7 @@ _: {
         blueprintsDir = ./seerr-blueprints;
         clientCredsInAppEnv = false;
         homepage = {
-          group = "Acquisition";
+          group = "Requests";
           icon = "jellyseerr";
           description = "Media requests";
         };

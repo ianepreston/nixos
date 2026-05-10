@@ -51,7 +51,7 @@ _: {
         blueprintsDir = ./homeassistant-blueprints;
         clientCredsInAppEnv = false;
         homepage = {
-          group = "Infrastructure";
+          group = "Home";
           icon = "home-assistant";
           description = "Smart home";
         };

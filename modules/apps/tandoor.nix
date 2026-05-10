@@ -54,8 +54,8 @@ in
           }","settings":{"server_url":"https://${authentikHost}/application/o/tandoor/.well-known/openid-configuration"}}]}}
         '';
         homepage = {
-          group = "Consumption";
-          icon = "tandoor";
+          group = "Home";
+          icon = "tandoor-recipes";
           description = "Recipe manager";
         };
         homepageDisplayName = "Tandoor";
