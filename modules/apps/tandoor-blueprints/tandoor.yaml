@@ -21,7 +21,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://tandoor.dnix.ipreston.net/accounts/oidc/authentik/login/callback/
+          url: https://tandoor.@serverDomain@/accounts/oidc/authentik/login/callback/
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -36,7 +36,7 @@ entries:
       provider: !KeyOf prov-tandoor
       group: Users
       open_in_new_tab: true
-      meta_launch_url: https://tandoor.dnix.ipreston.net
+      meta_launch_url: https://tandoor.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/tandoor-recipes.png
       policy_engine_mode: all
   - model: authentik_policies.policybinding

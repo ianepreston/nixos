@@ -20,9 +20,9 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://seerr.dnix.ipreston.net/login
+          url: https://seerr.@serverDomain@/login
         - matching_mode: strict
-          url: https://seerr.dnix.ipreston.net/profile/settings/linked-accounts
+          url: https://seerr.@serverDomain@/profile/settings/linked-accounts
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -38,7 +38,7 @@ entries:
       provider: !KeyOf prov-seerr
       group: Users
       open_in_new_tab: true
-      meta_launch_url: https://seerr.dnix.ipreston.net
+      meta_launch_url: https://seerr.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/jellyseerr.png
       policy_engine_mode: all
 

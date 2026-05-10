@@ -20,7 +20,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://komga.dnix.ipreston.net/login/oauth2/code/authentik
+          url: https://komga.@serverDomain@/login/oauth2/code/authentik
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -36,7 +36,7 @@ entries:
       provider: !KeyOf prov-komga
       group: Users
       open_in_new_tab: true
-      meta_launch_url: https://komga.dnix.ipreston.net
+      meta_launch_url: https://komga.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/komga.png
       policy_engine_mode: all
 

@@ -13,9 +13,9 @@
 #
 # On first boot, complete the admin setup, then in Settings → OIDC
 # enter Provider name `Authentik`, Issuer URI
-# `https://authentik.dnix.ipreston.net/application/o/grimmory/`,
+# `https://authentik.<serverDomain>/application/o/grimmory/`,
 # Client ID from `grimmory/oidc_client_id` in sops, and JWKS URL
-# `https://authentik.dnix.ipreston.net/application/o/grimmory/jwks/`.
+# `https://authentik.<serverDomain>/application/o/grimmory/jwks/`.
 { inputs, ... }:
 let
   sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";

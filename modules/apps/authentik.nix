@@ -49,12 +49,18 @@ in
       # symlinkJoin the top-level entries are symlinks back to upstream /
       # our source, so they resolve outside the merged dir and every
       # blueprint apply fails with "Invalid blueprint path".
+      # `@serverDomain@` in any contributed blueprint is rewritten to the
+      # host's serverDomain at merge time. This keeps per-app YAMLs
+      # host-portable instead of baking a single host's domain into
+      # every redirect_uri / meta_launch_url.
       mergedBlueprints = pkgs.runCommandLocal "authentik-blueprints-merged" { } ''
         mkdir -p $out
         cp -rL ${config.services.authentik.authentikComponents.staticWorkdirDeps}/blueprints/. $out/
         cp -rL ${./authentik-blueprints}/. $out/
         ${lib.concatMapStringsSep "\n" (p: "cp -rL ${p}/. $out/") config.myAuthentik.extraBlueprints}
         chmod -R u+w $out
+        find $out -type f -name '*.yaml' -exec \
+          sed -i 's|@serverDomain@|${hostSpec.serverDomain}|g' {} +
       '';
     in
     {

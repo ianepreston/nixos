@@ -25,7 +25,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://grafana.dnix.ipreston.net/login/generic_oauth
+          url: https://grafana.@serverDomain@/login/generic_oauth
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -41,7 +41,7 @@ entries:
       provider: !KeyOf prov-grafana
       group: Infrastructure
       open_in_new_tab: true
-      meta_launch_url: https://grafana.dnix.ipreston.net
+      meta_launch_url: https://grafana.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/grafana.png
       policy_engine_mode: all
 
@@ -63,7 +63,7 @@ entries:
       name: prometheus
     attrs:
       mode: forward_single
-      external_host: https://prometheus.dnix.ipreston.net
+      external_host: https://prometheus.@serverDomain@
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
 
@@ -76,7 +76,7 @@ entries:
       provider: !KeyOf prov-prometheus
       group: Infrastructure
       open_in_new_tab: true
-      meta_launch_url: https://prometheus.dnix.ipreston.net
+      meta_launch_url: https://prometheus.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/prometheus.png
       policy_engine_mode: all
 
@@ -95,7 +95,7 @@ entries:
       name: alertmanager
     attrs:
       mode: forward_single
-      external_host: https://alertmanager.dnix.ipreston.net
+      external_host: https://alertmanager.@serverDomain@
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
 
@@ -108,7 +108,7 @@ entries:
       provider: !KeyOf prov-alertmanager
       group: Infrastructure
       open_in_new_tab: true
-      meta_launch_url: https://alertmanager.dnix.ipreston.net
+      meta_launch_url: https://alertmanager.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/prometheus.png
       policy_engine_mode: all
 

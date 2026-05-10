@@ -20,7 +20,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://miniflux.dnix.ipreston.net/oauth2/oidc/callback
+          url: https://miniflux.@serverDomain@/oauth2/oidc/callback
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -36,7 +36,7 @@ entries:
       provider: !KeyOf prov-miniflux
       group: Users
       open_in_new_tab: true
-      meta_launch_url: https://miniflux.dnix.ipreston.net
+      meta_launch_url: https://miniflux.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/miniflux.png
       policy_engine_mode: all
 

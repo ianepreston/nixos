@@ -19,7 +19,7 @@ entries:
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
       redirect_uris:
         - matching_mode: strict
-          url: https://grimmory.dnix.ipreston.net/oauth2-callback
+          url: https://grimmory.@serverDomain@/oauth2-callback
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
@@ -35,7 +35,7 @@ entries:
       provider: !KeyOf prov-grimmory
       group: Users
       open_in_new_tab: true
-      meta_launch_url: https://grimmory.dnix.ipreston.net
+      meta_launch_url: https://grimmory.@serverDomain@
       meta_icon: https://raw.githubusercontent.com/grimmory-tools/grimmory/main/assets/logo.svg
       policy_engine_mode: all
 

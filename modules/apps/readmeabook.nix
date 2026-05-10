@@ -10,7 +10,7 @@
 #
 # On first boot, complete the local-admin setup wizard, then under
 # Settings → Authentication enable OIDC with Issuer
-# `https://authentik.dnix.ipreston.net/application/o/readmeabook/`,
+# `https://authentik.<serverDomain>/application/o/readmeabook/`,
 # the client_id from `readmeabook/oidc_client_id` in sops, and the
 # client_secret from `readmeabook/oidc_client_secret`. The first OIDC
 # user to land becomes admin; subsequent users default to `user`.
