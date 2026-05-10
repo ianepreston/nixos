@@ -33,6 +33,7 @@
       shelfmark
       sonarr
       tandoor
+      unifi
       watchstate
     ];
   };

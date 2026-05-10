@@ -61,6 +61,11 @@
               default = null;
               description = "Base domain under which this host exposes apps (e.g. \"dnix.ipreston.net\"). Apps compose \"<app>.\${serverDomain}\". null on non-server hosts.";
             };
+            serverLanIp = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Static LAN IPv4 address for this server. Used by apps that need to advertise an L3 address other clients on the same subnet can reach (e.g. UniFi OS Server's inform URL). null on non-server hosts.";
+            };
             isWork = lib.mkOption {
               type = lib.types.bool;
               default = false;
