@@ -16,9 +16,9 @@ _: {
       port = 8090;
     in
     {
-      myAuthentik.forwardAuthApps.mylar3 = {
+      myAuthentik.forwardAuthApps.mylar = {
         inherit port;
-        displayName = "Mylar3";
+        displayName = "Mylar";
         homepage = {
           group = "Acquisition";
           icon = "mylar";

@@ -1,3 +1,4 @@
+---
 version: 1
 metadata:
   name: tandoor
@@ -26,7 +27,6 @@ entries:
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
       issuer_mode: per_provider
-
   - model: authentik_core.application
     id: app-tandoor
     identifiers:
@@ -37,9 +37,8 @@ entries:
       group: Users
       open_in_new_tab: true
       meta_launch_url: https://tandoor.dnix.ipreston.net
-      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/tandoor.png
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/tandoor-recipes.png
       policy_engine_mode: all
-
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf app-tandoor

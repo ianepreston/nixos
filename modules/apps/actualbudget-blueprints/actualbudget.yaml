@@ -1,3 +1,4 @@
+---
 version: 1
 metadata:
   name: actualbudget
@@ -26,7 +27,6 @@ entries:
       refresh_token_validity: days=30
       sub_mode: hashed_user_id
       issuer_mode: per_provider
-
   - model: authentik_core.application
     id: app-actualbudget
     identifiers:
@@ -37,9 +37,8 @@ entries:
       group: Home
       open_in_new_tab: true
       meta_launch_url: https://actualbudget.dnix.ipreston.net
-      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/actual.png
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/actual-budget.png
       policy_engine_mode: all
-
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf app-actualbudget
