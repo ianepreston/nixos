@@ -76,7 +76,7 @@ flake to unstable.
 Stay on the container path when:
 
 - **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3,
-  readmeabook, shelfmark, tandoor, watchstate, grimmory.)
+  readmeabook, shelfarr, tandoor, watchstate, grimmory.)
 - **The container is a fork or variant the nix module doesn't track.**
   Seerr is the seerr-team fork at v3.x; nixpkgs ships jellyseerr.
   They share lineage but aren't drop-in.

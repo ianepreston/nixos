@@ -11,7 +11,7 @@
 # SABNZBD__HOST_WHITELIST_ENTRIES to the .ini on every start; we
 # reproduce that behaviour with a one-shot that patches sabnzbd.ini
 # before sabnzbd.service comes up. The oneshot also pins
-# `host = 0.0.0.0` so co-located containers (e.g. shelfmark) can reach
+# `host = 0.0.0.0` so co-located containers (e.g. shelfarr) can reach
 # sabnzbd via `host.containers.internal:8080` — without that the
 # service binds to 127.0.0.1 only and bridge traffic gets refused at
 # the TCP layer. `host.containers.internal` is whitelisted alongside

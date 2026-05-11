@@ -30,7 +30,7 @@
       readmeabook
       sabnzbd
       seerr
-      shelfmark
+      shelfarr
       sonarr
       tandoor
       unifi
