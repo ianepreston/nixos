@@ -712,25 +712,14 @@ Common operations are automated via `Taskfile.yaml`:
 ### Connecting the target to wifi (minimal ISO)
 
 If the target has no ethernet, get it on wifi before running any bootstrap
-tasks — they all SSH into `DEST`. The minimal ISO ships `wpa_supplicant`
-but no NetworkManager. On the target's TTY:
+tasks — they all SSH into `DEST`. The minimal ISO ships `nmtui`. On the
+target's TTY:
 
 ```bash
-sudo systemctl start wpa_supplicant
-wpa_cli
-scan          # optional: confirm your network is visible
-scan_results  # optional: list identified networks
-add_network
-set_network 0 ssid "MYSSID"
-set_network 0 psk "passphrase"
-enable_network 0
-# Don't run save_config like the Arch wiki suggests — this is nix, and it
-# will still work for this session.
-quit
+sudo nmtui
 ```
 
-Thanks [Arch wiki](https://wiki.archlinux.org/title/Wpa_supplicant), I still
-love you even if I'm running nix now.
+Pick "Activate a connection", select your SSID, enter the passphrase.
 
 ### 1. Create host config files
 
