@@ -176,17 +176,17 @@ Notes:
 
 ## Current Conclusion
 
-**The B650M C V3-Y1 motherboard with IT5701 firmware V4.0.39.2 does not respond to standard RGB Fusion 2 USB protocol commands.**
+**The B650M C V3-Y1 motherboard with IT5701 firmware V4.0.39.2 does not respond to standard RGB Fusion 2 USB protocol commands *from Linux*.** RGB works correctly in Windows on this same hardware, so the controller, firmware, and BIOS are fine — the gap is on the Linux side.
 
 Both OpenRGB and liquidctl can:
 - Detect the device correctly
 - Send HID feature reports successfully
 - Receive firmware version information
 
-But the LEDs never change. This is likely one of:
-1. **Firmware incompatibility** - V4.0.39.2 may use a different protocol
-2. **Hardware issue** - The RGB controller may be malfunctioning
-3. **BIOS setting** - RGB control may need to be enabled in BIOS
+But the LEDs never change. Most likely cause: OpenRGB/liquidctl's RGB Fusion 2 USB driver was written against earlier IT5702 firmware (e.g. `1.0.10.0` per liquidctl's own docs) and doesn't speak the protocol revision shipped on this board. Possible mechanisms:
+1. Wrong report ID / wrong interface for HID feature reports on this firmware
+2. The IT5702 control-endpoint quirk (see "Technical Detail" above) — OpenRGB's HIDIOCSFEATURE path may not be reaching the control endpoint correctly on this revision
+3. A "save/apply" frame that newer firmware now requires and OpenRGB doesn't send
 
 ## Next Steps
 
@@ -194,10 +194,12 @@ But the LEDs never change. This is likely one of:
 2. ~~**Trace actual HID communication**~~: DONE - strace shows HIDIOCSFEATURE calls succeed
 3. ~~**Try liquidctl as root**~~: DONE - Commands succeed but LEDs don't change
 4. ~~**Try all LED channels**~~: DONE - led1/led2 valid but no effect
-5. **Check BIOS for RGB settings**: Look for RGB Fusion or LED control options
-6. **Check if RGB Fusion 2 works on Windows**: Determine if it's Linux-specific
-7. **Research IT5701 firmware V4.0.39.2**: This specific version may have known issues
-8. **File bug report with liquidctl/OpenRGB**: Include firmware version and board model
+5. ~~**Confirm Windows works on this hardware**~~: DONE (2026-05-12) — RGB worked in Windows pre-NixOS install. Rules out brick / BIOS / hardware.
+6. **Skip the firmware flash.** 1.0.1.2 exists but Windows already works, so flashing only adds brick risk (also: wrong-chip flash is what bricked boards in 2024).
+7. **USB packet capture from a Windows session.** Boot a Windows live USB (or spare drive), capture RGB Fusion 2 traffic to the IT5702 with Wireshark + USBPcap, then replay/compare with what OpenRGB sends on Linux. This is the highest-signal step — gives the protocol delta directly.
+8. **Re-test with OpenRGB pipeline build** (post-1.0rc2) before any deeper work — confirms we're not chasing an already-fixed bug. The stable 1.0rc2 release notes don't mention this, but the master branch often has driver tweaks not in tagged releases.
+9. **File a focused bug report** with: firmware version string, packet capture diff (from step 7), board model + revision. Existing #4094 is too vague to be useful.
+10. **Low-effort distractor to deprioritise**: kernel/zen tweaks. Kernel side is fine — `/dev/hidraw9` exists, ioctls succeed, ACLs work. No more kernel patches.
 
 ## Current rgb.nix Configuration
 
@@ -212,6 +214,16 @@ users.users.${hostSpec.username}.extraGroups = [ "i2c" ];
 This is correct for SMBus access, but may need HID group additions.
 
 ## Session Notes
+- 2026-05-12: **CRITICAL CONFIRMATION** — RGB worked correctly in Windows on this exact board *before* the machine was reinstalled with NixOS. That rules out:
+  - Bricked IT5701/IT5702 controller (the Nov 2024 firmware-brick scenario)
+  - Dead hardware
+  - BIOS RGB-disable setting (would have failed in Windows too)
+  This is a **Linux-side problem**, almost certainly in how OpenRGB/liquidctl talk to this specific firmware revision over HID. Working Windows = the protocol *does* work on this board, we're just not speaking it correctly from Linux.
+- 2026-05-12: Research pass for new upstream developments since 2026-04-05:
+  - **OpenRGB**: latest tagged release is **1.0rc2 (2025-09-14)**. Headline change is PawnIO replacing WinRing0 on Windows — Linux-irrelevant. No changelog entry for IT5701/IT5702/RGB Fusion 2 protocol fixes. GitLab #4094 (B650 support) still unresolved, template never completed.
+  - **Gigabyte IT5701/5702 firmware**: a newer **1.0.1.2** package exists (vs the 1.0.0.9 brick-er from Nov 2024). Release notes call out chassis RGB compatibility fixes (Corsair, Cooler Master), RAM RGB compatibility fixes, and **an I2C conflict fix**. The "I2C conflict" item is suggestive but since RGB works in Windows, our installed firmware is not the brick variant — flashing is unnecessary and risky.
+  - **Gigabyte BIOS**: no B650M C V3 BIOS changelog entry found that calls out an RGB fix. Most recent published item was an AMD APU driver dated 2026-01-16.
+  - **OpenRGB note on the version string**: the `V4.0.39.2` OpenRGB reports is the controller's *internal* firmware version over HID, NOT the same numbering scheme as Gigabyte's `1.0.x.y` packaging. You can't tell from that string which Gigabyte firmware package is installed.
 - 2026-04-05: Initial investigation. Found CONFIG_I2C_NCT6775 missing from kernel config. Proposed fix.
 - 2026-04-05: **CORRECTION** - Discovered motherboard uses HID (IT5701 via /dev/hidraw9), NOT SMBus. Secondary SMBus already working. Issue likely HID permissions. Session crashed while checking `/dev/hidraw9` access.
 - 2026-04-05: **HID Permissions are FINE** - User has read/write access to `/dev/hidraw9` via ACLs. OpenRGB verbose output confirms device detected correctly. OpenRGB has `--very-verbose` flag for debug output. Issue is NOT permissions - need to investigate further.
@@ -228,7 +240,10 @@ This is correct for SMBus access, but may need HID group additions.
 - [Zen Kernel Issue #176: OpenRGB piix4 duplicated](https://github.com/zen-kernel/zen-kernel/issues/176)
 - [OpenRGB SMBusAccess.md](https://gitlab.com/CalcProgrammer1/OpenRGB/-/blob/master/Documentation/SMBusAccess.md)
 - [OpenRGB Wiki](https://openrgb-wiki.readthedocs.io/)
+- [OpenRGB releases](https://openrgb.org/releases.html) — latest tagged 1.0rc2 (2025-09-14)
 - [GitLab #4094: B650 Aorus Elite AX not working](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/4094)
 - [GitLab #962: RGBFusion2USB calibration save instruction](https://gitlab.com/CalcProgrammer1/OpenRGB/-/issues/962)
 - [liquidctl #127: RGB Fusion 2 driver - USB control endpoint details](https://github.com/liquidctl/liquidctl/issues/127)
+- [liquidctl Gigabyte RGB Fusion 2 guide](https://github.com/liquidctl/liquidctl/blob/main/docs/gigabyte-rgb-fusion2-guide.md) — references ITE 5702 firmware `1.0.10.0`
 - [Tom's Hardware: IT5701/IT5702 firmware bricking](https://www.tomshardware.com/pc-components/motherboards/gigabytes-latest-rgb-firmware-upgrade-is-bricking-some-motherboards-including-z790-series)
+- [Techspark IT5701/5702 firmware archive (1.0.0.4, 1.0.0.7, 1.0.0.9, 1.0.1.2)](https://www.techspark.de/gigabyte-ite-it5701-5702-firmware-archive/)
