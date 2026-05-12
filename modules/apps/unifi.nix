@@ -44,6 +44,11 @@
 
       services.unifi-os-server = {
         enable = true;
+        # Bypass the upstream module's `package` default, which reads
+        # `pkgs.system` and trips the nixpkgs deprecation warning
+        # ('system' renamed to 'stdenv.hostPlatform.system'). Setting
+        # the option here means the default's body is never evaluated.
+        package = inputs.unifi-os-server.packages.${pkgs.stdenv.hostPlatform.system}.unifi-os-server;
         uosSystemIP = hostSpec.serverLanIp;
         openFirewallUiPort = false;
         openFirewallServicePorts = true;
