@@ -13,5 +13,6 @@ _: {
     ./hpp-1.nix
     ./toshibachromebook.nix
     ./work.nix
+    ./xps13.nix
   ];
 }
