@@ -34,6 +34,7 @@
       sonarr
       tandoor
       unifi
+      valheim
       watchstate
     ];
   };
