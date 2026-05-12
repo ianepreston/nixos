@@ -26,10 +26,7 @@
         motherboard = "amd";
       };
       hardware.i2c.enable = true;
-
-      # Use Zen kernel which has the OpenRGB SMBus patch included
       boot = {
-        kernelPackages = pkgs.linuxPackages_zen;
         kernelModules = [
           "i2c-dev"
           "i2c-piix4"
