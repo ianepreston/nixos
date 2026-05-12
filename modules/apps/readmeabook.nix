@@ -61,10 +61,11 @@ _: {
       virtualisation.oci-containers.containers.readmeabook = {
         # Upstream only publishes `latest` and per-commit `sha-*` tags
         # to ghcr.io (no semver tags despite their GitHub releases), so
-        # we pin to the digest of `latest` at module-update time for
-        # reproducibility. Bump the digest manually when upgrading.
+        # we pin to the digest of `latest` for reproducibility; renovate
+        # tracks `latest` and bumps the digest on its own (see
+        # renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/kikootwo/readmeabook
-        image = "ghcr.io/kikootwo/readmeabook@sha256:dbab6658743053955f1397216337cfe5eef412cbee4bb6e9ab7fbe8a3b5cb09a";
+        image = "ghcr.io/kikootwo/readmeabook:latest@sha256:dbab6658743053955f1397216337cfe5eef412cbee4bb6e9ab7fbe8a3b5cb09a";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/readmeabook/config:/app/config"

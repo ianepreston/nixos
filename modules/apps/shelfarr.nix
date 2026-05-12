@@ -52,9 +52,10 @@ _: {
         # Upstream only publishes `latest`, `main`, `dev`, and per-commit
         # short-SHA tags to ghcr.io despite tagging GitHub releases
         # (0.18.x at module-write time). Pin to the digest of `latest`
-        # for reproducibility and bump manually when upgrading.
+        # for reproducibility; renovate tracks `latest` and bumps the
+        # digest on its own (see renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/pedro-revez-silva/shelfarr
-        image = "ghcr.io/pedro-revez-silva/shelfarr@sha256:53628fa60696b1bc4cf7866332b05e3ba07081bc9bcc86e5212f436e849d791d";
+        image = "ghcr.io/pedro-revez-silva/shelfarr:latest@sha256:53628fa60696b1bc4cf7866332b05e3ba07081bc9bcc86e5212f436e849d791d";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/shelfarr/data:/rails/storage"

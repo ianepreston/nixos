@@ -17,7 +17,15 @@
       "description": "Update Docker image tags in Nix files (image = \"repo:tag\")",
       "managerFilePatterns": ["/\\.nix$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*image\\s*=\\s*\"[^\"]+:(?<currentValue>[^\"]+)\""
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*image\\s*=\\s*\"[^\"]+:(?<currentValue>[^\"@]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update Docker image digests in Nix files (image = \"repo:tag@sha256:...\")",
+      "managerFilePatterns": ["/\\.nix$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*image\\s*=\\s*\"[^\"]+:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]+)\""
       ]
     },
     {
