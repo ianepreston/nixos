@@ -4,7 +4,8 @@
 # Note: The motherboard (Gigabyte B650M) uses HID (IT5701 controller at /dev/hidraw*)
 # rather than SMBus for RGB control. SMBus is used by RAM sticks.
 #
-# See openrgb.md for investigation notes on motherboard RGB not responding.
+# See https://github.com/ianepreston/nixos/issues/111 for investigation notes
+# on motherboard RGB not responding.
 { inputs, ... }:
 {
   flake.modules.nixos.rgb =
