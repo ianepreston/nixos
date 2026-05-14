@@ -10,6 +10,7 @@
 {
   flake.modules.nixos.server = _: {
     imports = with inputs.self.modules.nixos; [
+      apprise
       auto-rebuild
       authentik
       base
