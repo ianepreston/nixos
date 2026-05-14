@@ -1,6 +1,7 @@
 # Sunshine - Simple Aspect
 # Game streaming server
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.sunshine =
     { pkgs, ... }:
     {
@@ -12,5 +13,31 @@ _: {
       environment.systemPackages = with pkgs; [
         gnomeExtensions.sunshinestatus
       ];
+
+      # Keep the session's primary CRTC live so sunshine can capture it even
+      # when the physical monitor is off. Idle-blank would tear it down on
+      # mutter+NVIDIA and leave moonlight clients staring at a black frame.
+      home-manager.sharedModules = [
+        inputs.self.modules.homeManager.sunshine
+      ];
+    };
+
+  # GNOME-specific: disable idle blanking and screen-off-on-AC so the
+  # rendering pipeline keeps running while nobody's at the desk. On a non-
+  # GNOME desktop these keys are simply ignored.
+  flake.modules.homeManager.sunshine =
+    { lib, ... }:
+    with lib.hm.gvariant;
+    {
+      dconf.settings = {
+        "org/gnome/desktop/session" = {
+          idle-delay = mkUint32 0;
+        };
+        "org/gnome/settings-daemon/plugins/power" = {
+          sleep-inactive-ac-type = "nothing";
+          sleep-inactive-ac-timeout = 0;
+          idle-dim = false;
+        };
+      };
     };
 }
