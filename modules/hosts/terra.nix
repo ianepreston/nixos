@@ -56,6 +56,13 @@
           networkmanager.enable = true;
         };
 
+        # Pin sunshine capture to the headless HDMI dummy plug so streaming
+        # works regardless of the real monitor (DP-4) being awake.
+        # output_name is a numeric index from sunshine's KMS monitor list,
+        # not a connector name — check with `journalctl --user -u sunshine`
+        # for "Monitor N is <name>" lines if the dummy ever moves ports.
+        services.sunshine.settings.output_name = "0";
+
         system.stateVersion = "25.05";
       }
     ];
