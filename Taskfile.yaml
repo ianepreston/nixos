@@ -289,6 +289,7 @@ tasks:
 
         # Create host secrets file with a generated SSH key
         host_secrets="$secrets_dir/sops/${host}.yaml"
+        host_pubkey="$git_root/modules/profiles/_ssh-keys/id_${host}.pub"
         if [ -f "$host_secrets" ]; then
           echo -e "\x1B[33m[~] $host_secrets already exists — skipping\x1B[0m"
         else
@@ -299,6 +300,10 @@ tasks:
           printf 'ssh:\n    ed25519: |\n' > "$host_secrets"
           sed 's/^/        /' "$temp/id_ed25519" >> "$host_secrets"
           sops --config "$sops_yaml" --encrypt --in-place "$host_secrets"
+
+          echo -e "\x1B[32m[+] Saving public key to $host_pubkey\x1B[0m"
+          install -m644 "$temp/id_ed25519.pub" "$host_pubkey"
+          git -C "$git_root" add "$host_pubkey"
         fi
 
         # Re-encrypt shared secrets for the new host

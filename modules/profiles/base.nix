@@ -5,8 +5,9 @@
 # Hosts import this module to get essential NixOS configuration
 { inputs, ... }:
 let
+  sshKeysDir = ./_ssh-keys;
   pubKeys = builtins.attrValues (
-    builtins.mapAttrs (name: _: builtins.readFile ./_ssh-keys/${name}) (builtins.readDir ./_ssh-keys)
+    builtins.mapAttrs (name: _: builtins.readFile "${sshKeysDir}/${name}") (builtins.readDir sshKeysDir)
   );
 in
 {
@@ -126,13 +127,21 @@ in
         # Create the user entry - sharedModules will provide the actual config
         users.${hostSpec.username} = { };
         sharedModules = [
-          {
-            home = {
-              username = lib.mkDefault hostSpec.username;
-              homeDirectory = lib.mkDefault hostSpec.home;
-              stateVersion = lib.mkDefault "23.05";
-            };
-          }
+          (
+            let
+              hostPubKey = "${sshKeysDir}/id_${hostSpec.hostName}.pub";
+            in
+            {
+              home = {
+                username = lib.mkDefault hostSpec.username;
+                homeDirectory = lib.mkDefault hostSpec.home;
+                stateVersion = lib.mkDefault "23.05";
+                file = lib.optionalAttrs (builtins.pathExists hostPubKey) {
+                  ".ssh/id_ed25519.pub".source = hostPubKey;
+                };
+              };
+            }
+          )
         ];
       };
     };
