@@ -34,6 +34,7 @@ in
       environment.systemPackages = with pkgs; [
         openssh
         vim
+        neovim
         git
         curl
         wget

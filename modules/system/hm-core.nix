@@ -13,7 +13,6 @@ _: {
       imports = [
         ./_hm-core/direnv.nix
         ./_hm-core/git.nix
-        ./_hm-core/neovim.nix
         ./_hm-core/packages.nix
         ./_hm-core/starship.nix
         ./_hm-core/zsh.nix

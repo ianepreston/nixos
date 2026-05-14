@@ -23,6 +23,7 @@
       comms
       ghostty
       media
+      neovim
     ];
   };
 }

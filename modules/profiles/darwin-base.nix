@@ -45,8 +45,9 @@
           inherit inputs hostSpec;
         };
         users.${hostSpec.username} = { };
-        sharedModules = [
-          inputs.self.modules.homeManager.core
+        sharedModules = with inputs.self.modules.homeManager; [
+          core
+          neovim
           {
             home = {
               inherit (hostSpec) username;
