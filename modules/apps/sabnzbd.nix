@@ -18,12 +18,25 @@
 # the public FQDN for the same reason.
 _: {
   flake.modules.nixos.sabnzbd =
-    { hostSpec, ... }:
+    {
+      config,
+      hostSpec,
+      ...
+    }:
     let
       port = 8080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = "server-${hostSpec.serverEnvironment}";
       iniFile = "/var/lib/sabnzbd/sabnzbd.ini";
+      serverUid = config.users.users.${sabnzbdUser}.uid;
+      serverGid = config.users.groups.servers.gid;
+      appriseConfigDir = "/var/lib/containers/apprise/config";
+      appriseConfigFile = "${appriseConfigDir}/sabnzbd.yml";
+      # Apprise URL pointing the local apprise lib at our apprise-api
+      # container under the `sabnzbd` stateful key; apprise-api fans
+      # this out to whatever URLs sabnzbd.yml lists (currently the
+      # shared discord alerts webhook).
+      appriseUrl = "apprise://localhost:8002/sabnzbd";
     in
     {
       myAuthentik.forwardAuthApps.sabnzbd = {
@@ -44,6 +57,41 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
+      # Apprise notifications. sabnzbd's bundled apprise library posts
+      # to our apprise-api container under the `sabnzbd` stateful key;
+      # apprise-api itself reads /config/sabnzbd.yml (rendered below)
+      # to decide where to fan out. Wiring lives here, not in
+      # apprise.nix, so the destination travels with sabnzbd's module
+      # and apprise stays unaware of who its consumers are.
+      sops.templates."apprise-sabnzbd.env" = {
+        content = ''
+          DISCORD_WEBHOOK=${config.sops.placeholder."discord/alerts_webhook"}
+        '';
+        restartUnits = [ "apprise-sabnzbd-config.service" ];
+      };
+
+      systemd.services.apprise-sabnzbd-config = {
+        description = "Render apprise stateful config for sabnzbd";
+        wantedBy = [ "multi-user.target" ];
+        before = [ "podman-apprise.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          EnvironmentFile = config.sops.templates."apprise-sabnzbd.env".path;
+        };
+        script = ''
+          set -e
+          install -d -m 0750 -o ${toString serverUid} -g ${toString serverGid} ${appriseConfigDir}
+          umask 027
+          cat > ${appriseConfigFile} <<EOF
+          urls:
+            - $DISCORD_WEBHOOK
+          EOF
+          chown ${toString serverUid}:${toString serverGid} ${appriseConfigFile}
+          chmod 0640 ${appriseConfigFile}
+        '';
+      };
+
       # Reapplies host + host_whitelist on every start (idempotent),
       # matching what the home-operations entrypoint used to do via
       # SABNZBD__HOST_WHITELIST_ENTRIES. Creates a minimal [misc] block
@@ -59,31 +107,42 @@ _: {
         script = ''
           set -e
           ini=${iniFile}
-          # Scope substitution to the [misc] section — sabnzbd's
-          # `[servers]` subsections also use `host = …` (the upstream
-          # usenet provider), and an unscoped sed would overwrite
-          # those.
+          # Scope substitution to one section — sabnzbd's `[servers]`
+          # subsections also use `host = …` (the upstream usenet
+          # provider), and an unscoped sed would overwrite those.
           pin_kv() {
-            key=$1
-            val=$2
-            if sed -n '/^\[misc\]/,/^\[/p' "$ini" | grep -q "^$key *="; then
-              sed -i "/^\[misc\]/,/^\[/{s|^$key *=.*|$key = $val|}" "$ini"
+            section=$1
+            key=$2
+            val=$3
+            if sed -n "/^\[$section\]/,/^\[/p" "$ini" | grep -q "^$key *="; then
+              sed -i "/^\[$section\]/,/^\[/{s|^$key *=.*|$key = $val|}" "$ini"
             else
-              sed -i "/^\[misc\]/a $key = $val" "$ini"
+              sed -i "/^\[$section\]/a $key = $val" "$ini"
+            fi
+          }
+          ensure_section() {
+            section=$1
+            if ! grep -q "^\[$section\]" "$ini"; then
+              printf '\n[%s]\n' "$section" >> "$ini"
             fi
           }
           if [ -f "$ini" ]; then
-            if ! grep -q '^\[misc\]' "$ini"; then
-              printf '\n[misc]\n' >> "$ini"
-            fi
-            pin_kv host 0.0.0.0
-            pin_kv host_whitelist '${sabnzbdHost},host.containers.internal'
+            ensure_section misc
+            pin_kv misc host 0.0.0.0
+            pin_kv misc host_whitelist '${sabnzbdHost},host.containers.internal'
+            ensure_section apprise
+            pin_kv apprise apprise_enable 1
+            pin_kv apprise apprise_urls '${appriseUrl}'
           else
             install -d -m 0750 -o ${sabnzbdUser} -g servers /var/lib/sabnzbd
             cat > "$ini" <<EOF
           [misc]
           host = 0.0.0.0
           host_whitelist = ${sabnzbdHost},host.containers.internal
+
+          [apprise]
+          apprise_enable = 1
+          apprise_urls = ${appriseUrl}
           EOF
             chown ${sabnzbdUser}:servers "$ini"
             chmod 0640 "$ini"
