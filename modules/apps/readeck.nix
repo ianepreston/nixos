@@ -81,6 +81,10 @@ in
         READECK_AUTH_FORWARDED_PROVISIONING = "true";
       };
 
-      services.restic.backups.server.paths = [ "/var/lib/readeck" ];
+      # DynamicUser: real state lives at /var/lib/private/readeck;
+      # /var/lib/readeck is the symlink systemd recreates each boot.
+      # Restic doesn't follow symlinks, so backing up /var/lib/readeck
+      # captures only the link, not the data.
+      services.restic.backups.server.paths = [ "/var/lib/private/readeck" ];
     };
 }

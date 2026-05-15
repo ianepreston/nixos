@@ -80,6 +80,13 @@ in
           }) sopsSecretNames
         );
 
+        # Authentik uses DynamicUser; real on-disk state (UI-uploaded
+        # icons, certs, branding assets) lives at /var/lib/private/authentik.
+        # Postgres dump covers blueprint-managed objects; this is the
+        # gap closer. Restic doesn't follow symlinks, so /var/lib/authentik
+        # (a symlink) would capture only the link. Closes #120.
+        services.restic.backups.server.paths = [ "/var/lib/private/authentik" ];
+
         sops.templates."authentik.env" = {
           content = ''
             AUTHENTIK_SECRET_KEY=${config.sops.placeholder."authentik/secret_key"}

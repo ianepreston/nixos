@@ -68,7 +68,11 @@ _: {
         };
       };
 
-      services.restic.backups.server.paths = [ "/var/lib/mealie" ];
+      # DynamicUser: real state lives at /var/lib/private/mealie;
+      # /var/lib/mealie is just the symlink systemd recreates each boot.
+      # Restic doesn't follow symlinks, so backing up /var/lib/mealie
+      # captures only the link, not the data.
+      services.restic.backups.server.paths = [ "/var/lib/private/mealie" ];
 
       myCaddy.apps.mealie = {
         host = mealieHost;
