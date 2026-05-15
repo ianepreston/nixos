@@ -9,6 +9,27 @@
         enable = true;
         capSysAdmin = true;
         openFirewall = true;
+        applications = {
+          env.PATH = "$(PATH):$(HOME)/.local/bin";
+          apps = [
+            {
+              name = "Desktop";
+              image-path = "desktop.png";
+            }
+            {
+              # `steam -bigpicture` (the CLI flag) launches BPM directly,
+              # unlike the `steam://open/bigpicture` URL handler the upstream
+              # default uses — which silently no-ops if steam wasn't already
+              # running and the URI dispatch lost the race. Detached so
+              # sunshine streams the desktop independently of steam's
+              # lifetime; gamescope wrapping is unworkable nested in
+              # mutter+NVIDIA today (see issue #117).
+              name = "Steam Big Picture";
+              detached = [ "steam -bigpicture" ];
+              image-path = "steam.png";
+            }
+          ];
+        };
       };
       environment.systemPackages = with pkgs; [
         gnomeExtensions.sunshinestatus
