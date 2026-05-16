@@ -22,7 +22,7 @@
 
       services.postgresql = {
         enable = true;
-        package = pkgs.postgresql_17;
+        package = pkgs.postgresql_18;
         enableTCPIP = true;
 
         # Peer auth for native services on the Unix socket; scram for TCP.

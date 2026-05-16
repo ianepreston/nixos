@@ -106,7 +106,19 @@ in
         };
       };
 
-      preservation.preserveAt."/persist".directories = [ dataDir ];
+      # Preservation defaults the bind-mount root to root:root mode
+      # 0755, but paperless runs its data-dir writability check at
+      # startup (django framework check) and fails if the top-level
+      # dir isn't owned by the paperless user — subdirs being owned
+      # correctly isn't enough. Match the service user/group.
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = dataDir;
+          user = "paperless";
+          group = "paperless";
+          mode = "0700";
+        }
+      ];
 
       services.restic.backups.server.paths = [ dataDir ];
 
