@@ -5,6 +5,12 @@
 # /mnt/<otherEnv>-content / /mnt/<otherEnv>-backups for migrations or
 # copies. UID/GID-based access control on the NAS (server-dev 1029,
 # server-prod 1030, group servers 65536) decides who can actually write.
+#
+# TODO #151: the dev/prod environment set is duplicated between this
+# module (contentByEnv / backupsByEnv) and server-users.nix (uidByEnv).
+# Consolidate the per-environment metadata in one place so adding a
+# third environment is a one-file change. See issue #151 for the
+# broader assertion-layer cleanup this rides alongside.
 _: {
   flake.modules.nixos.nfsclient =
     { hostSpec, ... }:
