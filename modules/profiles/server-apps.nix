@@ -28,6 +28,7 @@
       radarr
       readeck
       readmeabook
+      recyclarr
       sabnzbd
       seerr
       shelfarr
