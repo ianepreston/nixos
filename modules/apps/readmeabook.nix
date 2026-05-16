@@ -65,7 +65,7 @@ _: {
         # tracks `latest` and bumps the digest on its own (see
         # renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/kikootwo/readmeabook
-        image = "ghcr.io/kikootwo/readmeabook:latest@sha256:dbab6658743053955f1397216337cfe5eef412cbee4bb6e9ab7fbe8a3b5cb09a";
+        image = "ghcr.io/kikootwo/readmeabook:latest@sha256:7e061bea2611bf5314758b33ee86882a92b887e06fdc527964f54b643e0fdff0";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/readmeabook/config:/app/config"
