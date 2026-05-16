@@ -14,6 +14,7 @@
       bazarr
       grimmory
       homeassistant
+      immich
       jellyfin
       kapowarr
       kavita
