@@ -37,6 +37,8 @@ _: {
       # the restic snapshot. listOf merges via concat so the existing
       # /var/backup/postgresql + /var/lib/containers paths from
       # modules/system/server-backups.nix stay intact.
+      preservation.preserveAt."/persist".directories = [ "/var/lib/jellyfin" ];
+
       services.restic.backups.server.paths = [
         "/var/lib/jellyfin"
         sqliteBackupDir

@@ -22,6 +22,7 @@
       observability
       oci-containers
       postgresql
+      preservation-server
       server-backups
       server-users
       sops

@@ -85,6 +85,7 @@ in
         # Postgres dump covers blueprint-managed objects; this is the
         # gap closer. Restic doesn't follow symlinks, so /var/lib/authentik
         # (a symlink) would capture only the link. Closes #120.
+        preservation.preserveAt."/persist".directories = [ "/var/lib/private/authentik" ];
         services.restic.backups.server.paths = [ "/var/lib/private/authentik" ];
 
         sops.templates."authentik.env" = {

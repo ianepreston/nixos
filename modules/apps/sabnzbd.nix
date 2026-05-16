@@ -55,6 +55,8 @@ _: {
         group = "servers";
       };
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/sabnzbd" ];
+
       services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
       # Apprise notifications. sabnzbd's bundled apprise library posts

@@ -29,6 +29,8 @@ _: {
       # /var/lib/prowlarr is the symlink systemd recreates each boot.
       # Restic doesn't follow symlinks, so backing up /var/lib/prowlarr
       # captures only the link, not the data.
+      preservation.preserveAt."/persist".directories = [ "/var/lib/private/prowlarr" ];
+
       services.restic.backups.server.paths = [ "/var/lib/private/prowlarr" ];
     };
 }

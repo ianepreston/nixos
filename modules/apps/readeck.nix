@@ -85,6 +85,8 @@ in
       # /var/lib/readeck is the symlink systemd recreates each boot.
       # Restic doesn't follow symlinks, so backing up /var/lib/readeck
       # captures only the link, not the data.
+      preservation.preserveAt."/persist".directories = [ "/var/lib/private/readeck" ];
+
       services.restic.backups.server.paths = [ "/var/lib/private/readeck" ];
     };
 }

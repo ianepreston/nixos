@@ -82,9 +82,10 @@ tasks:
     vars:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+      IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
     cmds:
       - task: bootstrap:install
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}' }
       - |
         echo ""
         echo "===  Installation complete. Waiting for target to reboot.  ==="
@@ -106,9 +107,10 @@ tasks:
     vars:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+      IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
     cmds:
       - task: bootstrap:install
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}' }
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}' }
       - |
         echo ""
         echo "===  Installation complete. Waiting for target to reboot.  ==="
@@ -126,6 +128,12 @@ tasks:
     vars:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+      # For hosts using preservation-server (impermanent root), also
+      # seed the SSH host key into /persist/etc/ssh/ so that on first
+      # reboot — when @root is rolled back and preservation bind-mounts
+      # /persist/etc/ssh/* over /etc/ssh/* — sshd finds a real key.
+      # Default off; opt in per host with IMPERMANENT=true.
+      IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
     cmds:
       - |
         set -euo pipefail
@@ -150,6 +158,14 @@ tasks:
         install -d -m755 "$temp/etc/ssh"
         ssh-keygen -t ed25519 -f "$temp/etc/ssh/ssh_host_ed25519_key" -C "root@{{.HOST}}" -N ""
         chmod 600 "$temp/etc/ssh/ssh_host_ed25519_key"
+
+        if [ "{{.IMPERMANENT}}" = "true" ]; then
+          echo -e "\x1B[32m[+] IMPERMANENT=true — also seeding /persist/etc/ssh/\x1B[0m"
+          install -d -m755 "$temp/persist/etc/ssh"
+          cp "$temp/etc/ssh/ssh_host_ed25519_key" "$temp/persist/etc/ssh/ssh_host_ed25519_key"
+          cp "$temp/etc/ssh/ssh_host_ed25519_key.pub" "$temp/persist/etc/ssh/ssh_host_ed25519_key.pub"
+          chmod 600 "$temp/persist/etc/ssh/ssh_host_ed25519_key"
+        fi
 
         luks_args=""
         if [ -n "{{.LUKS_PASS}}" ]; then

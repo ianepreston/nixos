@@ -57,6 +57,8 @@ _: {
       # the file owner.
       users.users.${kavitaUser}.group = lib.mkForce "servers";
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/kavita" ];
+
       services.restic.backups.server.paths = [ "/var/lib/kavita" ];
 
       systemd.services.kavita-token-init = {

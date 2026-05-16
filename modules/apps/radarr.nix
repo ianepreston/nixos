@@ -24,6 +24,8 @@ _: {
         group = "servers";
       };
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/radarr" ];
+
       services.restic.backups.server.paths = [ "/var/lib/radarr" ];
     };
 }

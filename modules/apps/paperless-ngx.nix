@@ -106,6 +106,8 @@ in
         };
       };
 
+      preservation.preserveAt."/persist".directories = [ dataDir ];
+
       services.restic.backups.server.paths = [ dataDir ];
 
       # paperless-web persists its secret key into the data dir and

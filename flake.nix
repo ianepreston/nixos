@@ -60,5 +60,11 @@
     # here — the package is a self-contained image extraction that
     # doesn't share a closure with the host pkgs anyway.
     unifi-os-server.url = "github:rcambrj/unifi-os-server";
+    # Declarative state preservation across ephemeral root reboots.
+    # See modules/system/preservation-server.nix and the server hosts'
+    # disko configs (btrfs blank-snapshot rollback in initrd).
+    preservation = {
+      url = "github:nix-community/preservation";
+    };
   };
 }

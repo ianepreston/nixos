@@ -53,6 +53,8 @@ _: {
         serviceConfig.EnvironmentFile = [ config.sops.templates."komga.env".path ];
       };
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/komga" ];
+
       services.restic.backups.server.paths = [ "/var/lib/komga" ];
 
       myCaddy.apps.komga = {

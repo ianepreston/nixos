@@ -24,6 +24,8 @@ _: {
         group = "servers";
       };
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/sonarr" ];
+
       services.restic.backups.server.paths = [ "/var/lib/sonarr" ];
     };
 }

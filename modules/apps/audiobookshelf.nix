@@ -32,6 +32,8 @@ _: {
         inherit port;
       };
 
+      preservation.preserveAt."/persist".directories = [ "/var/lib/audiobookshelf" ];
+
       services.restic.backups.server.paths = [ "/var/lib/audiobookshelf" ];
 
       myCaddy.apps.audiobookshelf = {

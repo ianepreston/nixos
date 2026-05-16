@@ -72,6 +72,8 @@ _: {
       # /var/lib/mealie is just the symlink systemd recreates each boot.
       # Restic doesn't follow symlinks, so backing up /var/lib/mealie
       # captures only the link, not the data.
+      preservation.preserveAt."/persist".directories = [ "/var/lib/private/mealie" ];
+
       services.restic.backups.server.paths = [ "/var/lib/private/mealie" ];
 
       myCaddy.apps.mealie = {
