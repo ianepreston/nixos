@@ -1,0 +1,95 @@
+---
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to avoid wasting minutes when
+# pushing rapid follow-ups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake-check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Set up Magic Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      # nix-secrets is a private flake input fetched via git+https from
+      # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
+      # key (read-only) registered on that repo to authenticate, and
+      # rewrite https → ssh so nix's git fetcher picks up the agent.
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+
+      - name: Rewrite github.com https → ssh for nix-secrets fetch
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+      - name: nix flake check
+        run: nix flake check --all-systems --no-build
+
+  build:
+    name: build ${{ matrix.host }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Surface every failing host on a single PR rather than bailing
+      # on the first red.
+      fail-fast: false
+      matrix:
+        host: [luna, terra, toshibachromebook, hpp-1, testvm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up runner disk
+        run: |
+          # GHA runners default to ~14G free; closures for full server
+          # hosts (hpp-1) can blow that out. Drop preinstalled SDKs we
+          # don't need for nix builds.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          df -h
+
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Set up Magic Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+
+      - name: Rewrite github.com https → ssh for nix-secrets fetch
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+      - name: Build ${{ matrix.host }}
+        run: |
+          nix build \
+            --print-build-logs \
+            ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
