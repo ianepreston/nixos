@@ -364,3 +364,238 @@ tasks:
         echo -e "\x1B[32m[+] Rebuilding {{.HOST}} on {{.DEST}}\x1B[0m"
         ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
           "cd src/nixos && sudo nixos-rebuild switch --flake .#{{.HOST}} --override-input nix-secrets path:../nix-secrets"
+
+  # ---------------------------------------------------------------------------
+  # verify:restore — quarterly restic restore drill (issue #135)
+  # ---------------------------------------------------------------------------
+  # WHAT THIS DOES
+  #   End-to-end exercise of the README "Restore runbook" against a throwaway
+  #   target. Confirms last night's restic snapshot is actually replayable
+  #   into a working app, covering the three app shapes in this repo:
+  #
+  #     - containerized + postgres : mealie    (volume + db)
+  #     - DynamicUser 12-factor    : miniflux  (db only)
+  #     - SQLite-quiesce native    : jellyfin  (live tree + staged .db)
+  #
+  #   Steps:
+  #     1. Reinstall HOST via nixos-anywhere (bootstrap:reinstall).
+  #     2. Mount the SOURCE_HOST restic repo (NFS share at
+  #        /mnt/backups/restic/<SOURCE_HOST>).
+  #     3. Run each per-app restore exactly as documented in the README.
+  #     4. Assert HTTP 200 against the upstream port of each app
+  #        (localhost:9925 / localhost:8089 / localhost:8096). Caddy isn't
+  #        asserted because that needs LAN DNS for *.<serverDomain> to
+  #        resolve onto the testvm — verifying the upstream is what
+  #        proves the restore worked.
+  #
+  # WHEN TO RUN
+  #   Quarterly. Calendar reminder, not a systemd timer — restic restores
+  #   are destructive on the target and the operator should be watching.
+  #
+  # PREREQUISITES
+  #   - HOST must be a host that imports `server` + `server-apps` so that
+  #     the mealie / miniflux / jellyfin modules (and the postgres
+  #     cluster they depend on) are actually present. The repo's testvm
+  #     host is intentionally minimal; before running this drill, either
+  #     temporarily expand modules/hosts/testvm.nix to import those
+  #     profiles, or aim HOST at a separate sacrificial server.
+  #   - SOURCE_HOST is a live server whose restic repo is reachable from
+  #     the target via the NFS-mounted backup share (same /mnt/backups
+  #     layout used by services.restic.backups.server). The drill replays
+  #     `latest` from that repo.
+  #   - LAN reachability from your workstation to DEST on SSH_PORT.
+  #
+  # USAGE
+  #   task verify:restore HOST=testvm DEST=192.168.10.50 SOURCE_HOST=hpp-1
+  #
+  # TEARDOWN
+  #   The target is left running so you can poke at it post-drill. To
+  #   reclaim, just destroy/reimage the VM — there's no cleanup step in
+  #   the task itself.
+
+  verify:restore:
+    desc: Quarterly restic restore drill — reinstall HOST, restore mealie/miniflux/jellyfin from SOURCE_HOST's repo, assert HTTP 200
+    requires:
+      vars: [HOST, DEST, SOURCE_HOST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      LUKS_PASS: '{{.LUKS_PASS | default ""}}'
+      IMPERMANENT: '{{.IMPERMANENT | default "true"}}'
+    cmds:
+      - task: bootstrap:reinstall
+        vars:
+          HOST: '{{.HOST}}'
+          DEST: '{{.DEST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          LUKS_PASS: '{{.LUKS_PASS}}'
+          IMPERMANENT: '{{.IMPERMANENT}}'
+      - task: verify:restore:mealie
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', TARGET_USER: '{{.TARGET_USER}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: verify:restore:miniflux
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', TARGET_USER: '{{.TARGET_USER}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: verify:restore:jellyfin
+        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', TARGET_USER: '{{.TARGET_USER}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - |
+        echo ""
+        echo -e "\x1B[32m========================================================\x1B[0m"
+        echo -e "\x1B[32m  Restore drill PASSED for {{.HOST}} from {{.SOURCE_HOST}}\x1B[0m"
+        echo -e "\x1B[32m  All three app shapes restored cleanly and returned 200.\x1B[0m"
+        echo -e "\x1B[32m========================================================\x1B[0m"
+
+  verify:restore:mealie:
+    desc: Restore mealie (containerized + postgres shape) and assert HTTP 200
+    requires:
+      vars: [HOST, DEST, SOURCE_HOST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring mealie on {{.HOST}} from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<'EOF'
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+
+        echo "[+] Stopping mealie unit"
+        systemctl stop mealie.service || true
+
+        echo "[+] Restoring /var/lib/mealie from latest snapshot"
+        restic -r "$REPO" --password-file "$PASS_FILE" \
+          restore latest --target / --include /var/lib/mealie
+
+        echo "[+] Restoring /var/backup/postgresql from latest snapshot"
+        restic -r "$REPO" --password-file "$PASS_FILE" \
+          restore latest --target / --include /var/backup/postgresql
+
+        echo "[+] Replaying mealie database from pg_dumpall"
+        sudo -u postgres dropdb --if-exists mealie
+        sudo -u postgres createdb -O mealie mealie
+        zcat /var/backup/postgresql/all.sql.gz | awk '
+          /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "mealie"); next }
+          in_target { print }
+        ' | sudo -u postgres psql -v ON_ERROR_STOP=1 mealie
+
+        echo "[+] Starting mealie"
+        systemctl start mealie.service
+        EOF
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Asserting HTTP 200 on mealie upstream\x1B[0m"
+        ssh -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} '
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            code=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:9925/ || true)
+            if [ "$code" = "200" ]; then echo "mealie: 200 OK"; exit 0; fi
+            sleep 2
+          done
+          echo "mealie: did not return 200 within 60s (last code: $code)"; exit 1
+        '
+
+  verify:restore:miniflux:
+    desc: Restore miniflux (DynamicUser + postgres shape) and assert HTTP 200
+    requires:
+      vars: [HOST, DEST, SOURCE_HOST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring miniflux on {{.HOST}} from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<'EOF'
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+
+        echo "[+] Stopping miniflux unit"
+        systemctl stop miniflux.service || true
+
+        # /var/backup/postgresql was already restored as part of the mealie
+        # leg in the same drill run, but re-pull it here so this subtask is
+        # independently runnable.
+        echo "[+] Restoring /var/backup/postgresql from latest snapshot"
+        restic -r "$REPO" --password-file "$PASS_FILE" \
+          restore latest --target / --include /var/backup/postgresql
+
+        echo "[+] Replaying miniflux database from pg_dumpall"
+        sudo -u postgres dropdb --if-exists miniflux
+        sudo -u postgres createdb -O miniflux miniflux
+        zcat /var/backup/postgresql/all.sql.gz | awk '
+          /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "miniflux"); next }
+          in_target { print }
+        ' | sudo -u postgres psql -v ON_ERROR_STOP=1 miniflux
+
+        echo "[+] Starting miniflux"
+        systemctl start miniflux.service
+        EOF
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Asserting HTTP 200 on miniflux upstream\x1B[0m"
+        ssh -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} '
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            # miniflux returns 302 -> /login (or OIDC redirect) when healthy;
+            # accept any 2xx/3xx as evidence the binary is up.
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8089/healthcheck || true)
+            if [ "$code" = "200" ]; then echo "miniflux: 200 OK"; exit 0; fi
+            sleep 2
+          done
+          echo "miniflux: did not return 200 within 60s (last code: $code)"; exit 1
+        '
+
+  verify:restore:jellyfin:
+    desc: Restore jellyfin (SQLite-quiesce native shape) and assert HTTP 200
+    requires:
+      vars: [HOST, DEST, SOURCE_HOST]
+    vars:
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring jellyfin on {{.HOST}} from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<'EOF'
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+
+        echo "[+] Stopping jellyfin unit"
+        systemctl stop jellyfin.service || true
+
+        echo "[+] Restoring /var/lib/jellyfin and /var/backup/sqlite/jellyfin from latest snapshot"
+        restic -r "$REPO" --password-file "$PASS_FILE" \
+          restore latest --target / \
+          --include /var/lib/jellyfin \
+          --include /var/backup/sqlite/jellyfin
+
+        # The live SQLite file may have been torn mid-write inside the
+        # snapshot; the staged copy from sqlite-quiesce is the authoritative
+        # one. Match owner/group to whichever server-env user exists on
+        # the host (server-dev on dev hosts, server-prod on prod).
+        SERVER_USER=$(getent passwd server-prod >/dev/null && echo server-prod || echo server-dev)
+        echo "[+] Swapping live jellyfin.db for staged copy (owner: $SERVER_USER)"
+        install -o "$SERVER_USER" -g servers -m 0640 \
+          /var/backup/sqlite/jellyfin/jellyfin.db \
+          /var/lib/jellyfin/data/jellyfin.db
+
+        echo "[+] Starting jellyfin"
+        systemctl start jellyfin.service
+        EOF
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Asserting HTTP 200 on jellyfin upstream\x1B[0m"
+        ssh -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} '
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            code=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:8096/health || true)
+            if [ "$code" = "200" ]; then echo "jellyfin: 200 OK"; exit 0; fi
+            sleep 2
+          done
+          echo "jellyfin: did not return 200 within 120s (last code: $code)"; exit 1
+        '
