@@ -23,13 +23,12 @@ _: {
         appRestartUnit = "podman-actualbudget.service";
         clientIdVar = "ACTUAL_OPENID_CLIENT_ID";
         clientSecretVar = "ACTUAL_OPENID_CLIENT_SECRET";
+        displayName = "Actual Budget";
         homepage = {
           group = "Home";
           icon = "actual-budget";
           description = "Personal finance";
         };
-        homepageDisplayName = "Actual Budget";
-        homepageHref = "https://${actualHost}";
       };
 
       systemd.tmpfiles.rules = [

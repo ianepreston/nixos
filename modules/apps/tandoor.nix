@@ -53,13 +53,12 @@ in
             config.sops.placeholder."tandoor/oidc_client_secret"
           }","settings":{"server_url":"https://${authentikHost}/application/o/tandoor/.well-known/openid-configuration"}}]}}
         '';
+        displayName = "Tandoor";
         homepage = {
           group = "Home";
           icon = "tandoor-recipes";
           description = "Recipe manager";
         };
-        homepageDisplayName = "Tandoor";
-        homepageHref = "https://${tandoorHost}";
       };
 
       systemd.tmpfiles.rules = [

@@ -136,6 +136,14 @@ in
             type = lib.types.str;
             description = "Short blurb shown beneath the app on the homepage tile.";
           };
+          weight = lib.mkOption {
+            type = lib.types.nullOr lib.types.int;
+            default = null;
+            description = ''
+              Sort weight within the group (lower renders first). Null
+              defers to the homepage tile default (0).
+            '';
+          };
         };
       });
 
@@ -384,6 +392,22 @@ in
                       via `extraEnvLines`.
                     '';
                   };
+                  displayName = lib.mkOption {
+                    type = lib.types.str;
+                    default = name;
+                    description = ''
+                      Human-facing app name (homepage tile label).
+                      Defaults to the attribute name.
+                    '';
+                  };
+                  href = lib.mkOption {
+                    type = lib.types.str;
+                    default = "https://${name}.${hostSpec.serverDomain}";
+                    description = ''
+                      Homepage tile target URL. Defaults to
+                      `https://<name>.<serverDomain>`.
+                    '';
+                  };
                   homepage = lib.mkOption {
                     type = lib.types.nullOr homepageSubmodule;
                     default = null;
@@ -391,16 +415,6 @@ in
                       Homepage tile metadata. Set to null (default) to
                       skip generating a tile.
                     '';
-                  };
-                  homepageDisplayName = lib.mkOption {
-                    type = lib.types.str;
-                    default = name;
-                    description = "Tile label. Defaults to the attribute name.";
-                  };
-                  homepageHref = lib.mkOption {
-                    type = lib.types.str;
-                    default = "https://${name}.${hostSpec.serverDomain}";
-                    description = "Tile target URL. Defaults to <name>.<serverDomain>.";
                   };
                 };
               }
@@ -430,11 +444,15 @@ in
                 '';
           }) fwApps;
 
-          myHomepage.tiles = lib.mapAttrs (_name: app: {
-            inherit (app.homepage) group icon description;
-            inherit (app) displayName;
-            href = "https://${app.host}";
-          }) (lib.filterAttrs (_: app: app.homepage != null) fwApps);
+          myHomepage.tiles = lib.mapAttrs (
+            _name: app:
+            {
+              inherit (app.homepage) group icon description;
+              inherit (app) displayName;
+              href = "https://${app.host}";
+            }
+            // lib.optionalAttrs (app.homepage.weight != null) { inherit (app.homepage) weight; }
+          ) (lib.filterAttrs (_: app: app.homepage != null) fwApps);
         })
 
         (lib.mkIf (oidcApps != { }) {
@@ -490,11 +508,14 @@ in
 
           myAuthentik.extraBlueprints = lib.mapAttrsToList (_: app: app.blueprintsDir) oidcApps;
 
-          myHomepage.tiles = lib.mapAttrs (_name: app: {
-            inherit (app.homepage) group icon description;
-            displayName = app.homepageDisplayName;
-            href = app.homepageHref;
-          }) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
+          myHomepage.tiles = lib.mapAttrs (
+            _name: app:
+            {
+              inherit (app.homepage) group icon description;
+              inherit (app) displayName href;
+            }
+            // lib.optionalAttrs (app.homepage.weight != null) { inherit (app.homepage) weight; }
+          ) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
         })
       ];
     };

@@ -34,13 +34,12 @@ _: {
       myAuthentik.oidcApps.shelfarr = {
         blueprintsDir = ./shelfarr-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "Shelfarr";
         homepage = {
           group = "Requests";
           icon = "shelfarr";
           description = "Book + audiobook requests";
         };
-        homepageDisplayName = "Shelfarr";
-        homepageHref = "https://${shelfarrHost}";
       };
 
       systemd.tmpfiles.rules = [

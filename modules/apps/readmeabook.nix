@@ -35,13 +35,12 @@ _: {
       myAuthentik.oidcApps.readmeabook = {
         blueprintsDir = ./readmeabook-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "ReadMeABook";
         homepage = {
           group = "Requests";
           icon = "audiobookshelf";
           description = "Audiobook requests";
         };
-        homepageDisplayName = "ReadMeABook";
-        homepageHref = "https://${readmeabookHost}";
       };
 
       systemd = {

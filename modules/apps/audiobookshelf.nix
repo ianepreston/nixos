@@ -16,13 +16,12 @@ _: {
       myAuthentik.oidcApps.audiobookshelf = {
         blueprintsDir = ./audiobookshelf-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "Audiobookshelf";
         homepage = {
           group = "Consumption";
           icon = "audiobookshelf";
           description = "Audiobooks";
         };
-        homepageDisplayName = "Audiobookshelf";
-        homepageHref = "https://${audiobookshelfHost}";
       };
 
       services.audiobookshelf = {

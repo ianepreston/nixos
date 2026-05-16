@@ -50,13 +50,12 @@ _: {
       myAuthentik.oidcApps.homeassistant = {
         blueprintsDir = ./homeassistant-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "Home Assistant";
         homepage = {
           group = "Home";
           icon = "home-assistant";
           description = "Smart home";
         };
-        homepageDisplayName = "Home Assistant";
-        homepageHref = "https://${homeassistantHost}";
       };
 
       networking = {

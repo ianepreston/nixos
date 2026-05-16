@@ -31,13 +31,12 @@ _: {
         appRestartUnit = "miniflux.service";
         clientIdVar = "OAUTH2_CLIENT_ID";
         clientSecretVar = "OAUTH2_CLIENT_SECRET";
+        displayName = "Miniflux";
         homepage = {
           group = "Consumption";
           icon = "miniflux";
           description = "RSS reader";
         };
-        homepageDisplayName = "Miniflux";
-        homepageHref = "https://${minifluxHost}";
       };
 
       services.miniflux = {

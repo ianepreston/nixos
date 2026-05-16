@@ -27,13 +27,12 @@ _: {
       myAuthentik.oidcApps.kavita = {
         blueprintsDir = ./kavita-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "Kavita";
         homepage = {
           group = "Consumption";
           icon = "kavita";
           description = "Manga + books";
         };
-        homepageDisplayName = "Kavita";
-        homepageHref = "https://${kavitaHost}";
       };
 
       services.kavita = {

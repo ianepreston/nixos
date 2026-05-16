@@ -27,13 +27,12 @@ _: {
         appRestartUnit = "komga.service";
         clientIdVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_ID";
         clientSecretVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_SECRET";
+        displayName = "Komga";
         homepage = {
           group = "Consumption";
           icon = "komga";
           description = "Comics + manga";
         };
-        homepageDisplayName = "Komga";
-        homepageHref = "https://${komgaHost}";
       };
 
       services.komga = {

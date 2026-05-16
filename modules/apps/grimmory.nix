@@ -52,13 +52,12 @@ in
             ];
           };
         };
+        displayName = "Grimmory";
         homepage = {
           group = "Consumption";
           icon = "booklore";
           description = "Digital library";
         };
-        homepageDisplayName = "Grimmory";
-        homepageHref = "https://${grimmoryHost}";
       };
 
       services.mysql = {

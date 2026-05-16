@@ -24,13 +24,12 @@ _: {
       myAuthentik.oidcApps.seerr = {
         blueprintsDir = ./seerr-blueprints;
         clientCredsInAppEnv = false;
+        displayName = "Seerr";
         homepage = {
           group = "Requests";
           icon = "jellyseerr";
           description = "Media requests";
         };
-        homepageDisplayName = "Seerr";
-        homepageHref = "https://${seerrHost}";
       };
 
       systemd.tmpfiles.rules = [

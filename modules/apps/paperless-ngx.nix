@@ -64,13 +64,12 @@ in
             config.sops.placeholder."paperless-ngx/oidc_client_secret"
           }","settings":{"server_url":"https://${authentikHost}/application/o/paperless-ngx/.well-known/openid-configuration","fetch_userinfo":true}}],"SCOPE":["openid","profile","email"]}}
         '';
+        displayName = "Paperless-ngx";
         homepage = {
           group = "Home";
           icon = "paperless-ngx";
           description = "Documents";
         };
-        homepageDisplayName = "Paperless-ngx";
-        homepageHref = "https://${paperlessHost}";
       };
 
       services.paperless = {
