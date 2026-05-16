@@ -7,11 +7,7 @@
 # unit is independent from the prometheus unit. Keeping the config
 # next to its sops template + forward-auth registration here, even
 # though the actual option lives under `services.prometheus.alertmanager`.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.alertmanager =
     {
       config,
@@ -25,11 +21,11 @@ in
     {
       sops.secrets = {
         "discord/alerts_webhook" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          sopsFile = hostSpec.sopsFile;
           restartUnits = [ "alertmanager.service" ];
         };
         "alertmanager/heartbeat_url" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          sopsFile = hostSpec.sopsFile;
           restartUnits = [ "alertmanager.service" ];
         };
       };

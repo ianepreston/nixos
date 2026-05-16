@@ -15,11 +15,7 @@
 # Nginx in the upstream image listens on TANDOOR_PORT; we set it to
 # 8080 so the container can run as the unprivileged servers UID
 # without needing CAP_NET_BIND_SERVICE.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.tandoor =
     {
       config,
@@ -36,7 +32,7 @@ in
       myPostgresApp.tandoor.consumerService = "podman-tandoor.service";
 
       sops.secrets."tandoor/secret_key" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
         restartUnits = [ "podman-tandoor.service" ];
       };
 
@@ -44,6 +40,7 @@ in
         blueprintsDir = ./tandoor-blueprints;
         appRestartUnit = "podman-tandoor.service";
         clientCredsInAppEnv = false;
+        displayName = "Tandoor";
         extraEnvLines = ''
           POSTGRES_PASSWORD=${config.sops.placeholder."tandoor/db_password"}
           SECRET_KEY=${config.sops.placeholder."tandoor/secret_key"}
@@ -58,8 +55,6 @@ in
           icon = "tandoor-recipes";
           description = "Recipe manager";
         };
-        homepageDisplayName = "Tandoor";
-        homepageHref = "https://${tandoorHost}";
       };
 
       systemd.tmpfiles.rules = [

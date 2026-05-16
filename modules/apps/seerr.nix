@@ -29,8 +29,7 @@ _: {
           icon = "jellyseerr";
           description = "Media requests";
         };
-        homepageDisplayName = "Seerr";
-        homepageHref = "https://${seerrHost}";
+        displayName = "Seerr";
       };
 
       systemd.tmpfiles.rules = [

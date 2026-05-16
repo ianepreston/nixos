@@ -28,8 +28,7 @@ _: {
           icon = "actual-budget";
           description = "Personal finance";
         };
-        homepageDisplayName = "Actual Budget";
-        homepageHref = "https://${actualHost}";
+        displayName = "Actual Budget";
       };
 
       systemd.tmpfiles.rules = [

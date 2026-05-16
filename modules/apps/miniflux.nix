@@ -36,8 +36,7 @@ _: {
           icon = "miniflux";
           description = "RSS reader";
         };
-        homepageDisplayName = "Miniflux";
-        homepageHref = "https://${minifluxHost}";
+        displayName = "Miniflux";
       };
 
       services.miniflux = {

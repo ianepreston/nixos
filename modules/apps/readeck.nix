@@ -22,11 +22,7 @@
 # it readeck generates a key on first run and tries to persist it back
 # to its config TOML — but the nixpkgs module passes the toml from
 # /nix/store, so the write fails (EROFS) and the service crashloops.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.readeck =
     {
       config,
@@ -40,7 +36,7 @@ in
     in
     {
       sops.secrets."readeck/secret_key" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
         restartUnits = [ "readeck.service" ];
       };
 

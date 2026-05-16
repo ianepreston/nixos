@@ -13,11 +13,7 @@
 # module renders both a per-app env file (consumed by grafana via
 # EnvironmentFile + GF_AUTH_GENERIC_OAUTH_CLIENT_*) and a worker env
 # entry (GRAFANA_OIDC_CLIENT_* — referenced by !Env in the blueprint).
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.grafana =
     {
       config,
@@ -58,15 +54,14 @@ in
           icon = "grafana";
           description = "dashboards";
         };
-        homepageDisplayName = "Grafana";
-        homepageHref = "https://${grafanaHost}";
+        displayName = "Grafana";
       };
 
       # Bootstrap password is separate from OIDC: it's the local admin
       # account password, read via $__file{} (no env). Owned by
       # grafana so the unit can read it.
       sops.secrets."grafana/bootstrap_password" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
         owner = "grafana";
         restartUnits = [ "grafana.service" ];
       };

@@ -16,11 +16,7 @@
 # `https://authentik.<serverDomain>/application/o/grimmory/`,
 # Client ID from `grimmory/oidc_client_id` in sops, and JWKS URL
 # `https://authentik.<serverDomain>/application/o/grimmory/jwks/`.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.grimmory =
     {
       config,
@@ -39,12 +35,13 @@ in
         appRestartUnit = "podman-grimmory.service";
         publicClient = true;
         clientCredsInAppEnv = false;
+        displayName = "Grimmory";
         extraEnvLines = ''
           DATABASE_PASSWORD=${config.sops.placeholder."grimmory/db_password"}
         '';
         extraSecrets = {
           "grimmory/db_password" = {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+            sopsFile = hostSpec.sopsFile;
             owner = "mysql";
             restartUnits = [
               "grimmory-db-password.service"
@@ -57,8 +54,6 @@ in
           icon = "booklore";
           description = "Digital library";
         };
-        homepageDisplayName = "Grimmory";
-        homepageHref = "https://${grimmoryHost}";
       };
 
       services.mysql = {

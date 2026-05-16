@@ -39,8 +39,7 @@ _: {
           icon = "shelfarr";
           description = "Book + audiobook requests";
         };
-        homepageDisplayName = "Shelfarr";
-        homepageHref = "https://${shelfarrHost}";
+        displayName = "Shelfarr";
       };
 
       systemd.tmpfiles.rules = [
