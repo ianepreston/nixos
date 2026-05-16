@@ -10,7 +10,7 @@
 # Stack:
 #   Prometheus     — scrapes node/postgres/mysqld/redis/caddy/cadvisor/
 #                    itself; ephemeral on-disk TSDB with 15d retention.
-#   Loki           — single-node, filesystem store; ~7d retention.
+#   Loki           — single-node, filesystem store; ~30d retention.
 #   Promtail       — ships the systemd journal into Loki.
 #   Grafana        — dashboards + provisioned datasources, OIDC against
 #                    Authentik via myAuthentik.oidcApps.

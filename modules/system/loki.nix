@@ -59,10 +59,15 @@ _: {
             delete_request_store = "filesystem";
           };
           limits_config = {
-            retention_period = "168h"; # 7d
+            # 30d gives enough history to catch slow-burn issues (gradual
+            # OOM creep, weekly cron failures, certificate-near-expiry
+            # warnings) while staying well within the host's free space.
+            # Bumped from 7d per #157; revisit if /var/lib/loki growth
+            # becomes a problem.
+            retention_period = "720h"; # 30d
             allow_structured_metadata = true;
             reject_old_samples = true;
-            reject_old_samples_max_age = "168h";
+            reject_old_samples_max_age = "720h";
           };
           analytics.reporting_enabled = false;
         };
