@@ -31,10 +31,12 @@ in
     {
       config,
       hostSpec,
+      lib,
       ...
     }:
     let
       port = 8000;
+      uid = 893;
     in
     {
       sops.secrets."readeck/secret_key" = {
@@ -81,16 +83,39 @@ in
         READECK_AUTH_FORWARDED_PROVISIONING = "true";
       };
 
-      # DynamicUser: real state lives at /var/lib/private/readeck;
-      # /var/lib/readeck is the symlink systemd recreates each boot.
-      # Restic doesn't follow symlinks, so backing up /var/lib/readeck
-      # captures only the link, not the data.
-      preservation.preserveAt."/persist".directories = [ "/var/lib/private/readeck" ];
+      users.users.readeck = {
+        inherit uid;
+        group = "readeck";
+        isSystemUser = true;
+      };
+      users.groups.readeck.gid = uid;
 
-      services.restic.backups.server.paths = [ "/var/lib/private/readeck" ];
+      # Override DynamicUser → static "readeck". Upstream already pins
+      # most hardening explicitly (NoNewPrivileges, PrivateTmp,
+      # ProtectSystem=full, …); only the bits that DynamicUser used to
+      # imply but the unit doesn't set need to be re-added.
+      systemd.services.readeck.serviceConfig = {
+        DynamicUser = lib.mkForce false;
+        User = "readeck";
+        Group = "readeck";
+        RemoveIPC = true;
+        ProtectHome = "read-only";
+        RestrictSUIDSGID = true;
+      };
+
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/readeck";
+          user = "readeck";
+          group = "readeck";
+          mode = "0700";
+        }
+      ];
+
+      services.restic.backups.server.paths = [ "/var/lib/readeck" ];
 
       mySqliteQuiesce.apps.readeck.databases = [
-        "/var/lib/private/readeck/data/db.sqlite3"
+        "/var/lib/readeck/data/db.sqlite3"
       ];
     };
 }

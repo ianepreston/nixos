@@ -88,6 +88,31 @@ in
         preservation.preserveAt."/persist".directories = [ "/var/lib/private/authentik" ];
         services.restic.backups.server.paths = [ "/var/lib/private/authentik" ];
 
+        # authentik-nix hardcodes DynamicUser=true across server/worker/
+        # migrate (and the optional outpost units) with no exposed user
+        # override. We can't cleanly pin a static UID the way prowlarr/
+        # mealie/readeck do without `mkForce`-ing every unit and tracking
+        # the set as the flake evolves. Instead, heal the persisted
+        # state dir's ownership to whatever UID systemd allocated this
+        # boot — so a fresh `bootstrap:reinstall` against preserved
+        # /persist self-recovers. The dynamic UID is registered in NSS
+        # via nss-systemd as soon as the unit is loaded, so `id` resolves
+        # pre-start; on the very first start `id` fails and the chown
+        # is skipped (authentik creates its dir with the freshly
+        # allocated UID — fine).
+        systemd.services.authentik-state-chown = {
+          description = "Re-own /var/lib/private/authentik to the current dynamic authentik UID";
+          wantedBy = restartAuthentik;
+          before = restartAuthentik;
+          serviceConfig.Type = "oneshot";
+          script = ''
+            if uid=$(${pkgs.coreutils}/bin/id -u authentik 2>/dev/null) \
+            && gid=$(${pkgs.coreutils}/bin/id -g authentik 2>/dev/null); then
+              ${pkgs.coreutils}/bin/chown -R "$uid:$gid" /var/lib/private/authentik
+            fi
+          '';
+        };
+
         sops.templates."authentik.env" = {
           content = ''
             AUTHENTIK_SECRET_KEY=${config.sops.placeholder."authentik/secret_key"}

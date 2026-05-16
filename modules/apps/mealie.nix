@@ -16,6 +16,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       ...
     }:
     let
@@ -28,6 +29,7 @@ _: {
       # both end up pointing at the wrong upstream. 9925 is mealie's
       # common alt-port (used by some compose templates).
       port = 9925;
+      uid = 892;
     in
     {
       myAuthentik.oidcApps.mealie = {
@@ -68,13 +70,38 @@ _: {
         };
       };
 
-      # DynamicUser: real state lives at /var/lib/private/mealie;
-      # /var/lib/mealie is just the symlink systemd recreates each boot.
-      # Restic doesn't follow symlinks, so backing up /var/lib/mealie
-      # captures only the link, not the data.
-      preservation.preserveAt."/persist".directories = [ "/var/lib/private/mealie" ];
+      users.users.mealie = {
+        inherit uid;
+        group = "mealie";
+        isSystemUser = true;
+      };
+      users.groups.mealie.gid = uid;
 
-      services.restic.backups.server.paths = [ "/var/lib/private/mealie" ];
+      # Override DynamicUser → static "mealie" (the role name postgres
+      # peer-auth expects is unaffected — User="mealie" stays). Re-add
+      # the hardening DynamicUser used to imply, since dropping the
+      # flag also drops those implicit defaults.
+      systemd.services.mealie.serviceConfig = {
+        DynamicUser = lib.mkForce false;
+        Group = "mealie";
+        NoNewPrivileges = true;
+        RemoveIPC = true;
+        PrivateTmp = true;
+        ProtectHome = "read-only";
+        ProtectSystem = "strict";
+        RestrictSUIDSGID = true;
+      };
+
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/mealie";
+          user = "mealie";
+          group = "mealie";
+          mode = "0700";
+        }
+      ];
+
+      services.restic.backups.server.paths = [ "/var/lib/mealie" ];
 
       myCaddy.apps.mealie = {
         host = mealieHost;
