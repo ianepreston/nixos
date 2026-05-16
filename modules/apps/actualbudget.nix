@@ -20,7 +20,7 @@ _: {
     {
       myAuthentik.oidcApps.actualbudget = {
         blueprintsDir = ./actualbudget-blueprints;
-        appRestartUnit = "podman-actualbudget.service";
+        appRestartUnit = [ "podman-actualbudget.service" ];
         clientIdVar = "ACTUAL_OPENID_CLIENT_ID";
         clientSecretVar = "ACTUAL_OPENID_CLIENT_SECRET";
         homepage = {

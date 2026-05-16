@@ -29,7 +29,7 @@ _: {
       authentikHost = "authentik.${hostSpec.serverDomain}";
     in
     {
-      myPostgresApp.tandoor.consumerService = "podman-tandoor.service";
+      myPostgresApp.tandoor.consumerService = [ "podman-tandoor.service" ];
 
       sops.secrets."tandoor/secret_key" = {
         sopsFile = hostSpec.sopsFile;
@@ -38,7 +38,7 @@ _: {
 
       myAuthentik.oidcApps.tandoor = {
         blueprintsDir = ./tandoor-blueprints;
-        appRestartUnit = "podman-tandoor.service";
+        appRestartUnit = [ "podman-tandoor.service" ];
         clientCredsInAppEnv = false;
         displayName = "Tandoor";
         extraEnvLines = ''

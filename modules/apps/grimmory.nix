@@ -32,7 +32,7 @@ _: {
     {
       myAuthentik.oidcApps.grimmory = {
         blueprintsDir = ./grimmory-blueprints;
-        appRestartUnit = "podman-grimmory.service";
+        appRestartUnit = [ "podman-grimmory.service" ];
         publicClient = true;
         clientCredsInAppEnv = false;
         displayName = "Grimmory";

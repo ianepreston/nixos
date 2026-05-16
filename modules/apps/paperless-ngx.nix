@@ -40,7 +40,7 @@ _: {
       ];
     in
     {
-      myPostgresApp.paperless-ngx.consumerService = "paperless-scheduler.service";
+      myPostgresApp.paperless-ngx.consumerService = paperlessUnits;
 
       sops.secrets."paperless-ngx/secret_key" = {
         sopsFile = hostSpec.sopsFile;
