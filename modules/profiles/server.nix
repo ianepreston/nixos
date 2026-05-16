@@ -15,6 +15,7 @@
       authentik
       base
       caddy
+      drift-check
       homepage
       mariadb
       nfsclient
@@ -29,6 +30,12 @@
       ssh
       tailscale
     ];
+
+    # Server hosts run auto-rebuild + accept ad-hoc `task deploy:<host>`
+    # tweaks; the weekly drift-check timer surfaces when the live
+    # closure has diverged from `main` so a midnight auto-upgrade
+    # doesn't silently overwrite the deploy. See modules/system/drift-check.nix.
+    myDriftCheck.enable = true;
 
     # Home-manager modules common to all servers
     home-manager.sharedModules = with inputs.self.modules.homeManager; [
