@@ -43,24 +43,48 @@ in
         "authentik-worker.service"
         "authentik-migrate.service"
       ];
+      # Pre-render contributed blueprints through `lib.replaceStrings` at
+      # Nix-eval time so the assembled dir is a stack of already-substituted
+      # files. Avoids a sed pass that would silently mangle any YAML value
+      # containing the literal `@serverDomain@` for an unrelated purpose
+      # (closes #154). Upstream's bundled blueprints don't use the
+      # placeholder, so they're copied straight in.
+      #
       # Copy (with -L to dereference) instead of symlink-joining: authentik's
       # `retrieve_file` calls `Path(...).resolve()` on every blueprint and
       # rejects anything that resolves outside `blueprints_dir`. With
       # symlinkJoin the top-level entries are symlinks back to upstream /
       # our source, so they resolve outside the merged dir and every
-      # blueprint apply fails with "Invalid blueprint path".
-      # `@serverDomain@` in any contributed blueprint is rewritten to the
-      # host's serverDomain at merge time. This keeps per-app YAMLs
-      # host-portable instead of baking a single host's domain into
-      # every redirect_uri / meta_launch_url.
+      # blueprint apply fails with "Invalid blueprint path". `writeText`
+      # outputs are individual store files (not symlinks); copying them
+      # into the merged dir produces real files that resolve in-place.
+      substitute = builtins.replaceStrings [ "@serverDomain@" ] [ hostSpec.serverDomain ];
+      # Pre-render the local ./authentik-blueprints/*.yaml files at
+      # Nix-eval time: read each file, apply replaceStrings, write the
+      # result as an individual store file. The merge step then copies
+      # already-substituted files in. extraBlueprints contributors
+      # (e.g. fwBlueprintDir in modules/platform/authentik.nix) get
+      # their domain baked in via Nix string interpolation when they
+      # build, so they don't carry @serverDomain@ placeholders and
+      # don't need the readFile/writeText pass — they stay on the
+      # existing `cp -rL` path.
+      localBlueprintEntries = builtins.readDir ./authentik-blueprints;
+      localBlueprintYamls = lib.filter (
+        n: localBlueprintEntries.${n} == "regular" && lib.hasSuffix ".yaml" n
+      ) (lib.attrNames localBlueprintEntries);
+      renderedLocalBlueprints = map (name: {
+        inherit name;
+        path = pkgs.writeText name (substitute (builtins.readFile (./authentik-blueprints + "/${name}")));
+      }) localBlueprintYamls;
+      copyRenderedLines = lib.concatMapStringsSep "\n" (
+        f: "cp ${f.path} $out/${lib.escapeShellArg f.name}"
+      ) renderedLocalBlueprints;
       mergedBlueprints = pkgs.runCommandLocal "authentik-blueprints-merged" { } ''
         mkdir -p $out
         cp -rL ${config.services.authentik.authentikComponents.staticWorkdirDeps}/blueprints/. $out/
-        cp -rL ${./authentik-blueprints}/. $out/
         ${lib.concatMapStringsSep "\n" (p: "cp -rL ${p}/. $out/") config.myAuthentik.extraBlueprints}
         chmod -R u+w $out
-        find $out -type f -name '*.yaml' -exec \
-          sed -i 's|@serverDomain@|${hostSpec.serverDomain}|g' {} +
+        ${copyRenderedLines}
       '';
     in
     {
