@@ -648,54 +648,46 @@ in
       # Grafana speaks OIDC natively, so no forward_auth here. The
       # Authentik app binding still pins the launcher tile to the
       # Infrastructure group; this route is the destination of the OIDC
-      # redirect.
-      #
-      # Prometheus and Alertmanager have no auth of their own; the
-      # `authentik_forward_auth` snippet (defined in
-      # modules/apps/authentik.nix) gates every request through the
-      # embedded outpost.
-      myCaddy.apps = {
-        grafana = {
-          host = grafanaHost;
-          routeConfig = ''
-            reverse_proxy localhost:${toString grafanaPort}
-          '';
-        };
+      # redirect. Prometheus and Alertmanager are wired below via
+      # myAuthentik.forwardAuthApps — that aggregator owns the embedded
+      # outpost's providers list, so each forward-auth app on the host
+      # must register through it instead of emitting its own outpost
+      # block (CLAUDE.md).
+      myCaddy.apps.grafana = {
+        host = grafanaHost;
+        routeConfig = ''
+          reverse_proxy localhost:${toString grafanaPort}
+        '';
+      };
+
+      myAuthentik.forwardAuthApps = {
         prometheus = {
           host = prometheusHost;
-          routeConfig = ''
-            import authentik_forward_auth
-            reverse_proxy localhost:${toString prometheusPort}
-          '';
+          port = prometheusPort;
+          displayName = "Prometheus";
+          homepage = {
+            group = "Infrastructure";
+            icon = "prometheus";
+            description = "metrics";
+          };
         };
         alertmanager = {
           host = alertmanagerHost;
-          routeConfig = ''
-            import authentik_forward_auth
-            reverse_proxy localhost:${toString alertmanagerPort}
-          '';
+          port = alertmanagerPort;
+          displayName = "Alertmanager";
+          homepage = {
+            group = "Infrastructure";
+            icon = "prometheus";
+            description = "alerts";
+          };
         };
       };
 
-      myHomepage.tiles = {
-        Grafana = {
-          group = "Infrastructure";
-          href = "https://${grafanaHost}";
-          icon = "grafana";
-          description = "dashboards";
-        };
-        Prometheus = {
-          group = "Infrastructure";
-          href = "https://${prometheusHost}";
-          icon = "prometheus";
-          description = "metrics";
-        };
-        Alertmanager = {
-          group = "Infrastructure";
-          href = "https://${alertmanagerHost}";
-          icon = "prometheus";
-          description = "alerts";
-        };
+      myHomepage.tiles.Grafana = {
+        group = "Infrastructure";
+        href = "https://${grafanaHost}";
+        icon = "grafana";
+        description = "dashboards";
       };
 
       # Promtail needs to read the journal — the upstream NixOS module
