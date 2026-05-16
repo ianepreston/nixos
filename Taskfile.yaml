@@ -33,7 +33,15 @@ tasks:
     cmds:
       - nix build .#nixosConfigurations.{{.HOST}}.config.system.build.toplevel
   build-all:
-    desc: Build all NixOS host configurations
+    desc: Build all NixOS host configurations (full pre-push set, includes servers)
+    cmds:
+      - nix build .#nixosConfigurations.luna.config.system.build.toplevel
+      - nix build .#nixosConfigurations.terra.config.system.build.toplevel
+      - nix build .#nixosConfigurations.toshibachromebook.config.system.build.toplevel
+      - nix build .#nixosConfigurations.testvm.config.system.build.toplevel
+      - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
+  build-fast:
+    desc: Build workstation/laptop hosts only (skip servers for inner dev loop)
     cmds:
       - nix build .#nixosConfigurations.luna.config.system.build.toplevel
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
