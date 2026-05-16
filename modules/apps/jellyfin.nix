@@ -37,7 +37,17 @@ _: {
       # the restic snapshot. listOf merges via concat so the existing
       # /var/backup/postgresql + /var/lib/containers paths from
       # modules/system/server-backups.nix stay intact.
-      preservation.preserveAt."/persist".directories = [ "/var/lib/jellyfin" ];
+      # Preservation defaults to root:root, but jellyfin runs as
+      # server-${env}:servers and needs to mkdir under its own dir
+      # (the bind-mount root). Match the service user/group.
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/jellyfin";
+          user = "server-${hostSpec.serverEnvironment}";
+          group = "servers";
+          mode = "0700";
+        }
+      ];
 
       services.restic.backups.server.paths = [
         "/var/lib/jellyfin"

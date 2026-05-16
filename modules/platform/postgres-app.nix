@@ -102,6 +102,9 @@ in
 
         systemd.services = lib.mapAttrs' (
           name: app:
+          let
+            secretPath = config.sops.secrets.${app.secretName}.path;
+          in
           lib.nameValuePair "${name}-db-password" {
             description = "Set ${name} postgres role password from sops secret";
             after = [
@@ -112,6 +115,12 @@ in
             wants = [ "postgresql-setup.service" ];
             wantedBy = [ app.consumerService ];
             before = [ app.consumerService ];
+            # Skip the unit if sops hasn't decrypted the secret yet
+            # (happens on the very first boot if sops-install-secrets
+            # raced or failed). Without this guard the script below
+            # would cat a missing file, send an empty password to ALTER
+            # USER, and silently lock the app out of its DB.
+            unitConfig.ConditionPathExists = secretPath;
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;
@@ -119,8 +128,13 @@ in
               Group = "postgres";
             };
             script = ''
+              set -euo pipefail
+              if [ ! -s "${secretPath}" ]; then
+                echo "ERROR: sops secret ${secretPath} is empty — refusing to clear ${app.dbName} postgres password" >&2
+                exit 1
+              fi
               ${config.services.postgresql.package}/bin/psql -tAc \
-                "ALTER USER ${app.dbName} WITH PASSWORD '$(cat ${config.sops.secrets.${app.secretName}.path})'"
+                "ALTER USER ${app.dbName} WITH PASSWORD '$(cat ${secretPath})'"
             '';
           }
         ) apps;

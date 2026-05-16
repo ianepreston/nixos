@@ -53,7 +53,14 @@ _: {
         serviceConfig.EnvironmentFile = [ config.sops.templates."komga.env".path ];
       };
 
-      preservation.preserveAt."/persist".directories = [ "/var/lib/komga" ];
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/komga";
+          user = "server-${hostSpec.serverEnvironment}";
+          group = "servers";
+          mode = "0700";
+        }
+      ];
 
       services.restic.backups.server.paths = [ "/var/lib/komga" ];
 

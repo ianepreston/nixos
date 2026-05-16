@@ -32,7 +32,14 @@ _: {
         inherit port;
       };
 
-      preservation.preserveAt."/persist".directories = [ "/var/lib/audiobookshelf" ];
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/audiobookshelf";
+          user = "server-${hostSpec.serverEnvironment}";
+          group = "servers";
+          mode = "0700";
+        }
+      ];
 
       services.restic.backups.server.paths = [ "/var/lib/audiobookshelf" ];
 

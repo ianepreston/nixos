@@ -55,7 +55,14 @@ _: {
         group = "servers";
       };
 
-      preservation.preserveAt."/persist".directories = [ "/var/lib/sabnzbd" ];
+      preservation.preserveAt."/persist".directories = [
+        {
+          directory = "/var/lib/sabnzbd";
+          user = sabnzbdUser;
+          group = "servers";
+          mode = "0700";
+        }
+      ];
 
       services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
