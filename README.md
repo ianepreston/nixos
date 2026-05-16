@@ -231,11 +231,21 @@ Server hosts run `modules/system/server-backups.nix`, which composes:
   randomized delay). Retention:
   `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
 
-Apps that keep state outside `/var/lib/containers` (e.g. jellyfin's
-native `/var/lib/jellyfin` tree plus its `/var/backup/jellyfin`
-sqlite-staging dir) extend `services.restic.backups.server.paths`
-themselves; the listOf merges via concat so the base paths stay
-intact.
+Apps that keep state outside `/var/lib/containers` (e.g. the native
+*arr stack, jellyfin, kavita, komga, audiobookshelf, readeck) extend
+`services.restic.backups.server.paths` themselves with their own
+`/var/lib/<app>` tree; the listOf merges via concat so the base paths
+stay intact.
+
+SQLite-backed native apps additionally opt into the `mySqliteQuiesce`
+helper (`modules/platform/sqlite-quiesce.nix`), which runs `sqlite3
+.backup` for each declared database into `/var/backup/sqlite/<app>/`
+immediately before each restic run. The staging root is added to the
+restic paths automatically, so each snapshot contains both the (hot,
+possibly torn) live file under `/var/lib/<app>/...` and a
+guaranteed-consistent copy under `/var/backup/sqlite/<app>/`. Apps
+currently using it: jellyfin, sonarr, radarr, prowlarr, bazarr,
+kavita, komga, readeck, audiobookshelf.
 
 Only server-local app state is in scope. NAS-resident media under
 `/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
@@ -393,16 +403,17 @@ Authentik fits the same shape (everything in the `authentik` postgres
 db, no host state worth restoring) — same recipe with the names
 swapped.
 
-##### Native service with on-disk state (jellyfin)
+##### Native service with on-disk state + SQLite (jellyfin, *arr, kavita, …)
 
 Jellyfin keeps everything under `/var/lib/jellyfin` — XML config,
-plugins, metadata cache, and the library SQLite databases at
-`/var/lib/jellyfin/data/{library,jellyfin}.db`. There's no postgres
-to restore. The wrinkle is that the live SQLite files can be torn
-mid-write inside a restic snapshot; `jellyfin-sqlite-backup.service`
-runs `sqlite3 .backup` into `/var/backup/jellyfin/` immediately
-before each restic run, and **those staged copies — not the live
-ones — are the authoritative recovery source.**
+plugins, metadata cache, and the library SQLite database at
+`/var/lib/jellyfin/data/jellyfin.db`. There's no postgres to restore.
+The wrinkle is that the live SQLite file can be torn mid-write inside
+a restic snapshot; `jellyfin-sqlite-backup.service` (from the
+`mySqliteQuiesce` helper) runs `sqlite3 .backup` into
+`/var/backup/sqlite/jellyfin/` immediately before each restic run,
+and **those staged copies — not the live ones — are the
+authoritative recovery source.**
 
 ```bash
 # 1. Stop the service so nothing writes during restore.
@@ -414,23 +425,33 @@ sudo restic -r /mnt/backups/restic/<host> \
   --password-file /run/secrets/restic/password \
   restore latest --target / \
   --include /var/lib/jellyfin \
-  --include /var/backup/jellyfin
+  --include /var/backup/sqlite/jellyfin
 
-# 3. Swap the live SQLite files for the consistent staged copies.
+# 3. Swap the live SQLite file for the consistent staged copy.
 #    Use the env from the host's hostSpec (server-dev or server-prod);
 #    `id server-prod` / `id server-dev` confirms which one exists.
 sudo install -o server-prod -g servers -m 0640 \
-  /var/backup/jellyfin/library.db  /var/lib/jellyfin/data/library.db
-sudo install -o server-prod -g servers -m 0640 \
-  /var/backup/jellyfin/jellyfin.db /var/lib/jellyfin/data/jellyfin.db
+  /var/backup/sqlite/jellyfin/jellyfin.db /var/lib/jellyfin/data/jellyfin.db
 
-# 4. Restart. Jellyfin will reopen the databases and reuse the
+# 4. Restart. Jellyfin will reopen the database and reuse the
 #    cached metadata; no library rescan is needed.
 sudo systemctl start jellyfin.service
 ```
 
 Media files themselves live on the NAS under `/mnt/content` and are
 out of scope for restic — Synology snapshots cover them.
+
+The same pattern applies to every app that opts into `mySqliteQuiesce`
+(sonarr, radarr, prowlarr, bazarr, kavita, komga, readeck,
+audiobookshelf): stop the unit, `restic restore` both `/var/lib/<app>`
+(or `/var/lib/private/<app>` for DynamicUser apps like prowlarr and
+readeck) and `/var/backup/sqlite/<app>`, then `install` each staged
+`.db` over the live path declared in the app's module. Check
+`mySqliteQuiesce.apps.<app>.databases` in the module for the exact
+source paths to overwrite (e.g. sonarr → `/var/lib/sonarr/.config/
+NzbDrone/{sonarr,logs}.db`, bazarr → `/var/lib/bazarr/db/bazarr.db`).
+Match the file owner to the service's user/group (`server-${env}:
+servers` for the NFS-aligned apps).
 
 #### Cross-host recovery testing (prod → dev)
 
@@ -465,9 +486,9 @@ this repo, rebuild, and verify before deleting the old data directory.
 `modules/apps/jellyfin.nix` deploys jellyfin as a native systemd unit
 (no container) pinned to the `server-${env}:servers` UID/GID so it
 can read media off the NFS-mounted Synology share. Restic snapshots
-`/var/lib/jellyfin` and an extra staging dir at `/var/backup/jellyfin`
-that holds `sqlite3 .backup` dumps of `library.db` / `jellyfin.db`,
-written by a pre-hook before each restic run.
+`/var/lib/jellyfin` plus the `mySqliteQuiesce` staging dir at
+`/var/backup/sqlite/jellyfin/`, which holds a `sqlite3 .backup` dump
+of `jellyfin.db` written by a pre-hook before each restic run.
 
 ### Hardware-accelerated transcoding
 

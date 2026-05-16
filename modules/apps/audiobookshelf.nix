@@ -43,6 +43,10 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/audiobookshelf" ];
 
+      mySqliteQuiesce.apps.audiobookshelf.databases = [
+        "/var/lib/audiobookshelf/config/absdatabase.sqlite"
+      ];
+
       myCaddy.apps.audiobookshelf = {
         host = audiobookshelfHost;
         routeConfig = ''

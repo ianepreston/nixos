@@ -12,7 +12,12 @@
 #
 # The restic password lives in shared.yaml (not per-host) so any server
 # can decrypt any other server's repo for cross-host recovery testing.
-_: {
+#
+# `mySqliteQuiesce` (modules/platform/sqlite-quiesce.nix) is imported
+# here so SQLite-backed app modules can opt into a pre-restic
+# `.backup` oneshot wherever this profile is in effect.
+{ inputs, ... }:
+{
   flake.modules.nixos.server-backups =
     {
       config,
@@ -21,6 +26,8 @@ _: {
       ...
     }:
     {
+      imports = [ inputs.self.modules.nixos.mySqliteQuiesce ];
+
       # Operator-facing CLI for ad-hoc snapshot/restore work
       # (e.g. cross-host recovery from /mnt/<env>-backups/restic/<host>).
       environment.systemPackages = [ pkgs.restic ];

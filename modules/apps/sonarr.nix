@@ -34,5 +34,10 @@ _: {
       ];
 
       services.restic.backups.server.paths = [ "/var/lib/sonarr" ];
+
+      mySqliteQuiesce.apps.sonarr.databases = [
+        "/var/lib/sonarr/.config/NzbDrone/sonarr.db"
+        "/var/lib/sonarr/.config/NzbDrone/logs.db"
+      ];
     };
 }

@@ -32,5 +32,10 @@ _: {
       preservation.preserveAt."/persist".directories = [ "/var/lib/private/prowlarr" ];
 
       services.restic.backups.server.paths = [ "/var/lib/private/prowlarr" ];
+
+      mySqliteQuiesce.apps.prowlarr.databases = [
+        "/var/lib/private/prowlarr/prowlarr.db"
+        "/var/lib/private/prowlarr/logs.db"
+      ];
     };
 }

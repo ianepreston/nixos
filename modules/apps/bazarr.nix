@@ -34,5 +34,9 @@ _: {
       ];
 
       services.restic.backups.server.paths = [ "/var/lib/bazarr" ];
+
+      mySqliteQuiesce.apps.bazarr.databases = [
+        "/var/lib/bazarr/db/bazarr.db"
+      ];
     };
 }

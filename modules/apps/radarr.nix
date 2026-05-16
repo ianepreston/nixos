@@ -34,5 +34,10 @@ _: {
       ];
 
       services.restic.backups.server.paths = [ "/var/lib/radarr" ];
+
+      mySqliteQuiesce.apps.radarr.databases = [
+        "/var/lib/radarr/.config/Radarr/radarr.db"
+        "/var/lib/radarr/.config/Radarr/logs.db"
+      ];
     };
 }

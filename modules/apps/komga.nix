@@ -64,6 +64,11 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/komga" ];
 
+      mySqliteQuiesce.apps.komga.databases = [
+        "/var/lib/komga/database.sqlite"
+        "/var/lib/komga/tasks.sqlite"
+      ];
+
       myCaddy.apps.komga = {
         host = komgaHost;
         routeConfig = ''

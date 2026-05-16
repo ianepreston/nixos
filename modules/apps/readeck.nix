@@ -88,5 +88,9 @@ in
       preservation.preserveAt."/persist".directories = [ "/var/lib/private/readeck" ];
 
       services.restic.backups.server.paths = [ "/var/lib/private/readeck" ];
+
+      mySqliteQuiesce.apps.readeck.databases = [
+        "/var/lib/private/readeck/data/db.sqlite3"
+      ];
     };
 }

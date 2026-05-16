@@ -68,6 +68,10 @@ _: {
 
       services.restic.backups.server.paths = [ "/var/lib/kavita" ];
 
+      mySqliteQuiesce.apps.kavita.databases = [
+        "/var/lib/kavita/config/kavita.db"
+      ];
+
       systemd.services.kavita-token-init = {
         description = "Generate kavita JWT signing key on first boot";
         before = [ "kavita.service" ];

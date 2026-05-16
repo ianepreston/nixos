@@ -5,22 +5,17 @@
 #
 # Backups: /var/lib/jellyfin contains both XML config and the library
 # SQLite databases. Restic snapshots the whole tree, but live SQLite
-# files can be torn mid-write — `library.db` and `jellyfin.db` get an
-# extra consistent copy via `sqlite3 .backup` into /var/backup/jellyfin
-# before each restic run, captured by the same snapshot. On restore,
-# prefer the staged copy from /var/backup/jellyfin/ over the live one
-# under /var/lib/jellyfin/data/.
+# files can be torn mid-write — the DB gets an extra consistent copy
+# via `sqlite3 .backup` into /var/backup/sqlite/jellyfin/ before each
+# restic run (mySqliteQuiesce helper). On restore, prefer the staged
+# copy under /var/backup/sqlite/jellyfin/ over the live one under
+# /var/lib/jellyfin/data/.
 _: {
   flake.modules.nixos.jellyfin =
-    {
-      hostSpec,
-      pkgs,
-      ...
-    }:
+    { hostSpec, ... }:
     let
       jellyfinHost = "jellyfin.${hostSpec.serverDomain}";
       jellyfinPort = 8096;
-      sqliteBackupDir = "/var/backup/jellyfin";
     in
     {
       services.jellyfin = {
@@ -33,10 +28,6 @@ _: {
         group = "servers";
       };
 
-      # Append jellyfin's persistent state + the sqlite staging dir to
-      # the restic snapshot. listOf merges via concat so the existing
-      # /var/backup/postgresql + /var/lib/containers paths from
-      # modules/system/server-backups.nix stay intact.
       # Preservation defaults to root:root, but jellyfin runs as
       # server-${env}:servers and needs to mkdir under its own dir
       # (the bind-mount root). Match the service user/group.
@@ -49,45 +40,11 @@ _: {
         }
       ];
 
-      services.restic.backups.server.paths = [
-        "/var/lib/jellyfin"
-        sqliteBackupDir
+      services.restic.backups.server.paths = [ "/var/lib/jellyfin" ];
+
+      mySqliteQuiesce.apps.jellyfin.databases = [
+        "/var/lib/jellyfin/data/jellyfin.db"
       ];
-
-      systemd = {
-        # Ensure the staging dir exists with sane permissions before the
-        # pre-hook tries to write into it. 0700 root:root — restic runs
-        # as root and the dumps may contain user data.
-        tmpfiles.rules = [
-          "d ${sqliteBackupDir} 0700 root root -"
-        ];
-
-        services = {
-          # SQLite online .backup of jellyfin's databases into the
-          # staging dir. Runs before restic-backups-server so the
-          # snapshot includes a guaranteed-consistent copy alongside
-          # the live files. wantedBy (not requires) so a failure here
-          # doesn't abort the nightly restic run.
-          jellyfin-sqlite-backup = {
-            description = "Snapshot Jellyfin SQLite databases for restic";
-            before = [ "restic-backups-server.service" ];
-            wantedBy = [ "restic-backups-server.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              User = "root";
-              Group = "root";
-            };
-            script = ''
-              set -euo pipefail
-              for db in library.db jellyfin.db; do
-                src="/var/lib/jellyfin/data/$db"
-                [ -f "$src" ] || continue
-                ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup ${sqliteBackupDir}/$db"
-              done
-            '';
-          };
-        };
-      };
 
       myCaddy.apps.jellyfin = {
         host = jellyfinHost;
