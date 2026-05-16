@@ -110,16 +110,31 @@ in
             after = [
               "postgresql.service"
               "postgresql-setup.service"
+              # Explicit ordering on the sops decryption unit
+              # (sops.useSystemdActivation = true in modules/system/
+              # sops.nix). Without this, the activation-script form of
+              # sops races against an early-boot start of this unit:
+              # the secret file may not exist yet when the script
+              # below cats it. ConditionPathExists below still
+              # belt-and-suspenders the case where sops *finishes* but
+              # this particular secret failed to decrypt.
+              "sops-install-secrets.service"
             ];
             requires = [ "postgresql.service" ];
-            wants = [ "postgresql-setup.service" ];
+            wants = [
+              "postgresql-setup.service"
+              "sops-install-secrets.service"
+            ];
             wantedBy = [ app.consumerService ];
             before = [ app.consumerService ];
-            # Skip the unit if sops hasn't decrypted the secret yet
-            # (happens on the very first boot if sops-install-secrets
-            # raced or failed). Without this guard the script below
-            # would cat a missing file, send an empty password to ALTER
-            # USER, and silently lock the app out of its DB.
+            # Skip the unit if sops hasn't decrypted *this specific*
+            # secret yet (sops-install-secrets.service may report
+            # success overall while a single entry failed — wrong age
+            # key on file, blob shape changed upstream, etc.). Without
+            # this guard the script below would cat a missing file,
+            # send an empty password to ALTER USER, and silently lock
+            # the app out of its DB. See #123 for the original
+            # paperless-ngx near-miss that motivated the guard.
             unitConfig.ConditionPathExists = secretPath;
             serviceConfig = {
               Type = "oneshot";

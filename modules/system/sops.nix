@@ -24,6 +24,21 @@ in
           # Automatically import host SSH keys as age keys
           sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
         };
+
+        # Run sops-install-secrets as a proper systemd unit
+        # (`sops-install-secrets.service`, wantedBy=sysinit.target,
+        # requiredBy=sysinit-reactivation.target) instead of as an
+        # activation script. This is what lets `*-db-password.service`
+        # (and anything else that reads decrypted secrets in a script)
+        # gate its start with `after = [ sops-install-secrets.service ]`
+        # — there's no equivalent ordering primitive for activation
+        # scripts, so without this a script-style consumer could run
+        # before decryption completed and silently see a missing file
+        # (see #123 for the paperless-ngx-db-password near-miss). The
+        # sops-nix default auto-enables this only when systemd-sysusers
+        # or userborn is in use; we use the legacy users module, so we
+        # have to opt in explicitly.
+        useSystemdActivation = true;
       };
 
       # Secrets for user creation and home-manager bootstrap
