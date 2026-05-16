@@ -30,6 +30,15 @@ in
       hardware.enableRedistributableFirmware = true;
       nixpkgs.config.allowUnfree = true;
 
+      # Keep 20 boot generations rather than the systemd-boot default
+      # of unlimited (which still gets culled by nix-gc retention).
+      # Pairs with the 30d GC retention in nix-maintenance.nix so that
+      # `auto-rebuild` regressions remain rollback-able past the
+      # weekly upgrade cadence. Harmless on hosts that don't enable
+      # systemd-boot (e.g. toshibachromebook on grub) — the option is
+      # only read by the systemd-boot installer. See issue #134.
+      boot.loader.systemd-boot.configurationLimit = lib.mkDefault 20;
+
       # System-wide packages
       environment.systemPackages = with pkgs; [
         openssh

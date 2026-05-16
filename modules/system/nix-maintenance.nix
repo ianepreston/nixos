@@ -5,10 +5,15 @@
 # substitution of large closures.
 _: {
   flake.modules.nixos.nix-maintenance = _: {
+    # Keep four weeks of generations so a subtly-broken auto-upgrade
+    # (e.g. an app's HTTP listener regressed but the unit still starts)
+    # has rollback targets even if it goes unnoticed past the weekly
+    # auto-rebuild cadence. ~1-2 GiB extra in /nix/store is trivial vs.
+    # losing every known-good generation. See issue #134.
     nix.gc = {
       automatic = true;
       dates = "weekly";
-      options = "--delete-older-than 7d";
+      options = "--delete-older-than 30d";
       persistent = true;
     };
 
