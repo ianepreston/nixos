@@ -19,6 +19,29 @@ Frequently used:
 
 When in doubt: `task --list`.
 
+### Never `task deploy` disko-affecting changes
+
+Disko-managed subvolumes/partitions only land at install time (when
+nixos-anywhere actually runs disko). `task deploy:<host>` does an
+in-place `nixos-rebuild switch`, which copies the closure including the
+new `fileSystems.*` entries that disko generates — and then systemd
+tries to mount paths that don't exist on the running disk. `local-fs.target`
+fails, cascades through dependent units (sshd among them), and the
+host goes dark with no way back in except console rollback. Even
+console rollback doesn't always clear the runtime systemd job queue,
+so a second deploy after rollback can re-trigger the cascade.
+
+Rule: any change that touches `modules/hosts/_<host>-disks.nix`
+**must** be applied via `task bootstrap:reinstall HOST=<host> DEST=<ip>`
+(or `bootstrap:new` for a fresh host), with `IMPERMANENT=true` if
+preservation is involved. Never `task deploy:<host>` it.
+
+If you're impermanence-bound, also seed the SSH host key into
+`/persist/etc/ssh/` at install time — that's what the `IMPERMANENT=true`
+flag on `bootstrap:install` exists for. Without it sshd can't load its
+host key after the first rollback (preservation bind-mounts an empty
+file from `/persist`) and the host comes up unreachable.
+
 ## Module layout
 
 - `modules/system/*.nix` — NixOS modules, registered as
