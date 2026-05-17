@@ -80,7 +80,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Free up runner disk
+      - name: Free up runner disk and add swap
         run: |
           # GHA runners default to ~14G free; closures for full server
           # hosts (hpp-1) can blow that out. Drop preinstalled SDKs we
@@ -88,6 +88,16 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL
           sudo docker image prune -af || true
+          # GHA runners ship 16G RAM + 4G swap, which OOMs the nix
+          # daemon when napalm builds authentik's npm frontend in
+          # parallel with paperless's lxml/tesseract C extensions.
+          # Add 8G of additional swap so peak memory has somewhere to
+          # spill instead of killing the daemon.
+          sudo fallocate -l 8G /mnt/extra-swapfile
+          sudo chmod 600 /mnt/extra-swapfile
+          sudo mkswap /mnt/extra-swapfile
+          sudo swapon /mnt/extra-swapfile
+          free -h
           df -h
 
       - name: Install nix
@@ -113,6 +123,12 @@ jobs:
 
       - name: Build ${{ matrix.host }}
         run: |
+          # --max-jobs 2 --cores 2: cap parallel builds at 2 with 2
+          # cores each to keep peak memory in check. Default
+          # max-jobs=auto (4 on the runner) overruns RAM on hpp-1's
+          # closure even with the extra swap.
           nix build \
             --print-build-logs \
+            --max-jobs 2 \
+            --cores 2 \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
