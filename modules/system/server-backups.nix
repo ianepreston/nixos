@@ -147,32 +147,78 @@ in
         };
       };
 
-      systemd.services = {
-        # Restic timer fires after the database dumps so each daily
-        # snapshot contains the morning's dumps from both engines.
-        # ExecStartPost runs only on successful ExecStart, giving us
-        # the "last successful snapshot" liveness the issue asks for.
-        restic-backups-server = {
-          after = [
-            "mnt-backups.mount"
-            "postgresqlBackup.service"
-            "mysql-backup.service"
-          ];
-          requires = [ "mnt-backups.mount" ];
-          serviceConfig = {
-            EnvironmentFile = [ config.sops.templates."restic-heartbeat.env".path ];
+      systemd = {
+        services = {
+          # Restic timer fires after the database dumps so each daily
+          # snapshot contains the morning's dumps from both engines.
+          # ExecStartPost runs only on successful ExecStart, giving us
+          # the "last successful snapshot" liveness the issue asks for.
+          restic-backups-server = {
+            after = [
+              "mnt-backups.mount"
+              "postgresqlBackup.service"
+              "mysql-backup.service"
+            ];
+            requires = [ "mnt-backups.mount" ];
+            serviceConfig = {
+              EnvironmentFile = [ config.sops.templates."restic-heartbeat.env".path ];
+              ExecStartPost = [ heartbeatCmd ];
+            };
+          };
+
+          postgresqlBackup.serviceConfig = {
+            EnvironmentFile = [ config.sops.templates."postgresql-backup-heartbeat.env".path ];
             ExecStartPost = [ heartbeatCmd ];
+          };
+
+          mysql-backup.serviceConfig = {
+            EnvironmentFile = [ config.sops.templates."mysql-backup-heartbeat.env".path ];
+            ExecStartPost = [ heartbeatCmd ];
+          };
+
+          # Weekly `restic check` against the repo to catch silent
+          # corruption (bit-rot, partial truncation) that the nightly
+          # backup itself won't detect. `--with-cache` reuses restic's
+          # local pack cache so we don't re-download every pack from the
+          # NAS each week. A failed check leaves the unit in `failed`
+          # state, which is picked up by the `SystemdUnitFailed`
+          # Prometheus rule in observability.nix and routed to
+          # Alertmanager → Discord like any other unit failure.
+          restic-check-server = {
+            description = "restic check for server repo";
+            after = [ "mnt-backups.mount" ];
+            requires = [ "mnt-backups.mount" ];
+            serviceConfig = {
+              Type = "oneshot";
+              # Match the backup job's privilege model: root, so the
+              # unix-mount ACLs on /mnt/backups behave identically.
+              User = "root";
+              # Quiet down the journal noise from a healthy check;
+              # restic prints per-pack progress otherwise.
+              Environment = [
+                "RESTIC_PROGRESS_FPS=0"
+              ];
+            };
+            script = ''
+              set -euo pipefail
+              export RESTIC_REPOSITORY=/mnt/backups/restic/${hostSpec.hostName}
+              export RESTIC_PASSWORD_FILE=${config.sops.secrets."restic/password".path}
+              exec ${pkgs.restic}/bin/restic check --with-cache
+            '';
           };
         };
 
-        postgresqlBackup.serviceConfig = {
-          EnvironmentFile = [ config.sops.templates."postgresql-backup-heartbeat.env".path ];
-          ExecStartPost = [ heartbeatCmd ];
-        };
-
-        mysql-backup.serviceConfig = {
-          EnvironmentFile = [ config.sops.templates."mysql-backup-heartbeat.env".path ];
-          ExecStartPost = [ heartbeatCmd ];
+        timers.restic-check-server = {
+          description = "Weekly restic check for server repo";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            # Sunday 04:30 — well clear of the 03:00 nightly backup
+            # window plus its 30m randomized delay, and after pruning
+            # has typically settled.
+            OnCalendar = "Sun *-*-* 04:30:00";
+            Persistent = true;
+            RandomizedDelaySec = "30m";
+          };
         };
       };
     };
