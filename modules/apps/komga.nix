@@ -24,7 +24,7 @@ _: {
     {
       myAuthentik.oidcApps.komga = {
         blueprintsDir = ./komga-blueprints;
-        appRestartUnit = "komga.service";
+        appRestartUnit = [ "komga.service" ];
         clientIdVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_ID";
         clientSecretVar = "SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_SECRET";
         homepage = {

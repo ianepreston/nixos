@@ -54,13 +54,18 @@ _: {
                   '';
                 };
                 consumerService = lib.mkOption {
-                  type = lib.types.str;
+                  type = lib.types.listOf lib.types.str;
+                  default = [ ];
                   description = ''
-                    Systemd unit that consumes this role and must wait
+                    Systemd units that consume this role and must wait
                     for the password rotation oneshot to complete. The
                     oneshot is wired with `before` and `wantedBy` on
-                    this unit, so the consumer never starts with a
-                    stale password.
+                    every listed unit, so no consumer ever starts with
+                    a stale password. Pass every unit that opens a
+                    connection (e.g. paperless-ngx with
+                    paperless-{web,scheduler,task-queue,consumer})
+                    rather than trusting transitive ordering through a
+                    single representative unit.
                   '';
                 };
                 secretName = lib.mkOption {
@@ -82,7 +87,7 @@ _: {
         sops.secrets = lib.mapAttrs' (
           name: app:
           lib.nameValuePair app.secretName {
-            sopsFile = hostSpec.sopsFile;
+            inherit (hostSpec) sopsFile;
             owner = "postgres";
             restartUnits = [ "${name}-db-password.service" ];
           }
@@ -121,8 +126,8 @@ _: {
               "postgresql-setup.service"
               "sops-install-secrets.service"
             ];
-            wantedBy = [ app.consumerService ];
-            before = [ app.consumerService ];
+            wantedBy = app.consumerService;
+            before = app.consumerService;
             # Skip the unit if sops hasn't decrypted *this specific*
             # secret yet (sops-install-secrets.service may report
             # success overall while a single entry failed — wrong age

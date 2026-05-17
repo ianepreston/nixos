@@ -34,7 +34,7 @@ _: {
     {
       myAuthentik.oidcApps.mealie = {
         blueprintsDir = ./mealie-blueprints;
-        appRestartUnit = "mealie.service";
+        appRestartUnit = [ "mealie.service" ];
         homepage = {
           group = "Home";
           icon = "mealie";

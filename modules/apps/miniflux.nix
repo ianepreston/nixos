@@ -28,7 +28,7 @@ _: {
     {
       myAuthentik.oidcApps.miniflux = {
         blueprintsDir = ./miniflux-blueprints;
-        appRestartUnit = "miniflux.service";
+        appRestartUnit = [ "miniflux.service" ];
         clientIdVar = "OAUTH2_CLIENT_ID";
         clientSecretVar = "OAUTH2_CLIENT_SECRET";
         homepage = {

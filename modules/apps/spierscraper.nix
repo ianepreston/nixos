@@ -47,7 +47,7 @@ _: {
     in
     {
       sops.secrets."discord/spierscraper_webhook" = {
-        sopsFile = hostSpec.sopsFile;
+        inherit (hostSpec) sopsFile;
       };
 
       sops.templates."spierscraper.env" = {

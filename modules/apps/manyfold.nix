@@ -46,7 +46,7 @@ in
       redisPort = 6380;
     in
     {
-      myPostgresApp.manyfold.consumerService = "podman-manyfold.service";
+      myPostgresApp.manyfold.consumerService = [ "podman-manyfold.service" ];
 
       myAuthentik.forwardAuthApps.manyfold = {
         inherit port;

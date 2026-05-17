@@ -36,7 +36,7 @@ _: {
     in
     {
       sops.secrets."readeck/secret_key" = {
-        sopsFile = hostSpec.sopsFile;
+        inherit (hostSpec) sopsFile;
         restartUnits = [ "readeck.service" ];
       };
 

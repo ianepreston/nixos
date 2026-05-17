@@ -139,24 +139,12 @@ in
         };
       });
 
-      # appRestartUnit is `nullOr (either str (listOf str))` — normalize
-      # it to a plain list so consumers don't have to special-case the
-      # scalar form.
-      appRestartUnits =
-        app:
-        if app.appRestartUnit == null then
-          [ ]
-        else if lib.isList app.appRestartUnit then
-          app.appRestartUnit
-        else
-          [ app.appRestartUnit ];
-
       # Restart units for an app's OIDC sops secret. Always bounces
       # authentik (so the worker sees the new placeholder when the
       # blueprint is re-applied); also bounces the app's own service
       # iff the app reads creds from its env file.
       oidcSecretRestartUnits =
-        app: restartAuthentik ++ lib.optionals app.clientCredsInAppEnv (appRestartUnits app);
+        app: restartAuthentik ++ lib.optionals app.clientCredsInAppEnv app.appRestartUnit;
 
       mkOidcSecret = _appName: app: {
         sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
@@ -309,18 +297,19 @@ in
                     '';
                   };
                   appRestartUnit = lib.mkOption {
-                    type = lib.types.nullOr (lib.types.either lib.types.str (lib.types.listOf lib.types.str));
-                    default = null;
+                    type = lib.types.listOf lib.types.str;
+                    default = [ ];
                     description = ''
-                      Systemd unit (or list of units) to restart when
-                      the per-app env file changes. Required when
+                      Systemd units to restart when the per-app env
+                      file changes. Required (non-empty) when
                       `clientCredsInAppEnv` is true or `extraEnvLines`
-                      is non-empty. Leave null for apps with no per-app
-                      env file (e.g. audiobookshelf, kavita, seerr —
-                      all DB/UI configured). Pass a list when an app
-                      ships multiple systemd units that all consume
-                      the env file (e.g. paperless-ngx with
-                      paperless-{web,scheduler,consumer,task-queue}).
+                      is non-empty. Leave as the empty default for
+                      apps with no per-app env file (e.g.
+                      audiobookshelf, kavita, seerr — all DB/UI
+                      configured). Pass every unit that consumes the
+                      env file (e.g. paperless-ngx with
+                      paperless-{web,scheduler,consumer,task-queue})
+                      so they all bounce on credential rotation.
                     '';
                   };
                   publicClient = lib.mkOption {
@@ -460,7 +449,7 @@ in
               appName: app:
               lib.nameValuePair app.envFileName {
                 content = oidcAppEnvContent appName app;
-                restartUnits = appRestartUnits app;
+                restartUnits = app.appRestartUnit;
               }
             ) oidcApps)
             //

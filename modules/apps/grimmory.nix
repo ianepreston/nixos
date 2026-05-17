@@ -32,7 +32,7 @@ _: {
     {
       myAuthentik.oidcApps.grimmory = {
         blueprintsDir = ./grimmory-blueprints;
-        appRestartUnit = "podman-grimmory.service";
+        appRestartUnit = [ "podman-grimmory.service" ];
         publicClient = true;
         clientCredsInAppEnv = false;
         displayName = "Grimmory";
@@ -41,7 +41,7 @@ _: {
         '';
         extraSecrets = {
           "grimmory/db_password" = {
-            sopsFile = hostSpec.sopsFile;
+            inherit (hostSpec) sopsFile;
             owner = "mysql";
             restartUnits = [
               "grimmory-db-password.service"

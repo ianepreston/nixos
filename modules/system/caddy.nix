@@ -95,7 +95,7 @@ _: {
         };
 
         sops.secrets."cloudflare/acme_token" = {
-          sopsFile = hostSpec.sopsFile;
+          inherit (hostSpec) sopsFile;
           owner = "caddy";
           restartUnits = [ "caddy.service" ];
         };
