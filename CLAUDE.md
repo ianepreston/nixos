@@ -155,6 +155,51 @@ pre-existing `/var/lib/<app>` state on the host once — the upstream
 `tmpfiles` rules use type `d` and won't re-chown existing directories.
 See `modules/apps/jellyfin.nix` for the pattern.
 
+## Provisioning per-app secrets (nix-secrets Taskfile)
+
+Secrets live in the sibling repo at `../nix-secrets` (consumed as a
+flake input). It has its own `Taskfile.yaml` for generating new
+secrets — use it instead of editing sops yaml by hand or piping
+`openssl rand` into `sops set` manually. All tasks default to
+`HOST=hpp-1` (the homelab server) and refuse to overwrite an
+existing key unless `FORCE=true`.
+
+Run from `../nix-secrets`:
+
+- `task oidc APP=<app>` — generates `client_id` (hex 16) and
+  `client_secret` (hex 32) at `<app>.oidc_client_id` /
+  `<app>.oidc_client_secret` in `sops/<host>.yaml`. Use whenever
+  wiring `myAuthentik.oidcApps.<app>`.
+- `task dbpw APP=<app>` — generates `<app>.db_password` (hex 16).
+  Use for any app whose postgres role is provisioned via
+  `myPostgresApp` with TCP + password (i.e. not unix-socket peer auth
+  / `createLocally`).
+- `task secret APP=<app> KEY=<key> [LEN=<bytes>]` — generic
+  high-entropy hex at `<app>.<key>`. Use for app-specific tokens
+  (session keys, signing secrets, API keys).
+- `task edit:<host>` / `task view:<host>` — open or print a host's
+  decrypted yaml. Use `edit` for non-random values (e.g. pasted-in
+  API keys from a provider).
+- `task rekey` — re-encrypts every file against current
+  `.sops.yaml`; run after changing the key registry.
+
+Workflow when adding a new app that needs secrets:
+
+1. Decide which secrets the app needs (OIDC creds, db password,
+   app-specific tokens).
+2. From `../nix-secrets`: run the matching task(s). Keys nest under
+   the app name, so `sops.secrets."<app>/oidc_client_id"` /
+   `sops.placeholder."<app>/db_password"` etc. in the nixos module
+   resolve directly.
+3. Commit + push `nix-secrets`, then
+   `nix flake update nix-secrets` in this repo before deploy.
+
+Don't invent ad-hoc key names — stick to `oidc_client_id`,
+`oidc_client_secret`, `db_password` so existing app modules
+(`tandoor.nix`, `paperless-ngx.nix`, etc.) remain a copy-paste
+template. Reach for `task secret` only when the app genuinely needs
+something beyond those three.
+
 ## Authentik notes
 
 - Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`),
