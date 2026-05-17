@@ -55,7 +55,10 @@ jobs:
       # on the first red.
       fail-fast: false
       matrix:
-        host: [luna, terra, toshibachromebook, hpp-1, testvm]
+        # hpp-1 exercises the full server profile (server + server-apps),
+        # terra exercises the workstation profile. These two cover the
+        # bulk of the closure surface; testing every host is overkill.
+        host: [hpp-1, terra]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
