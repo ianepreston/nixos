@@ -27,6 +27,7 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
             lazy-trees = false
+            always-allow-substitutes = false
 
       # nix-secrets is a private flake input fetched via git+https from
       # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
@@ -85,6 +86,7 @@ jobs:
             experimental-features = nix-command flakes
             accept-flake-config = true
             lazy-trees = false
+            always-allow-substitutes = false
 
       - name: Set up Magic Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@main
