@@ -15,6 +15,7 @@
       authentik
       base
       caddy
+      gatus
       homepage
       mariadb
       nfsclient

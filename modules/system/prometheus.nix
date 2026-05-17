@@ -25,6 +25,7 @@ _: {
       alertmanagerPort = 9093;
       caddyMetricsPort = 2019;
       cadvisorPort = 8081;
+      gatusPort = 8084;
     in
     {
       systemd.services = {
@@ -143,6 +144,10 @@ _: {
             {
               job_name = "cadvisor";
               static_configs = [ { targets = [ "127.0.0.1:${toString cadvisorPort}" ]; } ];
+            }
+            {
+              job_name = "gatus";
+              static_configs = [ { targets = [ "127.0.0.1:${toString gatusPort}" ]; } ];
             }
           ];
 
@@ -272,6 +277,21 @@ _: {
                         annotations = {
                           summary = "Container {{ $labels.name }} restart-looping";
                           description = "Container {{ $labels.name }} on {{ $labels.instance }} has restarted {{ $value }} times in the last 15m.";
+                        };
+                      }
+                      {
+                        alert = "GatusEndpointDown";
+                        # Gauge of the most recent probe result per
+                        # endpoint. Probe interval is 60s for app/auth
+                        # endpoints (5m for external), so `for: 3m`
+                        # ignores a single transient failure and pages
+                        # on the second consecutive miss.
+                        expr = "gatus_results_endpoint_success == 0";
+                        for = "3m";
+                        labels.severity = "warning";
+                        annotations = {
+                          summary = "Gatus probe failing: {{ $labels.name }} ({{ $labels.group }})";
+                          description = "Endpoint {{ $labels.name }} in group {{ $labels.group }} has been failing its gatus probe for 3m.";
                         };
                       }
                       {
