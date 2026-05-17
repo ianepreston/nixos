@@ -67,6 +67,16 @@
         ''
       );
 
+      # UniFi state lives at /var/lib/unifi-os-server (the upstream
+      # module's `stateDir` default), NOT under /var/lib/containers —
+      # the controller's mongodb data, adoption keys, and site config
+      # all sit there. The wholesale `/var/lib/containers` preservation
+      # entry in preservation-server.nix doesn't cover it, so add an
+      # explicit one. Owner stays root:root because the upstream
+      # tmpfiles rules create the tree as root and bind-mount it into
+      # the container.
+      preservation.preserveAt."/persist".directories = [ "/var/lib/unifi-os-server" ];
+
       myAuthentik.forwardAuthApps.unifi = {
         port = 11443;
         displayName = "UniFi";
