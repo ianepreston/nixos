@@ -26,6 +26,7 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
+            lazy-trees = false
 
       - name: Set up Magic Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@main
@@ -75,6 +76,7 @@ jobs:
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
+            lazy-trees = false
 
       - name: Set up Magic Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@main
