@@ -32,8 +32,7 @@ _: {
           icon = "kavita";
           description = "Manga + books";
         };
-        homepageDisplayName = "Kavita";
-        homepageHref = "https://${kavitaHost}";
+        displayName = "Kavita";
       };
 
       services.kavita = {

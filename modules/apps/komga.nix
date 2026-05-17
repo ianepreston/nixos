@@ -32,8 +32,7 @@ _: {
           icon = "komga";
           description = "Comics + manga";
         };
-        homepageDisplayName = "Komga";
-        homepageHref = "https://${komgaHost}";
+        displayName = "Komga";
       };
 
       services.komga = {

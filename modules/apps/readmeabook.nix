@@ -40,8 +40,7 @@ _: {
           icon = "audiobookshelf";
           description = "Audiobook requests";
         };
-        homepageDisplayName = "ReadMeABook";
-        homepageHref = "https://${readmeabookHost}";
+        displayName = "ReadMeABook";
       };
 
       systemd = {

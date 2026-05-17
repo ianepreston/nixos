@@ -17,11 +17,7 @@
 #      reads) into their own env file via the secret placeholder, and
 #   2. point their consumer service at host.containers.internal:5432
 #      with the matching role + dbName.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.myPostgresApp =
     {
       config,
@@ -86,7 +82,7 @@ in
         sops.secrets = lib.mapAttrs' (
           name: app:
           lib.nameValuePair app.secretName {
-            sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+            sopsFile = hostSpec.sopsFile;
             owner = "postgres";
             restartUnits = [ "${name}-db-password.service" ];
           }

@@ -40,8 +40,7 @@ _: {
           icon = "mealie";
           description = "Recipe manager";
         };
-        homepageDisplayName = "Mealie";
-        homepageHref = "https://${mealieHost}";
+        displayName = "Mealie";
       };
 
       services.mealie = {

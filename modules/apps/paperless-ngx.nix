@@ -20,11 +20,7 @@
 # generated on first start), while the other three units read
 # PAPERLESS_SECRET_KEY from the env file. A oneshot pre-seeds the
 # file from sops on first run so all four agree on the same key.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.paperless-ngx =
     {
       config,
@@ -47,7 +43,7 @@ in
       myPostgresApp.paperless-ngx.consumerService = "paperless-scheduler.service";
 
       sops.secrets."paperless-ngx/secret_key" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
         restartUnits = paperlessUnits;
       };
 
@@ -55,6 +51,7 @@ in
         blueprintsDir = ./paperless-ngx-blueprints;
         appRestartUnit = paperlessUnits;
         clientCredsInAppEnv = false;
+        displayName = "Paperless-ngx";
         extraEnvLines = ''
           PAPERLESS_DBPASS=${config.sops.placeholder."paperless-ngx/db_password"}
           PAPERLESS_SECRET_KEY=${config.sops.placeholder."paperless-ngx/secret_key"}
@@ -69,8 +66,6 @@ in
           icon = "paperless-ngx";
           description = "Documents";
         };
-        homepageDisplayName = "Paperless-ngx";
-        homepageHref = "https://${paperlessHost}";
       };
 
       services.paperless = {

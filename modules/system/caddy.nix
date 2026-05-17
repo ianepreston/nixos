@@ -15,11 +15,7 @@
 # becomes a `@<name> host <fqdn>` matcher + `handle @<name> { ... }`
 # block inside the wildcard vhost, so adding an app stays a one-attr
 # declaration without leaking the routing layout into every module.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.caddy =
     {
       config,
@@ -99,7 +95,7 @@ in
         };
 
         sops.secrets."cloudflare/acme_token" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          sopsFile = hostSpec.sopsFile;
           owner = "caddy";
           restartUnits = [ "caddy.service" ];
         };

@@ -1,5 +1,6 @@
 # Specifications For Differentiating Hosts
 {
+  inputs,
   lib,
   ...
 }:
@@ -81,6 +82,12 @@
               type = lib.types.str;
               description = "The home directory of the user";
               default = if config.isDarwin then "/Users/${config.username}" else "/home/${config.username}";
+            };
+            sopsFile = lib.mkOption {
+              type = lib.types.path;
+              description = "Path to the per-host sops YAML file in the nix-secrets repo.";
+              default = "${inputs.nix-secrets}/sops/${config.hostName}.yaml";
+              defaultText = lib.literalExpression "\"\${inputs.nix-secrets}/sops/\${config.hostName}.yaml\"";
             };
           };
         }

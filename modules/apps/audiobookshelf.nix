@@ -21,8 +21,7 @@ _: {
           icon = "audiobookshelf";
           description = "Audiobooks";
         };
-        homepageDisplayName = "Audiobookshelf";
-        homepageHref = "https://${audiobookshelfHost}";
+        displayName = "Audiobookshelf";
       };
 
       services.audiobookshelf = {

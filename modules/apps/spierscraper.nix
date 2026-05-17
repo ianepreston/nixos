@@ -3,11 +3,7 @@
 # clearance/odds-and-ends collections and posts Discord embeds for new
 # matches; previously ran as a kubernetes CronJob in the old homelab
 # repo. No web UI, so no caddy / authentik wiring.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.spierscraper =
     {
       config,
@@ -51,7 +47,7 @@ in
     in
     {
       sops.secrets."discord/spierscraper_webhook" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
       };
 
       sops.templates."spierscraper.env" = {

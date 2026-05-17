@@ -55,8 +55,7 @@ _: {
           icon = "home-assistant";
           description = "Smart home";
         };
-        homepageDisplayName = "Home Assistant";
-        homepageHref = "https://${homeassistantHost}";
+        displayName = "Home Assistant";
       };
 
       networking = {

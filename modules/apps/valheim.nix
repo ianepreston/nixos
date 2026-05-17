@@ -30,11 +30,7 @@
 # the DLL; client-affecting mods need every player to install the
 # same mod locally. See
 # https://github.com/lloesche/valheim-server-docker#bepinex.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.valheim =
     {
       config,
@@ -48,7 +44,7 @@ in
     in
     {
       sops.secrets."valheim/server_password" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        sopsFile = hostSpec.sopsFile;
         restartUnits = [ "podman-valheim.service" ];
       };
 

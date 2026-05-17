@@ -392,15 +392,13 @@ in
                       skip generating a tile.
                     '';
                   };
-                  homepageDisplayName = lib.mkOption {
+                  displayName = lib.mkOption {
                     type = lib.types.str;
                     default = name;
-                    description = "Tile label. Defaults to the attribute name.";
-                  };
-                  homepageHref = lib.mkOption {
-                    type = lib.types.str;
-                    default = "https://${name}.${hostSpec.serverDomain}";
-                    description = "Tile target URL. Defaults to <name>.<serverDomain>.";
+                    description = ''
+                      Human-facing app name (authentik tile + homepage
+                      label). Defaults to the attribute name.
+                    '';
                   };
                 };
               }
@@ -490,10 +488,10 @@ in
 
           myAuthentik.extraBlueprints = lib.mapAttrsToList (_: app: app.blueprintsDir) oidcApps;
 
-          myHomepage.tiles = lib.mapAttrs (_name: app: {
+          myHomepage.tiles = lib.mapAttrs (name: app: {
             inherit (app.homepage) group icon description;
-            displayName = app.homepageDisplayName;
-            href = app.homepageHref;
+            inherit (app) displayName;
+            href = "https://${name}.${hostSpec.serverDomain}";
           }) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
         })
       ];
