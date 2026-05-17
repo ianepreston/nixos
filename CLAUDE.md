@@ -211,6 +211,15 @@ something beyond those three.
   back to upstream / source store paths and every blueprint apply fails
   with "Invalid blueprint path". `modules/apps/authentik.nix` uses
   `pkgs.runCommandLocal` + `cp -rL` to materialize real files.
+- **`@serverDomain@` substitution is per-contributor, not at merge
+  time.** OIDC blueprint dirs are pre-rendered by `renderedBlueprintDir`
+  in `modules/platform/authentik.nix` before they hit `extraBlueprints`;
+  `fwBlueprintDir` interpolates the domain into the Nix string directly.
+  The merge step in `modules/apps/authentik.nix` is a pure `cp -rL` stack
+  with no `sed` pass — that pass mangled unrelated YAML values that
+  happened to contain the literal string (closes #154). If you add a new
+  way of contributing blueprints, do substitution at the contribution
+  site if those files use the placeholder.
 - Blueprint secrets (`password`, `client_secret`, token `key`) go through
   `!Env VAR_NAME`. The var must be present in the `EnvironmentFile`
   consumed by the *worker* (the worker is what applies blueprints, not

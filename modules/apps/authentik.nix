@@ -43,24 +43,27 @@ in
         "authentik-worker.service"
         "authentik-migrate.service"
       ];
-      # Copy (with -L to dereference) instead of symlink-joining: authentik's
-      # `retrieve_file` calls `Path(...).resolve()` on every blueprint and
-      # rejects anything that resolves outside `blueprints_dir`. With
-      # symlinkJoin the top-level entries are symlinks back to upstream /
-      # our source, so they resolve outside the merged dir and every
-      # blueprint apply fails with "Invalid blueprint path".
-      # `@serverDomain@` in any contributed blueprint is rewritten to the
-      # host's serverDomain at merge time. This keeps per-app YAMLs
-      # host-portable instead of baking a single host's domain into
-      # every redirect_uri / meta_launch_url.
+      # Stack upstream blueprints + every contributed dir + this module's
+      # local set into a single real-file directory. Copy with `-L` to
+      # dereference: authentik's `retrieve_file` calls
+      # `Path(...).resolve()` on every blueprint and rejects anything
+      # that resolves outside `blueprints_dir`, so `symlinkJoin` (top-level
+      # entries are symlinks back to source store paths) makes every
+      # apply fail with "Invalid blueprint path".
+      #
+      # `@serverDomain@` substitution is not done here. Each contributor
+      # that uses the placeholder renders its own files first: OIDC app
+      # blueprints go through `renderedBlueprintDir` in
+      # `modules/platform/authentik.nix`; `fwBlueprintDir` interpolates
+      # the domain via Nix strings. This module's local
+      # `./authentik-blueprints/*.yaml` files don't reference the
+      # placeholder, so they cp in unmodified.
       mergedBlueprints = pkgs.runCommandLocal "authentik-blueprints-merged" { } ''
         mkdir -p $out
         cp -rL ${config.services.authentik.authentikComponents.staticWorkdirDeps}/blueprints/. $out/
-        cp -rL ${./authentik-blueprints}/. $out/
         ${lib.concatMapStringsSep "\n" (p: "cp -rL ${p}/. $out/") config.myAuthentik.extraBlueprints}
+        cp -rL ${./authentik-blueprints}/. $out/
         chmod -R u+w $out
-        find $out -type f -name '*.yaml' -exec \
-          sed -i 's|@serverDomain@|${hostSpec.serverDomain}|g' {} +
       '';
     in
     {
