@@ -28,9 +28,6 @@ jobs:
             accept-flake-config = true
             lazy-trees = false
 
-      - name: Set up Magic Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
-
       # nix-secrets is a private flake input fetched via git+https from
       # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
       # key (read-only) registered on that repo to authenticate, and
@@ -44,8 +41,16 @@ jobs:
         run: |
           git config --global url."git@github.com:".insteadOf "https://github.com/"
 
+      # Pre-materialize every flake input into the store. Without this,
+      # `nix flake check --all-systems` racing through many configs in
+      # parallel can reference transitive input store paths (e.g. the
+      # authentik-nix → napalm source) before they're written, producing
+      # "path '...-source' is not valid" errors mid-eval.
+      - name: Pre-fetch flake inputs
+        run: nix flake archive --json > /dev/null
+
       - name: nix flake check
-        run: nix flake check --all-systems --no-build
+        run: nix flake check --all-systems --no-build --show-trace
 
   build:
     name: build ${{ matrix.host }}
