@@ -31,11 +31,14 @@
 # Gatus itself appears in the list — probing its own admin route is a
 # useful end-to-end check of the forward-auth chain.
 #
+# Alerts route through prometheus: gatus exposes /metrics, prometheus
+# scrapes it, and a `gatus_results_endpoint_success == 0` rule fires
+# into the existing alertmanager → discord receiver. Wiring lives in
+# modules/system/prometheus.nix. Issue #128 originally floated ntfy for
+# delivery-path independence; the prometheus path was preferred because
+# it reuses the existing alert chain (grouping, silencing, watchdog).
+#
 # Open items (deferred — call out in PR):
-#   * Alerts. Issue recommends ntfy.sh for delivery-path independence
-#     from alertmanager+discord. Not wired in this first cut; probes
-#     surface failures via the status page only. Add ntfy receiver in
-#     a follow-up after confirming probe coverage is right.
 #   * Two-hostname listener split. Gatus 5.x serves UI + status page
 #     from the same handler; differentiating "admin" vs "read-only"
 #     is purely the Caddy auth layer (forward_auth on gatus.<domain>,
@@ -130,6 +133,12 @@ _: {
         # Bind loopback only; caddy handles tls + public exposure.
         # Gatus's `web.address` controls the listen interface.
         web.address = "127.0.0.1";
+
+        # Expose /metrics for prometheus. The scrape job + alert rule on
+        # `gatus_results_endpoint_success == 0` live in
+        # modules/system/prometheus.nix — gatus failures route through
+        # the existing alertmanager → discord receiver, no extra sink.
+        metrics = true;
 
         # SQLite storage so uptime history survives restarts. Path is
         # inside the StateDirectory (/var/lib/gatus) the systemd unit
