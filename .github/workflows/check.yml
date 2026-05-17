@@ -1,0 +1,73 @@
+---
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to avoid wasting minutes when
+# pushing rapid follow-ups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flake-check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            lazy-trees = false
+            always-allow-substitutes = false
+
+      # nix-secrets is a private flake input fetched via git+https from
+      # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
+      # key (read-only) registered on that repo to authenticate, and
+      # rewrite https → ssh so nix's git fetcher picks up the agent.
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+
+      - name: Rewrite github.com https → ssh for nix-secrets fetch
+        run: |
+          git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+      # `nix flake check --all-systems` evaluates every config in
+      # parallel and on Determinate Nix's Linux runner consistently
+      # hits "path '...-source' is not valid" on filtered sub-paths
+      # of transitive flake inputs (e.g. napalm's
+      # `lib.cleanSource ./napalm-registry`) — concurrent addToStore
+      # for sub-paths from git-cache-backed flake inputs races and
+      # leaves the path registered-but-empty. Walking every NixOS
+      # config sequentially via drvPath avoids the race and is the
+      # coverage that matters (darwin/home configs are deployed from
+      # local Darwin where local task check already gates them).
+      #
+      # Per-host builds (`nix build .#nixosConfigurations.<host>...`)
+      # are deliberately NOT in this workflow: hpp-1's full server
+      # closure (authentik via napalm's npm frontend, paperless lxml
+      # extensions, tesseract, etc.) takes ~60-90 min from cold on
+      # the 16G GHA runner even serialized — too slow to gate merges
+      # against. Builds come back in once we have a binary cache or
+      # a self-hosted runner; see #180.
+      - name: Eval each NixOS config
+        run: |
+          set -euo pipefail
+          for host in $(nix eval --json '.#nixosConfigurations' \
+              --apply 'cfgs: builtins.attrNames cfgs' | jq -r '.[]'); do
+            echo "::group::nixosConfigurations.$host"
+            nix eval --raw \
+              ".#nixosConfigurations.$host.config.system.build.toplevel.drvPath"
+            echo
+            echo "::endgroup::"
+          done

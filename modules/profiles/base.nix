@@ -7,7 +7,7 @@
 let
   sshKeysDir = ./_ssh-keys;
   pubKeys = builtins.attrValues (
-    builtins.mapAttrs (name: _: builtins.readFile "${sshKeysDir}/${name}") (builtins.readDir sshKeysDir)
+    builtins.mapAttrs (name: _: builtins.readFile (sshKeysDir + "/${name}")) (builtins.readDir sshKeysDir)
   );
 in
 {
@@ -139,7 +139,7 @@ in
         sharedModules = [
           (
             let
-              hostPubKey = "${sshKeysDir}/id_${hostSpec.hostName}.pub";
+              hostPubKey = sshKeysDir + "/id_${hostSpec.hostName}.pub";
             in
             {
               home = {
