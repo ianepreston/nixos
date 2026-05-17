@@ -82,6 +82,50 @@ _: {
                 "systemd"
                 "processes"
               ];
+              # Narrow the systemd collector to units we actually
+              # dashboard/alert on. Without this, node_systemd_unit_state
+              # emits a series per (unit × state) for every unit on the
+              # host — hundreds of mounts, scopes, user@*.service slices,
+              # podman-internal helpers — which blows up TSDB cardinality
+              # for no observability gain.
+              #
+              # Per #157: re-evaluate this regex when adding a new app
+              # module. Anything not matched here is invisible to
+              # SystemdUnitFailed alerting.
+              extraFlags = [
+                (
+                  "--collector.systemd.unit-include=^("
+                  # Core infra:
+                  #   sshd       — remote access; if it dies we're cooked.
+                  #   caddy      — TLS edge / reverse proxy for everything.
+                  #   postgresql — shared DB for most apps.
+                  #   mysql      — shared MariaDB (grimmory, etc.).
+                  #   redis*     — unnamed instance + named per-app servers
+                  #                (paperless, …) get redis-<name>.service.
+                  #   restic-backups-server — nightly off-site backup.
+                  + "sshd|caddy|postgresql|mysql|redis(-.+)?|restic-backups-server"
+                  # Authentik (SSO) — server + worker + migrate one-shot.
+                  + "|authentik(-worker|-migrate)?"
+                  # Observability stack itself — useful to know if our
+                  # own scrapers fall over.
+                  + "|prometheus|alertmanager|grafana|loki|promtail|cadvisor|gatus"
+                  + "|prometheus-(node|postgres|mysqld|redis)-exporter"
+                  # Native NixOS app services (modules/apps/*.nix using
+                  # services.<app>): audiobookshelf, bazarr, jellyfin,
+                  # kavita, komga, mealie, miniflux, paperless (multi-unit:
+                  # web/scheduler/task-queue/consumer), prowlarr, radarr,
+                  # readeck, sabnzbd, sonarr, spierscraper, unifi-os-server.
+                  + "|audiobookshelf|bazarr|jellyfin|kavita|komga|mealie|miniflux"
+                  + "|paperless(-.+)?|prowlarr|radarr|readeck|sabnzbd|sonarr"
+                  + "|spierscraper|unifi-os-server"
+                  # Container-based apps (modules/apps/*.nix using
+                  # virtualisation.oci-containers): each registers a
+                  # podman-<name>.service unit.
+                  + "|podman-(actualbudget|grimmory|homeassistant|kapowarr"
+                  + "|maintainerr|mylar3|profilarr|readmeabook|seerr|shelfarr"
+                  + "|tandoor|valheim|watchstate))\\.service$"
+                )
+              ];
             };
             postgres = {
               enable = true;
