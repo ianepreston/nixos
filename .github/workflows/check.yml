@@ -34,7 +34,7 @@ jobs:
       # key (read-only) registered on that repo to authenticate, and
       # rewrite https → ssh so nix's git fetcher picks up the agent.
       - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
 
