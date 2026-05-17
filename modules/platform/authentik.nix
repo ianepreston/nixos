@@ -118,6 +118,24 @@ in
 
       fwBlueprintDir = pkgs.writeTextDir "forward-auth-apps.yaml" fwBlueprintContent;
 
+      # Pre-render an OIDC app's blueprint dir: copy each *.yaml in and
+      # substitute `@serverDomain@` → `hostSpec.serverDomain`. Substitution
+      # happens per-contributor here rather than as a sed pass over the
+      # final merged dir — that pass would silently mangle any YAML value
+      # containing the literal string for an unrelated purpose (closes
+      # #154). `fwBlueprintDir` above sidesteps the placeholder entirely
+      # by interpolating the domain into the Nix string at write time;
+      # any new blueprint-contribution path must do one or the other.
+      renderedBlueprintDir =
+        name: src:
+        pkgs.runCommandLocal "${name}-blueprints-rendered" { } ''
+          mkdir $out
+          cp -L ${src}/*.yaml $out/
+          chmod -R u+w $out
+          substituteInPlace $out/*.yaml \
+            --replace-quiet '@serverDomain@' '${hostSpec.serverDomain}'
+        '';
+
       homepageSubmodule = lib.types.submodule (_: {
         options = {
           group = lib.mkOption {
@@ -475,7 +493,9 @@ in
             ];
           };
 
-          myAuthentik.extraBlueprints = lib.mapAttrsToList (_: app: app.blueprintsDir) oidcApps;
+          myAuthentik.extraBlueprints = lib.mapAttrsToList (
+            appName: app: renderedBlueprintDir appName app.blueprintsDir
+          ) oidcApps;
 
           myHomepage.tiles = lib.mapAttrs (name: app: {
             inherit (app.homepage) group icon description;
