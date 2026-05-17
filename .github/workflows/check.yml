@@ -52,6 +52,14 @@ jobs:
       # config sequentially via drvPath avoids the race and is the
       # coverage that matters (darwin/home configs are deployed from
       # local Darwin where local task check already gates them).
+      #
+      # Per-host builds (`nix build .#nixosConfigurations.<host>...`)
+      # are deliberately NOT in this workflow: hpp-1's full server
+      # closure (authentik via napalm's npm frontend, paperless lxml
+      # extensions, tesseract, etc.) takes ~60-90 min from cold on
+      # the 16G GHA runner even serialized — too slow to gate merges
+      # against. Builds come back in once we have a binary cache or
+      # a self-hosted runner; see #180.
       - name: Eval each NixOS config
         run: |
           set -euo pipefail
@@ -63,76 +71,3 @@ jobs:
             echo
             echo "::endgroup::"
           done
-
-  build:
-    name: build ${{ matrix.host }}
-    runs-on: ubuntu-latest
-    strategy:
-      # Surface every failing host on a single PR rather than bailing
-      # on the first red.
-      fail-fast: false
-      matrix:
-        # hpp-1 exercises the full server profile (server + server-apps),
-        # terra exercises the workstation profile. These two cover the
-        # bulk of the closure surface; testing every host is overkill.
-        host: [hpp-1, terra]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Free up runner disk and add swap
-        run: |
-          # GHA runners default to ~14G free; closures for full server
-          # hosts (hpp-1) can blow that out. Drop preinstalled SDKs we
-          # don't need for nix builds.
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL
-          sudo docker image prune -af || true
-          # GHA runners ship 16G RAM + 4G swap, which OOMs the nix
-          # daemon when napalm builds authentik's npm frontend in
-          # parallel with paperless's lxml/tesseract C extensions.
-          # Add 12G of additional swap so peak memory has somewhere
-          # to spill instead of killing the daemon. /mnt has ~75G
-          # free so the swap file is comfortably accommodated.
-          sudo fallocate -l 12G /mnt/extra-swapfile
-          sudo chmod 600 /mnt/extra-swapfile
-          sudo mkswap /mnt/extra-swapfile
-          sudo swapon /mnt/extra-swapfile
-          free -h
-          df -h
-
-      - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            lazy-trees = false
-            always-allow-substitutes = false
-
-      - name: Set up Magic Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
-
-      - name: Rewrite github.com https → ssh for nix-secrets fetch
-        run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
-
-      - name: Build ${{ matrix.host }}
-        run: |
-          # --max-jobs 1 --cores 4: serialize derivation builds (one
-          # at a time) but let each one use all four runner cores.
-          # --max-jobs 2 still OOMed the daemon partway through
-          # napalm's parallel npm builds for authentik's frontend;
-          # going single-job is the most conservative setting that
-          # actually finishes on the 16G runner. Real fix is a
-          # binary cache (#179) or a self-hosted runner (#180).
-          nix build \
-            --print-build-logs \
-            --max-jobs 1 \
-            --cores 4 \
-            ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
