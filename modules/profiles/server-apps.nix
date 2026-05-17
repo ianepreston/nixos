@@ -86,6 +86,7 @@
         kavita
         komga
         maintainerr
+        manyfold
         mealie
         miniflux
         mylar3
