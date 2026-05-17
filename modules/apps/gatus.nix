@@ -17,7 +17,7 @@
 #
 # Probe strategy. Each endpoint hits https://<app>.<serverDomain> from
 # outside Caddy and asserts:
-#   * [STATUS] == 200 OR [STATUS] == 302
+#   * [STATUS] == any(200, 302)
 #       Apps gated by authentik forward-auth respond 302 (redirect to
 #       the outpost) for an unauthenticated request — that *is* the
 #       healthy response: it confirms Caddy → forward_auth → outpost
@@ -73,7 +73,7 @@ _: {
         url = "https://${app.host}";
         interval = "60s";
         conditions = [
-          "[STATUS] == 200 || [STATUS] == 302"
+          "[STATUS] == any(200, 302)"
           "[RESPONSE_TIME] < 2000"
           "[CERTIFICATE_EXPIRATION] > 336h"
         ];
