@@ -37,7 +37,7 @@ tasks:
     cmds:
       - nix build .#nixosConfigurations.luna.config.system.build.toplevel
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
-      - nix build .#nixosConfigurations.toshibachromebook.config.system.build.toplevel
+      - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake . --override-input nix-secrets path:../nix-secrets
@@ -68,13 +68,11 @@ tasks:
       # If we dont remove this folder, libvirtd VM doesnt run with the new iso...
       rm -rf result
       nix build --impure .#nixosConfigurations.iso.config.system.build.isoImage && ln -sf result/iso/*.iso latest.iso
-
   # ---------------------------------------------------------------------------
   # Bootstrap tasks — install NixOS on a remote target using nixos-anywhere
   # ---------------------------------------------------------------------------
   # Required vars: HOST (hostname), DEST (IP or domain of target)
   # Optional vars: SSH_PORT (default 22), LUKS_PASS (LUKS passphrase, omit if no LUKS)
-
   bootstrap:new:
     desc: Full pipeline for a brand-new host (install + hwconfig, pause for secrets setup, then sync + rebuild)
     requires:
@@ -85,21 +83,20 @@ tasks:
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
     cmds:
       - task: bootstrap:install
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}'}
       - |
         echo ""
         echo "===  Installation complete. Waiting for target to reboot.  ==="
         echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
         read -r
       - task: bootstrap:hwconfig
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: bootstrap:secrets
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: bootstrap:sync
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: bootstrap:rebuild
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   bootstrap:reinstall:
     desc: Reinstall an existing host that already has secrets configured (install + sync + rebuild)
     requires:
@@ -110,17 +107,16 @@ tasks:
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
     cmds:
       - task: bootstrap:install
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}'}
       - |
         echo ""
         echo "===  Installation complete. Waiting for target to reboot.  ==="
         echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
         read -r
       - task: bootstrap:sync
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: bootstrap:rebuild
-        vars: { HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   bootstrap:install:
     desc: Run nixos-anywhere to install NixOS on the target
     requires:
@@ -204,7 +200,6 @@ tasks:
         echo "        - age:"
         echo "            - *ipreston"
         echo "            - *{{.HOST}}"
-
   bootstrap:hwconfig:
     desc: Extract hardware-configuration.nix from the target and save it locally
     requires:
@@ -220,7 +215,6 @@ tasks:
         ssh -p {{.SSH_PORT}} -oStrictHostKeyChecking=accept-new {{.TARGET_USER}}@{{.DEST}} \
           "sudo nixos-generate-config --no-filesystems --show-hardware-config" > "$outfile"
         echo -e "\x1B[32m[+] Saved to $outfile\x1B[0m"
-
   bootstrap:hostkey:
     desc: Derive age public key from target's SSH host key and print SOPS update instructions
     requires:
@@ -261,7 +255,6 @@ tasks:
         echo ""
         echo "Then: cd ../nix-secrets && sops updatekeys sops/*.yaml && git add -A && git commit -m 'add {{.HOST}} keys' && git push"
         echo "Then: nix flake update nix-secrets  (back in this repo)"
-
   bootstrap:secrets:
     desc: Add host age key to nix-secrets, create host secrets file, and commit
     requires:
@@ -332,7 +325,6 @@ tasks:
         git add -A
         git diff --cached --quiet && echo -e "\x1B[33m[~] No changes to commit\x1B[0m" \
           || { git commit -m "add ${host} host key and secrets"; echo -e "\x1B[32m[+] Done. nix-secrets committed (not pushed).\x1B[0m"; }
-
   bootstrap:sync:
     desc: Rsync nixos and nix-secrets configs to the target
     requires:
@@ -359,7 +351,6 @@ tasks:
         rsync -av --mkpath --filter=':- .gitignore' \
           -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}}" \
           "$git_root"/../nix-secrets "{{.TARGET_USER}}@{{.DEST}}:src/"
-
   bootstrap:rebuild:
     desc: Run nixos-rebuild switch on the target
     requires:
