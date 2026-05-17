@@ -44,7 +44,7 @@ _: {
     in
     {
       sops.secrets."valheim/server_password" = {
-        sopsFile = hostSpec.sopsFile;
+        inherit (hostSpec) sopsFile;
         restartUnits = [ "podman-valheim.service" ];
       };
 

@@ -61,7 +61,7 @@ _: {
       # account password, read via $__file{} (no env). Owned by
       # grafana so the unit can read it.
       sops.secrets."grafana/bootstrap_password" = {
-        sopsFile = hostSpec.sopsFile;
+        inherit (hostSpec) sopsFile;
         owner = "grafana";
         restartUnits = [ "grafana.service" ];
       };

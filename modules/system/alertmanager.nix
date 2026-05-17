@@ -21,11 +21,11 @@ _: {
     {
       sops.secrets = {
         "discord/alerts_webhook" = {
-          sopsFile = hostSpec.sopsFile;
+          inherit (hostSpec) sopsFile;
           restartUnits = [ "alertmanager.service" ];
         };
         "alertmanager/heartbeat_url" = {
-          sopsFile = hostSpec.sopsFile;
+          inherit (hostSpec) sopsFile;
           restartUnits = [ "alertmanager.service" ];
         };
       };

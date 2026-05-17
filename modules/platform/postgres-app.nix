@@ -87,7 +87,7 @@ _: {
         sops.secrets = lib.mapAttrs' (
           name: app:
           lib.nameValuePair app.secretName {
-            sopsFile = hostSpec.sopsFile;
+            inherit (hostSpec) sopsFile;
             owner = "postgres";
             restartUnits = [ "${name}-db-password.service" ];
           }

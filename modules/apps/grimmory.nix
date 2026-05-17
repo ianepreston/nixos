@@ -41,7 +41,7 @@ _: {
         '';
         extraSecrets = {
           "grimmory/db_password" = {
-            sopsFile = hostSpec.sopsFile;
+            inherit (hostSpec) sopsFile;
             owner = "mysql";
             restartUnits = [
               "grimmory-db-password.service"

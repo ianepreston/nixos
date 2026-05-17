@@ -32,7 +32,7 @@ _: {
       myPostgresApp.tandoor.consumerService = [ "podman-tandoor.service" ];
 
       sops.secrets."tandoor/secret_key" = {
-        sopsFile = hostSpec.sopsFile;
+        inherit (hostSpec) sopsFile;
         restartUnits = [ "podman-tandoor.service" ];
       };
 
