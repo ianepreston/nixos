@@ -42,16 +42,27 @@ jobs:
         run: |
           git config --global url."git@github.com:".insteadOf "https://github.com/"
 
-      # Pre-materialize every flake input into the store. Without this,
-      # `nix flake check --all-systems` racing through many configs in
-      # parallel can reference transitive input store paths (e.g. the
-      # authentik-nix → napalm source) before they're written, producing
-      # "path '...-source' is not valid" errors mid-eval.
-      - name: Pre-fetch flake inputs
-        run: nix flake archive --json > /dev/null
-
-      - name: nix flake check
-        run: nix flake check --all-systems --no-build --show-trace
+      # `nix flake check --all-systems` evaluates every config in
+      # parallel and on Determinate Nix's Linux runner consistently
+      # hits "path '...-source' is not valid" on filtered sub-paths
+      # of transitive flake inputs (e.g. napalm's
+      # `lib.cleanSource ./napalm-registry`) — concurrent addToStore
+      # for sub-paths from git-cache-backed flake inputs races and
+      # leaves the path registered-but-empty. Walking every NixOS
+      # config sequentially via drvPath avoids the race and is the
+      # coverage that matters (darwin/home configs are deployed from
+      # local Darwin where local task check already gates them).
+      - name: Eval each NixOS config
+        run: |
+          set -euo pipefail
+          for host in $(nix eval --json '.#nixosConfigurations' \
+              --apply 'cfgs: builtins.attrNames cfgs' | jq -r '.[]'); do
+            echo "::group::nixosConfigurations.$host"
+            nix eval --raw \
+              ".#nixosConfigurations.$host.config.system.build.toplevel.drvPath"
+            echo
+            echo "::endgroup::"
+          done
 
   build:
     name: build ${{ matrix.host }}
