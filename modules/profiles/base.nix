@@ -7,7 +7,9 @@
 let
   sshKeysDir = ./_ssh-keys;
   pubKeys = builtins.attrValues (
-    builtins.mapAttrs (name: _: builtins.readFile (sshKeysDir + "/${name}")) (builtins.readDir sshKeysDir)
+    builtins.mapAttrs (name: _: builtins.readFile (sshKeysDir + "/${name}")) (
+      builtins.readDir sshKeysDir
+    )
   );
 in
 {

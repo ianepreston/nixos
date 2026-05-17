@@ -1,12 +1,13 @@
 version: 1
 metadata:
-  name: observability
+  name: grafana
 entries:
   # ========== Grafana — OIDC ==========
   # Grafana speaks OIDC natively. We use generic_oauth on the grafana
-  # side (see modules/system/observability.nix) and a stock OAuth2
-  # provider here. Same shape as the mealie blueprint; client creds
-  # come from sops via the authentik worker's EnvironmentFile.
+  # side (see modules/system/grafana.nix) and a stock OAuth2 provider
+  # here. Same shape as the mealie blueprint; client creds come from
+  # sops via the authentik worker's EnvironmentFile, injected by
+  # myAuthentik.oidcApps.grafana.
   - model: authentik_providers_oauth2.oauth2provider
     id: prov-grafana
     identifiers:
@@ -55,8 +56,8 @@ entries:
 
   # Prometheus and Alertmanager use forward-auth via the embedded
   # outpost, registered through `myAuthentik.forwardAuthApps` in
-  # modules/system/observability.nix. Their proxy providers,
-  # applications, policy bindings, and the outpost's providers list
-  # are emitted from modules/platform/authentik.nix's aggregated
-  # blueprint — a second outpost block here would clobber the
-  # aggregator's providers list at apply time.
+  # modules/system/{prometheus,alertmanager}.nix respectively. Their
+  # proxy providers, applications, policy bindings, and the outpost's
+  # providers list are emitted from modules/platform/authentik.nix's
+  # aggregated blueprint — a second outpost block here would clobber
+  # the aggregator's providers list at apply time.
