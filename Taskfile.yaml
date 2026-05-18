@@ -105,14 +105,58 @@ tasks:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
+      SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE | default ""}}'
+      # Skip the post-install "press enter once it's up" prompt and
+      # poll instead. Used by verify:restore:full for unattended runs.
+      AUTO_WAIT: '{{.AUTO_WAIT | default "false"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
     cmds:
       - task: bootstrap:install
-        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}'}
+        vars:
+          HOST: '{{.HOST}}'
+          DEST: '{{.DEST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          LUKS_PASS: '{{.LUKS_PASS}}'
+          IMPERMANENT: '{{.IMPERMANENT}}'
+          SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE}}'
       - |
-        echo ""
-        echo "===  Installation complete. Waiting for target to reboot.  ==="
-        echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
-        read -r
+        set -euo pipefail
+        if [ "{{.AUTO_WAIT}}" = "true" ]; then
+          echo -e "\x1B[32m[+] Polling for {{.TARGET_USER}}@{{.DEST}}:{{.SSH_PORT}} after reboot (up to 6 min)\x1B[0m"
+          ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+          # `UpdateHostKeys=no` on every ssh below: OpenSSH 9.5+'s default
+          # behavior is to open a flurry of parallel verification
+          # connections (one per advertised host-key algorithm) on every
+          # successful connect — to learn additional host keys. The VM
+          # only has an ed25519 host key, so every other verification
+          # attempt is refused, and the burst can fill sshd's MaxStartups
+          # window. The next legitimate connection (rsync below) then
+          # lands preauth-rejected. Disabling the update kills the flood.
+          # Also wait for systemd to leave the `starting` state before
+          # handing back to bootstrap:sync — otherwise sysinit-reactivation
+          # can flap sshd mid-handshake.
+          for i in $(seq 1 120); do
+            state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                        -o StrictHostKeyChecking=accept-new \
+                        -o UpdateHostKeys=no \
+                        {{.TARGET_USER}}@{{.DEST}} 'systemctl is-system-running' 2>/dev/null || echo connecting)
+            case "$state" in
+              running|degraded)
+                echo -e "\x1B[32m[+] Target reachable (systemd: $state)\x1B[0m"
+                break
+                ;;
+              *)
+                sleep 3
+                ;;
+            esac
+          done
+        else
+          echo ""
+          echo "===  Installation complete. Waiting for target to reboot.  ==="
+          echo "    Press Enter once {{.DEST}} is back up and reachable via SSH."
+          read -r
+        fi
       - task: bootstrap:sync
         vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: bootstrap:rebuild
@@ -130,6 +174,12 @@ tasks:
       # /persist/etc/ssh/* over /etc/ssh/* — sshd finds a real key.
       # Default off; opt in per host with IMPERMANENT=true.
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
+      # If set to an existing ed25519 private key path, reuse that key
+      # (and its .pub) instead of generating fresh. Used by
+      # `verify:restore:full` so the tests-server VM keeps a stable
+      # age identity across drills — without this, every drill would
+      # require redoing the sops creation-rule dance in nix-secrets.
+      SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE | default ""}}'
     cmds:
       - |
         set -euo pipefail
@@ -150,10 +200,20 @@ tasks:
         ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
         ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
 
-        echo -e "\x1B[32m[+] Generating SSH host key for {{.HOST}}\x1B[0m"
         install -d -m755 "$temp/etc/ssh"
-        ssh-keygen -t ed25519 -f "$temp/etc/ssh/ssh_host_ed25519_key" -C "root@{{.HOST}}" -N ""
-        chmod 600 "$temp/etc/ssh/ssh_host_ed25519_key"
+        if [ -n "{{.SSH_HOST_KEY_FILE}}" ]; then
+          if [ ! -f "{{.SSH_HOST_KEY_FILE}}" ] || [ ! -f "{{.SSH_HOST_KEY_FILE}}.pub" ]; then
+            echo -e "\x1B[31m[!] SSH_HOST_KEY_FILE set but {{.SSH_HOST_KEY_FILE}}(.pub) not found\x1B[0m"
+            exit 1
+          fi
+          echo -e "\x1B[32m[+] Reusing existing SSH host key from {{.SSH_HOST_KEY_FILE}}\x1B[0m"
+          install -m600 "{{.SSH_HOST_KEY_FILE}}"     "$temp/etc/ssh/ssh_host_ed25519_key"
+          install -m644 "{{.SSH_HOST_KEY_FILE}}.pub" "$temp/etc/ssh/ssh_host_ed25519_key.pub"
+        else
+          echo -e "\x1B[32m[+] Generating SSH host key for {{.HOST}}\x1B[0m"
+          ssh-keygen -t ed25519 -f "$temp/etc/ssh/ssh_host_ed25519_key" -C "root@{{.HOST}}" -N ""
+          chmod 600 "$temp/etc/ssh/ssh_host_ed25519_key"
+        fi
 
         if [ "{{.IMPERMANENT}}" = "true" ]; then
           echo -e "\x1B[32m[+] IMPERMANENT=true — also seeding /persist/etc/ssh/\x1B[0m"
@@ -171,14 +231,38 @@ tasks:
         fi
 
         echo -e "\x1B[32m[+] Running nixos-anywhere for {{.HOST}} at {{.DEST}}\x1B[0m"
-        # shellcheck disable=SC2086
-        nix run github:nix-community/nixos-anywhere -- \
-          --ssh-port {{.SSH_PORT}} \
-          --post-kexec-ssh-port {{.SSH_PORT}} \
-          --extra-files "$temp" \
-          $luks_args \
-          --flake .#{{.HOST}} \
-          root@{{.DEST}}
+        # When SSH_HOST_KEY_FILE is set this is the unattended drill
+        # flow (verify:restore:full). Pre-build with a local nix-secrets
+        # override so any uncommitted edits in ../nix-secrets/ (e.g. the
+        # `sops updatekeys` envelope changes that authorize tests-server)
+        # actually land in the closure that gets installed — nixos-anywhere
+        # itself has no --override-input passthrough, hence the pre-build.
+        if [ -n "{{.SSH_HOST_KEY_FILE}}" ]; then
+          echo -e "\x1B[32m[+] Pre-building toplevel + diskoScript with local nix-secrets override\x1B[0m"
+          toplevel=$(nix build --no-link --print-out-paths \
+            .#nixosConfigurations.{{.HOST}}.config.system.build.toplevel \
+            --override-input nix-secrets path:../nix-secrets)
+          disko=$(nix build --no-link --print-out-paths \
+            .#nixosConfigurations.{{.HOST}}.config.system.build.diskoScript \
+            --override-input nix-secrets path:../nix-secrets)
+          # shellcheck disable=SC2086
+          nix run github:nix-community/nixos-anywhere -- \
+            --ssh-port {{.SSH_PORT}} \
+            --post-kexec-ssh-port {{.SSH_PORT}} \
+            --extra-files "$temp" \
+            $luks_args \
+            --store-paths "$disko" "$toplevel" \
+            root@{{.DEST}}
+        else
+          # shellcheck disable=SC2086
+          nix run github:nix-community/nixos-anywhere -- \
+            --ssh-port {{.SSH_PORT}} \
+            --post-kexec-ssh-port {{.SSH_PORT}} \
+            --extra-files "$temp" \
+            $luks_args \
+            --flake .#{{.HOST}} \
+            root@{{.DEST}}
+        fi
 
         host_age_key=$(ssh-to-age < "$temp/etc/ssh/ssh_host_ed25519_key.pub")
         echo ""
@@ -344,12 +428,12 @@ tasks:
 
         echo -e "\x1B[32m[+] Syncing nixos config to {{.DEST}}\x1B[0m"
         rsync -av --mkpath --filter=':- .gitignore' \
-          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}}" \
+          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}} -oUpdateHostKeys=no" \
           "$git_root"/../nixos "{{.TARGET_USER}}@{{.DEST}}:src/"
 
         echo -e "\x1B[32m[+] Syncing nix-secrets to {{.DEST}}\x1B[0m"
         rsync -av --mkpath --filter=':- .gitignore' \
-          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}}" \
+          -e "ssh -oport={{.SSH_PORT}} -l {{.TARGET_USER}} -oUpdateHostKeys=no" \
           "$git_root"/../nix-secrets "{{.TARGET_USER}}@{{.DEST}}:src/"
   bootstrap:rebuild:
     desc: Run nixos-rebuild switch on the target
@@ -599,3 +683,274 @@ tasks:
           done
           echo "jellyfin: did not return 200 within 120s (last code: $code)"; exit 1
         '
+
+  # ---------------------------------------------------------------------------
+  # tests-server VM lifecycle (drives verify:restore:full)
+  # ---------------------------------------------------------------------------
+  # The tests-server NixOS config (modules/hosts/tests-server.nix) is the
+  # server-shaped target used by `task verify:restore:full`. It runs in a
+  # quickemu VM on the operator's workstation. These two tasks bring the
+  # VM up (creating disk + ssh key + quickemu conf on first run) and tear
+  # it down (kill quickemu, delete the qcow2 so the next drill is a
+  # truly cold restore).
+  #
+  # The SSH host key under ~/vms/tests-server/ is persisted across
+  # teardowns deliberately — the matching age key has to live in
+  # nix-secrets/.sops.yaml's hpp-1 creation rule, and regenerating it
+  # every drill would mean redoing that dance every quarter. Delete
+  # ~/vms/tests-server/ssh_host_ed25519_key only if you want a fresh
+  # identity (and are prepared to update sops).
+
+  tests-server:up:
+    desc: Bring up the tests-server quickemu VM (idempotent — creates disk/key/conf on first run)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+      VM_CONF: '{{.VM_CONF | default "~/vms/tests-server.conf"}}'
+      DISK_SIZE: '{{.DISK_SIZE | default "60G"}}'
+      RAM: '{{.RAM | default "8G"}}'
+      CPU_CORES: '{{.CPU_CORES | default "4"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        vm_conf=$(eval echo "{{.VM_CONF}}")
+        mkdir -p "$vm_dir"
+
+        # ISO
+        iso_path="$(git rev-parse --show-toplevel)/latest.iso"
+        if [ ! -e "$iso_path" ]; then
+          echo -e "\x1B[32m[+] No latest.iso — building installer\x1B[0m"
+          (cd "$(git rev-parse --show-toplevel)" && task iso)
+        fi
+
+        # Stable SSH host key (persisted across teardowns)
+        key="$vm_dir/ssh_host_ed25519_key"
+        if [ ! -f "$key" ]; then
+          echo -e "\x1B[32m[+] Generating stable SSH host key at $key\x1B[0m"
+          ssh-keygen -t ed25519 -f "$key" -C "root@tests-server" -N "" -q
+          chmod 600 "$key"
+        fi
+
+        # Disk
+        disk="$vm_dir/tests-server.qcow2"
+        if [ ! -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Creating qcow2 at $disk ({{.DISK_SIZE}})\x1B[0m"
+          # qemu-img isn't necessarily on PATH; pull from nixpkgs.
+          nix shell nixpkgs#qemu-utils -c qemu-img create -f qcow2 "$disk" "{{.DISK_SIZE}}"
+        fi
+
+        # quickemu conf
+        if [ ! -f "$vm_conf" ]; then
+          echo -e "\x1B[32m[+] Writing quickemu conf $vm_conf\x1B[0m"
+          cat > "$vm_conf" <<EOF
+        guest_os="linux"
+        disk_img="$disk"
+        iso="$iso_path"
+        disk_size="{{.DISK_SIZE}}"
+        ram="{{.RAM}}"
+        cpu_cores="{{.CPU_CORES}}"
+        EOF
+        fi
+
+        # Already running?
+        if [ -f "$vm_dir/tests-server.pid" ] && kill -0 "$(cat "$vm_dir/tests-server.pid")" 2>/dev/null; then
+          echo -e "\x1B[33m[~] VM appears to be running already (pid $(cat "$vm_dir/tests-server.pid"))\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Launching quickemu in background (ssh port {{.SSH_PORT}})\x1B[0m"
+          # setsid detaches from the controlling terminal so the task
+          # can return without the shell waiting on the child. `disown`
+          # would be cleaner but is a shell builtin that isn't available
+          # in the non-interactive shell `task` invokes commands under.
+          setsid nohup quickemu --vm "$vm_conf" --display none --ssh-port {{.SSH_PORT}} \
+            >"$vm_dir/quickemu.log" 2>&1 < /dev/null &
+        fi
+
+        echo -e "\x1B[32m[+] Waiting for SSH on 127.0.0.1:{{.SSH_PORT}} (root, ISO live system)\x1B[0m"
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        for i in $(seq 1 120); do
+          if ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                 root@127.0.0.1 true 2>/dev/null; then
+            echo -e "\x1B[32m[+] tests-server SSH up\x1B[0m"
+            exit 0
+          fi
+          sleep 3
+        done
+        echo -e "\x1B[31m[!] tests-server SSH did not come up within 6 minutes\x1B[0m"
+        echo "    Check $vm_dir/quickemu.log"
+        exit 1
+
+  tests-server:down:
+    desc: Tear down the tests-server VM (kill quickemu, delete qcow2 — preserves SSH host key)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pid_file="$vm_dir/tests-server.pid"
+        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+          pid=$(cat "$pid_file")
+          echo -e "\x1B[32m[+] Killing quickemu (pid $pid)\x1B[0m"
+          kill "$pid" || true
+          # quickemu spawns qemu as a child; wait briefly for clean exit
+          for i in $(seq 1 10); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          kill -9 "$pid" 2>/dev/null || true
+          rm -f "$pid_file"
+        else
+          # Fallback — quickemu was running but pidfile got lost
+          pkill -f "qemu.*tests-server.qcow2" 2>/dev/null || true
+        fi
+
+        disk="$vm_dir/tests-server.qcow2"
+        if [ -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Deleting qcow2 $disk\x1B[0m"
+          rm -f "$disk"
+        fi
+        echo -e "\x1B[32m[+] tests-server torn down (SSH host key preserved at $vm_dir/ssh_host_ed25519_key)\x1B[0m"
+
+  tests-server:sops-authorize:
+    desc: Idempotently authorize tests-server's age key to read hpp-1.yaml + shared.yaml (uncommitted edit in ../nix-secrets)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pub="$vm_dir/ssh_host_ed25519_key.pub"
+        if [ ! -f "$pub" ]; then
+          echo -e "\x1B[31m[!] $pub not found — run \`task tests-server:up\` first to generate the host key\x1B[0m"
+          exit 1
+        fi
+
+        age_key=$(ssh-to-age < "$pub")
+        secrets_dir="$(git rev-parse --show-toplevel)/../nix-secrets"
+        sops_yaml="$secrets_dir/.sops.yaml"
+
+        if [ ! -f "$sops_yaml" ]; then
+          echo -e "\x1B[31m[!] $sops_yaml not found\x1B[0m"
+          exit 1
+        fi
+
+        # Helper: extract the lines of a single creation_rule block by
+        # path_regex name, so we can grep for *tests-server within it
+        # without false-positives from sibling blocks.
+        block_for() {
+          # awk: print lines from "path_regex: <name>.yaml" to (but
+          # excluding) the next "  - path_regex:" or EOF.
+          awk -v name="$1" '
+            $0 ~ "^  - path_regex: " name "\\\\\\.yaml\\$" { in_block=1; next }
+            in_block && /^  - path_regex:/ { exit }
+            in_block { print }
+          ' "$sops_yaml"
+        }
+
+        needs_updatekeys=0
+
+        # 1. keys.hosts anchor
+        if grep -q "&tests-server " "$sops_yaml"; then
+          echo -e "\x1B[33m[~] tests-server already in keys.hosts — leaving as-is\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding &tests-server anchor under keys.hosts\x1B[0m"
+          sed -i "/^creation_rules:/i\\    - \&tests-server $age_key" "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 2. *tests-server in hpp-1.yaml's age list
+        if block_for hpp-1 | grep -q '\*tests-server'; then
+          echo -e "\x1B[33m[~] *tests-server already in hpp-1.yaml age list\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding *tests-server to hpp-1.yaml age list (after *hpp-1)\x1B[0m"
+          # The path_regex line in .sops.yaml is literally
+          #   "  - path_regex: hpp-1\.yaml$"
+          # The `\` before `.` is a real character in the source, so the
+          # sed BRE needs `\\` (literal backslash) + `\.` (literal dot) +
+          # `\$` (literal `$`). Range end is the next "  - path_regex:".
+          sed -i '/^  - path_regex: hpp-1\\\.yaml\$/,/^  - path_regex:/{/- \*hpp-1$/a\          - *tests-server
+          }' "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 3. *tests-server in shared.yaml's age list
+        if block_for shared | grep -q '\*tests-server'; then
+          echo -e "\x1B[33m[~] *tests-server already in shared.yaml age list\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding *tests-server to shared.yaml age list (after *hpp-1)\x1B[0m"
+          sed -i '/^  - path_regex: shared\\\.yaml\$/,/^  - path_regex:/{/- \*hpp-1$/a\          - *tests-server
+          }' "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        if [ "$needs_updatekeys" = "1" ]; then
+          echo -e "\x1B[32m[+] Running sops updatekeys on hpp-1.yaml + shared.yaml\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes sops/hpp-1.yaml sops/shared.yaml )
+          echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — \`git restore\` in ../nix-secrets after the drill to revoke\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] tests-server already authorized — no changes\x1B[0m"
+        fi
+
+  verify:restore:full:
+    desc: End-to-end restore drill — spin up tests-server VM, reinstall, restore from SOURCE_HOST, teardown
+    requires:
+      vars: [SOURCE_HOST]
+    vars:
+      SOURCE_HOST: '{{.SOURCE_HOST | default "hpp-1"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+    cmds:
+      - task: tests-server:up
+        vars: { SSH_PORT: '{{.SSH_PORT}}' }
+      - task: tests-server:sops-authorize
+      # bootstrap:install with SSH_HOST_KEY_FILE pre-builds the toplevel
+      # with --override-input nix-secrets path:../nix-secrets, so the
+      # installed system already reflects local repo state. That makes
+      # the usual bootstrap:sync + bootstrap:rebuild round-trip
+      # redundant for this flow — and rebuild would otherwise fail the
+      # drill on harmless tests-server degraded units (tailscale needs a
+      # fresh authkey, loki/radarr expect NFS content paths, etc.). Skip
+      # both; the per-app restore subtasks below are the actual signal.
+      - task: bootstrap:install
+        vars:
+          HOST: tests-server
+          DEST: 127.0.0.1
+          SSH_PORT: '{{.SSH_PORT}}'
+          IMPERMANENT: 'true'
+          SSH_HOST_KEY_FILE: '{{.HOME}}/vms/tests-server/ssh_host_ed25519_key'
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Waiting for tests-server to reboot into installed system\x1B[0m"
+        ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        for i in $(seq 1 120); do
+          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                      -o StrictHostKeyChecking=accept-new \
+                      -o UpdateHostKeys=no \
+                      ipreston@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
+          case "$state" in
+            running|degraded)
+              echo -e "\x1B[32m[+] Target reachable (systemd: $state)\x1B[0m"
+              break
+              ;;
+            *)
+              sleep 3
+              ;;
+          esac
+        done
+      - task: verify:restore:mealie
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: verify:restore:miniflux
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: verify:restore:jellyfin
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: tests-server:down
+      - |
+        echo ""
+        echo -e "\x1B[32m========================================================\x1B[0m"
+        echo -e "\x1B[32m  Full restore drill PASSED (tests-server VM, source {{.SOURCE_HOST}})\x1B[0m"
+        echo -e "\x1B[32m  Bootstrap + all three app shapes restored cleanly.\x1B[0m"
+        echo -e "\x1B[32m========================================================\x1B[0m"
+        echo -e "\x1B[33m  Reminder: ../nix-secrets/ now has uncommitted sops envelope changes\x1B[0m"
+        echo -e "\x1B[33m  authorizing tests-server. \`cd ../nix-secrets && git restore .\` to revoke.\x1B[0m"
