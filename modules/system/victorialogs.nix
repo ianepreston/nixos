@@ -2,14 +2,15 @@
 #
 # Listens on loopback only; Grafana queries via the VictoriaLogs
 # datasource provisioned in ./grafana.nix (plugin
-# `victoriametrics-logs-datasource`). Promtail ingests through VL's
-# Loki-compatible push endpoint at `/insert/loki/api/v1/push`, so the
-# promtail config doesn't need to learn a new protocol — only the URL
-# changes (see ./promtail.nix).
+# `victoriametrics-logs-datasource`). Vector ingests through VL's
+# native elasticsearch-bulk endpoint at `/insert/elasticsearch/_bulk`
+# (see ./vector.nix) — swapped in via #127 so every journal field
+# stays queryable instead of being collapsed into the Loki-push
+# label/body shape promtail forced.
 #
 # Data is intentionally ephemeral per #65 / #126 — no backup hook.
 # If the host dies, only historical logs are lost; the runtime config
-# and promtail wire-up recreate themselves declaratively.
+# and vector wire-up recreate themselves declaratively.
 _: {
   flake.modules.nixos.victorialogs =
     {
@@ -24,7 +25,7 @@ _: {
       services.victorialogs = {
         enable = true;
         # Loopback-only — Caddy proxies the UI for human access;
-        # ingestion is local-only from promtail.
+        # ingestion is local-only from vector.
         listenAddress = "127.0.0.1:${toString vlPort}";
         # 30d matches the retention we had on Loki (bumped from 7d
         # per #157). VL stores significantly more efficiently than

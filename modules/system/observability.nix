@@ -16,10 +16,11 @@
 #                     alertmanager. PromQL-superset, so the existing
 #                     rule expressions move over unchanged.
 #   VictoriaLogs    — single-binary log store, 30d retention.
-#   Promtail        — ships the systemd journal into VictoriaLogs via
-#                     its Loki-push compatibility endpoint
-#                     (`/insert/loki/api/v1/push`) — no config rewrite
-#                     beyond the URL.
+#   Vector          — ships the systemd journal into VictoriaLogs via
+#                     VL's native elasticsearch-bulk ingest endpoint
+#                     (`/insert/elasticsearch/_bulk`); replaced promtail
+#                     in #127 so every journal field stays queryable
+#                     instead of being collapsed into label/body shape.
 #   Grafana         — dashboards + provisioned datasources, OIDC
 #                     against Authentik via myAuthentik.oidcApps.
 #                     The Prometheus datasource (uid="prometheus")
@@ -48,7 +49,7 @@
     imports = with inputs.self.modules.nixos; [
       alertmanager
       grafana
-      promtail
+      vector
       victorialogs
       victoriametrics
     ];

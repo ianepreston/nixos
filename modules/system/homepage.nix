@@ -198,8 +198,8 @@ _: {
 
         # cpu widget needs ProcSubset=all and the upstream module already
         # flips that based on widgets[].resources.cpu, so nothing to do
-        # here. Logging goes to journal -> promtail -> loki via the
-        # default "LOG_TARGETS=stdout" the upstream module sets.
+        # here. Logging goes to journal -> vector -> victorialogs via
+        # the default "LOG_TARGETS=stdout" the upstream module sets.
 
         myCaddy.apps.homepage = {
           host = homepageHost;
