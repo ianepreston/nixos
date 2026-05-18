@@ -16,7 +16,13 @@
 #   /mnt/content/books       shared with kavita / komga (ebooks)
 #   /mnt/content/Downloads   shared with sabnzbd / *arr containers
 # Rails state (db, auto-generated master key) persists under
-# /var/lib/containers/shelfarr/data.
+# /var/lib/containers/shelfarr/data. /rails/tmp is also bind-mounted
+# so it's UID-aligned to server-${env} from first boot — otherwise the
+# image's entrypoint touches a startup-check sentinel as the rails
+# user (whose UID gets rewritten to PUID via usermod), fails because
+# the image's /rails/tmp is still owned by the build-time UID 1000,
+# and emits a "Permission denied" warning every boot before chown'ing
+# it. Pre-aligning the bind mount avoids the noise. Closes #196.
 _: {
   flake.modules.nixos.shelfarr =
     {
@@ -45,6 +51,7 @@ _: {
       systemd.tmpfiles.rules = [
         "d /var/lib/containers/shelfarr 0750 ${toString serverUid} ${toString serverGid} -"
         "d /var/lib/containers/shelfarr/data 0750 ${toString serverUid} ${toString serverGid} -"
+        "d /var/lib/containers/shelfarr/tmp 0750 ${toString serverUid} ${toString serverGid} -"
       ];
 
       virtualisation.oci-containers.containers.shelfarr = {
@@ -58,6 +65,7 @@ _: {
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/shelfarr/data:/rails/storage"
+          "/var/lib/containers/shelfarr/tmp:/rails/tmp"
           "/mnt/content/audiobooks:/audiobooks"
           "/mnt/content/books:/ebooks"
           "/mnt/content/Downloads:/downloads"
