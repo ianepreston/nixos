@@ -60,7 +60,25 @@
 
           # ----- Databases (data dirs; dumps are recovery) -----
           "/var/lib/postgresql"
-          "/var/lib/mysql"
+          # mariadb writes ib_buffer_pool.incomplete and deletes tc.log
+          # directly in this dir during shutdown — unlike postgres which
+          # writes to a versioned subdirectory. Preservation's default
+          # root:root 0755 (bind-mount source's perms on /persist/...)
+          # propagates here and matches 00-nixos.conf's mode but not its
+          # owner, so a `systemd-tmpfiles --create` mid-deploy reverts
+          # /var/lib/mysql from mysql:mysql to root:root. Mariadb then
+          # gets EACCES on the next shutdown's buffer-pool dump and
+          # tc.log unlink → tc.log header left half-written → next
+          # boot's crash recovery fails with "Bad magic header in tc
+          # log" and an 11-minute systemd-retry cascade. Pinning owner
+          # and mode to match 00-nixos.conf keeps mysql writable through
+          # tmpfiles-resetup. Closes #195.
+          {
+            directory = "/var/lib/mysql";
+            user = "mysql";
+            group = "mysql";
+            mode = "0755";
+          }
 
           # ----- Dump staging -----
           # The morning's postgres/mariadb dumps land here and restic
@@ -72,6 +90,16 @@
           # ----- Container app state -----
           # Every podman-managed app's volumes live under here.
           "/var/lib/containers"
+
+          # ----- Logs -----
+          # Persist journald across reboots. /var/log is on the wiped
+          # rootfs, so without this every boot drops prior journals and
+          # `journalctl --list-boots` only sees the current boot.
+          # journald's default storage=auto writes here when the dir
+          # exists, so persisting it is sufficient — no extra config
+          # needed. Closes #195 (diagnostic gap for the mariadb tc.log
+          # corruption investigation).
+          "/var/log/journal"
 
           # ----- Observability -----
           # Prometheus TSDB (15d) + Loki chunks/index (7d). The
