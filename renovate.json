@@ -11,6 +11,18 @@
     "enabled": true,
     "schedule": ["before 4am on monday"]
   },
+  "packageRules": [
+    {
+      "description": "Auto-merge low-risk updates (patch versions + image digest refreshes) after CI green.",
+      "matchUpdateTypes": ["patch", "digest", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "Caddy plugin bumps require regenerating the pkgs.caddy.withPlugins hash in modules/system/caddy.nix; keep manual.",
+      "matchPackageNames": ["/caddy/"],
+      "automerge": false
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
