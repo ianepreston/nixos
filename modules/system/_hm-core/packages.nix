@@ -20,6 +20,8 @@ in
     lazygit
     neofetch
     jq
+    openssl
+    go-task
     yq-go
     shellcheck
     nixfmt-rfc-style
