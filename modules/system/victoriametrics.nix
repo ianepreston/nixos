@@ -34,7 +34,8 @@ _: {
       vmalertHost = "vmalert.${hostSpec.serverDomain}";
 
       vmPort = 8428;
-      vmalertPort = 8880;
+      # 8880 is vmalert's default but UniFi controller binds it; bump by 1.
+      vmalertPort = 8881;
       alertmanagerPort = 9093;
       caddyMetricsPort = 2019;
       cadvisorPort = 8081;
