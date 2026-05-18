@@ -2,9 +2,12 @@
 
 ## Taskfile.yaml is the entry point
 
-Common operations are defined in `Taskfile.yaml`. Read it before running ad-hoc
-`nixos-rebuild` / `nix build` commands — there is usually a task that already
-wires up the right flags (private-input overrides, target hosts, etc.).
+Common operations are defined in `Taskfile.yaml` (with bootstrap /
+recovery / secrets workflows split out into `taskfiles/*.yaml` and
+exposed via `includes:`). Read them before running ad-hoc
+`nixos-rebuild` / `nix build` commands — there is usually a task that
+already wires up the right flags (private-input overrides, target
+hosts, etc.).
 
 Frequently used:
 
@@ -158,50 +161,76 @@ pre-existing `/var/lib/<app>` state on the host once — the upstream
 `tmpfiles` rules use type `d` and won't re-chown existing directories.
 See `modules/apps/jellyfin.nix` for the pattern.
 
-## Provisioning per-app secrets (nix-secrets Taskfile)
+## Provisioning per-app secrets (`task secrets:*`)
 
 Secrets live in the sibling repo at `../nix-secrets` (consumed as a
-flake input). It has its own `Taskfile.yaml` for generating new
-secrets — use it instead of editing sops yaml by hand or piping
-`openssl rand` into `sops set` manually. All tasks default to
-`HOST=hpp-1` (the homelab server) and refuse to overwrite an
-existing key unless `FORCE=true`.
+flake input). Run secret-management tasks from **this** repo — the
+former `../nix-secrets/Taskfile.yaml` was rolled in as
+`taskfiles/secrets.yaml` since the operator workflow always starts
+from a nixos checkout. All tasks default to `HOST=hpp-1` (the homelab
+server) and refuse to overwrite an existing key unless `FORCE=true`.
 
-Run from `../nix-secrets`:
-
-- `task oidc APP=<app>` — generates `client_id` (hex 16) and
+- `task secrets:oidc APP=<app>` — generates `client_id` (hex 16) and
   `client_secret` (hex 32) at `<app>.oidc_client_id` /
   `<app>.oidc_client_secret` in `sops/<host>.yaml`. Use whenever
   wiring `myAuthentik.oidcApps.<app>`.
-- `task dbpw APP=<app>` — generates `<app>.db_password` (hex 16).
+- `task secrets:dbpw APP=<app>` — generates `<app>.db_password` (hex 16).
   Use for any app whose postgres role is provisioned via
   `myPostgresApp` with TCP + password (i.e. not unix-socket peer auth
   / `createLocally`).
-- `task secret APP=<app> KEY=<key> [LEN=<bytes>]` — generic
+- `task secrets:secret APP=<app> KEY=<key> [LEN=<bytes>]` — generic
   high-entropy hex at `<app>.<key>`. Use for app-specific tokens
   (session keys, signing secrets, API keys).
-- `task edit:<host>` / `task view:<host>` — open or print a host's
-  decrypted yaml. Use `edit` for non-random values (e.g. pasted-in
-  API keys from a provider).
-- `task rekey` — re-encrypts every file against current
+- `task secrets:edit:<host>` / `task secrets:view:<host>` — open or
+  print a host's decrypted yaml. Use `edit` for non-random values
+  (e.g. pasted-in API keys from a provider).
+- `task secrets:rekey` — re-encrypts every file against current
   `.sops.yaml`; run after changing the key registry.
 
 Workflow when adding a new app that needs secrets:
 
 1. Decide which secrets the app needs (OIDC creds, db password,
    app-specific tokens).
-2. From `../nix-secrets`: run the matching task(s). Keys nest under
-   the app name, so `sops.secrets."<app>/oidc_client_id"` /
+2. Run the matching task(s). Keys nest under the app name, so
+   `sops.secrets."<app>/oidc_client_id"` /
    `sops.placeholder."<app>/db_password"` etc. in the nixos module
    resolve directly.
-3. Commit + push `nix-secrets`, then
-   `nix flake update nix-secrets` in this repo before deploy.
+3. Commit + push `nix-secrets` (the tasks write into `../nix-secrets`
+   but don't commit), then `nix flake update nix-secrets` in this
+   repo before deploy.
 
 Don't invent ad-hoc key names — stick to `oidc_client_id`,
 `oidc_client_secret`, `db_password` so existing app modules
 (`tandoor.nix`, `paperless-ngx.nix`, etc.) remain a copy-paste
-template. Reach for `task secret` only when the app genuinely needs
-something beyond those three.
+template. Reach for `task secrets:secret` only when the app genuinely
+needs something beyond those three.
+
+## Recovery tasks: keep the per-app list in sync
+
+`taskfiles/recovery.yaml` has a dispatcher per server-app. When you
+add a new app under `modules/apps/`, add a matching
+`recovery:<app>` task in the same PR and append it to `recovery:all`'s
+cmd list (the catastrophic-rebuild aggregate). Pick the template that
+matches the app's shape:
+
+| Shape (how the module is built) | Template | What to fill in |
+|---|---|---|
+| Container, no postgres | `_restore-volume` | `UNITS=podman-<app>.service`, `PATHS` = every persistent volume (typically `/var/lib/containers/<app>` plus any out-of-tree mount) |
+| Container + `myPostgresApp.<app>` | `_restore-pg` | `UNITS=podman-<app>.service`, `DB=<app>` (or the `dbName` override — hyphens become underscores), `PATHS` = volumes outside `/var/backup/postgresql` |
+| Native + `myPostgresApp.<app>` | `_restore-pg` | `UNITS` = every unit in `myPostgresApp.<app>.consumerService`, `DB=<role>`, `PATHS=/var/lib/<app>` (or `/var/lib/private/<app>` for DynamicUser modules) if the app has on-disk state |
+| Native + `mySqliteQuiesce.apps.<app>` | `_restore-sqlite` | `UNITS=<app>.service`, `PATHS=/var/lib/<app> /var/backup/sqlite/<app>`, `SWAPS` = one triple `<staged>:<live>:<owner>` per file in `mySqliteQuiesce.apps.<app>.databases`. Use `@env@` as the owner sentinel when the app runs as `server-${env}` — the template substitutes the live username from `/etc/passwd` at execution time. |
+| Native, no postgres or quiesce | `_restore-volume` | `UNITS=<app>.service`, `PATHS=/var/lib/<app>` |
+| Timer-driven oneshot container (e.g. spierscraper) | `_restore-volume` | `UNITS=''` (nothing to stop), `PATHS` = its state dir |
+
+For apps with an HTTP endpoint, append a `_health` task after the
+restore so the dispatcher exits non-zero on a botched restore. See
+`recovery:jellyfin` (60-retry, longer warm-up) or `recovery:miniflux`
+(`/healthcheck`) for the two main patterns.
+
+The `expectedPreservedDirs` list in
+`modules/profiles/server-apps.nix` is the structural analogue —
+forcing a manual edit when adding state to a native app. Recovery
+dispatchers and that list should grow together.
 
 ### `restartUnits` goes on the template, not the secret
 

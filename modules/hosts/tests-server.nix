@@ -1,4 +1,4 @@
-# tests-server - sacrificial VM target for `task verify:restore:full`.
+# tests-server - sacrificial VM target for `task recovery:test:full`.
 # Imports the same server + server-apps profiles as hpp-1 so the
 # restore drill exercises the real shape of a server. Single-disk
 # btrfs with impermanence (rolled back to @root-blank on every boot)

@@ -270,6 +270,22 @@ Recovery is an explicit operator action — there's intentionally no
 automatic restore on container start, since "first boot" and "restore
 after data loss" are different decisions.
 
+The `recovery:*` tasks in `taskfiles/recovery.yaml` automate every
+step below. Use them for the fast path:
+
+```bash
+task bootstrap:reinstall HOST=<host> DEST=<ip>      # reinstall NixOS
+task recovery:all HOST=<host> [SOURCE_HOST=<other>] # restore everything
+# or, scoped to one app:
+task recovery:mealie HOST=<host>
+```
+
+`SOURCE_HOST` defaults to `HOST` (in-place restore); set it to a
+different host to seed from that host's restic repo (e.g.
+prod → dev). The longhand below documents what each per-app
+dispatcher actually does so the runbook keeps working if a task is
+unavailable or you need to deviate.
+
 1. **Reinstall the host:**
    ```bash
    task bootstrap:reinstall HOST=<host> DEST=<ip>
@@ -775,7 +791,10 @@ in the decrypted file.
 
 ## Task Automation
 
-Common operations are automated via `Taskfile.yaml`:
+Common operations are automated via `Taskfile.yaml`. The bootstrap,
+recovery, and secrets-management workflows live in `taskfiles/*.yaml`
+and are pulled in via Task's `includes:`, so `task --list` shows the
+full prefixed surface (`bootstrap:*`, `recovery:*`, `secrets:*`).
 
 | Command                                   | Description                                                                      |
 | ----------------------------------------- | -------------------------------------------------------------------------------- |
@@ -802,6 +821,15 @@ Common operations are automated via `Taskfile.yaml`:
 | `task bootstrap:secrets HOST=x DEST=ip`   | Add host age key to nix-secrets, create host secrets, commit                     |
 | `task bootstrap:sync HOST=x DEST=ip`      | Rsync nixos and nix-secrets to target                                            |
 | `task bootstrap:rebuild HOST=x DEST=ip`   | Run nixos-rebuild switch on target                                               |
+| `task recovery:<app> HOST=x [SOURCE_HOST=other]` | Restore a single app from restic; see `task --list` for the full app menu |
+| `task recovery:all HOST=x`                | Catastrophic restore: every per-app dispatcher in sequence                       |
+| `task recovery:test:full SOURCE_HOST=x`   | Quarterly drill — install tests-server VM, restore three shapes, teardown        |
+| `task secrets:oidc APP=x [HOST=y]`        | Generate OIDC `client_id` + `client_secret` for an app on a host                 |
+| `task secrets:dbpw APP=x [HOST=y]`        | Generate a postgres `db_password` for an app on a host                           |
+| `task secrets:secret APP=x KEY=k`         | Generic high-entropy hex secret at `<app>.<key>`                                 |
+| `task secrets:edit:<host>`                | Open a host's sops yaml in `$EDITOR`                                             |
+| `task secrets:view:<host>`                | Decrypt and print a host's sops yaml                                             |
+| `task secrets:rekey`                      | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
 
 ## Bootstrapping a New Host
 

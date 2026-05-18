@@ -1,0 +1,1035 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Recovery tasks — per-app and whole-host restore from restic.
+#
+# ## Usage
+#
+#   task recovery:<app>                 # in-place restore on HOST
+#       HOST=hpp-1
+#       [DEST=<ip-or-host>]              # default: same as HOST
+#       [SOURCE_HOST=<other-host>]       # default: same as HOST
+#
+# Each per-app task dispatches to one of three internal templates
+# (`_restore-volume`, `_restore-pg`, `_restore-sqlite`) and then runs
+# an HTTP health check via `_health` where applicable. `recovery:all`
+# runs every app's dispatcher in sequence — use it for catastrophic
+# rebuilds.
+#
+# When you add a new server-app, add a dispatcher here and append it
+# to `all`. The shape table in CLAUDE.md ("Recovery tasks: keep the
+# per-app list in sync") describes which template applies.
+#
+# ## Verification drill (recovery:test:full)
+#
+# Spins up a tests-server quickemu VM, reinstalls it from this flake,
+# restores mealie + miniflux + jellyfin from SOURCE_HOST's restic repo
+# (exercising the three app shapes), and tears the VM down. Quarterly
+# cadence — see issue #135 for the rationale.
+
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+
+  # ---------------------------------------------------------------------------
+  # Internal templates
+  # ---------------------------------------------------------------------------
+  #
+  # These do the actual restic + systemd + (postgres|sqlite) dance.
+  # Per-app dispatchers below populate UNITS / PATHS / DB / SWAPS and
+  # call the matching template. Marked `internal: true` so they don't
+  # appear in `task --list`.
+
+  _restore-volume:
+    internal: true
+    requires:
+      vars: [HOST, APP, UNITS, PATHS]
+    vars:
+      DEST: '{{.DEST | default .HOST}}'
+      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (volume-only) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<EOF
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+
+        for u in {{.UNITS}}; do
+          echo "[+] Stopping \$u"
+          systemctl stop "\$u" || true
+        done
+
+        includes=""
+        for p in {{.PATHS}}; do
+          includes="\$includes --include \$p"
+        done
+        echo "[+] Restoring paths: {{.PATHS}}"
+        # shellcheck disable=SC2086
+        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+          restore latest --target / \$includes
+
+        for u in {{.UNITS}}; do
+          echo "[+] Starting \$u"
+          systemctl start "\$u"
+        done
+        EOF
+
+  _restore-pg:
+    internal: true
+    requires:
+      vars: [HOST, APP, UNITS, DB]
+    vars:
+      DEST: '{{.DEST | default .HOST}}'
+      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      # Extra non-postgres paths to restore alongside /var/backup/postgresql
+      # (e.g. /var/lib/<app> for native apps with on-disk state, or
+      # /var/lib/containers/<app> for containerized + pg shapes).
+      PATHS: '{{.PATHS | default ""}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (postgres + paths) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<EOF
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+        DB={{.DB}}
+
+        for u in {{.UNITS}}; do
+          echo "[+] Stopping \$u"
+          systemctl stop "\$u" || true
+        done
+
+        includes="--include /var/backup/postgresql"
+        for p in {{.PATHS}}; do
+          includes="\$includes --include \$p"
+        done
+        echo "[+] Restoring /var/backup/postgresql {{.PATHS}}"
+        # shellcheck disable=SC2086
+        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+          restore latest --target / \$includes
+
+        echo "[+] Replaying \$DB database from pg_dumpall"
+        sudo -u postgres dropdb --if-exists "\$DB"
+        sudo -u postgres createdb -O "\$DB" "\$DB"
+        # pg_dumpall layout: \connect <db> introduces a section, but
+        # CREATE DATABASE <next>; for the SUCCEEDING db appears between
+        # the current \connect block and the next \connect — so flip
+        # in_target off on both, or psql will try to recreate already-
+        # provisioned databases.
+        zcat /var/backup/postgresql/all.sql.gz | awk -v db="\$DB" '
+          /^\\\\connect / { name = \$2; gsub(/"/, "", name); in_target = (name == db); next }
+          /^CREATE DATABASE / { in_target = 0; next }
+          in_target { print }
+        ' | sudo -u postgres psql -v ON_ERROR_STOP=1 "\$DB"
+
+        for u in {{.UNITS}}; do
+          echo "[+] Starting \$u"
+          systemctl start "\$u"
+        done
+        EOF
+
+  _restore-sqlite:
+    internal: true
+    requires:
+      vars: [HOST, APP, UNITS, PATHS, SWAPS]
+    vars:
+      DEST: '{{.DEST | default .HOST}}'
+      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      # SWAPS format: space-separated triples "src:dst:owner". The
+      # token "@env@" in `owner` is replaced with "server-<env>" where
+      # <env> is detected from /etc/passwd on the target — lets one
+      # SWAPS string apply on both server-dev and server-prod hosts.
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (sqlite-quiesce) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
+        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
+          'sudo bash -se' <<EOF
+        set -euo pipefail
+        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        PASS_FILE=/run/secrets/restic/password
+
+        SERVER_USER=\$(getent passwd server-prod >/dev/null && echo server-prod || echo server-dev)
+
+        for u in {{.UNITS}}; do
+          echo "[+] Stopping \$u"
+          systemctl stop "\$u" || true
+        done
+
+        includes=""
+        for p in {{.PATHS}}; do
+          includes="\$includes --include \$p"
+        done
+        echo "[+] Restoring paths: {{.PATHS}}"
+        # shellcheck disable=SC2086
+        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+          restore latest --target / \$includes
+
+        for triple in {{.SWAPS}}; do
+          IFS=":" read -r src dst owner <<<"\$triple"
+          owner=\${owner//@env@/\$SERVER_USER}
+          echo "[+] Swapping \$dst <- \$src (owner: \$owner)"
+          install -o "\$owner" -g servers -m 0640 "\$src" "\$dst"
+        done
+
+        for u in {{.UNITS}}; do
+          echo "[+] Starting \$u"
+          systemctl start "\$u"
+        done
+        EOF
+
+  _health:
+    internal: true
+    requires:
+      vars: [HOST, APP, URL]
+    vars:
+      DEST: '{{.DEST | default .HOST}}'
+      SSH_PORT: '{{.SSH_PORT | default "22"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      EXPECT: '{{.EXPECT | default "200"}}'
+      RETRIES: '{{.RETRIES | default "30"}}'
+      SLEEP: '{{.SLEEP | default "2"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Asserting HTTP {{.EXPECT}} on {{.APP}} ({{.URL}})\x1B[0m"
+        ssh -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} "
+          set -euo pipefail
+          for i in \$(seq 1 {{.RETRIES}}); do
+            code=\$(curl -s -o /dev/null -w '%{http_code}' '{{.URL}}' || true)
+            if [ \"\$code\" = '{{.EXPECT}}' ]; then echo '{{.APP}}: {{.EXPECT}} OK'; exit 0; fi
+            sleep {{.SLEEP}}
+          done
+          echo '{{.APP}}: did not return {{.EXPECT}} within {{.RETRIES}}x{{.SLEEP}}s (last code: '\$code')'
+          exit 1
+        "
+
+  # ---------------------------------------------------------------------------
+  # Per-app dispatchers
+  # ---------------------------------------------------------------------------
+  # Keep this list in sync with modules/profiles/server-apps.nix and
+  # the `all` aggregate below. See CLAUDE.md "Recovery tasks" for the
+  # shape → template mapping.
+
+  actualbudget:
+    desc: Restore actualbudget (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: actualbudget
+          UNITS: 'podman-actualbudget.service'
+          PATHS: '/var/lib/containers/actualbudget'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  audiobookshelf:
+    desc: Restore audiobookshelf (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: audiobookshelf
+          UNITS: 'audiobookshelf.service'
+          PATHS: '/var/lib/audiobookshelf /var/backup/sqlite/audiobookshelf'
+          SWAPS: '/var/backup/sqlite/audiobookshelf/absdatabase.sqlite:/var/lib/audiobookshelf/config/absdatabase.sqlite:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: audiobookshelf, URL: 'http://127.0.0.1:13378/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  authentik:
+    desc: Restore authentik (native + postgres, peer auth)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: authentik
+          UNITS: 'authentik.service authentik-worker.service authentik-migrate.service'
+          PATHS: '/var/lib/private/authentik'
+          DB: authentik
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  bazarr:
+    desc: Restore bazarr (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: bazarr
+          UNITS: 'bazarr.service'
+          PATHS: '/var/lib/bazarr /var/backup/sqlite/bazarr'
+          SWAPS: '/var/backup/sqlite/bazarr/bazarr.db:/var/lib/bazarr/db/bazarr.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  gatus:
+    desc: Restore gatus (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: gatus
+          UNITS: 'gatus.service'
+          PATHS: '/var/lib/gatus /var/backup/sqlite/gatus'
+          SWAPS: '/var/backup/sqlite/gatus/data.db:/var/lib/gatus/data.db:gatus'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  grimmory:
+    desc: Restore grimmory (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: grimmory
+          UNITS: 'podman-grimmory.service'
+          PATHS: '/var/lib/containers/grimmory'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  homeassistant:
+    desc: Restore home-assistant (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: homeassistant
+          UNITS: 'podman-homeassistant.service'
+          PATHS: '/var/lib/containers/homeassistant'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  jellyfin:
+    desc: Restore jellyfin (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: jellyfin
+          UNITS: 'jellyfin.service'
+          PATHS: '/var/lib/jellyfin /var/backup/sqlite/jellyfin'
+          SWAPS: '/var/backup/sqlite/jellyfin/jellyfin.db:/var/lib/jellyfin/data/jellyfin.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: jellyfin, URL: 'http://127.0.0.1:8096/health', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  kapowarr:
+    desc: Restore kapowarr (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: kapowarr
+          UNITS: 'podman-kapowarr.service'
+          PATHS: '/var/lib/containers/kapowarr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  kavita:
+    desc: Restore kavita (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: kavita
+          UNITS: 'kavita.service'
+          PATHS: '/var/lib/kavita /var/backup/sqlite/kavita'
+          SWAPS: '/var/backup/sqlite/kavita/kavita.db:/var/lib/kavita/config/kavita.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  komga:
+    desc: Restore komga (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: komga
+          UNITS: 'komga.service'
+          PATHS: '/var/lib/komga /var/backup/sqlite/komga'
+          SWAPS: '/var/backup/sqlite/komga/database.sqlite:/var/lib/komga/database.sqlite:@env@ /var/backup/sqlite/komga/tasks.sqlite:/var/lib/komga/tasks.sqlite:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  maintainerr:
+    desc: Restore maintainerr (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: maintainerr
+          UNITS: 'podman-maintainerr.service'
+          PATHS: '/var/lib/containers/maintainerr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  manyfold:
+    desc: Restore manyfold (containerized + postgres)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: manyfold
+          UNITS: 'podman-manyfold.service'
+          PATHS: '/var/lib/containers/manyfold'
+          DB: manyfold
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  mealie:
+    desc: Restore mealie (native + postgres, peer auth)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: mealie
+          UNITS: 'mealie.service'
+          PATHS: '/var/lib/mealie'
+          DB: mealie
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: mealie, URL: 'http://127.0.0.1:9925/', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  metube:
+    desc: Restore metube (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: metube
+          UNITS: 'podman-metube.service'
+          PATHS: '/var/lib/containers/metube'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  miniflux:
+    desc: Restore miniflux (native + postgres only, no on-disk state)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: miniflux
+          UNITS: 'miniflux.service'
+          DB: miniflux
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: miniflux, URL: 'http://127.0.0.1:8089/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
+  mylar3:
+    desc: Restore mylar3 (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: mylar3
+          UNITS: 'podman-mylar3.service'
+          PATHS: '/var/lib/containers/mylar3'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  paperless-ngx:
+    desc: Restore paperless-ngx (native + postgres, four units)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: paperless-ngx
+          UNITS: 'paperless-scheduler.service paperless-task-queue.service paperless-consumer.service paperless-web.service'
+          PATHS: '/var/lib/paperless-ngx'
+          DB: paperless_ngx
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  pinchflat:
+    desc: Restore pinchflat (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: pinchflat
+          UNITS: 'pinchflat.service'
+          PATHS: '/var/lib/pinchflat /var/backup/sqlite/pinchflat'
+          SWAPS: '/var/backup/sqlite/pinchflat/pinchflat.db:/var/lib/pinchflat/db/pinchflat.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  profilarr:
+    desc: Restore profilarr (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: profilarr
+          UNITS: 'podman-profilarr.service'
+          PATHS: '/var/lib/containers/profilarr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  prowlarr:
+    desc: Restore prowlarr (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: prowlarr
+          UNITS: 'prowlarr.service'
+          PATHS: '/var/lib/prowlarr /var/backup/sqlite/prowlarr'
+          SWAPS: '/var/backup/sqlite/prowlarr/prowlarr.db:/var/lib/prowlarr/prowlarr.db:prowlarr /var/backup/sqlite/prowlarr/logs.db:/var/lib/prowlarr/logs.db:prowlarr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  radarr:
+    desc: Restore radarr (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: radarr
+          UNITS: 'radarr.service'
+          PATHS: '/var/lib/radarr /var/backup/sqlite/radarr'
+          SWAPS: '/var/backup/sqlite/radarr/radarr.db:/var/lib/radarr/.config/Radarr/radarr.db:@env@ /var/backup/sqlite/radarr/logs.db:/var/lib/radarr/.config/Radarr/logs.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  readeck:
+    desc: Restore readeck (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: readeck
+          UNITS: 'readeck.service'
+          PATHS: '/var/lib/readeck /var/backup/sqlite/readeck'
+          SWAPS: '/var/backup/sqlite/readeck/db.sqlite3:/var/lib/readeck/data/db.sqlite3:readeck'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  readmeabook:
+    desc: Restore readmeabook (containerized + postgres)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: readmeabook
+          UNITS: 'podman-readmeabook.service'
+          PATHS: '/var/lib/containers/readmeabook'
+          DB: readmeabook
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  sabnzbd:
+    desc: Restore sabnzbd (native, volume only)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: sabnzbd
+          UNITS: 'sabnzbd.service'
+          PATHS: '/var/lib/sabnzbd'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  seerr:
+    desc: Restore seerr (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: seerr
+          UNITS: 'podman-seerr.service'
+          PATHS: '/var/lib/containers/seerr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  shelfarr:
+    desc: Restore shelfarr (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: shelfarr
+          UNITS: 'podman-shelfarr.service'
+          PATHS: '/var/lib/containers/shelfarr'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  sonarr:
+    desc: Restore sonarr (native + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: sonarr
+          UNITS: 'sonarr.service'
+          PATHS: '/var/lib/sonarr /var/backup/sqlite/sonarr'
+          SWAPS: '/var/backup/sqlite/sonarr/sonarr.db:/var/lib/sonarr/.config/NzbDrone/sonarr.db:@env@ /var/backup/sqlite/sonarr/logs.db:/var/lib/sonarr/.config/NzbDrone/logs.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  spierscraper:
+    desc: Restore spierscraper cache (timer-driven container; nothing to stop)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: spierscraper
+          UNITS: ''
+          PATHS: '/var/lib/containers/spierscraper'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  tandoor:
+    desc: Restore tandoor (containerized + postgres)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: tandoor
+          UNITS: 'podman-tandoor.service'
+          PATHS: '/var/lib/containers/tandoor'
+          DB: tandoor
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  unifi:
+    desc: Restore unifi-os-server (container, state outside /var/lib/containers)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: unifi
+          UNITS: 'podman-unifi-os-server.service'
+          PATHS: '/var/lib/unifi-os-server'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  valheim:
+    desc: Restore valheim (container volume — config + cache)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: valheim
+          UNITS: 'podman-valheim.service'
+          PATHS: '/var/lib/containers/valheim'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  watchstate:
+    desc: Restore watchstate (container volume)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: watchstate
+          UNITS: 'podman-watchstate.service'
+          PATHS: '/var/lib/containers/watchstate'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+
+  # ---------------------------------------------------------------------------
+  # Catastrophic restore — every app
+  # ---------------------------------------------------------------------------
+  # Order matters where there are explicit dependencies (authentik
+  # first, since most apps' OIDC integrations want it reachable),
+  # otherwise the rest are per-app independent.
+
+  all:
+    desc: Catastrophic restore — every app on HOST from SOURCE_HOST (default same host)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: authentik
+      - task: actualbudget
+      - task: audiobookshelf
+      - task: bazarr
+      - task: gatus
+      - task: grimmory
+      - task: homeassistant
+      - task: jellyfin
+      - task: kapowarr
+      - task: kavita
+      - task: komga
+      - task: maintainerr
+      - task: manyfold
+      - task: mealie
+      - task: metube
+      - task: miniflux
+      - task: mylar3
+      - task: paperless-ngx
+      - task: pinchflat
+      - task: profilarr
+      - task: prowlarr
+      - task: radarr
+      - task: readeck
+      - task: readmeabook
+      - task: sabnzbd
+      - task: seerr
+      - task: shelfarr
+      - task: sonarr
+      - task: spierscraper
+      - task: tandoor
+      - task: unifi
+      - task: valheim
+      - task: watchstate
+
+  # ---------------------------------------------------------------------------
+  # tests-server VM lifecycle (drives test:full)
+  # ---------------------------------------------------------------------------
+  # The tests-server NixOS config (modules/hosts/tests-server.nix) is
+  # the server-shaped target used by `task recovery:test:full`. It runs
+  # in a quickemu VM on the operator's workstation. These tasks bring
+  # the VM up (creating disk + ssh key + quickemu conf on first run)
+  # and tear it down (kill quickemu, delete the qcow2 so the next
+  # drill is a truly cold restore).
+  #
+  # The SSH host key under ~/vms/tests-server/ is persisted across
+  # teardowns deliberately — the matching age key has to live in
+  # nix-secrets/.sops.yaml's hpp-1 creation rule, and regenerating it
+  # every drill would mean redoing that dance every quarter. Delete
+  # ~/vms/tests-server/ssh_host_ed25519_key only if you want a fresh
+  # identity (and are prepared to update sops).
+
+  tests-server:up:
+    desc: Bring up the tests-server quickemu VM (idempotent — creates disk/key/conf on first run)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+      VM_CONF: '{{.VM_CONF | default "~/vms/tests-server.conf"}}'
+      DISK_SIZE: '{{.DISK_SIZE | default "60G"}}'
+      RAM: '{{.RAM | default "8G"}}'
+      CPU_CORES: '{{.CPU_CORES | default "4"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        vm_conf=$(eval echo "{{.VM_CONF}}")
+        mkdir -p "$vm_dir"
+
+        # ISO
+        iso_path="$(git rev-parse --show-toplevel)/latest.iso"
+        if [ ! -e "$iso_path" ]; then
+          echo -e "\x1B[32m[+] No latest.iso — building installer\x1B[0m"
+          (cd "$(git rev-parse --show-toplevel)" && task iso)
+        fi
+
+        # Stable SSH host key (persisted across teardowns)
+        key="$vm_dir/ssh_host_ed25519_key"
+        if [ ! -f "$key" ]; then
+          echo -e "\x1B[32m[+] Generating stable SSH host key at $key\x1B[0m"
+          ssh-keygen -t ed25519 -f "$key" -C "root@tests-server" -N "" -q
+          chmod 600 "$key"
+        fi
+
+        # Disk
+        disk="$vm_dir/tests-server.qcow2"
+        if [ ! -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Creating qcow2 at $disk ({{.DISK_SIZE}})\x1B[0m"
+          # qemu-img isn't necessarily on PATH; pull from nixpkgs.
+          nix shell nixpkgs#qemu-utils -c qemu-img create -f qcow2 "$disk" "{{.DISK_SIZE}}"
+        fi
+
+        # quickemu conf
+        if [ ! -f "$vm_conf" ]; then
+          echo -e "\x1B[32m[+] Writing quickemu conf $vm_conf\x1B[0m"
+          cat > "$vm_conf" <<EOF
+        guest_os="linux"
+        disk_img="$disk"
+        iso="$iso_path"
+        disk_size="{{.DISK_SIZE}}"
+        ram="{{.RAM}}"
+        cpu_cores="{{.CPU_CORES}}"
+        EOF
+        fi
+
+        # Already running?
+        if [ -f "$vm_dir/tests-server.pid" ] && kill -0 "$(cat "$vm_dir/tests-server.pid")" 2>/dev/null; then
+          echo -e "\x1B[33m[~] VM appears to be running already (pid $(cat "$vm_dir/tests-server.pid"))\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Launching quickemu in background (ssh port {{.SSH_PORT}})\x1B[0m"
+          # setsid detaches from the controlling terminal so the task
+          # can return without the shell waiting on the child. `disown`
+          # would be cleaner but is a shell builtin that isn't available
+          # in the non-interactive shell `task` invokes commands under.
+          setsid nohup quickemu --vm "$vm_conf" --display none --ssh-port {{.SSH_PORT}} \
+            >"$vm_dir/quickemu.log" 2>&1 < /dev/null &
+        fi
+
+        echo -e "\x1B[32m[+] Waiting for SSH on 127.0.0.1:{{.SSH_PORT}} (root, ISO live system)\x1B[0m"
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        for i in $(seq 1 120); do
+          if ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                 root@127.0.0.1 true 2>/dev/null; then
+            echo -e "\x1B[32m[+] tests-server SSH up\x1B[0m"
+            exit 0
+          fi
+          sleep 3
+        done
+        echo -e "\x1B[31m[!] tests-server SSH did not come up within 6 minutes\x1B[0m"
+        echo "    Check $vm_dir/quickemu.log"
+        exit 1
+
+  tests-server:down:
+    desc: Tear down the tests-server VM (kill quickemu, delete qcow2 — preserves SSH host key)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pid_file="$vm_dir/tests-server.pid"
+        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+          pid=$(cat "$pid_file")
+          echo -e "\x1B[32m[+] Killing quickemu (pid $pid)\x1B[0m"
+          kill "$pid" || true
+          # quickemu spawns qemu as a child; wait briefly for clean exit
+          for i in $(seq 1 10); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          kill -9 "$pid" 2>/dev/null || true
+          rm -f "$pid_file"
+        else
+          # Fallback — quickemu was running but pidfile got lost
+          pkill -f "qemu.*tests-server.qcow2" 2>/dev/null || true
+        fi
+
+        disk="$vm_dir/tests-server.qcow2"
+        if [ -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Deleting qcow2 $disk\x1B[0m"
+          rm -f "$disk"
+        fi
+        echo -e "\x1B[32m[+] tests-server torn down (SSH host key preserved at $vm_dir/ssh_host_ed25519_key)\x1B[0m"
+
+  tests-server:sops-authorize:
+    desc: Idempotently authorize tests-server's age key to read hpp-1.yaml + shared.yaml (uncommitted edit in ../nix-secrets)
+    vars:
+      VM_DIR: '{{.VM_DIR | default "~/vms/tests-server"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pub="$vm_dir/ssh_host_ed25519_key.pub"
+        if [ ! -f "$pub" ]; then
+          echo -e "\x1B[31m[!] $pub not found — run \`task recovery:tests-server:up\` first to generate the host key\x1B[0m"
+          exit 1
+        fi
+
+        age_key=$(ssh-to-age < "$pub")
+        secrets_dir="$(git rev-parse --show-toplevel)/../nix-secrets"
+        sops_yaml="$secrets_dir/.sops.yaml"
+
+        if [ ! -f "$sops_yaml" ]; then
+          echo -e "\x1B[31m[!] $sops_yaml not found\x1B[0m"
+          exit 1
+        fi
+
+        # Helper: extract the lines of a single creation_rule block by
+        # path_regex name, so we can grep for *tests-server within it
+        # without false-positives from sibling blocks.
+        block_for() {
+          # awk: print lines from "path_regex: <name>.yaml" to (but
+          # excluding) the next "  - path_regex:" or EOF.
+          awk -v name="$1" '
+            $0 ~ "^  - path_regex: " name "\\\\\\.yaml\\$" { in_block=1; next }
+            in_block && /^  - path_regex:/ { exit }
+            in_block { print }
+          ' "$sops_yaml"
+        }
+
+        needs_updatekeys=0
+
+        # 1. keys.hosts anchor
+        if grep -q "&tests-server " "$sops_yaml"; then
+          echo -e "\x1B[33m[~] tests-server already in keys.hosts — leaving as-is\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding &tests-server anchor under keys.hosts\x1B[0m"
+          sed -i "/^creation_rules:/i\\    - \&tests-server $age_key" "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 2. *tests-server in hpp-1.yaml's age list
+        if block_for hpp-1 | grep -q '\*tests-server'; then
+          echo -e "\x1B[33m[~] *tests-server already in hpp-1.yaml age list\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding *tests-server to hpp-1.yaml age list (after *hpp-1)\x1B[0m"
+          # The path_regex line in .sops.yaml is literally
+          #   "  - path_regex: hpp-1\.yaml$"
+          # The `\` before `.` is a real character in the source, so the
+          # sed BRE needs `\\` (literal backslash) + `\.` (literal dot) +
+          # `\$` (literal `$`). Range end is the next "  - path_regex:".
+          sed -i '/^  - path_regex: hpp-1\\\.yaml\$/,/^  - path_regex:/{/- \*hpp-1$/a\          - *tests-server
+          }' "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 3. *tests-server in shared.yaml's age list
+        if block_for shared | grep -q '\*tests-server'; then
+          echo -e "\x1B[33m[~] *tests-server already in shared.yaml age list\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding *tests-server to shared.yaml age list (after *hpp-1)\x1B[0m"
+          sed -i '/^  - path_regex: shared\\\.yaml\$/,/^  - path_regex:/{/- \*hpp-1$/a\          - *tests-server
+          }' "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        if [ "$needs_updatekeys" = "1" ]; then
+          echo -e "\x1B[32m[+] Running sops updatekeys on hpp-1.yaml + shared.yaml\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes sops/hpp-1.yaml sops/shared.yaml )
+          echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — \`git restore\` in ../nix-secrets after the drill to revoke\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] tests-server already authorized — no changes\x1B[0m"
+        fi
+
+  # ---------------------------------------------------------------------------
+  # End-to-end drill: VM up → install → restore three shapes → teardown
+  # ---------------------------------------------------------------------------
+  # Confirms last night's restic snapshot is actually replayable into a
+  # working app for each of the three app shapes (containerized + pg,
+  # native + pg only, native + sqlite-quiesce). Quarterly. See issue
+  # #135 for the rationale.
+
+  test:full:
+    desc: Quarterly end-to-end drill — VM up, reinstall, restore mealie/miniflux/jellyfin from SOURCE_HOST, teardown
+    vars:
+      SOURCE_HOST: '{{.SOURCE_HOST | default "hpp-1"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+    cmds:
+      - task: tests-server:up
+        vars: { SSH_PORT: '{{.SSH_PORT}}' }
+      - task: tests-server:sops-authorize
+      # bootstrap:install with SSH_HOST_KEY_FILE pre-builds the toplevel
+      # with --override-input nix-secrets path:../nix-secrets, so the
+      # installed system already reflects local repo state. That makes
+      # the usual bootstrap:sync + bootstrap:rebuild round-trip
+      # redundant for this flow — and rebuild would otherwise fail the
+      # drill on harmless tests-server degraded units (tailscale needs a
+      # fresh authkey, loki/radarr expect NFS content paths, etc.). Skip
+      # both; the per-app restore subtasks below are the actual signal.
+      - task: :bootstrap:install
+        vars:
+          HOST: tests-server
+          DEST: 127.0.0.1
+          SSH_PORT: '{{.SSH_PORT}}'
+          IMPERMANENT: 'true'
+          SSH_HOST_KEY_FILE: '{{.HOME}}/vms/tests-server/ssh_host_ed25519_key'
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Waiting for tests-server to reboot into installed system\x1B[0m"
+        ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        for i in $(seq 1 120); do
+          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                      -o StrictHostKeyChecking=accept-new \
+                      -o UpdateHostKeys=no \
+                      ipreston@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
+          case "$state" in
+            running|degraded)
+              echo -e "\x1B[32m[+] Target reachable (systemd: $state)\x1B[0m"
+              break
+              ;;
+            *)
+              sleep 3
+              ;;
+          esac
+        done
+      - task: mealie
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: miniflux
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: jellyfin
+        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - task: tests-server:down
+      - |
+        echo ""
+        echo -e "\x1B[32m========================================================\x1B[0m"
+        echo -e "\x1B[32m  Full restore drill PASSED (tests-server VM, source {{.SOURCE_HOST}})\x1B[0m"
+        echo -e "\x1B[32m  Bootstrap + all three app shapes restored cleanly.\x1B[0m"
+        echo -e "\x1B[32m========================================================\x1B[0m"
+        echo -e "\x1B[33m  Reminder: ../nix-secrets/ now has uncommitted sops envelope changes\x1B[0m"
+        echo -e "\x1B[33m  authorizing tests-server. \`cd ../nix-secrets && git restore .\` to revoke.\x1B[0m"
