@@ -21,7 +21,10 @@ _: {
     let
       serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
       serverGid = config.users.groups.servers.gid;
-      port = 8081;
+      # 8081 is cAdvisor (modules/system/prometheus.nix); 8082 is
+      # homepage (modules/system/homepage.nix). 8085 is the next free
+      # loopback port.
+      port = 8085;
     in
     {
       myAuthentik.forwardAuthApps.metube = {
@@ -45,7 +48,9 @@ _: {
       virtualisation.oci-containers.containers.metube = {
         # renovate: datasource=docker depName=ghcr.io/alexta69/metube
         image = "ghcr.io/alexta69/metube:2026.04.28";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
+        # MeTube inside the container always listens on 8081; map our
+        # chosen host port onto that.
+        ports = [ "127.0.0.1:${toString port}:8081" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/metube:/downloads/.metube"
