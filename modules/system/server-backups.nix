@@ -29,9 +29,6 @@
 # unit, so a failing backup deliberately does *not* ping. The dead-man's
 # switch is the missing ping, not an explicit /fail call.
 { inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
 {
   flake.modules.nixos.server-backups =
     {
@@ -63,15 +60,15 @@ in
         # own healthchecks.io check (otherwise one job silently masks
         # another's miss).
         "healthchecks/restic_backup_url" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          inherit (hostSpec) sopsFile;
           restartUnits = [ "restic-backups-server.service" ];
         };
         "healthchecks/postgresql_backup_url" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          inherit (hostSpec) sopsFile;
           restartUnits = [ "postgresqlBackup.service" ];
         };
         "healthchecks/mysql_backup_url" = {
-          sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+          inherit (hostSpec) sopsFile;
           restartUnits = [ "mysql-backup.service" ];
         };
       };

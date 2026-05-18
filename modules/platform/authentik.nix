@@ -27,11 +27,7 @@
 # actualbudget) get one; DB/UI-configured apps (audiobookshelf, kavita,
 # seerr) skip it. Apps with non-OIDC env secrets (grimmory's db
 # password) opt in via `extraEnvLines`.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.myAuthentik =
     {
       config,
@@ -165,7 +161,7 @@ in
         app: restartAuthentik ++ lib.optionals app.clientCredsInAppEnv app.appRestartUnit;
 
       mkOidcSecret = _appName: app: {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        inherit (hostSpec) sopsFile;
         restartUnits = oidcSecretRestartUnits app;
       };
 

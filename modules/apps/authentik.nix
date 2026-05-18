@@ -16,9 +16,6 @@
 # `sops.templates."authentik.env"` whenever a new `!Env` reference is
 # introduced.
 { inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
 {
   flake.modules.nixos.authentik =
     {
@@ -77,7 +74,7 @@ in
           map (n: {
             name = "authentik/${n}";
             value = {
-              sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+              inherit (hostSpec) sopsFile;
               restartUnits = restartAuthentik;
             };
           }) sopsSecretNames
