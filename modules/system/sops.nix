@@ -3,7 +3,6 @@
 { inputs, ... }:
 let
   sopsFile = builtins.toString inputs.nix-secrets + "/sops/shared.yaml";
-  sopsFolder = builtins.toString inputs.nix-secrets + "/sops";
 in
 {
   # NixOS-level sops configuration
@@ -92,7 +91,7 @@ in
 
       sops = {
         age.keyFile = "${homeDirectory}/.config/sops/age/keys.txt";
-        defaultSopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        defaultSopsFile = hostSpec.sopsFile;
         validateSopsFiles = false;
         secrets = lib.mkMerge [
           {

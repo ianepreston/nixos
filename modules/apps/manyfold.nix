@@ -27,11 +27,7 @@
 # UID checks pass. Container state (uploaded thumbnails, indices) is
 # under /var/lib/containers/manyfold and rides the standard restic
 # preservation; the NFS share itself is backed up by the NAS.
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.manyfold =
     {
       config,
@@ -66,7 +62,7 @@ in
       # for a 128-char random hex string. Lives alongside the DB
       # password in the host's sops yaml.
       sops.secrets."manyfold/secret_key_base" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        inherit (hostSpec) sopsFile;
         restartUnits = [ "podman-manyfold.service" ];
       };
 
