@@ -26,9 +26,14 @@ _: {
       authentikHost = "authentik.${hostSpec.serverDomain}";
 
       grafanaPort = 3000;
-      prometheusPort = 9090;
+      # Datasource URLs point at the Victoria stack (#126).
+      # VictoriaMetrics speaks the Prometheus query API natively at its
+      # root, so the Prometheus datasource just talks to :8428.
+      # VictoriaLogs needs the dedicated `victoriametrics-logs-datasource`
+      # plugin (installed declaratively below).
+      victoriametricsPort = 8428;
       alertmanagerPort = 9093;
-      lokiPort = 3100;
+      victorialogsPort = 9428;
 
       dashboardsDir = pkgs.runCommandLocal "grafana-dashboards" { } ''
         mkdir -p $out
@@ -75,6 +80,10 @@ _: {
 
       services.grafana = {
         enable = true;
+        # The VictoriaLogs datasource is plugin-backed (no built-in
+        # type) so it has to be installed up-front for grafana to
+        # accept the provisioned datasource at start-up.
+        declarativePlugins = with pkgs.grafanaPlugins; [ victoriametrics-logs-datasource ];
         settings = {
           server = {
             http_addr = "127.0.0.1";
@@ -131,22 +140,28 @@ _: {
           # resolution.
           datasources.settings.datasources = [
             {
-              name = "Prometheus";
+              # The Prometheus datasource UID stays "prometheus" so
+              # dashboards under modules/system/_grafana-dashboards/
+              # that reference `"uid": "prometheus"` keep resolving
+              # after the swap to VictoriaMetrics. VM speaks the
+              # Prometheus query API at its root, so the type and
+              # query plugin are unchanged.
+              name = "VictoriaMetrics";
               uid = "prometheus";
               type = "prometheus";
               access = "proxy";
-              url = "http://127.0.0.1:${toString prometheusPort}";
+              url = "http://127.0.0.1:${toString victoriametricsPort}";
               isDefault = true;
               # Tell Grafana the scrape interval so $__rate_interval
               # stays >= 4 * 30s = 2m (always wide enough for rate()).
               jsonData.timeInterval = "30s";
             }
             {
-              name = "Loki";
-              uid = "loki";
-              type = "loki";
+              name = "VictoriaLogs";
+              uid = "victorialogs";
+              type = "victoriametrics-logs-datasource";
               access = "proxy";
-              url = "http://127.0.0.1:${toString lokiPort}";
+              url = "http://127.0.0.1:${toString victorialogsPort}";
             }
             {
               name = "Alertmanager";
