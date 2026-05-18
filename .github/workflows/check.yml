@@ -29,18 +29,15 @@ jobs:
             lazy-trees = false
             always-allow-substitutes = false
 
-      # nix-secrets is a private flake input fetched via git+https from
+      # nix-secrets is a private flake input fetched via git+ssh from
       # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
-      # key (read-only) registered on that repo to authenticate, and
-      # rewrite https → ssh so nix's git fetcher picks up the agent.
+      # key (read-only) registered on that repo to authenticate; the
+      # ssh-agent loaded here is what nix's git fetcher picks up when
+      # cloning the input.
       - name: Authorize nix-secrets clone
         uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
-
-      - name: Rewrite github.com https → ssh for nix-secrets fetch
-        run: |
-          git config --global url."git@github.com:".insteadOf "https://github.com/"
 
       # `nix flake check --all-systems` evaluates every config in
       # parallel and on Determinate Nix's Linux runner consistently
