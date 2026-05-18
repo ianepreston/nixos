@@ -58,6 +58,7 @@
         "/var/lib/komga"
         "/var/lib/mealie"
         "/var/lib/paperless-ngx"
+        "/var/lib/pinchflat"
         "/var/lib/private/authentik"
         "/var/lib/prowlarr"
         "/var/lib/radarr"
@@ -88,9 +89,11 @@
         maintainerr
         manyfold
         mealie
+        metube
         miniflux
         mylar3
         paperless-ngx
+        pinchflat
         profilarr
         prowlarr
         radarr
