@@ -25,6 +25,11 @@ _: {
       systemd.tmpfiles.rules = [
         "d /var/lib/containers/apprise 0750 ${toString serverUid} ${toString serverGid} -"
         "d /var/lib/containers/apprise/config 0750 ${toString serverUid} ${toString serverGid} -"
+        # Bind target for /etc/timezone — supervisord-startup writes ${TZ}
+        # to /etc/timezone on every boot, which fails when the container runs
+        # as a non-root user (the image's /etc/timezone is root-owned). TZ env
+        # is the real source of truth; this just keeps the write quiet.
+        "f /var/lib/containers/apprise/timezone 0644 ${toString serverUid} ${toString serverGid} - ${config.time.timeZone}"
       ];
 
       virtualisation.oci-containers.containers.apprise = {
@@ -34,6 +39,7 @@ _: {
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/apprise/config:/config"
+          "/var/lib/containers/apprise/timezone:/etc/timezone"
         ];
         environment = {
           TZ = config.time.timeZone;
