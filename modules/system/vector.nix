@@ -44,6 +44,26 @@ _: {
             # since vector persists the cursor.
           };
 
+          # cAdvisor floods the journal with one line per podman
+          # container per housekeeping cycle (~33/min, ~47k/day on
+          # hpp-1) trying to read podman's `containers.json` storage
+          # metadata — the cgroup-level metrics it ships still work,
+          # only the libpod label-enrichment lookup fails. Drop just
+          # the matching message; keep everything else cadvisor logs
+          # so genuine collector errors stay visible (closes #192).
+          transforms.drop_cadvisor_libpod_noise = {
+            type = "filter";
+            inputs = [ "journald" ];
+            condition = {
+              type = "vrl";
+              source = ''
+                unit = to_string(._SYSTEMD_UNIT) ?? ""
+                msg = to_string(.message) ?? ""
+                !(unit == "cadvisor.service" && contains(msg, "Failed to create existing container"))
+              '';
+            };
+          };
+
           # Add query-friendly aliases (`unit`, `level`) without
           # deleting the raw underscored journal fields — keeping both
           # means existing dashboards/alerts that key off `unit` and
@@ -53,7 +73,7 @@ _: {
           # this swap.
           transforms.journal_enrich = {
             type = "remap";
-            inputs = [ "journald" ];
+            inputs = [ "drop_cadvisor_libpod_noise" ];
             source = ''
               if exists(._SYSTEMD_UNIT) {
                 .unit = ._SYSTEMD_UNIT
