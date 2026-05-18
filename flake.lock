@@ -499,13 +499,13 @@
         "rev": "06f24899ad6ad82c1a0295d2fcb79366eebf543c",
         "shallow": true,
         "type": "git",
-        "url": "https://github.com/ianepreston/nix-secrets.git"
+        "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
       },
       "original": {
         "ref": "main",
         "shallow": true,
         "type": "git",
-        "url": "https://github.com/ianepreston/nix-secrets.git"
+        "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
       }
     },
     "nixpkgs": {

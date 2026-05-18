@@ -44,9 +44,13 @@
     # ========= Personal Repositories =========
     #
     # Private secrets repo.  See ./docs/secretsmgmt.md
-    # Authenticate via ssh and use shallow clone
+    # Authenticate via ssh and use shallow clone. SSH (not HTTPS) so the
+    # nightly `nixos-upgrade.service` on impermanent server hosts can
+    # fetch with a system-level deploy key — root has no HTTPS creds and
+    # the user's home-manager-managed SSH key isn't materialized at
+    # 04:40 when the timer fires (see modules/system/auto-rebuild.nix).
     nix-secrets = {
-      url = "git+https://github.com/ianepreston/nix-secrets.git?ref=main&shallow=1";
+      url = "git+ssh://git@github.com/ianepreston/nix-secrets.git?ref=main&shallow=1";
       inputs = { };
     };
     # Native NixOS module for authentik (server, worker, outposts).

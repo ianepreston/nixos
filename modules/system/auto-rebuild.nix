@@ -2,7 +2,11 @@
 # Periodically fetch latest config from GitHub and rebuild
 _: {
   flake.modules.nixos.auto-rebuild =
-    { hostSpec, ... }:
+    {
+      config,
+      hostSpec,
+      ...
+    }:
     {
       system.autoUpgrade = {
         enable = true;
@@ -14,16 +18,27 @@ _: {
         allowReboot = true;
       };
 
-      # The flake depends on a private repo (nix-secrets). Its URL is
-      # git+https://... (kept that way so Renovate can read it), but root
-      # has no GitHub HTTPS creds. Rewrite to SSH at fetch time via git
-      # config env vars and point GIT_SSH at the user's key — mirroring
-      # the insteadOf rule in the user's home-manager gitconfig.
+      # The flake depends on a private repo (nix-secrets) and fetches it
+      # over SSH (see `nix-secrets` input in flake.nix). Provision the
+      # per-host SSH key at the system level — root-owned, available
+      # straight out of `sops-install-secrets.service` so it's ready
+      # when the 04:40 timer fires regardless of whether the user has
+      # logged in. The user's home-manager copy at
+      # `${hostSpec.home}/.ssh/id_ed25519` is materialized by the
+      # `sops-nix` *user* service on session start and is absent on
+      # impermanent hosts after a reboot — pointing nixos-upgrade at
+      # the system path side-steps that race entirely.
+      sops.secrets."ssh/ed25519" = {
+        inherit (hostSpec) sopsFile;
+        owner = "root";
+        group = "root";
+        mode = "0400";
+      };
+
       systemd.services.nixos-upgrade.environment = {
-        GIT_SSH_COMMAND = "ssh -i ${hostSpec.home}/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new";
-        GIT_CONFIG_COUNT = "1";
-        GIT_CONFIG_KEY_0 = "url.git@github.com:ianepreston/.insteadOf";
-        GIT_CONFIG_VALUE_0 = "https://github.com/ianepreston/";
+        GIT_SSH_COMMAND = "ssh -i ${
+          config.sops.secrets."ssh/ed25519".path
+        } -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes";
       };
     };
 }
