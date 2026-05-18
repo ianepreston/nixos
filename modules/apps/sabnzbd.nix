@@ -83,6 +83,18 @@ _: {
         description = "Render apprise stateful config for sabnzbd";
         wantedBy = [ "multi-user.target" ];
         before = [ "podman-apprise.service" ];
+        # Explicit ordering on the sops decryption unit
+        # (sops.useSystemdActivation = true in modules/system/sops.nix).
+        # Without this, EnvironmentFile= points at
+        # /run/secrets/rendered/apprise-sabnzbd.env before sops has
+        # rendered the template, the unit fails with "Failed to load
+        # environment files", and only the sops template's restartUnits
+        # hook (which fires after rendering) recovers it ~minutes later.
+        # See #194. ConditionPathExists below belt-and-suspenders the
+        # case where sops *finishes* but this specific render failed.
+        after = [ "sops-install-secrets.service" ];
+        wants = [ "sops-install-secrets.service" ];
+        unitConfig.ConditionPathExists = config.sops.templates."apprise-sabnzbd.env".path;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
