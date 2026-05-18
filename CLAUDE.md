@@ -203,6 +203,33 @@ Don't invent ad-hoc key names — stick to `oidc_client_id`,
 template. Reach for `task secret` only when the app genuinely needs
 something beyond those three.
 
+### `restartUnits` goes on the template, not the secret
+
+When an app declares its own `sops.templates."<app>.env"` (i.e. it's
+not threaded through `myAuthentik.oidcApps`), put `restartUnits` on
+the **template only** — not on the underlying `sops.secrets.<key>`,
+not on both. The template is what the consumer reads via
+`environmentFile` / `EnvironmentFile`, and sops-nix re-renders it
+whenever any referenced placeholder's source changes — so a single
+declaration on the template captures every rotation path. Putting
+it on the secret is redundant; splitting it across both is a
+"did I update both?" footgun the next time keys change.
+
+Exceptions:
+- Aggregators (`myPostgresApp`, `myAuthentik.oidcApps`) already attach
+  `restartUnits` to the secrets they own — leave those alone. The rule
+  applies to per-app env templates declared inline in the app module.
+- When a secret is consumed directly (via `config.sops.secrets.<k>.path`
+  in a oneshot or `ExecStart`) rather than through a template, the
+  restart trigger has to go on the secret because there's no template
+  to bind it to. `paperless-ngx.nix`'s `paperless-secret-key-init`
+  oneshot is the example.
+
+Existing modules that have it on both the secret and the template
+(`readeck.nix`, `manyfold.nix`, `pinchflat.nix`, `valheim.nix`) are
+not broken — converge them to template-only on drive-by edits rather
+than a dedicated cleanup pass. Closes #142.
+
 ## Authentik notes
 
 - Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`),
