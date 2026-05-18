@@ -1,5 +1,5 @@
 # Kapowarr - comics manager (alternative to mylar3)
-# Container only; auth/caddy/homepage wired by platform/authentik.nix. Upstream
+# Container only; auth/caddy/homepage wired by apps/authentik.nix. Upstream
 # image isn't a linuxserver build, so we set the runtime user via
 # `--user` directly rather than via PUID/PGID env vars.
 _: {

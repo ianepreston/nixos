@@ -372,7 +372,7 @@ _: {
       # Forward-auth via the embedded authentik outpost — prometheus
       # has no built-in auth so it sits behind the
       # `authentik_forward_auth` Caddy snippet (see
-      # modules/platform/authentik.nix for the aggregator that owns
+      # modules/apps/authentik.nix for the aggregator that owns
       # the outpost's providers list).
       myAuthentik.forwardAuthApps.prometheus = {
         host = prometheusHost;

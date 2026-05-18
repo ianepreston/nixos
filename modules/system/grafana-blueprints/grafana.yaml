@@ -58,6 +58,6 @@ entries:
   # outpost, registered through `myAuthentik.forwardAuthApps` in
   # modules/system/{prometheus,alertmanager}.nix respectively. Their
   # proxy providers, applications, policy bindings, and the outpost's
-  # providers list are emitted from modules/platform/authentik.nix's
+  # providers list are emitted from modules/apps/authentik.nix's
   # aggregated blueprint — a second outpost block here would clobber
   # the aggregator's providers list at apply time.

@@ -46,16 +46,19 @@ file from `/persist`) and the host comes up unreachable.
 
 - `modules/system/*.nix` — NixOS modules, registered as
   `flake.modules.nixos.<name>` and consumed via
-  `inputs.self.modules.nixos.<name>`.
-- `modules/platform/*.nix` — option-only "platform-tier" modules that
-  define cross-cutting option surfaces (`myCaddy.apps`,
-  `myPostgresApp`, `myAuthentik.{oidcApps,forwardAuthApps,extraBlueprints}`,
-  `myHomepage.tiles`) which app modules contribute into.
+  `inputs.self.modules.nixos.<name>`. Cross-cutting option surfaces
+  (`myCaddy.apps` in `caddy.nix`, `myPostgresApp` in `postgresql.nix`,
+  `myHomepage.tiles` in `homepage.nix`, `mySqliteQuiesce.apps` in
+  `sqlite-quiesce.nix`) are declared inline next to the service that
+  consumes them — no separate "platform tier" directory. The
+  `my`-prefix marks options owned by this flake (vs upstream
+  `services.*`).
 - `modules/apps/*.nix` — server-app modules (jellyfin, mealie, miniflux,
-  authentik, homepage, …). Each is self-contained: service (or
-  container — see "App packaging" below), caddy route via
-  `myCaddy.apps`, postgres via `myPostgresApp`, SSO via
-  `myAuthentik.{oidcApps,forwardAuthApps}`.
+  authentik, …). Each is self-contained: service (or container — see
+  "App packaging" below), caddy route via `myCaddy.apps`, postgres
+  via `myPostgresApp`, SSO via `myAuthentik.{oidcApps,forwardAuthApps}`.
+  The `myAuthentik.*` option surface lives in `modules/apps/authentik.nix`
+  — same file as the IDP itself.
 - `modules/profiles/*.nix` — composed bundles. Two server-side profiles:
   `server` (core infra: `base`, `auto-rebuild`, `authentik`, `caddy`,
   `mariadb`, `nfsclient`, `nix-maintenance`, `observability`,
@@ -213,13 +216,13 @@ something beyond those three.
   `pkgs.runCommandLocal` + `cp -rL` to materialize real files.
 - **`@serverDomain@` substitution is per-contributor, not at merge
   time.** OIDC blueprint dirs are pre-rendered by `renderedBlueprintDir`
-  in `modules/platform/authentik.nix` before they hit `extraBlueprints`;
+  in `modules/apps/authentik.nix` before they hit `extraBlueprints`;
   `fwBlueprintDir` interpolates the domain into the Nix string directly.
-  The merge step in `modules/apps/authentik.nix` is a pure `cp -rL` stack
-  with no `sed` pass — that pass mangled unrelated YAML values that
-  happened to contain the literal string (closes #154). If you add a new
-  way of contributing blueprints, do substitution at the contribution
-  site if those files use the placeholder.
+  The merge step (also in `modules/apps/authentik.nix`) is a pure
+  `cp -rL` stack with no `sed` pass — that pass mangled unrelated YAML
+  values that happened to contain the literal string (closes #154). If
+  you add a new way of contributing blueprints, do substitution at the
+  contribution site if those files use the placeholder.
 - Blueprint secrets (`password`, `client_secret`, token `key`) go through
   `!Env VAR_NAME`. The var must be present in the `EnvironmentFile`
   consumed by the *worker* (the worker is what applies blueprints, not

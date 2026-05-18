@@ -3,7 +3,7 @@
 # overridden to the shared server-${env}:servers user so writes
 # against /mnt/content/Downloads keep their NFS UID alignment).
 # auth/caddy/homepage wiring is generated from
-# `myAuthentik.forwardAuthApps.sabnzbd` by modules/platform/authentik.nix.
+# `myAuthentik.forwardAuthApps.sabnzbd` by modules/apps/authentik.nix.
 #
 # Sabnzbd refuses any HTTP request whose Host header doesn't match the
 # local hostname or an entry in `host_whitelist`. The home-operations
