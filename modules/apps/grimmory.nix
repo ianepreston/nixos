@@ -68,6 +68,15 @@ _: {
         ];
 
         services = {
+          # Explicit ordering on mariadb so the container stops before
+          # mariadb on shutdown. Transitive ordering through
+          # grimmory-db-password.service (a RemainAfterExit oneshot)
+          # should give the same guarantee, but the issue #195 audit
+          # called that out as fragile — make it explicit.
+          podman-grimmory = {
+            after = [ "mysql.service" ];
+          };
+
           # Sets up the grimmory mariadb role with a sops-managed password
           # and grants on the grimmory database. ensureUsers can't help
           # here because it provisions unix_socket auth only, but the
