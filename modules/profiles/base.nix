@@ -41,6 +41,19 @@ in
       # only read by the systemd-boot installer. See issue #134.
       boot.loader.systemd-boot.configurationLimit = lib.mkDefault 20;
 
+      # Mount the ESP with umask=0077 so the random seed file under
+      # /boot/loader/ isn't world-readable. systemd-bootctl warns
+      # loudly on every boot otherwise. vfat ignores chmod, so the
+      # umask mount option is the only knob. Override here rather
+      # than in disko's `mountOptions` to avoid the
+      # "any disks.nix change requires reinstall" rule — mount-option
+      # changes apply cleanly on `nixos-rebuild switch` via remount.
+      # See issue #199.
+      fileSystems."/boot".options = lib.mkForce [
+        "defaults"
+        "umask=0077"
+      ];
+
       # System-wide packages
       environment.systemPackages = with pkgs; [
         openssh
