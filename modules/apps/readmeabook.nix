@@ -1,12 +1,30 @@
 # ReadMeABook - audiobook request + automation engine
 # Container; OIDC against authentik gated to the Users group. The
 # unified image (`ghcr.io/kikootwo/readmeabook`) bundles postgres +
-# redis internally and uses gosu to drop from root to PUID:PGID at
-# startup, so the container runs as root and we set PUID/PGID rather
-# than `--user`. ReadMeABook stores OIDC settings in its own bundled
-# postgres (configured via Settings → Authentication in the UI), so
-# this module registers via myAuthentik.oidcApps with
-# clientCredsInAppEnv = false.
+# redis + node under supervisord and uses gosu to drop from root to
+# PUID:PGID, so the container runs as root and we set PUID/PGID rather
+# than `--user`.
+#
+# We *don't* run the bundled postgres / redis — they're a packaging
+# convenience for compose users, not an isolation requirement. The
+# entrypoint detects `DATABASE_URL` / `REDIS_URL` in the env and exports
+# `USE_EXTERNAL_POSTGRES=true` / `USE_EXTERNAL_REDIS=true`, which makes
+# the supervisord `postgres-start.sh` / `redis-start.sh` children
+# `exec sleep infinity` instead of starting their service. That gives
+# us the shared postgres role + a native NixOS redis under journald,
+# both backed up by the same machinery as every other app on this host
+# — and avoids the original gosu/UID-mapping issues that were causing
+# pg_filenode.map permission failures and redis MISCONF errors when the
+# bundled services tried to coexist inside one container.
+#
+# Postgres via myPostgresApp (TCP + sops `readmeabook/db_password`).
+# Redis via per-app `services.redis.servers.readmeabook` on 6381
+# (authentik = 6379, manyfold = 6380); same loopback + bridge trust
+# model as manyfold's redis.
+#
+# ReadMeABook stores OIDC settings in its own postgres (configured
+# via Settings → Authentication in the UI), so this module registers
+# via myAuthentik.oidcApps with clientCredsInAppEnv = false.
 #
 # On first boot, complete the local-admin setup wizard, then under
 # Settings → Authentication enable OIDC with Issuer
@@ -30,8 +48,11 @@ _: {
       serverGid = config.users.groups.servers.gid;
       readmeabookHost = "readmeabook.${hostSpec.serverDomain}";
       port = 3030;
+      redisPort = 6381;
     in
     {
+      myPostgresApp.readmeabook.consumerService = [ "podman-readmeabook.service" ];
+
       myAuthentik.oidcApps.readmeabook = {
         blueprintsDir = ./readmeabook-blueprints;
         clientCredsInAppEnv = false;
@@ -43,24 +64,35 @@ _: {
         displayName = "ReadMeABook";
       };
 
-      systemd = {
-        # Container runs as root and uses gosu to drop to PUID/PGID
-        # for node + redis, while leaving postgres at UID 103. Leave
-        # the parent dirs root-owned and let the entrypoint chown
-        # children on first start — except for redis: RDB snapshots
-        # write `temp-<pid>.rdb` into the parent dir and rename over
-        # `dump.rdb`, so the parent itself must be writable by the
-        # gosu-dropped uid. `Z` re-chowns on every activation so the
-        # live dir self-heals if it was previously root-owned.
-        tmpfiles.rules = [
-          "d /var/lib/containers/readmeabook 0750 root root -"
-          "d /var/lib/containers/readmeabook/config 0750 root root -"
-          "d /var/lib/containers/readmeabook/cache 0750 root root -"
-          "d /var/lib/containers/readmeabook/pgdata 0750 root root -"
-          "d /var/lib/containers/readmeabook/redis 0750 server-${hostSpec.serverEnvironment} servers -"
-          "Z /var/lib/containers/readmeabook/redis - server-${hostSpec.serverEnvironment} servers -"
-        ];
+      # DATABASE_URL embeds the role password, so it has to come through
+      # sops.templates rather than the plain `environment` attrset.
+      sops.templates."readmeabook.env" = {
+        content = ''
+          DATABASE_URL=postgresql://readmeabook:${
+            config.sops.placeholder."readmeabook/db_password"
+          }@host.containers.internal:5432/readmeabook
+          REDIS_URL=redis://host.containers.internal:${toString redisPort}/0
+        '';
+        restartUnits = [ "podman-readmeabook.service" ];
       };
+
+      # Per-app redis on 6381 (loopback + podman bridge). Same trust
+      # model as manyfold: host firewall blocks the port on external
+      # NICs and podman0 is in trustedInterfaces, so practical surface
+      # is loopback + the bridge. `protected-mode = no` is required
+      # when bind != 127.0.0.1 with no password.
+      services.redis.servers.readmeabook = {
+        enable = true;
+        port = redisPort;
+        bind = "0.0.0.0";
+        settings.protected-mode = "no";
+      };
+
+      systemd.tmpfiles.rules = [
+        "d /var/lib/containers/readmeabook 0750 root root -"
+        "d /var/lib/containers/readmeabook/config 0750 root root -"
+        "d /var/lib/containers/readmeabook/cache 0750 root root -"
+      ];
 
       virtualisation.oci-containers.containers.readmeabook = {
         # Upstream only publishes `latest` and per-commit `sha-*` tags
@@ -74,8 +106,6 @@ _: {
         volumes = [
           "/var/lib/containers/readmeabook/config:/app/config"
           "/var/lib/containers/readmeabook/cache:/app/cache"
-          "/var/lib/containers/readmeabook/pgdata:/var/lib/postgresql/data"
-          "/var/lib/containers/readmeabook/redis:/var/lib/redis"
           "/mnt/content/Downloads:/downloads"
           "/mnt/content/audiobooks:/media"
         ];
@@ -85,6 +115,7 @@ _: {
           PGID = toString serverGid;
           PUBLIC_URL = "https://${readmeabookHost}";
         };
+        environmentFiles = [ config.sops.templates."readmeabook.env".path ];
       };
 
       myCaddy.apps.readmeabook = {
