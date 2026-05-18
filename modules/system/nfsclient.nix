@@ -53,6 +53,19 @@ _: {
 
       boot.supportedFilesystems = [ "nfs" ];
 
+      # rpc-statd-notify (sm-notify) reads /var/lib/nfs/sm and moves
+      # entries to sm.bak on boot to notify NFS peers of a restart.
+      # nfs-utils ships no tmpfiles snippet for these, and
+      # services.nfs.server.enable (which would create them) is off on
+      # client-only hosts. Without these, every boot logs:
+      #   sm-notify: Failed to open sm: No such file or directory
+      #   sm-notify: Failed to open directory sm.bak: No such file or directory
+      systemd.tmpfiles.rules = [
+        "d /var/lib/nfs        0755 root root - -"
+        "d /var/lib/nfs/sm     0755 root root - -"
+        "d /var/lib/nfs/sm.bak 0755 root root - -"
+      ];
+
       fileSystems = {
         "/mnt/content" = mkMount contentByEnv.${env};
         "/mnt/backups" = mkMount backupsByEnv.${env};
