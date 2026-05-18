@@ -240,7 +240,7 @@ _: {
                 # Observability stack itself — useful to know if our
                 # own scrapers fall over.
                 + "|victoriametrics|victorialogs|vmalert(-.+)?"
-                + "|alertmanager|grafana|promtail|cadvisor|gatus"
+                + "|alertmanager|grafana|vector|cadvisor|gatus"
                 + "|prometheus-(node|postgres|mysqld|redis)-exporter"
                 # Native NixOS app services (modules/apps/*.nix using
                 # services.<app>): audiobookshelf, bazarr, jellyfin,
