@@ -379,11 +379,11 @@
     },
     "hardware": {
       "locked": {
-        "lastModified": 1779034340,
-        "narHash": "sha256-zhMjgfsnNPcZtMhhWoeyaUV7JVEJ4rm5YJ0whwTfo8M=",
+        "lastModified": 1779058144,
+        "narHash": "sha256-OFaHDx6EMVUfufD2cxkLHXT3AZdhLnjS+RChKPLIyAI=",
         "owner": "nixos",
         "repo": "nixos-hardware",
-        "rev": "88e6bd5c2db9e0b098d8ccb081f35fe33f0f3186",
+        "rev": "8ea1d787af06d65d83885264cb5572d966bfa289",
         "type": "github"
       },
       "original": {
@@ -493,10 +493,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1779039658,
-        "narHash": "sha256-NvXKaHi+u8ALm50F2QrjEhGNf/tQQR5QMHfHTQ69EjY=",
+        "lastModified": 1779065952,
+        "narHash": "sha256-+NgHeHUgi1sEwqHQv/rAbKU+RWwW5Emn7dH6WB/9iiE=",
         "ref": "main",
-        "rev": "e0f083ae59e9077dca2b020b2a1229be955f0076",
+        "rev": "c326ef2cb62e3556fe27f45286c7bd6b922fbe78",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/ianepreston/nix-secrets.git"
