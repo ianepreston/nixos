@@ -47,13 +47,18 @@ _: {
         # Container runs as root and uses gosu to drop to PUID/PGID
         # for node + redis, while leaving postgres at UID 103. Leave
         # the parent dirs root-owned and let the entrypoint chown
-        # children on first start.
+        # children on first start — except for redis: RDB snapshots
+        # write `temp-<pid>.rdb` into the parent dir and rename over
+        # `dump.rdb`, so the parent itself must be writable by the
+        # gosu-dropped uid. `Z` re-chowns on every activation so the
+        # live dir self-heals if it was previously root-owned.
         tmpfiles.rules = [
           "d /var/lib/containers/readmeabook 0750 root root -"
           "d /var/lib/containers/readmeabook/config 0750 root root -"
           "d /var/lib/containers/readmeabook/cache 0750 root root -"
           "d /var/lib/containers/readmeabook/pgdata 0750 root root -"
-          "d /var/lib/containers/readmeabook/redis 0750 root root -"
+          "d /var/lib/containers/readmeabook/redis 0750 server-${hostSpec.serverEnvironment} servers -"
+          "Z /var/lib/containers/readmeabook/redis - server-${hostSpec.serverEnvironment} servers -"
         ];
       };
 
