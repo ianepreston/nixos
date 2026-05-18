@@ -13,7 +13,7 @@
 # The restic password lives in shared.yaml (not per-host) so any server
 # can decrypt any other server's repo for cross-host recovery testing.
 #
-# `mySqliteQuiesce` (modules/platform/sqlite-quiesce.nix) is imported
+# `mySqliteQuiesce` (modules/system/sqlite-quiesce.nix) is imported
 # here so SQLite-backed app modules can opt into a pre-restic
 # `.backup` oneshot wherever this profile is in effect.
 #

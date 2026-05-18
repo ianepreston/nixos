@@ -3,7 +3,7 @@
 # to the shared server-${env}:servers user so writes back to the
 # NFS-mounted Movies share land with the UID/GID the NAS expects).
 # auth/caddy/homepage wiring is generated from
-# `myAuthentik.forwardAuthApps.radarr` by modules/platform/authentik.nix.
+# `myAuthentik.forwardAuthApps.radarr` by modules/apps/authentik.nix.
 _: {
   flake.modules.nixos.radarr =
     { hostSpec, ... }:

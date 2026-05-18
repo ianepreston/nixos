@@ -8,7 +8,7 @@
 # resolves to the real path, not the DynamicUser /var/lib/private/
 # symlink).
 # auth/caddy/homepage wiring is generated from
-# `myAuthentik.forwardAuthApps.prowlarr` by modules/platform/authentik.nix.
+# `myAuthentik.forwardAuthApps.prowlarr` by modules/apps/authentik.nix.
 _: {
   flake.modules.nixos.prowlarr =
     { lib, ... }:

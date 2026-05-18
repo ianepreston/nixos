@@ -1,4 +1,4 @@
-# SQLite quiesce helper (platform-tier).
+# SQLite quiesce helper for restic backups.
 # `mySqliteQuiesce.apps.<name>.databases = [...]` stages an online
 # `sqlite3 .backup` copy of each listed database into
 # /var/backup/sqlite/<name>/ before each restic-backups-server run,
@@ -7,6 +7,12 @@
 # hot copy *usually* fine, but `.backup` is the only thing sqlite
 # itself promises is point-in-time consistent. On restore, prefer the
 # staged copy under /var/backup/sqlite/<name>/ over the live one.
+#
+# Lives next to server-backups.nix rather than inline so app modules
+# can still contribute to `mySqliteQuiesce.apps` from a self-contained
+# option surface — the helper is consumed by exactly one consumer
+# (server-backups) but the contribution pattern is the same as
+# myCaddy.apps / myHomepage.tiles / etc.
 #
 # The oneshot runs as root with `before = [restic-backups-server.service]`
 # and `wantedBy = [restic-backups-server.service]` (not requires) so a

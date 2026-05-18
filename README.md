@@ -67,8 +67,7 @@ and resources if you want to build your own.
 │   ├── flake/             # Flake infrastructure (host-specs, module namespaces, dev shell, git hooks)
 │   ├── profiles/          # Composable profiles (base, darwin-base, server, server-apps, workstation)
 │   │   └── _ssh-keys/    # Public SSH keys
-│   ├── platform/          # Option-only platform-tier modules (myCaddy, myPostgresApp, myAuthentik, myHomepage)
-│   ├── system/            # System-level modules (sops, ssh, caddy, postgresql, mariadb, oci-containers, server-backups, observability, tailscale, …)
+│   ├── system/            # System-level modules (sops, ssh, caddy, postgresql, mariadb, oci-containers, server-backups, observability, tailscale, …). Cross-cutting option surfaces (myCaddy.apps, myPostgresApp, myHomepage.tiles, mySqliteQuiesce.apps) are declared inline next to the service that consumes them.
 │   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
 │   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
 │   ├── hardware/          # Hardware-specific modules (intel-quicksync, nvidia, yubikey, keyboards, rgb, xreal-headset)
@@ -132,8 +131,9 @@ database/user it needs, its sops secrets, an authentik blueprint
 `modules/apps/mealie.nix` is the canonical example for a
 containerized, postgres-backed, OIDC-integrated app.
 
-App modules contribute to a small set of platform-tier aggregators
-declared in `modules/platform/`:
+App modules contribute to a small set of aggregator options declared
+inline next to the services that consume them (in `modules/system/` or,
+for `myAuthentik.*`, `modules/apps/authentik.nix`):
 
 - `myCaddy.apps.<name>` — hands a route block to the wildcard
   `*.${serverDomain}` virtualHost (one wildcard cert covers every
@@ -195,7 +195,7 @@ declared in `modules/platform/`:
   bind-mount it into the container.
 - **Postgres:** declare `myPostgresApp.<name>.consumerService =
   "podman-<app>.service"` (or whatever unit consumes the role). The
-  helper in `modules/platform/postgres-app.nix` handles the
+  helper in `modules/system/postgresql.nix` handles the
   database/role via `ensureDatabases`/`ensureUsers`, the sops secret,
   and the rotate-on-secret-change oneshot wired `before` the consumer
   unit. The app is responsible for plumbing
@@ -238,7 +238,7 @@ Apps that keep state outside `/var/lib/containers` (e.g. the native
 stay intact.
 
 SQLite-backed native apps additionally opt into the `mySqliteQuiesce`
-helper (`modules/platform/sqlite-quiesce.nix`), which runs `sqlite3
+helper (`modules/system/sqlite-quiesce.nix`), which runs `sqlite3
 .backup` for each declared database into `/var/backup/sqlite/<app>/`
 immediately before each restic run. The staging root is added to the
 restic paths automatically, so each snapshot contains both the (hot,
@@ -617,7 +617,7 @@ Real files via `cp -L` are required.
 ### Adding an OIDC app to Authentik
 
 Apps that speak OIDC natively register via the `myAuthentik.oidcApps`
-aggregator from `modules/platform/authentik.nix`. The aggregator
+aggregator from `modules/apps/authentik.nix`. The aggregator
 generates the sops secret pair, contributes the per-app blueprint
 dir, and stacks one merged worker-side env file onto authentik so
 blueprint `!Env` placeholders resolve. Apps that read OIDC creds
@@ -752,7 +752,7 @@ a different key, or a YAML file is malformed), any service that reads
 the missing secret via a script will hit a no-op guard or auth-fail.
 The current safety net for postgres roles is the
 `unitConfig.ConditionPathExists` on `<app>-db-password.service` (see
-`modules/platform/postgres-app.nix`): the unit refuses to run if the
+`modules/system/postgresql.nix`): the unit refuses to run if the
 secret file is missing, so it can't silently `ALTER USER … WITH
 PASSWORD ''` and lock the app out of its DB.
 

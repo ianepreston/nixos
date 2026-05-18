@@ -1,5 +1,5 @@
 # Mylar3 - comics manager
-# Container only; auth/caddy/homepage wired by platform/authentik.nix. Mounts
+# Container only; auth/caddy/homepage wired by apps/authentik.nix. Mounts
 # /mnt/content/comics so it can manage the user's comic library and
 # /mnt/content/Downloads so post-processed grabs land in the right
 # place.

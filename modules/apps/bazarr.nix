@@ -3,7 +3,7 @@
 # to the shared server-${env}:servers user so NFS reads/writes against
 # /mnt/content land with the UID/GID the NAS expects). auth/caddy/
 # homepage wiring is generated from `myAuthentik.forwardAuthApps.bazarr`
-# by modules/platform/authentik.nix.
+# by modules/apps/authentik.nix.
 _: {
   flake.modules.nixos.bazarr =
     { hostSpec, ... }:

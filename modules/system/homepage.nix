@@ -4,16 +4,15 @@
 #
 # App entries are *distributed*: each app module sets one
 # `myHomepage.tiles.<name> = { group; href; icon; description; ... }`
-# entry. The option itself lives in modules/platform/homepage.nix; this
-# module groups the accumulated tiles by `group`, sorts each group by
-# (weight, displayName), and feeds the result into the upstream
+# entry. The option is declared inline below; this module groups the
+# accumulated tiles by `group`, sorts each group by (weight,
+# displayName), and feeds the result into the upstream
 # `services.homepage-dashboard.services` list-of-single-key shape.
 #
 # No auth in front of homepage. Per-app links go to apps that gate
 # their own access (Authentik OIDC or forward_auth), so the dashboard
 # itself only exposes link metadata.
-{ inputs, ... }:
-{
+_: {
   flake.modules.nixos.homepage =
     {
       config,
@@ -26,7 +25,63 @@
       homepagePort = 8082;
     in
     {
-      imports = [ inputs.self.modules.nixos.myHomepage ];
+      options.myHomepage = {
+        tiles = lib.mkOption {
+          default = { };
+          description = ''
+            Flat per-tile attrset. Each entry becomes one tile under the
+            named `group`. Sort within a group is by `weight` (low to
+            high), then alphabetical by `displayName`. Group display
+            order is controlled by services.homepage-dashboard.settings.layout
+            below.
+          '';
+          type = lib.types.attrsOf (
+            lib.types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  group = lib.mkOption {
+                    type = lib.types.str;
+                    description = ''
+                      Layout group this tile appears under (e.g.
+                      "Consumption", "Acquisition", "Infrastructure").
+                      Required: no implicit default.
+                    '';
+                  };
+                  displayName = lib.mkOption {
+                    type = lib.types.str;
+                    default = name;
+                    description = "Label shown on the tile. Defaults to the attribute name.";
+                  };
+                  href = lib.mkOption {
+                    type = lib.types.str;
+                    description = "URL the tile links to.";
+                  };
+                  icon = lib.mkOption {
+                    type = lib.types.str;
+                    description = ''
+                      Icon — either a dashboard-icons slug (e.g. `sonarr`)
+                      or a full URL to an image.
+                    '';
+                  };
+                  description = lib.mkOption {
+                    type = lib.types.str;
+                    description = "Short blurb shown beneath the tile label.";
+                  };
+                  weight = lib.mkOption {
+                    type = lib.types.int;
+                    default = 0;
+                    description = ''
+                      Sort weight within the group. Lower values render
+                      first. Ties break alphabetically by displayName.
+                    '';
+                  };
+                };
+              }
+            )
+          );
+        };
+      };
 
       config = {
         services.homepage-dashboard = {
