@@ -1,10 +1,14 @@
-# Promtail — ships the systemd journal into Loki (see ./loki.nix).
-# Loopback-only; no external exposure.
+# Promtail — ships the systemd journal into VictoriaLogs
+# (see ./victorialogs.nix). VictoriaLogs accepts the Loki
+# `/loki/api/v1/push` payload as a compatibility endpoint at
+# `/insert/loki/api/v1/push`, so the promtail config doesn't need to
+# learn a new protocol — only the URL changed when we migrated off
+# Loki (#126). Loopback-only; no external exposure.
 _: {
   flake.modules.nixos.promtail =
     { config, ... }:
     let
-      lokiPort = 3100;
+      victorialogsPort = 9428;
       promtailPort = 9080;
     in
     {
@@ -15,11 +19,14 @@ _: {
             http_listen_address = "127.0.0.1";
             http_listen_port = promtailPort;
             grpc_listen_address = "127.0.0.1";
-            # Loki claims the default 9095; promtail doesn't actually
-            # need its gRPC listener exposed, so park it somewhere else.
+            # Promtail doesn't actually need its gRPC listener
+            # exposed; park it on a non-default port so it can't
+            # collide with anything else on loopback.
             grpc_listen_port = 9096;
           };
-          clients = [ { url = "http://127.0.0.1:${toString lokiPort}/loki/api/v1/push"; } ];
+          clients = [
+            { url = "http://127.0.0.1:${toString victorialogsPort}/insert/loki/api/v1/push"; }
+          ];
           scrape_configs = [
             {
               job_name = "journal";
