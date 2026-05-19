@@ -70,9 +70,12 @@ tasks:
           includes="\$includes --include \$p"
         done
         echo "[+] Restoring paths: {{.PATHS}}"
+        # --delete: remove files at the destination within the included
+        # paths that aren't in the snapshot. Makes restore a clean
+        # operation rather than an overlay — see issue #217.
         # shellcheck disable=SC2086
         restic -r "\$REPO" --password-file "\$PASS_FILE" \
-          restore latest --target / \$includes
+          restore latest --target / --delete \$includes
 
         for u in {{.UNITS}}; do
           echo "[+] Starting \$u"
@@ -114,9 +117,10 @@ tasks:
           includes="\$includes --include \$p"
         done
         echo "[+] Restoring /var/backup/postgresql {{.PATHS}}"
+        # --delete: see comment in _restore-volume.
         # shellcheck disable=SC2086
         restic -r "\$REPO" --password-file "\$PASS_FILE" \
-          restore latest --target / \$includes
+          restore latest --target / --delete \$includes
 
         echo "[+] Replaying \$DB database from pg_dumpall"
         sudo -u postgres dropdb --if-exists "\$DB"
@@ -173,9 +177,10 @@ tasks:
           includes="\$includes --include \$p"
         done
         echo "[+] Restoring paths: {{.PATHS}}"
+        # --delete: see comment in _restore-volume.
         # shellcheck disable=SC2086
         restic -r "\$REPO" --password-file "\$PASS_FILE" \
-          restore latest --target / \$includes
+          restore latest --target / --delete \$includes
 
         for triple in {{.SWAPS}}; do
           IFS=":" read -r src dst owner <<<"\$triple"
@@ -1018,12 +1023,47 @@ tasks:
               ;;
           esac
         done
+      - |
+        set -euo pipefail
+        # Seed sentinel files inside the paths the upcoming restores
+        # will --include. If the snapshot doesn't contain these names
+        # (and it won't — they're random), --delete should remove them,
+        # locking in clean-restore semantics. See issue #217.
+        echo -e "\x1B[32m[+] Seeding sentinel files to verify clean-restore semantics\x1B[0m"
+        ssh -p {{.SSH_PORT}} -o StrictHostKeyChecking=accept-new ipreston@127.0.0.1 \
+          'sudo bash -se' <<'EOF'
+        set -euo pipefail
+        mkdir -p /var/lib/mealie /var/lib/jellyfin /var/backup/sqlite/jellyfin
+        touch /var/lib/mealie/.recovery-overlay-sentinel
+        touch /var/lib/jellyfin/.recovery-overlay-sentinel
+        touch /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel
+        echo "[+] sentinels placed"
+        EOF
       - task: mealie
         vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
       - task: miniflux
         vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
       - task: jellyfin
         vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Asserting sentinels were removed by --delete\x1B[0m"
+        ssh -p {{.SSH_PORT}} ipreston@127.0.0.1 'sudo bash -se' <<'EOF'
+        set -euo pipefail
+        failed=0
+        for f in \
+          /var/lib/mealie/.recovery-overlay-sentinel \
+          /var/lib/jellyfin/.recovery-overlay-sentinel \
+          /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel; do
+          if [ -e "$f" ]; then
+            echo "[!] OVERLAY REGRESSION: $f survived restore"
+            failed=1
+          else
+            echo "[+] OK: $f removed by --delete"
+          fi
+        done
+        exit "$failed"
+        EOF
       - task: tests-server:down
       - |
         echo ""
