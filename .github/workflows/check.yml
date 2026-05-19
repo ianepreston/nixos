@@ -49,14 +49,6 @@ jobs:
       # config sequentially via drvPath avoids the race and is the
       # coverage that matters (darwin/home configs are deployed from
       # local Darwin where local task check already gates them).
-      #
-      # Per-host builds (`nix build .#nixosConfigurations.<host>...`)
-      # are deliberately NOT in this workflow: hpp-1's full server
-      # closure (authentik via napalm's npm frontend, paperless lxml
-      # extensions, tesseract, etc.) takes ~60-90 min from cold on
-      # the 16G GHA runner even serialized — too slow to gate merges
-      # against. Builds come back in once we have a binary cache or
-      # a self-hosted runner; see #180.
       - name: Eval each NixOS config
         run: |
           set -euo pipefail
@@ -68,3 +60,51 @@ jobs:
             echo
             echo "::endgroup::"
           done
+
+  build:
+    name: build ${{ matrix.host }}
+    # Self-hosted runner on hpp-1 shares its warm /nix/store with CI,
+    # so unchanged closures rebuild in seconds. See #180 for the design.
+    #
+    # PR-from-fork guard: a fork PR can edit this workflow and run
+    # arbitrary code on our host. Restrict the build job to push events
+    # and to PRs whose head branch lives in this repo. Fork PRs still
+    # get `flake-check` above (cloud runner, no host access).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, nixos]
+    strategy:
+      # Surface every failing host on a single PR rather than bailing
+      # on the first red.
+      fail-fast: false
+      matrix:
+        # hpp-1 exercises the full server profile (server + server-apps);
+        # terra exercises the workstation profile. Terra builds on hpp-1
+        # hit the warm store for everything except terra-specific
+        # hardware/wm bits — net: a few seconds-to-minutes cold, free
+        # warm.
+        host: [hpp-1, terra]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            lazy-trees = false
+            always-allow-substitutes = false
+
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+
+      - name: Build ${{ matrix.host }}
+        run: |
+          nix build \
+            --print-build-logs \
+            ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
