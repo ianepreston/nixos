@@ -29,6 +29,7 @@
         gatus
         homepage
         mariadb
+        mosquitto
         nfsclient
         nix-maintenance
         observability
