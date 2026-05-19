@@ -36,6 +36,11 @@ in
             fsType = "cifs";
             options = [ "${automount_options},${useroptions},${secoptions}" ];
           };
+          "/mnt/dev_content" = {
+            device = "//laconia/dev-content";
+            fsType = "cifs";
+            options = [ "${automount_options},${useroptions},${secoptions}" ];
+          };
         };
     };
 }
