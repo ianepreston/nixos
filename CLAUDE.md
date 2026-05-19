@@ -186,6 +186,10 @@ server) and refuse to overwrite an existing key unless `FORCE=true`.
   (e.g. pasted-in API keys from a provider).
 - `task secrets:rekey` — re-encrypts every file against current
   `.sops.yaml`; run after changing the key registry.
+- `task secrets:publish MSG="..."` — commits + pushes pending changes
+  in `../nix-secrets`, then runs `nix flake update nix-secrets` here.
+  No-ops on a clean tree / already-pushed branch, so it's also safe
+  to run defensively before a deploy.
 
 Workflow when adding a new app that needs secrets:
 
@@ -195,9 +199,9 @@ Workflow when adding a new app that needs secrets:
    `sops.secrets."<app>/oidc_client_id"` /
    `sops.placeholder."<app>/db_password"` etc. in the nixos module
    resolve directly.
-3. Commit + push `nix-secrets` (the tasks write into `../nix-secrets`
-   but don't commit), then `nix flake update nix-secrets` in this
-   repo before deploy.
+3. Run `task secrets:publish MSG="add <app> secrets for <host>"` to
+   commit + push `nix-secrets` and bump the flake input here. After
+   that the new secrets are usable in a deploy.
 
 Don't invent ad-hoc key names — stick to `oidc_client_id`,
 `oidc_client_secret`, `db_password` so existing app modules
