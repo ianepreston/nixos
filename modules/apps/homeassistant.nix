@@ -20,6 +20,15 @@
 # it's not declaratively managed here — set this manually on first
 # boot.
 #
+# DHCP discovery: the container is not granted `CAP_NET_RAW`, so
+# `aiodhcpwatcher` can't open AF_PACKET and spams "Operation not
+# permitted" if the `dhcp` integration is loaded. Workaround in
+# `configuration.yaml` on first boot: replace `default_config:` with
+# its expanded dependency list minus `dhcp` (see
+# components/default_config/manifest.json in the running container
+# for the current list). SSDP/mDNS discovery via the macvlan still
+# covers the bulk of IoT devices. Closes #201.
+#
 # IoT VLAN access: HA needs L2 reachability on vlan30 for mDNS /
 # discovery / broadcast traffic. Topology:
 #   enp1s0 (host trunk) ──┬── (untagged mgmt VLAN, host's primary IP)
