@@ -26,6 +26,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
@@ -128,6 +129,16 @@ _: {
                 annotations = {
                   summary = "MariaDB is down on {{ $labels.instance }}";
                   description = "mysqld_exporter reports mysql_up=0 for 2m. All apps using shared mariadb are broken.";
+                };
+              }
+              {
+                alert = "RedisDown";
+                expr = "redis_up == 0";
+                for = "2m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "Redis/Valkey instance {{ $labels.redis_instance }} is down";
+                  description = "redis_exporter reports redis_up=0 for {{ $labels.instance }} (redis_instance={{ $labels.redis_instance }}) for 2m. Consumers of this redis are broken.";
                 };
               }
               {
@@ -326,10 +337,38 @@ _: {
                   { targets = [ "127.0.0.1:${toString config.services.prometheus.exporters.mysqld.port}" ]; }
                 ];
               }
+              # Multi-target scrape: one redis_exporter, many redis
+              # instances. Each app's `services.redis.servers.<name>`
+              # is picked up automatically so long as it exposes a TCP
+              # port (loopback is fine). Unix-socket-only instances
+              # aren't reachable from the exporter's user — apps that
+              # want metrics must open a loopback port (see
+              # modules/apps/paperless-ngx.nix for the pattern).
+              #
+              # `redis_instance` label preserves the friendly attr name
+              # ("default" for the unnamed authentik instance); the
+              # `instance` label ends up as the redis URL so per-target
+              # alerts (RedisDown) differentiate cleanly.
               {
                 job_name = "redis";
-                static_configs = [
-                  { targets = [ "127.0.0.1:${toString config.services.prometheus.exporters.redis.port}" ]; }
+                metrics_path = "/scrape";
+                static_configs = lib.mapAttrsToList (name: srv: {
+                  targets = [ "redis://127.0.0.1:${toString srv.port}" ];
+                  labels.redis_instance = if name == "" then "default" else name;
+                }) (lib.filterAttrs (_: srv: srv.enable && srv.port != 0) config.services.redis.servers);
+                relabel_configs = [
+                  {
+                    source_labels = [ "__address__" ];
+                    target_label = "__param_target";
+                  }
+                  {
+                    source_labels = [ "__param_target" ];
+                    target_label = "instance";
+                  }
+                  {
+                    target_label = "__address__";
+                    replacement = "127.0.0.1:${toString config.services.prometheus.exporters.redis.port}";
+                  }
                 ];
               }
               {

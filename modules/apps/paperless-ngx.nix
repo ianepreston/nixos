@@ -115,7 +115,18 @@ _: {
         }
       ];
 
-      services.restic.backups.server.paths = [ dataDir ];
+      services = {
+        restic.backups.server.paths = [ dataDir ];
+
+        # Open a loopback TCP port on the upstream module's per-app redis
+        # so redis_exporter (in modules/system/victoriametrics.nix) can
+        # scrape it. Paperless itself keeps talking to the unix socket;
+        # this is metrics-only.
+        redis.servers.paperless = {
+          port = 6382;
+          bind = "127.0.0.1";
+        };
+      };
 
       # paperless-web persists its secret key into the data dir and
       # ignores PAPERLESS_SECRET_KEY from the env. The other three
