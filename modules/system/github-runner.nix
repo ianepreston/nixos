@@ -83,10 +83,14 @@ _: {
           runnerName
         ];
         # The module's default PATH is minimal (bash, coreutils, git,
-        # tar, gz, nix, findutils, grep, sed, systemd) — no `ssh` or
-        # `ssh-agent`, which webfactory/ssh-agent needs to load
-        # `NIX_SECRETS_DEPLOY_KEY` for fetching the private flake input.
-        extraPackages = [ pkgs.openssh ];
+        # tar, gz, nix, findutils, grep, sed, systemd). Workflows need:
+        # - openssh: webfactory/ssh-agent invokes `ssh-agent` to load
+        #   NIX_SECRETS_DEPLOY_KEY for fetching the private flake input.
+        # - jq: the flake-check job pipes `nix eval --json` through it.
+        extraPackages = [
+          pkgs.openssh
+          pkgs.jq
+        ];
       };
 
       # `nix build` against the system daemon needs flake / substituter

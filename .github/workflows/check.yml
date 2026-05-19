@@ -15,7 +15,15 @@ concurrency:
 jobs:
   flake-check:
     name: nix flake check
-    runs-on: ubuntu-latest
+    # Self-hosted on hpp-1 — eval walks every NixOS config's drvPath,
+    # which pulls every flake input. Warm /nix/store on hpp-1 makes
+    # this seconds instead of minutes. Same fork-PR guard as the
+    # build job: workflow YAML can be edited by fork PRs and would
+    # otherwise run on our host.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, nixos]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
