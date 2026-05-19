@@ -22,6 +22,7 @@
       gnome
       flatpak
       printing
+      tailscale
       zsa-keeb
     ])
     ++ [

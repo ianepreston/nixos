@@ -30,6 +30,7 @@
       nvidia-gtx1060
       printing
       smbclient
+      tailscale
       xreal-headset
       zsa-keeb
     ])
