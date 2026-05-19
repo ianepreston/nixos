@@ -56,6 +56,19 @@ _: {
       port = 8123;
     in
     {
+      # MQTT broker user. ACL grants HA full access — HA bridges every
+      # publisher's topic via its own auto-discovery prefix and re-emits
+      # state on the entity-level topics, so a narrower ACL would just
+      # mean maintaining a per-publisher list here. Operator workflow
+      # after first deploy: read the password with
+      # `task secrets:view:hpp-1` (key: homeassistant.mqtt_password) and
+      # paste it into HA's MQTT integration setup (Configuration →
+      # Devices & Services → Add Integration → MQTT; broker
+      # `10.88.0.1`, port `1883`, username `homeassistant`).
+      # configuration.yaml is operator-owned (see comment above), so the
+      # broker URL/credentials are not declaratively pushed.
+      myMosquitto.users.homeassistant.acl = [ "readwrite #" ];
+
       myAuthentik.oidcApps.homeassistant = {
         blueprintsDir = ./homeassistant-blueprints;
         clientCredsInAppEnv = false;

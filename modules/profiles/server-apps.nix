@@ -57,6 +57,8 @@
         "/var/lib/kavita"
         "/var/lib/komga"
         "/var/lib/mealie"
+        "/var/lib/mosquitto"
+        "/var/lib/private/matter-server"
         "/var/lib/paperless-ngx"
         "/var/lib/pinchflat"
         "/var/lib/private/authentik"
@@ -87,6 +89,7 @@
         kavita
         komga
         maintainerr
+        matter-server
         manyfold
         mealie
         metube
