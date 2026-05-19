@@ -16,6 +16,13 @@
 #                         forward_auth
 #   * oidcApps          — apps that speak OIDC against authentik directly
 #
+# `oidcApps` also handles boot-time HTTP readiness: each app's
+# `appRestartUnit` is pulled `After=authentik-ready.service` so apps
+# that fetch the OIDC discovery URL once at startup (actualbudget,
+# miniflux, komga) don't race authentik's Django worker and 502.
+# No per-app `After=authentik.service` is needed — adding one would
+# be redundant.
+#
 # Forward-auth specifics: the embedded outpost has a single global
 # `providers` list. To avoid two blueprints clobbering it, this module
 # renders one merged blueprint per host that owns every registered
@@ -504,6 +511,38 @@
             '';
           };
 
+          # Real readiness boundary for the authentik stack. The three
+          # native units (server / worker / migrate) are all Type=simple,
+          # so systemd considers them "active" as soon as the process
+          # execs — long before Django finishes loading and answers HTTP.
+          # Apps that fetch the OIDC discovery URL once at startup hit
+          # the Go front-end on :9000, which proxies to a not-yet-listening
+          # Django worker and surfaces 502 Bad Gateway. /-/health/ready/
+          # returns 200 only after Django can answer, so probing it gives
+          # dependents a real readiness gate. Closes #200.
+          systemd.services.authentik-ready = {
+            description = "Wait for authentik to serve 200 on /-/health/ready/";
+            after = [
+              "authentik.service"
+              "authentik-worker.service"
+            ];
+            wants = [
+              "authentik.service"
+              "authentik-worker.service"
+            ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              TimeoutStartSec = "180s";
+            };
+            script = ''
+              until ${pkgs.curl}/bin/curl -fsS -o /dev/null \
+                -m 3 http://localhost:${toString authentikPort}/-/health/ready/; do
+                sleep 2
+              done
+            '';
+          };
+
           sops.templates."authentik.env" = {
             content = ''
               AUTHENTIK_SECRET_KEY=${config.sops.placeholder."authentik/secret_key"}
@@ -639,17 +678,34 @@
               };
             };
 
-          systemd.services = {
-            authentik.serviceConfig.EnvironmentFile = [
-              config.sops.templates."authentik-oidc-apps.env".path
-            ];
-            authentik-worker.serviceConfig.EnvironmentFile = [
-              config.sops.templates."authentik-oidc-apps.env".path
-            ];
-            authentik-migrate.serviceConfig.EnvironmentFile = [
-              config.sops.templates."authentik-oidc-apps.env".path
-            ];
-          };
+          systemd.services = lib.mkMerge [
+            {
+              authentik.serviceConfig.EnvironmentFile = [
+                config.sops.templates."authentik-oidc-apps.env".path
+              ];
+              authentik-worker.serviceConfig.EnvironmentFile = [
+                config.sops.templates."authentik-oidc-apps.env".path
+              ];
+              authentik-migrate.serviceConfig.EnvironmentFile = [
+                config.sops.templates."authentik-oidc-apps.env".path
+              ];
+            }
+            # Inject After=authentik-ready.service on every OIDC app's
+            # restart units so apps that probe the OIDC discovery URL at
+            # startup don't race the Django worker. Apps with empty
+            # appRestartUnit (DB/UI-configured: audiobookshelf, kavita,
+            # seerr) end up no-op'd through genAttrs and are immune to
+            # the race anyway.
+            (lib.mkMerge (
+              lib.mapAttrsToList (
+                _appName: app:
+                lib.genAttrs (map (lib.removeSuffix ".service") app.appRestartUnit) (_: {
+                  after = [ "authentik-ready.service" ];
+                  wants = [ "authentik-ready.service" ];
+                })
+              ) oidcApps
+            ))
+          ];
 
           myAuthentik.extraBlueprints = lib.mapAttrsToList (
             appName: app: renderedBlueprintDir appName app.blueprintsDir
