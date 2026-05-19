@@ -40,7 +40,15 @@ _: {
       users.users.${runnerUser} = {
         isSystemUser = true;
         group = runnerUser;
-        home = "/var/lib/github-runner";
+        # Home is the runner's StateDirectory leaf (writable, owned by
+        # the runner user, per-instance) rather than the parent
+        # `/var/lib/github-runner`. The upstream module sets
+        # `ProtectSystem = "strict"`, which leaves only StateDirectory /
+        # WorkingDirectory / LogsDirectory writable — actions that
+        # expect `mkdir $HOME/.ssh` (webfactory/ssh-agent,
+        # actions/checkout's git-credentials helper, etc.) fail with
+        # ENOENT against an RO parent.
+        home = "/var/lib/github-runner/${runnerName}";
       };
       users.groups.${runnerUser} = { };
 
