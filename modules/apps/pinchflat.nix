@@ -13,11 +13,7 @@
 # module enforces an assertion that either `selfhosted = true` (weak
 # secret) or `secretsFile` is set; we go with sops. The key must be
 # a 64-byte hex string (`openssl rand -hex 64`).
-{ inputs, ... }:
-let
-  sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
-in
-{
+_: {
   flake.modules.nixos.pinchflat =
     {
       config,
@@ -29,7 +25,7 @@ in
     in
     {
       sops.secrets."pinchflat/secret_key_base" = {
-        sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml";
+        inherit (hostSpec) sopsFile;
         restartUnits = [ "pinchflat.service" ];
       };
 
