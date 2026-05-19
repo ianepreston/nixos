@@ -30,6 +30,7 @@ _: {
     {
       config,
       hostSpec,
+      pkgs,
       ...
     }:
     let
@@ -81,6 +82,11 @@ _: {
           "nixos"
           runnerName
         ];
+        # The module's default PATH is minimal (bash, coreutils, git,
+        # tar, gz, nix, findutils, grep, sed, systemd) — no `ssh` or
+        # `ssh-agent`, which webfactory/ssh-agent needs to load
+        # `NIX_SECRETS_DEPLOY_KEY` for fetching the private flake input.
+        extraPackages = [ pkgs.openssh ];
       };
 
       # `nix build` against the system daemon needs flake / substituter
