@@ -124,6 +124,7 @@ in
               "scanner"
               "lp"
               "render"
+              "servers"
             ])
           ];
       };
