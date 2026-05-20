@@ -45,6 +45,46 @@ flag on `bootstrap:install` exists for. Without it sshd can't load its
 host key after the first rollback (preservation bind-mounts an empty
 file from `/persist`) and the host comes up unreachable.
 
+### Local testing via `task vm:*`
+
+For sandboxed iteration without a real host, use the `task vm:*` family
+(`taskfiles/vm.yaml`). It drives a single quickemu VM at a time under
+`~/vms/nixos-vm/`, with a persistent SSH host key (and matching age
+identity) preserved across `vm:down`/`vm:up` cycles.
+
+- `task vm:up` — boots the VM on the installer ISO (rebuilds
+  `latest.iso` only if absent, or if `FORCE_ISO=true`).
+- `task vm:sops-authorize TARGET=<host>` — one-time per real-host
+  secret set. Authorizes the VM's persistent age key onto
+  `<host>.yaml` + `shared.yaml`'s creation rules in
+  `../nix-secrets/.sops.yaml`. Edit is uncommitted; commit + push via
+  `task secrets:publish` to make sticky, or `git restore` in
+  `../nix-secrets` to revoke.
+- `task vm:install HOST=<flake-host>` — `bootstrap:reinstall` against
+  the VM with the persistent key reused (no nix-secrets churn per
+  install). HOST must be on the allow-list (`tests-server`,
+  `tests-desktop`) — anything else has a real-hardware disk layout
+  that won't boot under quickemu.
+- `task vm:down` — kills quickemu, deletes the qcow2, preserves the
+  SSH host key.
+- `task vm:reset HOST=<flake-host>` — `down` → `up` → `install` in one
+  shot for a fresh sandbox.
+
+When adding a new VM-compatible flake host, register it in the
+`case` allow-list in `taskfiles/vm.yaml`'s `install` task and have it
+import `modules/hosts/_vm-disks.nix` (the shared impermanent vda
+btrfs layout).
+
+### `LOCAL_SECRETS` toggle
+
+`task bootstrap:{install,reinstall,new,rebuild}` and `task vm:install`
+take `LOCAL_SECRETS=true|false` (default `true`). True pre-builds /
+on-target-switches with `--override-input nix-secrets path:../nix-secrets`,
+picking up any uncommitted edits in the sibling checkout. False
+resolves nix-secrets from `flake.lock`. Default-true is what you want
+for almost all local iteration; flip to false only when explicitly
+testing against published secrets.
+
 ## Module layout
 
 - `modules/system/*.nix` — NixOS modules, registered as

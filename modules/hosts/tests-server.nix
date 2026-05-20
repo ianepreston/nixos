@@ -21,7 +21,7 @@
     modules = [
       ./_tests-server-hardware.nix
       inputs.disko.nixosModules.disko
-      ./_tests-server-disks.nix
+      ./_vm-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
       server

@@ -8,6 +8,7 @@ includes:
   bootstrap: ./taskfiles/bootstrap.yaml
   recovery: ./taskfiles/recovery.yaml
   secrets: ./taskfiles/secrets.yaml
+  vm: ./taskfiles/vm.yaml
 
 tasks:
   default:

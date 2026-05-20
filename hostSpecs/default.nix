@@ -9,7 +9,7 @@ _: {
     ./minimal-configuration.nix
     ./penguin.nix
     ./terra.nix
-    ./testvm.nix
+    ./tests-desktop.nix
     ./tests-server.nix
     ./hpp-1.nix
     ./toshibachromebook.nix

@@ -16,9 +16,10 @@ tasks:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
     cmds:
       - task: install
-        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}'}
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LUKS_PASS: '{{.LUKS_PASS}}', IMPERMANENT: '{{.IMPERMANENT}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'}
       - |
         echo ""
         echo "===  Installation complete. Waiting for target to reboot.  ==="
@@ -31,7 +32,7 @@ tasks:
       - task: sync
         vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: rebuild
-        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'}
 
   reinstall:
     desc: Reinstall an existing host that already has secrets configured (install + sync + rebuild)
@@ -42,6 +43,10 @@ tasks:
       LUKS_PASS: '{{.LUKS_PASS | default ""}}'
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
       SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE | default ""}}'
+      # When true, every step that resolves the nix-secrets input uses
+      # the local sibling checkout at ../nix-secrets instead of the
+      # flake-locked git URL. Set to false to force flake.lock resolution.
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
       # Skip the post-install "press enter once it's up" prompt and
       # poll instead. Used by recovery:test:full for unattended runs.
       AUTO_WAIT: '{{.AUTO_WAIT | default "false"}}'
@@ -55,6 +60,7 @@ tasks:
           LUKS_PASS: '{{.LUKS_PASS}}'
           IMPERMANENT: '{{.IMPERMANENT}}'
           SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE}}'
+          LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'
       - |
         set -euo pipefail
         if [ "{{.AUTO_WAIT}}" = "true" ]; then
@@ -96,7 +102,7 @@ tasks:
       - task: sync
         vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
       - task: rebuild
-        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
+        vars: {HOST: '{{.HOST}}', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'}
 
   install:
     desc: Run nixos-anywhere to install NixOS on the target
@@ -112,11 +118,20 @@ tasks:
       # Default off; opt in per host with IMPERMANENT=true.
       IMPERMANENT: '{{.IMPERMANENT | default "false"}}'
       # If set to an existing ed25519 private key path, reuse that key
-      # (and its .pub) instead of generating fresh. Used by
-      # `recovery:test:full` so the tests-server VM keeps a stable
-      # age identity across drills — without this, every drill would
-      # require redoing the sops creation-rule dance in nix-secrets.
+      # (and its .pub) instead of generating fresh. Used by `task vm:*`
+      # so the VM keeps a stable age identity across reinstalls — without
+      # this, every reinstall would require redoing the sops creation-rule
+      # dance in nix-secrets.
       SSH_HOST_KEY_FILE: '{{.SSH_HOST_KEY_FILE | default ""}}'
+      # When true, pre-build the toplevel + diskoScript with the local
+      # nix-secrets checkout overriding the flake input — picks up any
+      # uncommitted edits in ../nix-secrets/. Independent of
+      # SSH_HOST_KEY_FILE: set both for "VM iteration with live local
+      # secrets edits", set just LOCAL_SECRETS=false to force flake.lock
+      # resolution. nixos-anywhere has no --override-input passthrough,
+      # so we materialize store paths up front and pass them via
+      # --store-paths.
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
     cmds:
       - |
         set -euo pipefail
@@ -168,13 +183,11 @@ tasks:
         fi
 
         echo -e "\x1B[32m[+] Running nixos-anywhere for {{.HOST}} at {{.DEST}}\x1B[0m"
-        # When SSH_HOST_KEY_FILE is set this is the unattended drill
-        # flow (recovery:test:full). Pre-build with a local nix-secrets
-        # override so any uncommitted edits in ../nix-secrets/ (e.g. the
-        # `sops updatekeys` envelope changes that authorize tests-server)
-        # actually land in the closure that gets installed — nixos-anywhere
-        # itself has no --override-input passthrough, hence the pre-build.
-        if [ -n "{{.SSH_HOST_KEY_FILE}}" ]; then
+        # LOCAL_SECRETS=true: pre-build with a local nix-secrets override
+        # so any uncommitted edits in ../nix-secrets/ actually land in
+        # the closure that gets installed — nixos-anywhere itself has no
+        # --override-input passthrough, hence the pre-build.
+        if [ "{{.LOCAL_SECRETS}}" = "true" ]; then
           echo -e "\x1B[32m[+] Pre-building toplevel + diskoScript with local nix-secrets override\x1B[0m"
           toplevel=$(nix build --no-link --print-out-paths \
             .#nixosConfigurations.{{.HOST}}.config.system.build.toplevel \
@@ -384,9 +397,19 @@ tasks:
     vars:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      # When true, the on-target switch resolves nix-secrets from the
+      # synced ../nix-secrets/ checkout. Set false to resolve via
+      # flake.lock (no synced secrets needed on the target).
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
     cmds:
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Rebuilding {{.HOST}} on {{.DEST}}\x1B[0m"
+        if [ "{{.LOCAL_SECRETS}}" = "true" ]; then
+          override="--override-input nix-secrets path:../nix-secrets"
+        else
+          override=""
+        fi
+        # shellcheck disable=SC2029,SC2086
         ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
-          "cd src/nixos && sudo nixos-rebuild switch --flake .#{{.HOST}} --override-input nix-secrets path:../nix-secrets"
+          "cd src/nixos && sudo nixos-rebuild switch --flake .#{{.HOST}} $override"
