@@ -24,6 +24,7 @@
       printing
       tailscale
       zsa-keeb
+      parents-user
     ])
     ++ [
       (

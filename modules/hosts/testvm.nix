@@ -21,6 +21,7 @@
       base
       sops
       ssh
+      parents-user
     ])
     ++ [
       {
