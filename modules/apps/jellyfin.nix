@@ -1,7 +1,20 @@
 # Jellyfin - media server
 # Native services.jellyfin from nixpkgs (system user `jellyfin`,
-# /var/lib/jellyfin for state). Hardware transcoding and OIDC are
-# tracked as follow-ups; v1 is just the bare service + caddy + backups.
+# /var/lib/jellyfin for state). Hardware transcoding is tracked as
+# a follow-up.
+#
+# Auth: shared credentials with authentik via LDAP rather than OIDC.
+# Most jellyfin clients are TVs / native apps that can't do an SSO
+# redirect anyway, so OIDC's only benefit (the web-client redirect)
+# wasn't worth depending on the archived 9p4/jellyfin-plugin-sso.
+# `jellyfin/jellyfin-plugin-ldapauth` is officially maintained under
+# the jellyfin org and binds against the authentik LDAP outpost
+# (services.authentik-ldap on loopback :3389). This module requests
+# the outpost via `myAuthentik.ldap.enable`; the blueprint creates
+# everything including a pre-stamped outpost token so no UI steps are
+# needed (see goauthentik/authentik#9711). Only manual one-time bit
+# is installing the LDAP plugin DLL inside jellyfin and filling its
+# config form — see the Jellyfin section of the README.
 #
 # Backups: /var/lib/jellyfin contains both XML config and the library
 # SQLite databases. Restic snapshots the whole tree, but live SQLite
@@ -18,6 +31,8 @@ _: {
       jellyfinPort = 8096;
     in
     {
+      myAuthentik.ldap.enable = true;
+
       services.jellyfin = {
         enable = true;
         # Run as the shared server-env user so jellyfin can read media
