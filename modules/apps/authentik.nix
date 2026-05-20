@@ -78,6 +78,9 @@
 
       inherit (config.myAuthentik) oidcApps;
 
+      ldapEnabled = config.myAuthentik.ldap.enable;
+      ldapPort = 3389;
+
       # One YAML entry block per forward-auth app: provider, application,
       # policy binding. `id:` anchors are used inside this same blueprint
       # by `!KeyOf` so the application can reference its own provider
@@ -336,6 +339,21 @@
               }
             )
           );
+        };
+
+        ldap = {
+          enable = lib.mkEnableOption ''
+            authentik's LDAP outpost. Renders the LDAP provider /
+            application / ldapservice user blueprint, wires the
+            worker-side bind password, and starts `services.authentik-
+            ldap` against a sops-templated env file. Used by apps
+            (jellyfin) that can only authenticate against authentik
+            via LDAP — TV/native clients don't do OIDC redirects, so
+            same-credentials login is the goal, not full SSO.
+
+            One-time manual setup is required to capture the outpost
+            token: see the Jellyfin section of the README.
+          '';
         };
 
         oidcApps = lib.mkOption {
@@ -716,6 +734,150 @@
             inherit (app) displayName;
             href = "https://${name}.${hostSpec.serverDomain}";
           }) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
+        })
+
+        # LDAP outpost. Blueprint creates the LDAP provider + app +
+        # outpost record; authentik auto-creates the outpost's SA user
+        # and API token at save time. The `token_identifier` field on
+        # the Outpost model is a computed property, not a writable DB
+        # column, so the goauthentik/authentik#9711 workaround of
+        # pre-creating the SA + token doesn't actually take effect.
+        # We fetch the auto-generated token via the admin API in a
+        # NixOS oneshot using the existing bootstrap token, and write
+        # it to a runtime env file the outpost reads.
+        (lib.mkIf ldapEnabled {
+          sops.secrets."authentik/ldap_service_password" = {
+            inherit (hostSpec) sopsFile;
+            restartUnits = restartAuthentik;
+          };
+
+          # Worker-side env so `!Env LDAP_SERVICE_PASSWORD` resolves in
+          # the blueprint (the worker is what applies blueprints).
+          sops.templates."authentik-ldap-worker.env" = {
+            content = ''
+              LDAP_SERVICE_PASSWORD=${config.sops.placeholder."authentik/ldap_service_password"}
+            '';
+            restartUnits = restartAuthentik;
+          };
+
+          myAuthentik.extraBlueprints = [ ./authentik-blueprints-ldap ];
+
+          systemd.services = {
+            authentik.serviceConfig.EnvironmentFile = [
+              config.sops.templates."authentik-ldap-worker.env".path
+            ];
+            authentik-worker.serviceConfig.EnvironmentFile = [
+              config.sops.templates."authentik-ldap-worker.env".path
+            ];
+            authentik-migrate.serviceConfig.EnvironmentFile = [
+              config.sops.templates."authentik-ldap-worker.env".path
+            ];
+
+            # Fetch the outpost's auto-generated API token via the
+            # admin API (using the existing bootstrap token), and
+            # render an env file the outpost reads. Polls until the
+            # blueprint has applied and the outpost record exists.
+            authentik-ldap-token-fetcher = {
+              description = "Fetch authentik LDAP outpost API token and stage env file";
+              after = [ "authentik-ready.service" ];
+              wants = [ "authentik-ready.service" ];
+              wantedBy = [ "authentik-ldap.service" ];
+              before = [ "authentik-ldap.service" ];
+              path = with pkgs; [
+                curl
+                jq
+                coreutils
+              ];
+              serviceConfig = {
+                Type = "oneshot";
+                # Own a private RuntimeDirectory so the env file isn't
+                # under authentik-ldap.service's RuntimeDirectory
+                # (systemd wipes that one every time the outpost
+                # restarts, taking our env file with it). The outpost
+                # service reads from this path directly.
+                RuntimeDirectory = "authentik-ldap-token";
+                RuntimeDirectoryPreserve = "yes";
+                RemainAfterExit = true;
+                # bootstrap_token is owned by sops-nix as 0400; let
+                # this oneshot read it (root, no special user).
+                LoadCredential = "bootstrap_token:${config.sops.secrets."authentik/bootstrap_token".path}";
+              };
+              script = ''
+                set -uo pipefail
+                BOOTSTRAP_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/bootstrap_token")"
+                HOST="http://localhost:${toString authentikPort}"
+
+                # Poll until the outpost exists and has a token_identifier.
+                # First deploy: authentik-ready fires when /-/health/ready
+                # returns 200, but the worker may still be loading the
+                # blueprint, and /api/v3 may briefly 503 while Django
+                # initialises. Don't `set -e` over curl — retry instead.
+                outpost=""
+                for _ in $(seq 1 60); do
+                  resp="$(curl -sS \
+                    -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
+                    "$HOST/api/v3/outposts/instances/?name__iexact=ldap" \
+                    2>/dev/null || true)"
+                  outpost="$(echo "$resp" \
+                    | jq -r '.results[]? | select(.name == "ldap") | .token_identifier' \
+                    2>/dev/null || true)"
+                  [ -n "$outpost" ] && [ "$outpost" != "null" ] && break
+                  sleep 2
+                done
+                if [ -z "$outpost" ] || [ "$outpost" = "null" ]; then
+                  echo "LDAP outpost not found after 120s" >&2
+                  exit 1
+                fi
+
+                key=""
+                for _ in $(seq 1 10); do
+                  resp="$(curl -sS \
+                    -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
+                    "$HOST/api/v3/core/tokens/$outpost/view_key/" \
+                    2>/dev/null || true)"
+                  key="$(echo "$resp" | jq -r '.key // empty' 2>/dev/null || true)"
+                  [ -n "$key" ] && break
+                  sleep 2
+                done
+                if [ -z "$key" ]; then
+                  echo "Empty token from view_key endpoint" >&2
+                  exit 1
+                fi
+
+                # RuntimeDirectory= creates /run/authentik-ldap-token
+                # with mode 0755 and owner=root. The outpost service
+                # runs as a DynamicUser, so we can't chown — make the
+                # file world-readable. Token only grants view perms on
+                # this outpost+provider; full secret hygiene would need
+                # outpost.service forking, not worth it here.
+                {
+                  printf 'AUTHENTIK_HOST=%s\n' "$HOST"
+                  printf 'AUTHENTIK_TOKEN=%s\n' "$key"
+                  printf 'AUTHENTIK_INSECURE=true\n'
+                  printf 'AUTHENTIK_LISTEN__LDAP=127.0.0.1:%s\n' '${toString ldapPort}'
+                } >/run/authentik-ldap-token/env
+                chmod 0444 /run/authentik-ldap-token/env
+              '';
+            };
+
+            # The outpost reads AUTHENTIK_TOKEN at startup; bounce it
+            # whenever the token-fetcher refreshes the env file.
+            authentik-ldap = {
+              after = [
+                "authentik-ready.service"
+                "authentik-ldap-token-fetcher.service"
+              ];
+              wants = [
+                "authentik-ready.service"
+                "authentik-ldap-token-fetcher.service"
+              ];
+            };
+          };
+
+          services.authentik-ldap = {
+            enable = true;
+            environmentFile = "/run/authentik-ldap-token/env";
+          };
         })
       ];
     };

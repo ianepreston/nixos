@@ -1,0 +1,99 @@
+version: 1
+metadata:
+  name: ldap
+entries:
+  # Service account used by LDAP clients (e.g. jellyfin) to bind and
+  # search the directory. Password from sops via the worker env file.
+  # Membership in `Users` is required for the LDAP application's
+  # policy binding to authorize the bind; search permission is
+  # granted as an object-level perm on the provider further down.
+  - model: authentik_core.user
+    id: usr-ldapservice
+    state: present
+    identifiers:
+      username: ldapservice
+    attrs:
+      username: ldapservice
+      name: LDAP Service Account
+      is_active: true
+      path: goauthentik.io/service-accounts
+      password: !Env LDAP_SERVICE_PASSWORD
+      attributes:
+        goauthentik.io/user/service-account: true
+        goauthentik.io/user/token-expires: false
+      groups:
+        - !Find [authentik_core.group, [name, Users]]
+
+  - model: authentik_providers_ldap.ldapprovider
+    id: prov-ldap
+    state: present
+    identifiers:
+      name: ldap
+    attrs:
+      name: ldap
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      base_dn: dc=ldap,dc=goauthentik,dc=io
+      uid_start_number: 2000
+      gid_start_number: 4000
+      bind_mode: cached
+      search_mode: direct
+      mfa_support: false
+    # Authentik migration 0004 removed `search_group` on the provider
+    # and replaced it with a `search_full_directory` object-level
+    # permission. The bind user needs this perm or LDAP searches
+    # silently return only the bound user (visible to itself).
+    permissions:
+      - user: !KeyOf usr-ldapservice
+        permission: authentik_providers_ldap.search_full_directory
+
+  - model: authentik_core.application
+    id: app-ldap
+    state: present
+    identifiers:
+      slug: ldap
+    attrs:
+      name: LDAP
+      slug: ldap
+      provider: !KeyOf prov-ldap
+      group: Infrastructure
+      open_in_new_tab: false
+      policy_engine_mode: all
+
+  # Anyone in the Users group can authenticate via LDAP. Per-app
+  # access control (e.g. only Jellyfin Admins are admins inside
+  # jellyfin) happens client-side via the plugin's user/admin filters.
+  - model: authentik_policies.policybinding
+    state: present
+    identifiers:
+      target: !KeyOf app-ldap
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Users]]
+      enabled: true
+
+  # The outpost record itself. Authentik auto-creates the outpost's SA
+  # user + API token on save; the `token_identifier` field is a
+  # computed property (not a writable DB column), so the
+  # goauthentik/authentik#9711 trick of pre-stamping our own token via
+  # blueprint doesn't take effect on current versions. The
+  # `authentik-ldap-token-fetcher` oneshot in modules/apps/authentik.nix
+  # picks up the auto-generated token via the admin API at boot.
+  - model: authentik_outposts.outpost
+    state: present
+    identifiers:
+      name: ldap
+    attrs:
+      name: ldap
+      type: ldap
+      providers:
+        - !KeyOf prov-ldap
+      # `managed: null` = self-hosted (we run the outpost ourselves
+      # via services.authentik-ldap); authentik just tracks its
+      # existence and serves config to it. No service_connection.
+      managed: null
+      config:
+        authentik_host: http://localhost:9000
+        authentik_host_insecure: true
+        log_level: info
+        object_naming_template: ak-outpost-%(name)s
