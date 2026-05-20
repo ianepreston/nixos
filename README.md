@@ -645,7 +645,7 @@ sets `myAuthentik.ldap.enable = true`, which:
    | LDAP Admin Base DN | `dc=ldap,dc=goauthentik,dc=io` |
    | LDAP Admin Filter | `(memberOf=cn=Infrastructure,ou=groups,dc=ldap,dc=goauthentik,dc=io)` (reuses the existing authentik group used to gate forward-auth admin tools; anyone in `Infrastructure` becomes a jellyfin admin. Leave blank if you'd rather manage admin status inside jellyfin.) |
    | LDAP Search Attributes | `uid,cn,mail,displayName` |
-   | LDAP Username Attribute | `uid` |
+   | LDAP Username Attribute | `cn` (authentik puts the human-readable username here; `uid` is a hashed opaque identifier and produces UUID-shaped jellyfin accounts) |
    | LDAP Password Attribute | `userPassword` |
    | Enable User Creation | on (auto-provisions jellyfin accounts on first LDAP login) |
    | Library Access | pick the libraries new LDAP users get; can also be tuned per-user after first login |
