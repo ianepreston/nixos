@@ -1,6 +1,11 @@
-# btrfs disk layout for VM testing (no LUKS), with impermanence:
-# @root is rolled back to @root-blank on every boot; @persist holds
-# anything declared via the preservation module.
+# btrfs disk layout for any quickemu-driven VM target (single virtio
+# disk, no LUKS), with impermanence: @root is rolled back to @root-blank
+# on every boot; @persist holds anything declared via the preservation
+# module.
+#
+# Imported by both tests-server.nix and tests-desktop.nix. Lives in a
+# shared file because every VM target uses the same shape — disk size
+# is set on the qcow2 by `task vm:up`, not in this layout.
 _: {
   disko.devices = {
     disk = {
@@ -37,9 +42,6 @@ _: {
                   };
                   # Empty subvolume created at install time; the initrd
                   # rollback service snapshots from this on every boot.
-                  # No mountpoint and nothing else references it, so it
-                  # stays pristine without needing a postCreateHook or
-                  # explicit readonly flag.
                   "@root-blank" = { };
                   "@nix" = {
                     mountpoint = "/nix";
@@ -57,7 +59,7 @@ _: {
                   };
                   "@swap" = {
                     mountpoint = "/.swapvol";
-                    swap.swapfile.size = "2G";
+                    swap.swapfile.size = "4G";
                   };
                 };
               };

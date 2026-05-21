@@ -1,8 +1,8 @@
-# Generic qemu-guest hardware config — mirrors _testvm-hardware.nix
+# Generic qemu-guest hardware config — mirrors _tests-desktop-hardware.nix
 # since both run under quickemu/qemu with virtio devices. Not generated
 # by nixos-generate-config because the VM doesn't exist until first
-# `task tests-server:up`; this hand-rolled file is sufficient for
-# qemu virtio + AHCI + USB HID, which is all quickemu exposes.
+# `task vm:up`; this hand-rolled file is sufficient for qemu virtio +
+# AHCI + USB HID, which is all quickemu exposes.
 {
   lib,
   modulesPath,

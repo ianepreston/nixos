@@ -89,7 +89,8 @@ and resources if you want to build your own.
 | **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config     |
 | **penguin**           | x86_64-linux   | `homeConfigurations`   | Standalone home-manager (WSL / non-NixOS Linux)                          |
 | **toshibachromebook** | x86_64-linux   | `nixosConfigurations`  | Minimal ChromeBook config                                                |
-| **testvm**            | x86_64-linux   | `nixosConfigurations`  | Minimal VM for bootstrap testing (quickemu)                              |
+| **tests-server**      | x86_64-linux   | `nixosConfigurations`  | Server-shaped VM target — drives `task recovery:test:full` restore drill |
+| **tests-desktop**     | x86_64-linux   | `nixosConfigurations`  | Desktop-shaped VM target — workstation profile iteration                 |
 | **iso**               | x86_64-linux   | `nixosConfigurations`  | Custom NixOS installer/recovery ISO                                      |
 
 ## Module System
@@ -1032,48 +1033,44 @@ task bootstrap:reinstall HOST=existinghost DEST=192.168.1.50
 
 ### VM testing
 
-A `testvm` host config is included for bootstrap testing. Build the ISO if
-needed (`task iso`), then:
+Two VM-compatible flake hosts exist for local testing:
+
+- `tests-server` — server-shaped (imports `server` + `server-apps`,
+  same as hpp-1). Used by `task recovery:test:full` for the quarterly
+  restore drill.
+- `tests-desktop` — desktop-shaped (imports the workstation profile).
+  Useful for iterating on desktop modules without a real machine.
+
+The `task vm:*` namespace drives a single quickemu VM at a time under
+`~/vms/nixos-vm/`, with a persistent SSH host key (and matching age
+identity) preserved across teardowns. Authorize the VM key onto the
+secrets it needs once via `task vm:sops-authorize TARGET=<host>`
+(uncommitted edit in `../nix-secrets`; commit + push via
+`task secrets:publish` to make sticky, or `git restore` to revoke).
 
 ```bash
-# Create a quickemu config (adjust paths as needed)
-mkdir -p ~/vms/testvm
-cat > ~/vms/testvm.conf <<'EOF'
-guest_os="linux"
-disk_img="/home/ipreston/vms/testvm/testvm.qcow2"
-iso="/home/ipreston/src/nixos/latest.iso"
-disk_size="20G"
-ram="4G"
-cpu_cores="2"
-EOF
+# Bring up the VM (builds latest.iso if absent; FORCE_ISO=true to rebuild)
+task vm:up
 
-# Boot the VM headlessly with a fixed SSH port
-quickemu --vm ~/vms/testvm.conf --display none --ssh-port 22222
+# One-time per real-host secret set: authorize the VM age key
+task vm:sops-authorize TARGET=hpp-1
+
+# Install — pre-builds with ../nix-secrets by default (LOCAL_SECRETS=true)
+task vm:install HOST=tests-server
+
+# ... iterate, poke ...
+
+# Tear down (kills quickemu, deletes qcow2, preserves SSH host key)
+task vm:down
+
+# Or do all of the above as a single fresh-sandbox run:
+task vm:reset HOST=tests-server
 ```
 
-Then run the full bootstrap pipeline using `127.0.0.1` (not `localhost` — QEMU
-only forwards IPv4):
+To use flake-locked nix-secrets instead of the local sibling checkout:
 
 ```bash
-task bootstrap:new HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-```
-
-Or run individual steps for debugging:
-
-```bash
-task bootstrap:install  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-# Wait for reboot, then:
-task bootstrap:hwconfig HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-task bootstrap:hostkey  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-# Follow the secrets steps above, then:
-task bootstrap:sync     HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-task bootstrap:rebuild  HOST=testvm DEST=127.0.0.1 SSH_PORT=22222
-```
-
-To start fresh, delete the VM disk and OVMF vars:
-
-```bash
-rm -f ~/vms/testvm/testvm.qcow2 ~/vms/testvm/OVMF_VARS.fd
+task vm:install HOST=tests-server LOCAL_SECRETS=false
 ```
 
 ## Guidance and Resources

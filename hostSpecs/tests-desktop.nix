@@ -1,7 +1,7 @@
 { inputs, ... }:
 {
-  config.hostSpecs.testvm = {
-    hostName = "testvm";
+  config.hostSpecs.tests-desktop = {
+    hostName = "tests-desktop";
     isMinimal = true;
     inherit (inputs.nix-secrets) email;
   };

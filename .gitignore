@@ -13,3 +13,6 @@ result-*
 
 # Just load latest plugins
 lazy-lock.json
+
+# Claude Code runtime state (scheduled-tasks lockfile, etc.)
+.claude/

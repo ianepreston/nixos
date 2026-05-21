@@ -1,20 +1,25 @@
-# testvm - minimal VM for bootstrap testing
+# tests-desktop - desktop-shaped VM target for local testing of
+# workstation profile changes. Sibling of tests-server (server-shaped,
+# restore-drill target) — both are driven by `task vm:*` and share the
+# same VM disk layout (_vm-disks.nix). Profile composition is open;
+# start minimal and expand to import workstation modules as test
+# scenarios require.
 {
   inputs,
   hostSpecs,
   ...
 }:
 {
-  flake.nixosConfigurations.testvm = inputs.nixpkgs.lib.nixosSystem {
+  flake.nixosConfigurations.tests-desktop = inputs.nixpkgs.lib.nixosSystem {
     system = "x86_64-linux";
     specialArgs = {
       inherit inputs;
-      hostSpec = hostSpecs.testvm;
+      hostSpec = hostSpecs.tests-desktop;
     };
     modules = [
-      ./_testvm-hardware.nix
+      ./_tests-desktop-hardware.nix
       inputs.disko.nixosModules.disko
-      ./_testvm-disks.nix
+      ./_vm-disks.nix
       inputs.preservation.nixosModules.default
     ]
     ++ (with inputs.self.modules.nixos; [
@@ -30,11 +35,11 @@
           efi.canTouchEfiVariables = true;
         };
         # Required by preservation; also a prerequisite for the
-        # rollback-root initrd service defined in _testvm-disks.nix.
+        # rollback-root initrd service defined in _vm-disks.nix.
         boot.initrd.systemd.enable = true;
 
         networking = {
-          hostName = "testvm";
+          hostName = "tests-desktop";
           networkmanager.enable = true;
         };
 
@@ -58,7 +63,8 @@
         # Minimal persist set — just enough to validate that
         # preservation actually keeps state across reboot. The full
         # server persist set lives in modules/system/preservation-server.nix
-        # and is gated on the server profile, which testvm doesn't import.
+        # and is gated on the server profile, which tests-desktop doesn't
+        # import.
         preservation = {
           enable = true;
           preserveAt."/persist" = {

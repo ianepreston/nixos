@@ -1,0 +1,323 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# VM lifecycle — workstation-side quickemu VM for local testing of any
+# VM-compatible flake host (`tests-server`, `tests-desktop`). Replaces
+# the host-specific tests-server:* tasks that used to live in
+# recovery.yaml.
+#
+# Single VM at a time, fixed port 22322, state under ~/vms/nixos-vm/.
+# The SSH host key under ~/vms/nixos-vm/ssh_host_ed25519_key is the
+# persistent identity — derives a stable age key that you authorize once
+# (per real-host secret set) via `vm:sops-authorize TARGET=<host>`.
+# Authorization is sticky — never removed.
+#
+# Typical usage:
+#
+#   task vm:up
+#   task vm:install HOST=tests-server          # (re)install end-to-end
+#   ... iterate / poke ...
+#   task vm:down
+#
+# Override input resolution:
+#
+#   LOCAL_SECRETS=true   (default) — pre-build with ../nix-secrets
+#   LOCAL_SECRETS=false           — resolve nix-secrets from flake.lock
+#
+# Force rebuild of latest.iso (only needed when the installer profile
+# itself changed — for normal app iteration the ISO doesn't matter,
+# we just SSH into the installed system):
+#
+#   task vm:up FORCE_ISO=true
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+
+vars:
+  # Single canonical VM state dir. Path is hardcoded into VM_DIR rather
+  # than parameterized — "one VM at a time" was an explicit design
+  # decision; concurrent runs require concurrent state dirs which we
+  # are not supporting. Use {{.HOME}} rather than ~ so the value works
+  # both as a shell path (in this file's cmd bodies) and as a template
+  # var passed into bootstrap:install (which doesn't shell-expand it).
+  VM_DIR: '{{.VM_DIR | default (printf "%s/vms/nixos-vm" .HOME) }}'
+  VM_CONF: '{{.VM_CONF | default (printf "%s/vms/nixos-vm.conf" .HOME) }}'
+  SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+
+tasks:
+
+  up:
+    desc: Bring up the quickemu VM on ISO (idempotent — creates disk/key/conf on first run)
+    vars:
+      DISK_SIZE: '{{.DISK_SIZE | default "100G"}}'
+      RAM: '{{.RAM | default "16G"}}'
+      CPU_CORES: '{{.CPU_CORES | default "4"}}'
+      FORCE_ISO: '{{.FORCE_ISO | default "false"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        vm_conf=$(eval echo "{{.VM_CONF}}")
+        mkdir -p "$vm_dir"
+
+        # ISO. Rebuild if FORCE_ISO or absent. For day-to-day iteration
+        # the existing ISO is fine — we only need it to bring sshd up
+        # long enough for nixos-anywhere to take over.
+        iso_path="$(git rev-parse --show-toplevel)/latest.iso"
+        if [ "{{.FORCE_ISO}}" = "true" ] || [ ! -e "$iso_path" ]; then
+          echo -e "\x1B[32m[+] Building installer ISO\x1B[0m"
+          (cd "$(git rev-parse --show-toplevel)" && task iso)
+        fi
+
+        # Stable SSH host key (persisted across teardowns)
+        key="$vm_dir/ssh_host_ed25519_key"
+        if [ ! -f "$key" ]; then
+          echo -e "\x1B[32m[+] Generating stable SSH host key at $key\x1B[0m"
+          ssh-keygen -t ed25519 -f "$key" -C "root@nixos-vm" -N "" -q
+          chmod 600 "$key"
+        fi
+
+        # Disk
+        disk="$vm_dir/nixos-vm.qcow2"
+        if [ ! -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Creating qcow2 at $disk ({{.DISK_SIZE}})\x1B[0m"
+          nix shell nixpkgs#qemu-utils -c qemu-img create -f qcow2 "$disk" "{{.DISK_SIZE}}"
+        fi
+
+        # quickemu conf
+        if [ ! -f "$vm_conf" ]; then
+          echo -e "\x1B[32m[+] Writing quickemu conf $vm_conf\x1B[0m"
+          cat > "$vm_conf" <<EOF
+        guest_os="linux"
+        disk_img="$disk"
+        iso="$iso_path"
+        disk_size="{{.DISK_SIZE}}"
+        ram="{{.RAM}}"
+        cpu_cores="{{.CPU_CORES}}"
+        EOF
+        fi
+
+        # Already running?
+        if [ -f "$vm_dir/nixos-vm.pid" ] && kill -0 "$(cat "$vm_dir/nixos-vm.pid")" 2>/dev/null; then
+          echo -e "\x1B[33m[~] VM appears to be running already (pid $(cat "$vm_dir/nixos-vm.pid"))\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Launching quickemu in background (ssh port {{.SSH_PORT}})\x1B[0m"
+          # setsid detaches from the controlling terminal so the task
+          # can return without the shell waiting on the child.
+          setsid nohup quickemu --vm "$vm_conf" --display none --ssh-port {{.SSH_PORT}} \
+            >"$vm_dir/quickemu.log" 2>&1 < /dev/null &
+        fi
+
+        echo -e "\x1B[32m[+] Waiting for SSH on 127.0.0.1:{{.SSH_PORT}} (root, ISO live system)\x1B[0m"
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        for i in $(seq 1 120); do
+          if ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                 root@127.0.0.1 true 2>/dev/null; then
+            echo -e "\x1B[32m[+] VM SSH up\x1B[0m"
+            exit 0
+          fi
+          sleep 3
+        done
+        echo -e "\x1B[31m[!] VM SSH did not come up within 6 minutes\x1B[0m"
+        echo "    Check $vm_dir/quickemu.log"
+        exit 1
+
+  install:
+    desc: Install a VM-compatible flake host onto the running VM (HOST=tests-server|tests-desktop)
+    requires:
+      vars: [HOST]
+    vars:
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        # Allow-list. Keep this in lockstep with the set of flake hosts
+        # whose disk module is _vm-disks.nix. Anything else uses real-
+        # hardware disk layouts (LUKS, multi-disk, etc.) that don't fit
+        # the quickemu VM shape — fail fast rather than wedge halfway
+        # through nixos-anywhere.
+        case "{{.HOST}}" in
+          tests-server|tests-desktop) ;;
+          *)
+            echo -e "\x1B[31m[!] {{.HOST}} is not a VM-compatible target\x1B[0m"
+            echo "    Allowed: tests-server, tests-desktop"
+            echo "    (Anything else uses a real-hardware disk layout that won't boot under quickemu.)"
+            exit 1
+            ;;
+        esac
+      # bootstrap:install — not :reinstall — by design. With
+      # LOCAL_SECRETS=true the install pre-builds the toplevel locally
+      # with any uncommitted ../nix-secrets/ edits already folded in, so
+      # the post-install sync+rebuild that bootstrap:reinstall would run
+      # is redundant. It is also actively harmful for tests-server: a
+      # full server-apps rebuild OOMs the 8G VM (exit 247). If you need
+      # to iterate on the installed system, run `task bootstrap:sync` +
+      # `task bootstrap:rebuild` manually with whatever flags suit.
+      - task: :bootstrap:install
+        vars:
+          HOST: '{{.HOST}}'
+          DEST: 127.0.0.1
+          SSH_PORT: '{{.SSH_PORT}}'
+          IMPERMANENT: 'true'
+          SSH_HOST_KEY_FILE: '{{.VM_DIR}}/ssh_host_ed25519_key'
+          LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Waiting for {{.HOST}} to reboot into installed system\x1B[0m"
+        ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        # See bootstrap.yaml's reinstall AUTO_WAIT block for the
+        # rationale on `UpdateHostKeys=no` and waiting on systemd state.
+        # 240 iterations * 3s = 12 min. tests-server's first boot
+        # (server-apps stack) takes 4-8 min; 6 min isn't enough.
+        for i in $(seq 1 240); do
+          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+                      -o StrictHostKeyChecking=accept-new \
+                      -o UpdateHostKeys=no \
+                      {{.TARGET_USER}}@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
+          case "$state" in
+            running|degraded)
+              echo -e "\x1B[32m[+] {{.HOST}} reachable (systemd: $state)\x1B[0m"
+              exit 0
+              ;;
+            *)
+              sleep 3
+              ;;
+          esac
+        done
+        echo -e "\x1B[31m[!] {{.HOST}} did not come up within 12 minutes after install\x1B[0m"
+        exit 1
+
+  down:
+    desc: Tear down the VM (kill quickemu, delete qcow2 — preserves SSH host key)
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pid_file="$vm_dir/nixos-vm.pid"
+        if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+          pid=$(cat "$pid_file")
+          echo -e "\x1B[32m[+] Killing quickemu (pid $pid)\x1B[0m"
+          kill "$pid" || true
+          # quickemu spawns qemu as a child; wait briefly for clean exit
+          for i in $(seq 1 10); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          kill -9 "$pid" 2>/dev/null || true
+          rm -f "$pid_file"
+        else
+          # Fallback — quickemu was running but pidfile got lost
+          pkill -f "qemu.*nixos-vm.qcow2" 2>/dev/null || true
+        fi
+
+        disk="$vm_dir/nixos-vm.qcow2"
+        if [ -f "$disk" ]; then
+          echo -e "\x1B[32m[+] Deleting qcow2 $disk\x1B[0m"
+          rm -f "$disk"
+        fi
+        echo -e "\x1B[32m[+] VM torn down (SSH host key preserved at $vm_dir/ssh_host_ed25519_key)\x1B[0m"
+
+  reset:
+    desc: down → up → install (fresh sandbox in one shot)
+    requires:
+      vars: [HOST]
+    vars:
+      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
+      FORCE_ISO: '{{.FORCE_ISO | default "false"}}'
+    cmds:
+      - task: down
+      - task: up
+        vars: { FORCE_ISO: '{{.FORCE_ISO}}' }
+      - task: install
+        vars: { HOST: '{{.HOST}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}' }
+
+  sops-authorize:
+    desc: Authorize the VM age key to read TARGET's secrets + shared.yaml (uncommitted edit in ../nix-secrets)
+    requires:
+      vars: [TARGET]
+    cmds:
+      - |
+        set -euo pipefail
+        vm_dir=$(eval echo "{{.VM_DIR}}")
+        pub="$vm_dir/ssh_host_ed25519_key.pub"
+        if [ ! -f "$pub" ]; then
+          echo -e "\x1B[31m[!] $pub not found — run \`task vm:up\` first to generate the host key\x1B[0m"
+          exit 1
+        fi
+
+        age_key=$(ssh-to-age < "$pub")
+        secrets_dir="$(git rev-parse --show-toplevel)/../nix-secrets"
+        sops_yaml="$secrets_dir/.sops.yaml"
+
+        if [ ! -f "$sops_yaml" ]; then
+          echo -e "\x1B[31m[!] $sops_yaml not found\x1B[0m"
+          exit 1
+        fi
+
+        # The TARGET creation_rule must already exist — we only add the
+        # VM anchor to its age list, never create the rule from scratch.
+        if ! grep -q "^  - path_regex: {{.TARGET}}\\\\\\.yaml\\\$" "$sops_yaml"; then
+          echo -e "\x1B[31m[!] No creation_rule for {{.TARGET}}.yaml in $sops_yaml\x1B[0m"
+          echo "    Create it manually first, then re-run."
+          exit 1
+        fi
+
+        # Helper: extract the lines of a single creation_rule block by
+        # path_regex name (excluding the next "  - path_regex:" header).
+        block_for() {
+          awk -v name="$1" '
+            $0 ~ "^  - path_regex: " name "\\\\\\.yaml\\$" { in_block=1; next }
+            in_block && /^  - path_regex:/ { exit }
+            in_block { print }
+          ' "$sops_yaml"
+        }
+
+        anchor="tests-vm"
+        needs_updatekeys=0
+
+        # 1. keys.hosts anchor
+        if grep -q "&${anchor} " "$sops_yaml"; then
+          echo -e "\x1B[33m[~] &${anchor} already in keys.hosts — leaving as-is\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding &${anchor} anchor under keys.hosts\x1B[0m"
+          sed -i "/^creation_rules:/i\\    - \&${anchor} $age_key" "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 2. *anchor in TARGET.yaml's age list
+        if block_for {{.TARGET}} | grep -q "\*${anchor}"; then
+          echo -e "\x1B[33m[~] *${anchor} already in {{.TARGET}}.yaml age list\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] Adding *${anchor} to {{.TARGET}}.yaml age list (after *{{.TARGET}})\x1B[0m"
+          sed -i "/^  - path_regex: {{.TARGET}}\\\\\\.yaml\\\$/,/^  - path_regex:/{/- \\*{{.TARGET}}\$/a\\          - *${anchor}
+          }" "$sops_yaml"
+          needs_updatekeys=1
+        fi
+
+        # 3. *anchor in shared.yaml's age list (insert after *TARGET if
+        # present, else after the first existing entry).
+        if block_for shared | grep -q "\*${anchor}"; then
+          echo -e "\x1B[33m[~] *${anchor} already in shared.yaml age list\x1B[0m"
+        else
+          if block_for shared | grep -q "\*{{.TARGET}}"; then
+            echo -e "\x1B[32m[+] Adding *${anchor} to shared.yaml age list (after *{{.TARGET}})\x1B[0m"
+            sed -i "/^  - path_regex: shared\\\\\\.yaml\\\$/,/^  - path_regex:/{/- \\*{{.TARGET}}\$/a\\          - *${anchor}
+            }" "$sops_yaml"
+          else
+            echo -e "\x1B[31m[!] *{{.TARGET}} not in shared.yaml age list — can't anchor *${anchor} insertion\x1B[0m"
+            echo "    Add *{{.TARGET}} to shared.yaml's age list first."
+            exit 1
+          fi
+          needs_updatekeys=1
+        fi
+
+        if [ "$needs_updatekeys" = "1" ]; then
+          echo -e "\x1B[32m[+] Running sops updatekeys on {{.TARGET}}.yaml + shared.yaml\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes sops/{{.TARGET}}.yaml sops/shared.yaml )
+          echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — commit + push via \`task secrets:publish\` to make sticky, or \`git restore\` to revoke\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} — no changes\x1B[0m"
+        fi
