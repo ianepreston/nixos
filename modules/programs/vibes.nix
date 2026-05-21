@@ -59,6 +59,7 @@ _: {
         inherit (pkgsUnstable)
           claude-code
           gemini-cli
+          worktrunk
           ;
       };
 
