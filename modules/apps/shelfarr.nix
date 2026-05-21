@@ -61,7 +61,7 @@ _: {
         # for reproducibility; renovate tracks `latest` and bumps the
         # digest on its own (see renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/pedro-revez-silva/shelfarr
-        image = "ghcr.io/pedro-revez-silva/shelfarr:latest@sha256:ace28661da42495b2d050b2ee58fef1326850d9cc54505093d768acd74f81c29";
+        image = "ghcr.io/pedro-revez-silva/shelfarr:latest@sha256:ce0b6e0f4ad38873b059d6b6531d52d6a6f585fd56f6e4a8938ad8230dc1bc60";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/shelfarr/data:/rails/storage"
