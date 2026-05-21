@@ -5,6 +5,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       ...
     }:
     {
@@ -15,7 +16,11 @@ _: {
         dates = "04:40";
         randomizedDelaySec = "1h";
         persistent = true;
-        allowReboot = true;
+        # Policy default: servers reboot themselves to pick up kernel /
+        # initrd updates. Interactive hosts (workstation profile) flip
+        # this off so an overnight upgrade doesn't yank the desktop out
+        # from under an active session.
+        allowReboot = lib.mkDefault true;
       };
 
       # The flake depends on a private repo (nix-secrets) and fetches it
