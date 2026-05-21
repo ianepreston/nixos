@@ -43,6 +43,10 @@
         tailscale
       ];
 
+      # Servers reboot themselves on kernel/initrd updates — that's the
+      # whole point of running the upgrade timer unattended.
+      system.autoUpgrade.allowReboot = true;
+
       # Swap Redis for Valkey across every `services.redis.servers.*`
       # instance on this profile. Valkey is the LF fork of Redis 7.2
       # under the original BSD-3-Clause license (Redis Inc. relicensed
