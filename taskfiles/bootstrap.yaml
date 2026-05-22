@@ -333,11 +333,18 @@ tasks:
           printf '  - path_regex: %s\\.yaml$\n    key_groups:\n      - age:\n          - *ipreston\n          - *%s\n' "$host" "$host" >> "$sops_yaml"
         fi
 
-        # Create host secrets file with a generated SSH key
+        # Create host secrets file with a generated SSH key, or rekey
+        # an existing one. The rekey branch covers the reinstall case:
+        # a fresh install regenerates the host's SSH host key (hence a
+        # new age key), but sops/<host>.yaml still carries the *old*
+        # host age key in its envelope. Without updatekeys here,
+        # sops-install-secrets fails to decrypt <host>.yaml on the
+        # next rebuild even though .sops.yaml was updated above.
         host_secrets="$secrets_dir/sops/${host}.yaml"
         host_pubkey="$git_root/modules/profiles/_ssh-keys/id_${host}.pub"
         if [ -f "$host_secrets" ]; then
-          echo -e "\x1B[33m[~] $host_secrets already exists — skipping\x1B[0m"
+          echo -e "\x1B[33m[~] $host_secrets already exists — rekeying envelope to current .sops.yaml\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes "sops/${host}.yaml" )
         else
           echo -e "\x1B[32m[+] Creating $host_secrets with generated SSH key\x1B[0m"
           temp=$(mktemp -d)
