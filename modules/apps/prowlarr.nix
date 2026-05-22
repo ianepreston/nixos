@@ -29,7 +29,10 @@ _: {
 
       services.prowlarr = {
         enable = true;
-        settings.server.port = port;
+        settings.server = {
+          inherit port;
+          bindAddress = "*";
+        };
       };
 
       users.users.prowlarr = {
