@@ -104,9 +104,13 @@ _: {
           set -e
           install -d -m 0750 -o ${toString serverUid} -g ${toString serverGid} ${appriseConfigDir}
           umask 027
+          # Apprise needs Discord webhooks in discord://ID/TOKEN form,
+          # not the raw https URL stored in sops (which alertmanager
+          # consumes directly).
+          discord_path="''${DISCORD_WEBHOOK#https://discord.com/api/webhooks/}"
           cat > ${appriseConfigFile} <<EOF
           urls:
-            - $DISCORD_WEBHOOK
+            - discord://$discord_path
           EOF
           chown ${toString serverUid}:${toString serverGid} ${appriseConfigFile}
           chmod 0640 ${appriseConfigFile}

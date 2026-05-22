@@ -43,6 +43,12 @@ _: {
         ];
         environment = {
           TZ = config.time.timeZone;
+          # Read plaintext /config/<key>.yml files directly. Default is
+          # "hash", which only sees configs saved via the API into
+          # /config/store/ under hashed filenames, and silently returns
+          # 204 No Content for /notify/<key> when <key>.yml exists only
+          # as a static file (the shape consumer modules render).
+          APPRISE_STATEFUL_MODE = "simple";
         };
       };
     };
