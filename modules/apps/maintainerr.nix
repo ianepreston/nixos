@@ -33,7 +33,7 @@ _: {
 
       virtualisation.oci-containers.containers.maintainerr = {
         # renovate: datasource=docker depName=ghcr.io/maintainerr/maintainerr
-        image = "ghcr.io/maintainerr/maintainerr:3.11.2";
+        image = "ghcr.io/maintainerr/maintainerr:3.12.0";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
