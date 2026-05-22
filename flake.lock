@@ -493,10 +493,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1779373026,
-        "narHash": "sha256-qN+mBKfFw0G5SKr+NgxeOfRplLjI8wFPY8KIG7rCX10=",
+        "lastModified": 1779413205,
+        "narHash": "sha256-Bo45Ql1vcyB7w2qcF1+MY1fp3itEialfq2HmvR5B9MY=",
         "ref": "main",
-        "rev": "816c19d5eb7b8e67c1f7ef064dd002e48fd306ae",
+        "rev": "6cc5962ba6b817606785dde124fd5a8f200e74e9",
         "shallow": true,
         "type": "git",
         "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
@@ -948,11 +948,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1778254898,
-        "narHash": "sha256-uVwHzZ3pw8QlEy/VyNlqqkGoe8iASSxXmCOKR4IzBHY=",
+        "lastModified": 1779388928,
+        "narHash": "sha256-jaUtyIcX8sS+hg2aqu4upMfiXBstXghSVnqs+T3TPbA=",
         "owner": "rcambrj",
         "repo": "unifi-os-server",
-        "rev": "b3629718dca90c849eb4ad957ec1e40b1c59c8b2",
+        "rev": "a47cf826a8ab9643c9c20cd8fc89bb986f582573",
         "type": "github"
       },
       "original": {
