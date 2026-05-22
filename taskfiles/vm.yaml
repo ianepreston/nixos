@@ -40,9 +40,17 @@ vars:
   # are not supporting. Use {{.HOME}} rather than ~ so the value works
   # both as a shell path (in this file's cmd bodies) and as a template
   # var passed into bootstrap:install (which doesn't shell-expand it).
+  #
+  # NOTE: SSH_PORT is intentionally NOT declared at this file scope.
+  # Task 3.x exposes file-level vars from included taskfiles to *all*
+  # other includes, which means a file-level `SSH_PORT: "22322"` here
+  # silently overrides the `default "22"` in bootstrap.yaml when a
+  # user runs `task bootstrap:install` with no explicit SSH_PORT — the
+  # bootstrap then tries to talk to a real target on the VM's loopback
+  # port and hangs. Scope SSH_PORT to the individual `up` / `install`
+  # tasks below instead.
   VM_DIR: '{{.VM_DIR | default (printf "%s/vms/nixos-vm" .HOME) }}'
   VM_CONF: '{{.VM_CONF | default (printf "%s/vms/nixos-vm.conf" .HOME) }}'
-  SSH_PORT: '{{.SSH_PORT | default "22322"}}'
 
 tasks:
 
@@ -53,6 +61,7 @@ tasks:
       RAM: '{{.RAM | default "16G"}}'
       CPU_CORES: '{{.CPU_CORES | default "4"}}'
       FORCE_ISO: '{{.FORCE_ISO | default "false"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
     cmds:
       - |
         set -euo pipefail
@@ -130,6 +139,7 @@ tasks:
     vars:
       LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
       TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      SSH_PORT: '{{.SSH_PORT | default "22322"}}'
     cmds:
       - |
         set -euo pipefail
