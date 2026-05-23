@@ -92,7 +92,6 @@
         matter-server
         manyfold
         mealie
-        metube
         miniflux
         mylar3
         paperless-ngx
