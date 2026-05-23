@@ -18,7 +18,7 @@
       # Native server-apps (and the one container-app whose volumes
       # live outside /var/lib/containers) that need an explicit
       # preservation entry on impermanence hosts. Container-only apps
-      # (kapowarr, maintainerr, mylar3, profilarr, valheim, watchstate,
+      # (kapowarr, mylar3, profilarr, valheim, watchstate,
       # spierscraper, seerr, …) are covered transitively by the
       # wholesale `/var/lib/containers` entry in preservation-server.nix
       # and don't appear here. Stateless natives (miniflux — backed by
@@ -88,7 +88,6 @@
         kapowarr
         kavita
         komga
-        maintainerr
         matter-server
         manyfold
         mealie
