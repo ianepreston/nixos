@@ -2,7 +2,10 @@
 { inputs, hostSpecs, ... }:
 {
   flake.homeConfigurations.penguin = inputs.home-manager.lib.homeManagerConfiguration {
-    pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+    pkgs = import inputs.nixpkgs {
+      system = "x86_64-linux";
+      config.allowUnfree = true;
+    };
     extraSpecialArgs = {
       inherit inputs;
       hostSpec = hostSpecs.penguin;
