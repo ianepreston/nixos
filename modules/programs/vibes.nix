@@ -48,6 +48,7 @@ _: {
         effortLevel = "high";
         theme = "light";
         agentPushNotifEnabled = true;
+        permissions.defaultMode = "auto";
         statusLine = {
           type = "command";
           command = "${statusLine}/bin/claude-statusline";
