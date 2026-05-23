@@ -173,6 +173,87 @@ _: {
               }
             ];
           }
+          {
+            # Temperature alerts (#240). CPU package temps come from
+            # node_exporter's hwmon collector — Intel exposes "Package
+            # id 0", AMD exposes "Tdie"/"Tctl"; matching on the label
+            # makes this vendor-agnostic. iGPUs share the CPU package
+            # thermal zone, so there is no separate iGPU sensor to
+            # alert on. The NVIDIA rules use nvidia_smi_temperature_gpu
+            # which is absent until a host runs the nvidia exporter
+            # (#242); silently no-ops on hosts without an NVIDIA GPU.
+            name = "temperature";
+            rules = [
+              {
+                alert = "HostCPUTemperatureHigh";
+                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 80'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "CPU running hot on {{ $labels.instance }}";
+                  description = "CPU package temperature on {{ $labels.instance }} has been above 80°C for 10m. Currently {{ $value }}°C. Check airflow / fan health.";
+                };
+              }
+              {
+                alert = "HostCPUTemperatureCritical";
+                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 90'';
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "CPU thermal-throttling imminent on {{ $labels.instance }}";
+                  description = "CPU package temperature on {{ $labels.instance }} has been above 90°C for 5m. Currently {{ $value }}°C. Thermal throttling likely; investigate immediately.";
+                };
+              }
+              {
+                alert = "HostGPUTemperatureHigh";
+                expr = "max by (instance) (nvidia_smi_temperature_gpu) > 80";
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "GPU running hot on {{ $labels.instance }}";
+                  description = "GPU temperature on {{ $labels.instance }} has been above 80°C for 10m. Currently {{ $value }}°C.";
+                };
+              }
+              {
+                alert = "HostGPUTemperatureCritical";
+                expr = "max by (instance) (nvidia_smi_temperature_gpu) > 90";
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "GPU thermal-throttling imminent on {{ $labels.instance }}";
+                  description = "GPU temperature on {{ $labels.instance }} has been above 90°C for 5m. Currently {{ $value }}°C. Thermal throttling likely; investigate immediately.";
+                };
+              }
+              # NVMe thresholds come from the drive itself (NVMe spec
+              # WCTEMP / CCTEMP fields, exposed by node_exporter as
+              # node_hwmon_temp_{max,crit}_celsius). Comparing against
+              # the drive's own thresholds rather than a hardcoded
+              # number generalises across drives — e.g. hpp-1's WD
+              # Black SN850 reports 85°C/88°C, but a different drive
+              # might throttle at 70°C and we'd want this to alert
+              # there instead of waiting until 80.
+              {
+                alert = "HostNVMeTemperatureHigh";
+                expr = ''node_hwmon_temp_celsius{chip=~"nvme_.*"} >= on (instance, chip, sensor) node_hwmon_temp_max_celsius{chip=~"nvme_.*"}'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "NVMe at warning threshold on {{ $labels.instance }}";
+                  description = "NVMe drive on {{ $labels.instance }} ({{ $labels.chip }}) has been at or above its self-reported warning temperature (WCTEMP) for 10m. Currently {{ $value }}°C. Check airflow / add a heatsink.";
+                };
+              }
+              {
+                alert = "HostNVMeTemperatureCritical";
+                expr = ''node_hwmon_temp_celsius{chip=~"nvme_.*"} >= on (instance, chip, sensor) node_hwmon_temp_crit_celsius{chip=~"nvme_.*"}'';
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "NVMe at critical threshold on {{ $labels.instance }}";
+                  description = "NVMe drive on {{ $labels.instance }} ({{ $labels.chip }}) has been at or above its self-reported critical temperature (CCTEMP) for 5m. Currently {{ $value }}°C. Drive will throttle or shut down; intervene immediately.";
+                };
+              }
+            ];
+          }
         ];
       };
     in
