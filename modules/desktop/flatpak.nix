@@ -1,5 +1,5 @@
 # Flatpak - Simple Aspect
-# Flatpak runtime with Discord, BambuStudio, Chrome, Headlamp
+# Flatpak runtime with Discord, BambuStudio, Headlamp
 { inputs, ... }:
 {
   flake.modules.nixos.flatpak =
@@ -34,7 +34,6 @@
         packages = [
           "com.discordapp.Discord"
           "com.bambulab.BambuStudio"
-          "com.google.Chrome"
           "io.kinvolk.Headlamp"
         ];
       };

@@ -5,8 +5,11 @@ _: {
     { pkgs, ... }:
     {
       services.udev.extraRules = ''
-        # Rule for Xreal Air firmware updates
-        SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3318", MODE="0666", GROUP="plugdev"
+        # Allow Chrome WebHID access for Xreal firmware updates
+        SUBSYSTEM=="usb", ATTR{idVendor}=="3318", MODE="0666", TAG+="uaccess"
+        KERNEL=="hidraw*", ATTRS{idVendor}=="3318", MODE="0666", TAG+="uaccess"
+        KERNEL=="ttyUSB[0-9]*", ATTRS{idVendor}=="3318", MODE="0666", TAG+="uaccess"
+        KERNEL=="ttyACM[0-9]*", ATTRS{idVendor}=="3318", MODE="0666", TAG+="uaccess"
       '';
       environment.systemPackages = with pkgs; [
         google-chrome

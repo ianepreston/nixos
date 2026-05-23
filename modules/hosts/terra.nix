@@ -30,6 +30,7 @@
       smbclient
       quickemu
       sunshine
+      xreal-headset
       zsa-keeb
     ])
     ++ [
