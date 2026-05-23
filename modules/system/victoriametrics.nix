@@ -173,6 +173,59 @@ _: {
               }
             ];
           }
+          {
+            # Temperature alerts (#240). CPU package temps come from
+            # node_exporter's hwmon collector — Intel exposes "Package
+            # id 0", AMD exposes "Tdie"/"Tctl"; matching on the label
+            # makes this vendor-agnostic. iGPUs share the CPU package
+            # thermal zone, so there is no separate iGPU sensor to
+            # alert on. The NVIDIA rules use nvidia_smi_temperature_gpu
+            # which is absent until a host runs the nvidia exporter
+            # (#242); silently no-ops on hosts without an NVIDIA GPU.
+            name = "temperature";
+            rules = [
+              {
+                alert = "HostCPUTemperatureHigh";
+                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 80'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "CPU running hot on {{ $labels.instance }}";
+                  description = "CPU package temperature on {{ $labels.instance }} has been above 80°C for 10m. Currently {{ $value }}°C. Check airflow / fan health.";
+                };
+              }
+              {
+                alert = "HostCPUTemperatureCritical";
+                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 90'';
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "CPU thermal-throttling imminent on {{ $labels.instance }}";
+                  description = "CPU package temperature on {{ $labels.instance }} has been above 90°C for 5m. Currently {{ $value }}°C. Thermal throttling likely; investigate immediately.";
+                };
+              }
+              {
+                alert = "HostGPUTemperatureHigh";
+                expr = "max by (instance) (nvidia_smi_temperature_gpu) > 80";
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "GPU running hot on {{ $labels.instance }}";
+                  description = "GPU temperature on {{ $labels.instance }} has been above 80°C for 10m. Currently {{ $value }}°C.";
+                };
+              }
+              {
+                alert = "HostGPUTemperatureCritical";
+                expr = "max by (instance) (nvidia_smi_temperature_gpu) > 90";
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "GPU thermal-throttling imminent on {{ $labels.instance }}";
+                  description = "GPU temperature on {{ $labels.instance }} has been above 90°C for 5m. Currently {{ $value }}°C. Thermal throttling likely; investigate immediately.";
+                };
+              }
+            ];
+          }
         ];
       };
     in

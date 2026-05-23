@@ -207,6 +207,69 @@
         { "expr": "rate(node_network_receive_bytes_total{instance=\"$instance\",device!~\"lo|veth.*|docker.*|cni.*|podman.*\"}[$__rate_interval])", "legendFormat": "rx {{device}}", "refId": "A" },
         { "expr": "rate(node_network_transmit_bytes_total{instance=\"$instance\",device!~\"lo|veth.*|docker.*|cni.*|podman.*\"}[$__rate_interval])", "legendFormat": "tx {{device}}", "refId": "B" }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "celsius",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 11,
+      "title": "CPU temperatures",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "node_hwmon_temp_celsius{instance=\"$instance\"} * on (instance, chip, sensor) group_left(label) node_hwmon_sensor_label{instance=\"$instance\"}", "legendFormat": "{{label}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "celsius",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 12,
+      "title": "GPU temperature",
+      "description": "Populated on hosts running the NVIDIA exporter (#242). Empty on Intel-iGPU hosts; the iGPU shares the CPU package thermal zone shown to the left.",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "nvidia_smi_temperature_gpu{instance=\"$instance\"}", "legendFormat": "GPU {{gpu}}", "refId": "A" }
+      ]
     }
   ],
   "refresh": "30s",
