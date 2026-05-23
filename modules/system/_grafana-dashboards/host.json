@@ -270,6 +270,32 @@
       "targets": [
         { "expr": "nvidia_smi_temperature_gpu{instance=\"$instance\"}", "legendFormat": "GPU {{gpu}}", "refId": "A" }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "celsius",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
+      "id": 13,
+      "title": "NVMe temperatures",
+      "description": "Drive-reported thresholds (WCTEMP / CCTEMP from the NVMe identify-controller data) are overlaid as dashed lines per drive — these are the drive's own warning and critical temperatures, used directly by the HostNVMeTemperature{High,Critical} alerts.",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}}", "refId": "A" },
+        { "expr": "node_hwmon_temp_max_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}} WCTEMP", "refId": "B" },
+        { "expr": "node_hwmon_temp_crit_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}} CCTEMP", "refId": "C" }
+      ]
     }
   ],
   "refresh": "30s",
