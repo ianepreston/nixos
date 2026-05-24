@@ -32,6 +32,7 @@
         mosquitto
         nfsclient
         nix-maintenance
+        nut-client
         observability
         oci-containers
         postgresql

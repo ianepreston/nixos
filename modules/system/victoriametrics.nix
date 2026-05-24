@@ -254,6 +254,87 @@ _: {
               }
             ];
           }
+          {
+            # UPS / power alerts (#82). Metrics come from
+            # nut_exporter; the `ups_source` label is set in
+            # nut-client.nix's scrape config (router|nas), the `ups`
+            # label is the upsname on each master (typically `ups`).
+            #
+            # ups.status is a bitfield surfaced as
+            # network_ups_tools_ups_status{flag="OL|OB|LB|FSD|RB|..."}
+            # — 1 when the flag is asserted. OL=online (mains),
+            # OB=on battery, LB=low battery, FSD=forced shutdown,
+            # RB=replace battery.
+            name = "power";
+            rules = [
+              {
+                alert = "UpsOnBattery";
+                expr = ''network_ups_tools_ups_status{flag="OB"} == 1'';
+                for = "30s";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "UPS {{ $labels.ups_source }} on battery";
+                  description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) has been on battery for 30s. Mains lost or upstream breaker tripped.";
+                };
+              }
+              {
+                alert = "UpsLowBattery";
+                expr = ''network_ups_tools_ups_status{flag="LB"} == 1'';
+                for = "0m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "UPS {{ $labels.ups_source }} at low battery";
+                  description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) signaled low battery. Hosts monitoring this UPS as primary are about to shut down.";
+                };
+              }
+              {
+                alert = "UpsBatteryReplace";
+                expr = ''network_ups_tools_ups_status{flag="RB"} == 1'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "UPS {{ $labels.ups_source }} needs battery replacement";
+                  description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) is reporting RB (replace battery) — self-test has failed. Schedule a swap before the next power event.";
+                };
+              }
+              {
+                alert = "UpsBatteryCharge";
+                expr = "network_ups_tools_battery_charge < 50";
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "UPS {{ $labels.ups_source }} battery low ({{ $value | humanize }}%)";
+                  description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) battery charge below 50% for 10m. Investigate — either we're on battery and didn't notice, or it isn't holding charge.";
+                };
+              }
+              {
+                # nut_exporter returns no metrics at all when it
+                # can't reach upsd, so `up == 0` for the nut job is
+                # how we detect master loss-of-comms. The 10m `for`
+                # window is intentionally longer than upsmon's
+                # NOCOMM_WARNTIME (300s) so a pfSense package
+                # restart flap doesn't page.
+                alert = "UpsNoCommunication";
+                expr = ''up{job="nut"} == 0'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Lost communication with {{ $labels.ups_source }}-side UPS master";
+                  description = "nut_exporter for {{ $labels.ups_source }}-side UPS has failed to reach its master for 10m. If this is the router-side UPS, the pfSense NUT package may have crashed (known fragility — see #82). Loss of comms with both at once probably means LAN-down, not power.";
+                };
+              }
+              {
+                alert = "UpsHighLoad";
+                expr = "network_ups_tools_ups_load > 80";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "UPS {{ $labels.ups_source }} load high ({{ $value | humanize }}%)";
+                  description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) load above 80% for 15m. Runtime on battery will be shorter than rated; consider re-balancing loads across PDUs.";
+                };
+              }
+            ];
+          }
         ];
       };
     in
@@ -334,6 +415,8 @@ _: {
                 + "|victoriametrics|victorialogs|vmalert(-.+)?"
                 + "|alertmanager|grafana|vector|cadvisor|gatus"
                 + "|prometheus-(node|postgres|mysqld|redis)-exporter"
+                # NUT client + per-master exporters (issue #82).
+                + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using
                 # services.<app>): audiobookshelf, bazarr, jellyfin,
                 # kavita, komga, mealie, miniflux, paperless (multi-unit:
