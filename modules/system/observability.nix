@@ -49,6 +49,7 @@
     imports = with inputs.self.modules.nixos; [
       alertmanager
       grafana
+      snmp-exporter
       vector
       victorialogs
       victoriametrics

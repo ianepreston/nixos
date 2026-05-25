@@ -252,6 +252,34 @@ _: {
                   description = "NVMe drive on {{ $labels.instance }} ({{ $labels.chip }}) has been at or above its self-reported critical temperature (CCTEMP) for 5m. Currently {{ $value }}°C. Drive will throttle or shut down; intervene immediately.";
                 };
               }
+              # Synology HDD temperature. diskTemperature comes from
+              # the synology MIB via snmp_exporter. 50°C / 60°C are
+              # the conventional warning / critical thresholds for
+              # enterprise 7200rpm spinning drives (Seagate Exos and
+              # similar — rated max 60°C operating). diskID is hex-
+              # encoded ASCII because snmp_exporter treats Synology's
+              # OctetString as binary; "0x4469736B2031" = "Disk 1",
+              # cross-reference the dashboard to find the slot.
+              {
+                alert = "NASDiskTemperatureHigh";
+                expr = ''diskTemperature{job="snmp_synology"} > 50'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "NAS disk running hot ({{ $labels.diskID }})";
+                  description = "Synology disk {{ $labels.diskID }} has been above 50°C for 10m. Currently {{ $value }}°C. Check NAS airflow / fan health.";
+                };
+              }
+              {
+                alert = "NASDiskTemperatureCritical";
+                expr = ''diskTemperature{job="snmp_synology"} > 60'';
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "NAS disk at thermal limit ({{ $labels.diskID }})";
+                  description = "Synology disk {{ $labels.diskID }} has been above 60°C for 5m. Currently {{ $value }}°C. Drives are at or above the rated operating ceiling; intervene immediately.";
+                };
+              }
             ];
           }
           {
@@ -414,7 +442,7 @@ _: {
                 # own scrapers fall over.
                 + "|victoriametrics|victorialogs|vmalert(-.+)?"
                 + "|alertmanager|grafana|vector|cadvisor|gatus"
-                + "|prometheus-(node|postgres|mysqld|redis)-exporter"
+                + "|prometheus-(node|postgres|mysqld|redis|snmp)-exporter"
                 # NUT client + per-master exporters (issue #82).
                 + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using
@@ -546,6 +574,75 @@ _: {
               {
                 job_name = "gatus";
                 static_configs = [ { targets = [ "127.0.0.1:${toString gatusPort}" ]; } ];
+              }
+              # ========== External device SNMP ==========
+              # Multi-target scrape: one snmp_exporter, many devices.
+              # Targets list device IPs/hostnames in `static_configs`,
+              # then relabel_configs rewrite __address__ to the local
+              # exporter and stash the original into __param_target.
+              # The `modules` query string (repeatable) selects which
+              # generator profiles to walk; `auth` picks the auth name
+              # from snmp.yml (we kept the shipped `public_v2` slot
+              # with its community sed-substituted at build time).
+              #
+              # pfSense bsnmpd only exposes standard mibII (no UCD-SNMP),
+              # so we limit it to if_mib + system. Synology gets the
+              # dedicated synology module plus if_mib + system.
+              {
+                job_name = "snmp_pfsense";
+                metrics_path = "/snmp";
+                params = {
+                  module = [
+                    "if_mib"
+                    "system"
+                  ];
+                  auth = [ "public_v2" ];
+                };
+                static_configs = [ { targets = [ "192.168.10.1" ]; } ];
+                relabel_configs = [
+                  {
+                    source_labels = [ "__address__" ];
+                    target_label = "__param_target";
+                  }
+                  {
+                    source_labels = [ "__param_target" ];
+                    target_label = "instance";
+                  }
+                  {
+                    target_label = "__address__";
+                    replacement = "127.0.0.1:${toString config.services.prometheus.exporters.snmp.port}";
+                  }
+                ];
+              }
+              {
+                job_name = "snmp_synology";
+                metrics_path = "/snmp";
+                params = {
+                  module = [
+                    "synology"
+                    "if_mib"
+                    "system"
+                    "ucd_la_table"
+                    "ucd_memory"
+                    "ucd_system_stats"
+                  ];
+                  auth = [ "public_v2" ];
+                };
+                static_configs = [ { targets = [ "laconia.ipreston.net" ]; } ];
+                relabel_configs = [
+                  {
+                    source_labels = [ "__address__" ];
+                    target_label = "__param_target";
+                  }
+                  {
+                    source_labels = [ "__param_target" ];
+                    target_label = "instance";
+                  }
+                  {
+                    target_label = "__address__";
+                    replacement = "127.0.0.1:${toString config.services.prometheus.exporters.snmp.port}";
+                  }
+                ];
               }
             ];
           };
