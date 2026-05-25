@@ -36,7 +36,7 @@ _: {
 
       virtualisation.oci-containers.containers.watchstate = {
         # renovate: datasource=docker depName=arabcoders/watchstate
-        image = "arabcoders/watchstate:v1.8.4";
+        image = "arabcoders/watchstate:v1.8.5";
         ports = [ "127.0.0.1:${toString port}:8080" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
