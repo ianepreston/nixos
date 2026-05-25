@@ -36,11 +36,12 @@ _: {
   flake.modules.nixos.snmp-exporter =
     {
       config,
-      hostSpec,
+      inputs,
       pkgs,
       ...
     }:
     let
+      sopsFolder = "${inputs.nix-secrets}/sops";
       upstreamSnmpYml = builtins.readFile "${pkgs.prometheus-snmp-exporter.src}/snmp.yml";
       communityPlaceholder = config.sops.placeholder."snmp/community";
       # Both shipped auths (public_v1 and public_v2) have
@@ -53,7 +54,7 @@ _: {
     in
     {
       sops.secrets."snmp/community" = {
-        inherit (hostSpec) sopsFile;
+        sopsFile = "${sopsFolder}/server-shared.yaml";
       };
 
       # The prometheus exporters module defaults to DynamicUser=true,
