@@ -44,12 +44,13 @@ _: {
   flake.modules.nixos.nut-client =
     {
       config,
-      hostSpec,
+      inputs,
       lib,
       pkgs,
       ...
     }:
     let
+      sopsFolder = "${inputs.nix-secrets}/sops";
       nasHost = "laconia.ipreston.net";
       nasUpsName = "ups";
       nasUser = "monuser";
@@ -108,11 +109,11 @@ _: {
     {
       sops.secrets = {
         "nut/nas_password" = {
-          inherit (hostSpec) sopsFile;
+          sopsFile = "${sopsFolder}/server-shared.yaml";
           restartUnits = [ "upsmon.service" ];
         };
         "nut/router_password" = {
-          inherit (hostSpec) sopsFile;
+          sopsFile = "${sopsFolder}/server-shared.yaml";
           restartUnits = [ "upsmon.service" ];
         };
       };

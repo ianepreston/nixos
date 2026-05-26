@@ -20,10 +20,14 @@ _: {
     {
       config,
       hostSpec,
+      inputs,
       lib,
       pkgs,
       ...
     }:
+    let
+      sopsFolder = "${inputs.nix-secrets}/sops";
+    in
     {
       options.myCaddy.apps = lib.mkOption {
         type = lib.types.attrsOf (
@@ -95,7 +99,7 @@ _: {
         };
 
         sops.secrets."cloudflare/acme_token" = {
-          inherit (hostSpec) sopsFile;
+          sopsFile = "${sopsFolder}/server-shared.yaml";
           owner = "caddy";
           restartUnits = [ "caddy.service" ];
         };
