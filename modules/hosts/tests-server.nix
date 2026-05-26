@@ -25,7 +25,7 @@
     ]
     ++ (with inputs.self.modules.nixos; [
       server
-      server-apps
+      dev-server-apps
     ])
     ++ [
       {
