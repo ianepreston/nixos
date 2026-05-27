@@ -4,6 +4,7 @@
 _: {
   imports = [
     ./host-spec.nix
+    ./amos1.nix
     ./iso.nix
     ./luna.nix
     ./minimal-configuration.nix
