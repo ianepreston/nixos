@@ -17,6 +17,8 @@
       ./_amos1-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
+      nvidia-server
+      nvidia-exporter
       server
       prod-server-apps
     ])
