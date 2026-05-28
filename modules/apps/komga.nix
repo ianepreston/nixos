@@ -1,7 +1,7 @@
 # Komga - comic + manga server
 # Native services.komga from nixpkgs (Spring Boot service; user
 # overridden to server-${env}:servers so reads against
-# /mnt/content/{comics,books} land with the NFS UID the NAS expects).
+# /mnt/content/{Comics,books} land with the NFS UID the NAS expects).
 # OIDC against authentik via Spring's relaxed-binding env vars
 # (SPRING_SECURITY_OAUTH2_CLIENT_*).
 #

@@ -1,6 +1,6 @@
 # Mylar3 - comics manager
 # Container only; auth/caddy/homepage wired by apps/authentik.nix. Mounts
-# /mnt/content/comics so it can manage the user's comic library and
+# /mnt/content/Comics so it can manage the user's comic library and
 # /mnt/content/Downloads so post-processed grabs land in the right
 # place.
 _: {
@@ -36,7 +36,7 @@ _: {
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/mylar3:/config"
-          "/mnt/content/comics:/comics"
+          "/mnt/content/Comics:/comics"
           "/mnt/content/Downloads:/downloads"
         ];
         environment = {

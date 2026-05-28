@@ -46,7 +46,7 @@ _: {
         volumes = [
           "/var/lib/containers/kapowarr/db:/app/db"
           "/var/lib/containers/kapowarr/logs:/app/logs"
-          "/mnt/content/comics:/content"
+          "/mnt/content/Comics:/content"
           "/mnt/content/Downloads:/app/temp_downloads"
         ];
         environment = {
