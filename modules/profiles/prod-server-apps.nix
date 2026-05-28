@@ -12,7 +12,7 @@
 # block-level comment above `expectedPreservedDirs` for the rationale.
 { inputs, ... }:
 {
-  flake.modules.nixos.server-apps =
+  flake.modules.nixos.prod-server-apps =
     { config, lib, ... }:
     let
       # Native server-apps (and the one container-app whose volumes
@@ -55,8 +55,6 @@
         "/var/lib/bazarr"
         "/var/lib/jellyfin"
         "/var/lib/kavita"
-        "/var/lib/komga"
-        "/var/lib/mealie"
         "/var/lib/mosquitto"
         "/var/lib/private/matter-server"
         "/var/lib/paperless-ngx"
@@ -85,12 +83,9 @@
         grimmory
         homeassistant
         jellyfin
-        kapowarr
         kavita
-        komga
         matter-server
         manyfold
-        mealie
         miniflux
         mylar3
         paperless-ngx

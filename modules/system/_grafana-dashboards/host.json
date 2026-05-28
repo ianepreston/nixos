@@ -289,12 +289,12 @@
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
       "id": 13,
       "title": "NVMe temperatures",
-      "description": "Drive-reported thresholds (WCTEMP / CCTEMP from the NVMe identify-controller data) are overlaid as dashed lines per drive — these are the drive's own warning and critical temperatures, used directly by the HostNVMeTemperature{High,Critical} alerts.",
+      "description": "Drive-reported thresholds (WCTEMP / CCTEMP from the NVMe identify-controller data) are overlaid as dashed lines per drive — these are the drive's own warning and critical temperatures, used directly by the HostNVMeTemperature{High,Critical} alerts. Threshold overlays are filtered `< 200` to drop the raw 0xFFFE kelvin sentinel some drives emit for sub-sensors (temp2/temp3) that have no defined WCTEMP, which would otherwise show up as ~65261°C and blow out the y-axis.",
       "type": "timeseries",
       "targets": [
-        { "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}}", "refId": "A" },
-        { "expr": "node_hwmon_temp_max_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}} WCTEMP", "refId": "B" },
-        { "expr": "node_hwmon_temp_crit_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}} CCTEMP", "refId": "C" }
+        { "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=~\"nvme_.*\"}", "legendFormat": "{{chip}} {{sensor}}", "refId": "A" },
+        { "expr": "node_hwmon_temp_max_celsius{instance=\"$instance\",chip=~\"nvme_.*\"} < 200", "legendFormat": "{{chip}} {{sensor}} WCTEMP", "refId": "B" },
+        { "expr": "node_hwmon_temp_crit_celsius{instance=\"$instance\",chip=~\"nvme_.*\"} < 200", "legendFormat": "{{chip}} {{sensor}} CCTEMP", "refId": "C" }
       ]
     }
   ],

@@ -442,7 +442,7 @@ _: {
                 # own scrapers fall over.
                 + "|victoriametrics|victorialogs|vmalert(-.+)?"
                 + "|alertmanager|grafana|vector|cadvisor|gatus"
-                + "|prometheus-(node|postgres|mysqld|redis|snmp)-exporter"
+                + "|prometheus-(node|postgres|mysqld|redis|snmp|nvidia-gpu)-exporter"
                 # NUT client + per-master exporters (issue #82).
                 + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using

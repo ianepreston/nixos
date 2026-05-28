@@ -1,7 +1,7 @@
 # Kavita - reading server (manga, comics, books)
 # Native services.kavita from nixpkgs (.NET service running as the
 # shared server-${env}:servers user so reads against /mnt/content/
-# {comics,books} keep their NFS UID alignment). OIDC against authentik
+# {Comics,books} keep their NFS UID alignment). OIDC against authentik
 # is configured in Settings → Authentication → OpenID Connect in the
 # kavita UI; this module only stages the authentik side.
 #

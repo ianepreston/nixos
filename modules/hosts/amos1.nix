@@ -1,28 +1,26 @@
-# hpp-1 - Dev server
+# amos1 - Prod server
 {
   inputs,
   hostSpecs,
   ...
 }:
 {
-  flake.nixosConfigurations.hpp-1 = inputs.nixpkgs.lib.nixosSystem {
+  flake.nixosConfigurations.amos1 = inputs.nixpkgs.lib.nixosSystem {
     system = "x86_64-linux";
     specialArgs = {
       inherit inputs;
-      hostSpec = hostSpecs.hpp-1;
+      hostSpec = hostSpecs.amos1;
     };
     modules = [
-      ./_hpp-1-hardware.nix
+      ./_amos1-hardware.nix
       inputs.disko.nixosModules.disko
-      ./_hpp-1-disks.nix
+      ./_amos1-disks.nix
     ]
     ++ (with inputs.self.modules.nixos; [
-      intel-quicksync
+      nvidia-server
+      nvidia-exporter
       server
-      dev-server-apps
-      # Imported here rather than via a profile so a future move to a
-      # dedicated runner box is a one-line change. See #180.
-      github-runner
+      prod-server-apps
     ])
     ++ [
       {
@@ -35,7 +33,7 @@
         };
 
         networking = {
-          hostName = "hpp-1";
+          hostName = "amos1";
           networkmanager.enable = true;
         };
 
