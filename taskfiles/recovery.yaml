@@ -50,6 +50,10 @@ tasks:
       SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+      # Override for cross-environment restore (dev→prod or prod→dev).
+      # Defaults to /mnt/backups (same-environment); set to
+      # /mnt/<otherEnv>-backups when SOURCE_HOST lives in the other env.
+      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
       - |
         set -euo pipefail
@@ -57,7 +61,7 @@ tasks:
         ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
           'sudo bash -se' <<EOF
         set -euo pipefail
-        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
         PASS_FILE=/run/secrets/restic/password
 
         for u in {{.UNITS}}; do
@@ -96,6 +100,8 @@ tasks:
       # (e.g. /var/lib/<app> for native apps with on-disk state, or
       # /var/lib/containers/<app> for containerized + pg shapes).
       PATHS: '{{.PATHS | default ""}}'
+      # See _restore-volume for REPO_MOUNT semantics.
+      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
       - |
         set -euo pipefail
@@ -103,7 +109,7 @@ tasks:
         ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
           'sudo bash -se' <<EOF
         set -euo pipefail
-        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
         PASS_FILE=/run/secrets/restic/password
         DB={{.DB}}
 
@@ -155,6 +161,8 @@ tasks:
       # token "@env@" in `owner` is replaced with "server-<env>" where
       # <env> is detected from /etc/passwd on the target — lets one
       # SWAPS string apply on both server-dev and server-prod hosts.
+      # See _restore-volume for REPO_MOUNT semantics.
+      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
       - |
         set -euo pipefail
@@ -162,7 +170,7 @@ tasks:
         ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
           'sudo bash -se' <<EOF
         set -euo pipefail
-        REPO=/mnt/backups/restic/{{.SOURCE_HOST}}
+        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
         PASS_FILE=/run/secrets/restic/password
 
         SERVER_USER=\$(getent passwd server-prod >/dev/null && echo server-prod || echo server-dev)
@@ -241,6 +249,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   audiobookshelf:
     desc: Restore audiobookshelf (native + sqlite-quiesce)
@@ -256,6 +265,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: audiobookshelf, URL: 'http://127.0.0.1:13378/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
@@ -273,6 +283,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   bazarr:
     desc: Restore bazarr (native + sqlite-quiesce)
@@ -288,6 +299,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
@@ -305,6 +317,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   grimmory:
     desc: Restore grimmory (container volume)
@@ -319,6 +332,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   homeassistant:
     desc: Restore home-assistant (container volume)
@@ -333,6 +347,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   jellyfin:
     desc: Restore jellyfin (native + sqlite-quiesce)
@@ -348,6 +363,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: jellyfin, URL: 'http://127.0.0.1:8096/health', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
@@ -364,6 +380,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   kavita:
     desc: Restore kavita (native + sqlite-quiesce)
@@ -379,6 +396,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   komga:
     desc: Restore komga (native + sqlite-quiesce)
@@ -394,6 +412,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   maintainerr:
     desc: Restore maintainerr (container volume)
@@ -408,6 +427,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   matter-server:
     desc: Restore matter-server (native, DynamicUser state under /var/lib/private)
@@ -422,6 +442,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   mosquitto:
     desc: Restore mosquitto (native MQTT broker)
@@ -436,6 +457,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   manyfold:
     desc: Restore manyfold (containerized + postgres)
@@ -451,6 +473,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   mealie:
     desc: Restore mealie (native + postgres, peer auth)
@@ -466,6 +489,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: mealie, URL: 'http://127.0.0.1:9925/', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
@@ -482,6 +506,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   miniflux:
     desc: Restore miniflux (native + postgres only, no on-disk state)
@@ -496,6 +521,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: miniflux, URL: 'http://127.0.0.1:8089/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
@@ -512,6 +538,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   paperless-ngx:
     desc: Restore paperless-ngx (native + postgres, four units)
@@ -527,6 +554,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   pinchflat:
     desc: Restore pinchflat (native + sqlite-quiesce)
@@ -542,6 +570,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   profilarr:
     desc: Restore profilarr (container volume)
@@ -556,6 +585,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   prowlarr:
     desc: Restore prowlarr (native + sqlite-quiesce)
@@ -571,6 +601,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   radarr:
     desc: Restore radarr (native + sqlite-quiesce)
@@ -586,6 +617,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   readeck:
     desc: Restore readeck (native + sqlite-quiesce)
@@ -601,6 +633,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   readmeabook:
     desc: Restore readmeabook (containerized + postgres)
@@ -616,6 +649,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   sabnzbd:
     desc: Restore sabnzbd (native, volume only)
@@ -630,6 +664,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   seerr:
     desc: Restore seerr (container volume)
@@ -644,6 +679,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   shelfarr:
     desc: Restore shelfarr (container volume)
@@ -658,6 +694,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   sonarr:
     desc: Restore sonarr (native + sqlite-quiesce)
@@ -673,6 +710,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   spierscraper:
     desc: Restore spierscraper cache (timer-driven container; nothing to stop)
@@ -687,6 +725,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   tandoor:
     desc: Restore tandoor (containerized + postgres)
@@ -702,6 +741,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   unifi:
     desc: Restore unifi-os-server (container, state outside /var/lib/containers)
@@ -716,6 +756,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   valheim:
     desc: Restore valheim (container volume — config + cache)
@@ -730,6 +771,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   watchstate:
     desc: Restore watchstate (container volume)
@@ -744,6 +786,7 @@ tasks:
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
 
   # ---------------------------------------------------------------------------
   # Catastrophic restore — every app
