@@ -506,28 +506,45 @@
 
           # authentik-nix hardcodes DynamicUser=true across server/worker/
           # migrate (and the optional outpost units) with no exposed user
-          # override. We can't cleanly pin a static UID the way prowlarr/
-          # mealie/readeck do without `mkForce`-ing every unit and tracking
-          # the set as the flake evolves. Instead, heal the persisted
-          # state dir's ownership to whatever UID systemd allocated this
-          # boot — so a fresh `bootstrap:reinstall` against preserved
-          # /persist self-recovers. The dynamic UID is registered in NSS
-          # via nss-systemd as soon as the unit is loaded, so `id` resolves
-          # pre-start; on the very first start `id` fails and the chown
-          # is skipped (authentik creates its dir with the freshly
-          # allocated UID — fine).
-          systemd.services.authentik-state-chown = {
-            description = "Re-own /var/lib/private/authentik to the current dynamic authentik UID";
-            wantedBy = restartAuthentik;
-            before = restartAuthentik;
-            serviceConfig.Type = "oneshot";
-            script = ''
-              if uid=$(${pkgs.coreutils}/bin/id -u authentik 2>/dev/null) \
-              && gid=$(${pkgs.coreutils}/bin/id -g authentik 2>/dev/null); then
-                ${pkgs.coreutils}/bin/chown -R "$uid:$gid" /var/lib/private/authentik
-              fi
-            '';
-          };
+          # override. We can't cleanly pin a static UID without `mkForce`-ing
+          # every unit and tracking the set as the flake evolves.
+          #
+          # On systemd 258+, DynamicUser + StateDirectory mounts the state
+          # dir with `idmapped` (visible in /proc/<pid>/mountinfo). The
+          # on-disk uid stays at a fixed sentinel (nobody/65534); the
+          # kernel translates that to the dynamic uid (currently 65454)
+          # inside the unit's mount namespace, so authentik sees files as
+          # its own and writes new ones that land back at 65534 on disk.
+          # When the invariant holds, no chown is needed.
+          #
+          # The hazard is stale state that pre-dates the idmap or got
+          # rewritten outside the idmapped mount: files literally owned
+          # by 65454 on disk (which is what authentik saw under earlier
+          # systemd, or what a `chown -R authentik` run from the host's
+          # mount namespace would write). uid 65454 on disk has no reverse
+          # mapping, so the kernel surfaces it as the overflow uid (nobody)
+          # inside the namespace, and authentik can't write to its own
+          # prometheus counters — the failure mode that took hpp-1 down
+          # on May 27. The previous `authentik-state-chown` unit was
+          # supposed to heal this but ran `Before=authentik.service`
+          # (when nss-systemd has no record of the dynamic user), so
+          # `id authentik` failed, the guarding `if` silently skipped,
+          # and the unit reported success.
+          #
+          # ExecStartPre runs inside the unit's mount namespace after
+          # systemd has set up the idmap and registered the dynamic uid
+          # with nss-systemd. `chown authentik:authentik` through the
+          # idmapped mount writes the on-disk sentinel uid back, healing
+          # any stale 65454 inodes in place. The `+` prefix runs as root
+          # so the chown can cross arbitrary ownership boundaries. Migrate
+          # runs Before=server/worker, so healing here covers the stack;
+          # a chown failure now fails the unit and blocks ExecStart
+          # instead of silently letting authentik come up wedged.
+          systemd.services.authentik-migrate.serviceConfig.ExecStartPre = [
+            "+${pkgs.writeShellScript "authentik-state-chown" ''
+              ${pkgs.coreutils}/bin/chown -R authentik:authentik /var/lib/private/authentik
+            ''}"
+          ];
 
           # Real readiness boundary for the authentik stack. The three
           # native units (server / worker / migrate) are all Type=simple,
