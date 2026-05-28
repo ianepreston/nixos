@@ -128,6 +128,18 @@
         n: "- !Find [authentik_providers_proxy.proxyprovider, [name, ${n}]]"
       ) fwAppNames;
 
+      # `config.authentik_host` is the base URL the outpost uses to reach
+      # the authentik server; `authentik_host_browser` is the base URL
+      # the outpost emits in 302 Location headers for unauthenticated
+      # requests. With both unset, the outpost falls back to its bind
+      # address (http://0.0.0.0:9000), which a browser can't resolve
+      # and which leaks an HTTP hop into otherwise-HTTPS auth flows.
+      # The default has been silently broken on every fresh authentik
+      # install — hpp-1 only worked because the field was set by hand
+      # in the UI before this blueprint existed. Encoding it here makes
+      # forward-auth deterministic across hosts (and incidentally lets
+      # gatus's external probes follow the redirect over HTTPS, so the
+      # cert-expiration condition succeeds).
       outpostEntry = ''
         - model: authentik_outposts.outpost
           identifiers:
@@ -135,7 +147,10 @@
           attrs:
             type: proxy
             providers:
-              ${outpostProviders}'';
+              ${outpostProviders}
+            config:
+              authentik_host: https://authentik.${hostSpec.serverDomain}
+              authentik_host_browser: https://authentik.${hostSpec.serverDomain}'';
 
       fwBlueprintContent = ''
         version: 1
