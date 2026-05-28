@@ -654,6 +654,11 @@
             '';
           };
 
+          # User blueprints (names, emails, group bindings) live in the
+          # private nix-secrets repo rather than this public flake.
+          # `!Env IAN_PASSWORD` still resolves from sops.templates."authentik.env".
+          myAuthentik.extraBlueprints = [ "${inputs.nix-secrets}/authentik-blueprints" ];
+
           myHomepage.tiles.Authentik = {
             group = "Infrastructure";
             href = "https://${authentikHost}";
