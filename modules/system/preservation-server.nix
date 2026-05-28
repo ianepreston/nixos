@@ -123,11 +123,23 @@
           # mode = 0600 for the private key: preservation's tmpfiles
           # default is 0644 and sshd refuses to load a key that's
           # group/world-readable.
+          #
+          # inInitrd = true on both: sops derives its age key from the
+          # ed25519 host key, and the `setupSecretsForUsers` activation
+          # snippet runs in the initrd (because boot.initrd.systemd.enable
+          # is on). Without the bind-mount firing in initrd, sops sees
+          # no usable key, fails to decrypt `passwords/<user>`, and the
+          # account boots with shadow set to `!` — console login and
+          # `passwd` then reject every input.
           {
             file = "/etc/ssh/ssh_host_ed25519_key";
             mode = "0600";
+            inInitrd = true;
           }
-          "/etc/ssh/ssh_host_ed25519_key.pub"
+          {
+            file = "/etc/ssh/ssh_host_ed25519_key.pub";
+            inInitrd = true;
+          }
           # journald uses this to namespace journals + as systemd's
           # stable machine identity.
           {
