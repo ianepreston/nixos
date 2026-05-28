@@ -54,8 +54,17 @@ _: {
         checkConfig = false;
         configText = ''
           route:
+            # Group by alertname AND `name` so per-endpoint alerts
+            # (e.g. GatusEndpointDown) get their own group instead of
+            # collapsing every endpoint into one. Without `name`,
+            # alertmanager only sends a "resolved" notification when
+            # every endpoint in the group has cleared — easy to miss a
+            # single-service recovery while others stay firing.
+            # `name` is a no-op label on alerts that don't carry it
+            # (InstanceDown, FilesystemAlmostFull, …) so adding it is
+            # safe across the rule set.
             receiver: discord
-            group_by: [alertname]
+            group_by: [alertname, name]
             group_wait: 30s
             group_interval: 5m
             repeat_interval: 4h
