@@ -31,9 +31,15 @@
 #
 # IoT VLAN access: HA needs L2 reachability on vlan30 for mDNS /
 # discovery / broadcast traffic. Topology:
-#   enp1s0 (host trunk) ──┬── (untagged mgmt VLAN, host's primary IP)
-#                         └── iot (host VLAN sub-iface, no host IP)
-#                              └── macvlan child in HA netns (DHCP)
+#   <hostSpec.iotTrunkInterface> ──┬── (untagged mgmt VLAN, host's primary IP)
+#                                  └── iot (host VLAN sub-iface, no host IP)
+#                                       └── macvlan child in HA netns (DHCP)
+# The trunk NIC name varies per host (PCI-topology-dependent predictable
+# names) so it's threaded through hostSpec; on hpp-1 it's enp1s0, on
+# amos1 it's enp4s0. When the field is null (e.g. quickemu test VMs
+# with no IoT VLAN), the VLAN/macvlan/dhcp-proxy stack is skipped and
+# HA runs on the podman bridge only — discovery via vlan30 is lost,
+# but the container starts and is probeable through Caddy.
 # HA keeps its primary NIC on the default podman bridge so Caddy still
 # reaches it on 127.0.0.1:8123 — only the second NIC lives on vlan30.
 # DHCP is via netavark's dhcp-proxy so prod and dev pick up distinct
@@ -48,12 +54,14 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
     let
       homeassistantHost = "homeassistant.${hostSpec.serverDomain}";
       port = 8123;
+      iotEnabled = hostSpec.iotTrunkInterface != null;
     in
     {
       # MQTT broker user. ACL grants HA full access — HA bridges every
@@ -80,12 +88,12 @@ _: {
         displayName = "Home Assistant";
       };
 
-      networking = {
+      networking = lib.mkIf iotEnabled {
         # Tagged sub-interface for vlan30 on the host trunk. Host gets
         # no IP here — only HA does, via the macvlan child below.
         vlans.iot = {
           id = 30;
-          interface = "enp1s0";
+          interface = hostSpec.iotTrunkInterface;
         };
         interfaces.iot.useDHCP = false;
         # NetworkManager would otherwise probe the trunk and fight us
@@ -100,7 +108,7 @@ _: {
           "d /var/lib/containers/homeassistant 0750 root root -"
         ];
 
-        services = {
+        services = lib.mkIf iotEnabled {
           # netavark ships dhcp-proxy as a subcommand; no NixOS module
           # for it yet, so we run it directly. Listens on
           # /run/podman/nv-proxy.sock and brokers DHCP leases for
@@ -171,12 +179,10 @@ _: {
       virtualisation.oci-containers.containers.homeassistant = {
         # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
         image = "ghcr.io/home-assistant/home-assistant:2026.5";
-        # Two NICs: the default podman bridge for Caddy/host port
-        # mapping, and the macvlan on vlan30 for IoT discovery.
-        networks = [
-          "podman"
-          "iot"
-        ];
+        # Default podman bridge for Caddy/host port mapping; when the
+        # host has an IoT trunk NIC configured, also attach the macvlan
+        # on vlan30 for discovery traffic.
+        networks = [ "podman" ] ++ lib.optional iotEnabled "iot";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/homeassistant:/config"

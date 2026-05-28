@@ -67,6 +67,11 @@
               default = null;
               description = "Static LAN IPv4 address for this server. Used by apps that need to advertise an L3 address other clients on the same subnet can reach (e.g. UniFi OS Server's inform URL). null on non-server hosts.";
             };
+            iotTrunkInterface = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Name of the physical NIC that carries the tagged IoT VLAN (vlan30) for Home Assistant's macvlan child. Host-specific because predictable interface names depend on PCI topology. null on hosts that don't run HA, or that run HA without IoT VLAN access (e.g. test VMs).";
+            };
             isWork = lib.mkOption {
               type = lib.types.bool;
               default = false;
