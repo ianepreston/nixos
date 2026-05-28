@@ -306,6 +306,15 @@ tasks:
         sops_yaml="$secrets_dir/.sops.yaml"
         host="{{.HOST}}"
 
+        # Server hosts (serverEnvironment set in hostSpecs/<host>.nix)
+        # also get keyed into server-shared.yaml so they can decrypt
+        # cross-server secrets (e.g. the snmp community). See issue #248.
+        is_server=false
+        if [ -f "$git_root/hostSpecs/${host}.nix" ] && \
+           grep -q 'serverEnvironment = "' "$git_root/hostSpecs/${host}.nix"; then
+          is_server=true
+        fi
+
         # Derive age key from the live host
         echo -e "\x1B[32m[+] Deriving age key from {{.DEST}}\x1B[0m"
         host_age_key=$(ssh-keyscan -4 -p {{.SSH_PORT}} -t ed25519 {{.DEST}} 2>/dev/null \
@@ -327,8 +336,16 @@ tasks:
           sed -i "/^creation_rules:/i\\    - \&${host} $host_age_key" "$sops_yaml"
           # Add *host to shared.yaml's age list (after the last existing entry)
           sed -i "/path_regex: shared/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
-          # Deduplicate the shared block in case of double-insertion
-          awk -v pat="          - *${host}" 'BEGIN{c=0} $0==pat{c++;if(c>1)next} {print}' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
+          # Server hosts also get added to server-shared.yaml's rule
+          if [ "$is_server" = true ]; then
+            sed -i "/path_regex: server-shared/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
+          fi
+          # Deduplicate per-block (the seds above insert after every existing entry)
+          awk -v pat="          - *${host}" '
+            /^[[:space:]]*- path_regex:/ { c = 0 }
+            $0 == pat { c++; if (c > 1) next }
+            { print }
+          ' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
           # Append creation rule for host.yaml
           printf '  - path_regex: %s\\.yaml$\n    key_groups:\n      - age:\n          - *ipreston\n          - *%s\n' "$host" "$host" >> "$sops_yaml"
         fi
@@ -344,7 +361,9 @@ tasks:
         host_pubkey="$git_root/modules/profiles/_ssh-keys/id_${host}.pub"
         if [ -f "$host_secrets" ]; then
           echo -e "\x1B[33m[~] $host_secrets already exists — rekeying envelope to current .sops.yaml\x1B[0m"
-          ( cd "$secrets_dir" && sops updatekeys --yes "sops/${host}.yaml" )
+          rekey_files=( "sops/${host}.yaml" )
+          [ "$is_server" = true ] && rekey_files+=( "sops/server-shared.yaml" )
+          ( cd "$secrets_dir" && sops updatekeys --yes "${rekey_files[@]}" )
         else
           echo -e "\x1B[32m[+] Creating $host_secrets with generated SSH key\x1B[0m"
           temp=$(mktemp -d)
@@ -362,7 +381,9 @@ tasks:
         # Re-encrypt shared secrets for the new host
         echo -e "\x1B[32m[+] Updating shared secrets keys\x1B[0m"
         cd "$secrets_dir"
-        sops updatekeys --yes sops/shared.yaml
+        shared_files=( sops/shared.yaml )
+        [ "$is_server" = true ] && shared_files+=( sops/server-shared.yaml )
+        sops updatekeys --yes "${shared_files[@]}"
 
         # Commit
         echo -e "\x1B[32m[+] Committing nix-secrets changes\x1B[0m"
