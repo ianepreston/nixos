@@ -97,6 +97,13 @@ _: {
             # path at runtime, so the password never lands in the
             # rendered grafana.ini in /nix/store.
             admin_password = "$__file{${config.sops.secrets."grafana/bootstrap_password".path}}";
+            # 26.05 drops the upstream default for `secret_key`. Pinning
+            # the historical default keeps any DB-encrypted material in
+            # /var/lib/grafana/grafana.db readable across the upgrade.
+            # Datasources/dashboards here are file-provisioned, so the
+            # only material protected by this key is incidental — no
+            # special protection needed, no rotation required.
+            secret_key = "SW2YcwTIb9zpOOhoPsMm"; # pragma: allowlist secret
           };
           # OIDC against Authentik. `role_attribute_path` is JMESPath
           # over the id_token claims — `Infrastructure` group → Admin,

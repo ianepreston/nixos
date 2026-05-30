@@ -16,6 +16,9 @@ _: {
         # Often required; don't worry as they are isolated in Neovim environment
         withPython3 = true;
         withNodeJs = true;
+        # Default in HM 26.05 is `false`; set explicitly to silence the
+        # `home.stateVersion < 26.05` migration warning.
+        withRuby = true;
 
         # Packages available within Neovim during runtime. Put your LSP Servers, formatters, linters, etc.
         extraPackages = with pkgs; [
@@ -58,16 +61,25 @@ _: {
         ];
       };
 
-      # Symlink your Neovim configuration (or delete the line to manage .config/nvim directly)
-      xdg.configFile."nvim".source =
-        config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/src/nixos/modules/programs/neovim";
+      # Symlink your Neovim configuration (or delete the line to manage .config/nvim directly).
+      # As of HM 26.05, the upstream `programs.neovim` module always emits
+      # `xdg.configFile."nvim/init.lua"` (even just to set
+      # `vim.g.loaded_*_provider=0`). That child entry collides with this
+      # whole-directory symlink in the home-manager-files build (the install
+      # script checks every target stays under $HOME after realpath). Force
+      # the child off so only our symlink survives.
+      xdg.configFile = {
+        "nvim".source =
+          config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/src/nixos/modules/programs/neovim";
+        "nvim/init.lua".enable = lib.mkForce false;
 
-      # Make yamlfmt not fight with yamllint
-      xdg.configFile."yamlfmt/.yamlfmt".text = ''
-        formatter:
-          type: basic
-          include_document_start: true
-      '';
+        # Make yamlfmt not fight with yamllint
+        "yamlfmt/.yamlfmt".text = ''
+          formatter:
+            type: basic
+            include_document_start: true
+        '';
+      };
       # Tools available during activation
       home.extraActivationPath = with pkgs; [
         git
