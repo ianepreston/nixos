@@ -12,10 +12,14 @@
 # reproduce that behaviour with a one-shot that patches sabnzbd.ini
 # before sabnzbd.service comes up. The oneshot also pins
 # `host = 0.0.0.0` so co-located containers (e.g. shelfarr) can reach
-# sabnzbd via `host.containers.internal:8080` — without that the
+# sabnzbd via `host.containers.internal:<port>` — without that the
 # service binds to 127.0.0.1 only and bridge traffic gets refused at
 # the TCP layer. `host.containers.internal` is whitelisted alongside
 # the public FQDN for the same reason.
+#
+# Port is 18080, not the sabnzbd default 8080, because UniFi's
+# adoption inform endpoint owns :8080 on this host. See
+# modules/apps/unifi.nix.
 _: {
   flake.modules.nixos.sabnzbd =
     {
@@ -24,7 +28,7 @@ _: {
       ...
     }:
     let
-      port = 8080;
+      port = 18080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = "server-${hostSpec.serverEnvironment}";
       iniFile = "/var/lib/sabnzbd/sabnzbd.ini";
@@ -154,6 +158,7 @@ _: {
           if [ -f "$ini" ]; then
             ensure_section misc
             pin_kv misc host 0.0.0.0
+            pin_kv misc port ${toString port}
             pin_kv misc host_whitelist '${sabnzbdHost},host.containers.internal'
             ensure_section apprise
             pin_kv apprise apprise_enable 1
@@ -163,6 +168,7 @@ _: {
             cat > "$ini" <<EOF
           [misc]
           host = 0.0.0.0
+          port = ${toString port}
           host_whitelist = ${sabnzbdHost},host.containers.internal
 
           [apprise]

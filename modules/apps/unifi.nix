@@ -19,9 +19,10 @@
 # so the Caddy `transport http { tls; tls_insecure_skip_verify }`
 # block is required for the proxy to talk to it.
 #
-# UAP device inform is remapped from the upstream default 8080 to
-# host port 18080 because sabnzbd already owns :8080 on this host.
-# APs must be adopted with `set-inform http://<serverLanIp>:18080/inform`.
+# APs are adopted with the upstream-default
+# `set-inform http://<serverLanIp>:8080/inform`. Sabnzbd, which used to
+# own :8080 on this host, has been moved to :18080 so UniFi can keep
+# the default inform port (matches every doc / mobile-app assumption).
 { inputs, ... }:
 {
   flake.modules.nixos.unifi =
@@ -53,7 +54,6 @@
         openFirewallUiPort = false;
         openFirewallServicePorts = true;
         ports.ui = null;
-        ports.uapDeviceInform = 18080;
         extraPorts = [ "127.0.0.1:11443:443" ];
       };
 
