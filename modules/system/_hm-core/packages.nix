@@ -24,7 +24,7 @@ in
     go-task
     yq-go
     shellcheck
-    nixfmt-rfc-style
+    nixfmt
     sops
     age
     ssh-to-age

@@ -8,14 +8,17 @@
 # Sabnzbd refuses any HTTP request whose Host header doesn't match the
 # local hostname or an entry in `host_whitelist`. The home-operations
 # container baked an entrypoint that re-applied
-# SABNZBD__HOST_WHITELIST_ENTRIES to the .ini on every start; we
-# reproduce that behaviour with a one-shot that patches sabnzbd.ini
-# before sabnzbd.service comes up. The oneshot also pins
-# `host = 0.0.0.0` so co-located containers (e.g. shelfarr) can reach
-# sabnzbd via `host.containers.internal:<port>` — without that the
-# service binds to 127.0.0.1 only and bridge traffic gets refused at
-# the TCP layer. `host.containers.internal` is whitelisted alongside
-# the public FQDN for the same reason.
+# SABNZBD__HOST_WHITELIST_ENTRIES to the .ini on every start; we get
+# the same effect by pinning host/host_whitelist via
+# `services.sabnzbd.settings` — the module's preStart merges these on
+# top of the existing on-disk ini (allowConfigWrite is true on
+# stateVersion < 26.05, so user-editable values like usenet provider
+# credentials are preserved). `host = 0.0.0.0` lets co-located
+# containers (e.g. shelfarr) reach sabnzbd via
+# `host.containers.internal:<port>`; without that the service binds
+# to 127.0.0.1 only and bridge traffic gets refused at the TCP layer.
+# `host.containers.internal` is whitelisted alongside the public FQDN
+# for the same reason.
 #
 # Port is 18080, not the sabnzbd default 8080, because UniFi's
 # adoption inform endpoint owns :8080 on this host. See
@@ -31,7 +34,6 @@ _: {
       port = 18080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = "server-${hostSpec.serverEnvironment}";
-      iniFile = "/var/lib/sabnzbd/sabnzbd.ini";
       serverUid = config.users.users.${sabnzbdUser}.uid;
       serverGid = config.users.groups.servers.gid;
       appriseConfigDir = "/var/lib/containers/apprise/config";
@@ -57,6 +59,24 @@ _: {
         enable = true;
         user = sabnzbdUser;
         group = "servers";
+        # Opt out of the stateVersion < 26.05 default that points
+        # configFile at /var/lib/sabnzbd/sabnzbd.ini (deprecated). With
+        # null + allowConfigWrite=true (also a stateVersion < 26.05
+        # default), the module's preStart merges existing-ini ⊕ settings
+        # ⊕ secretFiles on each start — same behaviour as the old
+        # host_whitelist oneshot, minus the bespoke sed.
+        configFile = null;
+        settings = {
+          misc = {
+            host = "0.0.0.0";
+            inherit port;
+            host_whitelist = "${sabnzbdHost},host.containers.internal";
+          };
+          apprise = {
+            apprise_enable = 1;
+            apprise_urls = appriseUrl;
+          };
+        };
       };
 
       preservation.preserveAt."/persist".directories = [
@@ -121,64 +141,5 @@ _: {
         '';
       };
 
-      # Reapplies host + host_whitelist on every start (idempotent),
-      # matching what the home-operations entrypoint used to do via
-      # SABNZBD__HOST_WHITELIST_ENTRIES. Creates a minimal [misc] block
-      # if the .ini is missing entirely (clean install).
-      systemd.services.sabnzbd-host-whitelist = {
-        description = "Pin sabnzbd bind host and host_whitelist";
-        before = [ "sabnzbd.service" ];
-        wantedBy = [ "sabnzbd.service" ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-        };
-        script = ''
-          set -e
-          ini=${iniFile}
-          # Scope substitution to one section — sabnzbd's `[servers]`
-          # subsections also use `host = …` (the upstream usenet
-          # provider), and an unscoped sed would overwrite those.
-          pin_kv() {
-            section=$1
-            key=$2
-            val=$3
-            if sed -n "/^\[$section\]/,/^\[/p" "$ini" | grep -q "^$key *="; then
-              sed -i "/^\[$section\]/,/^\[/{s|^$key *=.*|$key = $val|}" "$ini"
-            else
-              sed -i "/^\[$section\]/a $key = $val" "$ini"
-            fi
-          }
-          ensure_section() {
-            section=$1
-            if ! grep -q "^\[$section\]" "$ini"; then
-              printf '\n[%s]\n' "$section" >> "$ini"
-            fi
-          }
-          if [ -f "$ini" ]; then
-            ensure_section misc
-            pin_kv misc host 0.0.0.0
-            pin_kv misc port ${toString port}
-            pin_kv misc host_whitelist '${sabnzbdHost},host.containers.internal'
-            ensure_section apprise
-            pin_kv apprise apprise_enable 1
-            pin_kv apprise apprise_urls '${appriseUrl}'
-          else
-            install -d -m 0750 -o ${sabnzbdUser} -g servers /var/lib/sabnzbd
-            cat > "$ini" <<EOF
-          [misc]
-          host = 0.0.0.0
-          port = ${toString port}
-          host_whitelist = ${sabnzbdHost},host.containers.internal
-
-          [apprise]
-          apprise_enable = 1
-          apprise_urls = ${appriseUrl}
-          EOF
-            chown ${sabnzbdUser}:servers "$ini"
-            chmod 0640 "$ini"
-          fi
-        '';
-      };
     };
 }
