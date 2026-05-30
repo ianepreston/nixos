@@ -3,32 +3,28 @@
 _: {
   flake.modules.homeManager.ssh-homelan = _: {
     programs.ssh = {
-      matchBlocks = {
+      settings = {
         "switch" = {
-          hostname = "192.168.10.2";
-          user = "admin";
-          extraOptions = {
-            "KexAlgorithms" = "+diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1";
-            "PubkeyAcceptedKeyTypes" = "+ssh-rsa";
-            "HostKeyAlgorithms" = "+ssh-rsa";
-            "Ciphers" = "+3des-cbc";
-          };
+          HostName = "192.168.10.2";
+          User = "admin";
+          KexAlgorithms = "+diffie-hellman-group1-sha1,diffie-hellman-group-exchange-sha1";
+          PubkeyAcceptedKeyTypes = "+ssh-rsa";
+          HostKeyAlgorithms = "+ssh-rsa";
+          Ciphers = "+3des-cbc";
         };
         "behemoth" = {
-          hostname = "192.168.10.1";
-          user = "admin";
-          port = 2222;
+          HostName = "192.168.10.1";
+          User = "admin";
+          Port = 2222;
         };
         "laconia" = {
-          hostname = "laconia.ipreston.net";
-          user = "ipreston";
-          port = 2222;
-          extraOptions = {
-            "RequestTTY" = "yes";
-            "RemoteCommand" = "TERM=xterm-256color bash -l";
-            "IgnoreUnknown" = "WarnWeakCrypto";
-            "WarnWeakCrypto" = "no-pq-kex";
-          };
+          HostName = "laconia.ipreston.net";
+          User = "ipreston";
+          Port = 2222;
+          RequestTTY = "yes";
+          RemoteCommand = "TERM=xterm-256color bash -l";
+          IgnoreUnknown = "WarnWeakCrypto";
+          WarnWeakCrypto = "no-pq-kex";
         };
       };
     };
