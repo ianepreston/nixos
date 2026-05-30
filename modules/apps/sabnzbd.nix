@@ -52,7 +52,19 @@ _: {
           group = "Acquisition";
           icon = "sabnzbd";
           description = "Usenet downloader";
+          widget = {
+            type = "sabnzbd";
+            url = "http://localhost:${toString port}";
+            key = "{{HOMEPAGE_VAR_SABNZBD_API_KEY}}";
+          };
         };
+      };
+
+      myHomepage.credentials.SABNZBD_API_KEY = {
+        sourceUnit = "sabnzbd.service";
+        readScript = ''
+          awk -F= '/^[[:space:]]*api_key[[:space:]]*=/ { gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit }' /var/lib/sabnzbd/sabnzbd.ini
+        '';
       };
 
       services.sabnzbd = {

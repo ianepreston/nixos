@@ -152,6 +152,27 @@ _: {
         href = "https://${jellyfinHost}";
         icon = "jellyfin";
         description = "Media server";
+        widget = {
+          type = "jellyfin";
+          url = "http://localhost:${toString jellyfinPort}";
+          key = "{{HOMEPAGE_VAR_JELLYFIN_API_KEY}}";
+          enableBlocks = true;
+          enableNowPlaying = true;
+        };
+      };
+
+      # Jellyfin API keys live in the ApiKeys table of jellyfin.db; the
+      # widget reader looks for a row named "homepage". Create one
+      # per-host via Dashboard → API Keys (the SSO user "homepage"
+      # convention works for this since the API key name is just a
+      # label). Until the row exists the reader emits nothing and the
+      # widget shows an error; homepage itself stays up.
+      myHomepage.credentials.JELLYFIN_API_KEY = {
+        sourceUnit = "jellyfin.service";
+        readScript = ''
+          sqlite3 -readonly /var/lib/jellyfin/data/jellyfin.db \
+            "SELECT AccessToken FROM ApiKeys WHERE Name = 'homepage' LIMIT 1;"
+        '';
       };
 
       environment.systemPackages = [ trickplayCleanup ];

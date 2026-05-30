@@ -24,7 +24,19 @@ _: {
           group = "Acquisition";
           icon = "prowlarr";
           description = "Indexer manager";
+          widget = {
+            type = "prowlarr";
+            url = "http://localhost:${toString port}";
+            key = "{{HOMEPAGE_VAR_PROWLARR_API_KEY}}";
+          };
         };
+      };
+
+      myHomepage.credentials.PROWLARR_API_KEY = {
+        sourceUnit = "prowlarr.service";
+        readScript = ''
+          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/prowlarr/config.xml
+        '';
       };
 
       services.prowlarr = {

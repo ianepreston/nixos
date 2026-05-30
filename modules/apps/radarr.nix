@@ -24,7 +24,20 @@ _: {
           group = "Acquisition";
           icon = "radarr";
           description = "Movie manager";
+          widget = {
+            type = "radarr";
+            url = "http://localhost:7878";
+            key = "{{HOMEPAGE_VAR_RADARR_API_KEY}}";
+            enableQueue = true;
+          };
         };
+      };
+
+      myHomepage.credentials.RADARR_API_KEY = {
+        sourceUnit = "radarr.service";
+        readScript = ''
+          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/radarr/.config/Radarr/config.xml
+        '';
       };
 
       services.radarr = {

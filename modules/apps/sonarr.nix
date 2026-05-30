@@ -24,7 +24,20 @@ _: {
           group = "Acquisition";
           icon = "sonarr";
           description = "TV manager";
+          widget = {
+            type = "sonarr";
+            url = "http://localhost:8989";
+            key = "{{HOMEPAGE_VAR_SONARR_API_KEY}}";
+            enableQueue = true;
+          };
         };
+      };
+
+      myHomepage.credentials.SONARR_API_KEY = {
+        sourceUnit = "sonarr.service";
+        readScript = ''
+          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/sonarr/.config/NzbDrone/config.xml
+        '';
       };
 
       services.sonarr = {

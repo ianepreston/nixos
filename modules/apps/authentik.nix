@@ -198,6 +198,15 @@
             type = lib.types.str;
             description = "Short blurb shown beneath the app on the homepage tile.";
           };
+          widget = lib.mkOption {
+            type = lib.types.nullOr (lib.types.attrsOf lib.types.unspecified);
+            default = null;
+            description = ''
+              Optional homepage widget block. Passed through to the
+              generated tile via `myHomepage.tiles.<name>.widget`. See
+              https://gethomepage.dev/widgets/ for per-type fields.
+            '';
+          };
         };
       });
 
@@ -733,11 +742,17 @@
             }
           ) fwApps;
 
-          myHomepage.tiles = lib.mapAttrs (_name: app: {
-            inherit (app.homepage) group icon description;
-            inherit (app) displayName;
-            href = "https://${app.host}";
-          }) (lib.filterAttrs (_: app: app.homepage != null) fwApps);
+          myHomepage.tiles = lib.mapAttrs (
+            _name: app:
+            {
+              inherit (app.homepage) group icon description;
+              inherit (app) displayName;
+              href = "https://${app.host}";
+            }
+            // lib.optionalAttrs (app.homepage.widget != null) {
+              inherit (app.homepage) widget;
+            }
+          ) (lib.filterAttrs (_: app: app.homepage != null) fwApps);
         })
 
         (lib.mkIf (oidcApps != { }) {
@@ -812,11 +827,17 @@
             appName: app: renderedBlueprintDir appName app.blueprintsDir
           ) oidcApps;
 
-          myHomepage.tiles = lib.mapAttrs (name: app: {
-            inherit (app.homepage) group icon description;
-            inherit (app) displayName;
-            href = "https://${name}.${hostSpec.serverDomain}";
-          }) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
+          myHomepage.tiles = lib.mapAttrs (
+            name: app:
+            {
+              inherit (app.homepage) group icon description;
+              inherit (app) displayName;
+              href = "https://${name}.${hostSpec.serverDomain}";
+            }
+            // lib.optionalAttrs (app.homepage.widget != null) {
+              inherit (app.homepage) widget;
+            }
+          ) (lib.filterAttrs (_: app: app.homepage != null) oidcApps);
         })
 
         # LDAP outpost. Blueprint creates the LDAP provider + app +
