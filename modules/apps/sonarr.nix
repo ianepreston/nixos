@@ -11,6 +11,15 @@ _: {
       myAuthentik.forwardAuthApps.sonarr = {
         port = 8989;
         displayName = "Sonarr";
+        # Skip forward_auth for the REST API, healthcheck, and iCal feeds
+        # so non-browser clients (iOS app, calendar subscribers) can
+        # authenticate with the native API key instead of the authentik
+        # session cookie they don't have.
+        bypassAuthPaths = [
+          "/api/*"
+          "/ping"
+          "/feed/*"
+        ];
         homepage = {
           group = "Acquisition";
           icon = "sonarr";

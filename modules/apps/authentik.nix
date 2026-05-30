@@ -340,6 +340,26 @@
                       Remote-User from X-authentik-username).
                     '';
                   };
+                  bypassAuthPaths = lib.mkOption {
+                    type = lib.types.listOf lib.types.str;
+                    default = [ ];
+                    example = [
+                      "/api/*"
+                      "/ping"
+                    ];
+                    description = ''
+                      Caddy `path` patterns that skip forward_auth and reach
+                      the upstream directly. Use for apps that ship their
+                      own API-key auth on a sub-path (sonarr/radarr at
+                      /api/*, RSS calendars at /feed/*) so non-browser
+                      clients can authenticate with the app's native scheme
+                      instead of getting redirected to the authentik login
+                      flow. Empty (default) gates every path through
+                      authentik. Patterns follow Caddy `path` matcher
+                      semantics: `/foo/*` is a prefix match on `/foo/`,
+                      anything without a trailing `*` is an exact match.
+                    '';
+                  };
                   homepage = lib.mkOption {
                     type = lib.types.nullOr homepageSubmodule;
                     default = null;
@@ -670,22 +690,48 @@
         (lib.mkIf (fwApps != { }) {
           myAuthentik.extraBlueprints = [ fwBlueprintDir ];
 
-          myCaddy.apps = lib.mapAttrs (_name: app: {
-            inherit (app) host;
-            routeConfig =
-              if app.proxyConfig == "" then
-                ''
-                  import authentik_forward_auth
-                  reverse_proxy localhost:${toString app.port}
-                ''
-              else
-                ''
-                  import authentik_forward_auth
-                  reverse_proxy localhost:${toString app.port} {
-                    ${app.proxyConfig}
-                  }
-                '';
-          }) fwApps;
+          myCaddy.apps = lib.mapAttrs (
+            _name: app:
+            let
+              upstream = "localhost:${toString app.port}";
+              gatedBlock =
+                if app.proxyConfig == "" then
+                  ''
+                    import authentik_forward_auth
+                    reverse_proxy ${upstream}
+                  ''
+                else
+                  ''
+                    import authentik_forward_auth
+                    reverse_proxy ${upstream} {
+                      ${app.proxyConfig}
+                    }
+                  '';
+            in
+            {
+              inherit (app) host;
+              routeConfig =
+                if app.bypassAuthPaths == [ ] then
+                  gatedBlock
+                else
+                  # Split into two `handle` blocks: bypassAuthPaths reach
+                  # the upstream raw (the app's own auth scheme — typically
+                  # an API key — gates them); everything else still goes
+                  # through forward_auth. `proxyConfig` is applied only to
+                  # the gated block since its main use is forwarding
+                  # X-authentik-* headers, which don't exist on bypassed
+                  # requests.
+                  ''
+                    @bypass_auth path ${lib.concatStringsSep " " app.bypassAuthPaths}
+                    handle @bypass_auth {
+                      reverse_proxy ${upstream}
+                    }
+                    handle {
+                      ${gatedBlock}
+                    }
+                  '';
+            }
+          ) fwApps;
 
           myHomepage.tiles = lib.mapAttrs (_name: app: {
             inherit (app.homepage) group icon description;
