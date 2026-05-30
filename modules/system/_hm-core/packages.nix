@@ -18,7 +18,7 @@ in
     ripgrep
     fd
     lazygit
-    neofetch
+    fastfetch
     jq
     openssl
     go-task
