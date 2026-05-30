@@ -47,6 +47,7 @@ _: {
           TZ = config.time.timeZone;
           ACTUAL_LOGIN_METHOD = "openid";
           ACTUAL_ALLOWED_LOGIN_METHODS = "password,openid";
+          ACTUAL_USER_CREATION_MODE = "login";
           ACTUAL_OPENID_AUTH_METHOD = "openid";
           ACTUAL_OPENID_DISCOVERY_URL = "https://${authentikHost}/application/o/actualbudget/.well-known/openid-configuration";
           ACTUAL_OPENID_SERVER_HOSTNAME = "https://${actualHost}";
