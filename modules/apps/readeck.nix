@@ -51,6 +51,10 @@ _: {
         inherit port;
         displayName = "Readeck";
         authentikGroup = "Users";
+        # Skip forward_auth for the REST API so non-browser clients
+        # (Firefox extension, mobile apps) can authenticate with a
+        # readeck bearer token instead of the authentik session cookie.
+        bypassAuthPaths = [ "/api/*" ];
         homepage = {
           group = "Consumption";
           icon = "readeck";
