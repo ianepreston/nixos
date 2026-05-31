@@ -1,0 +1,231 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "description": "Per-app restic snapshot sizes plus repo-wide aggregates. Metrics are emitted once per nightly backup run by restic-metrics-server.service (see modules/system/server-backups.nix) via node_exporter's textfile collector, so values step daily — there is no sub-daily resolution.",
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeFromNow",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 86400 },
+              { "color": "red", "value": 172800 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Last snapshot",
+      "description": "Age of the most recent restic snapshot for this host. Should be under 24h on a healthy nightly cadence.",
+      "type": "stat",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "value"
+      },
+      "targets": [
+        { "expr": "restic_snapshot_timestamp_seconds{instance=\"$instance\"} * 1000", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Repo size (dedup)",
+      "description": "Deduplicated on-disk size of the entire restic repository — what's actually consuming space on the NAS.",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value" },
+      "targets": [
+        { "expr": "restic_repo_size_bytes{instance=\"$instance\"}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" } },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Latest snapshot size",
+      "description": "Raw size of the latest snapshot (sum of file sizes inside it, pre-dedup).",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value" },
+      "targets": [
+        { "expr": "restic_snapshot_size_bytes{instance=\"$instance\"}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "Snapshots",
+      "description": "Number of snapshots in the repo — should track the retention policy (7 daily + 4 weekly + 6 monthly ≈ 17, plus whatever hasn't been pruned yet).",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value" },
+      "targets": [
+        { "expr": "restic_repo_snapshot_count{instance=\"$instance\"}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "lineWidth": 1
+          }
+        }
+      },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Per-app size in latest snapshot",
+      "description": "Stacked: each app's contribution to the most recent snapshot, broken out by component (state directory, postgres dump, mysql dump, sqlite staging copy, container state). Use to spot apps that have grown unexpectedly or are missing entirely (zero/absent = either no snapshot path covers them or quiesce/dump failed).",
+      "type": "barchart",
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "auto",
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "right" },
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "xTickLabelRotation": 0,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (app, component) (restic_app_size_bytes{instance=\"$instance\"}))",
+          "legendFormat": "{{component}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "spanNulls": 172800000
+          },
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
+      "id": 6,
+      "title": "Per-app size over time",
+      "description": "One series per (app, component) since metrics are published once per backup. Use a multi-day time range — at 30s scrape resolution against daily writes, anything narrower than ~1d shows isolated points.",
+      "type": "timeseries",
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "restic_app_size_bytes{instance=\"$instance\"}",
+          "legendFormat": "{{app}} ({{component}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "spanNulls": 172800000
+          },
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 26 },
+      "id": 7,
+      "title": "Repo size over time",
+      "description": "Deduplicated repo size — what's actually consuming space on the NAS. Sustained growth without a matching rise in latest-snapshot size on the right means accumulated churn from old snapshots being retained.",
+      "type": "timeseries",
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        { "expr": "restic_repo_size_bytes{instance=\"$instance\"}", "legendFormat": "dedup", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "auto",
+            "spanNulls": 172800000
+          },
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 26 },
+      "id": 8,
+      "title": "Latest snapshot size over time",
+      "description": "Day-over-day size of the most recent snapshot. A flat/declining line on a write-heavy app suggests its data isn't reaching the backup path (quiesce failed, dump missing, mount empty).",
+      "type": "timeseries",
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        { "expr": "restic_snapshot_size_bytes{instance=\"$instance\"}", "legendFormat": "snapshot", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["homelab", "backups", "restic"],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Host",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(restic_repo_size_bytes, instance)",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Backups (Restic)",
+  "uid": "homelab-backups",
+  "version": 1,
+  "weekStart": ""
+}

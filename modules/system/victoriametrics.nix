@@ -34,6 +34,11 @@ _: {
       vmHost = "victoriametrics.${hostSpec.serverDomain}";
       vmalertHost = "vmalert.${hostSpec.serverDomain}";
 
+      # Textfile collector — writable by root oneshots, scraped by
+      # node_exporter's textfile collector. Used by server-backups.nix
+      # to publish per-snapshot restic stats once per nightly backup.
+      textfileDir = "/var/lib/node-exporter-textfile-collector";
+
       vmPort = 8428;
       # 8880 is vmalert's default but UniFi controller binds it; bump by 1.
       vmalertPort = 8881;
@@ -367,6 +372,13 @@ _: {
       };
     in
     {
+      # Textfile collector directory. World-readable so node_exporter's
+      # DynamicUser can traverse it; root-writable for the oneshots that
+      # publish `.prom` files into it (currently just server-backups).
+      systemd.tmpfiles.rules = [
+        "d ${textfileDir} 0755 root root - -"
+      ];
+
       systemd.services = {
         # Wait for mariadb's socket before the exporter tries to connect;
         # without this it crashloops at boot until mysql.service is up.
@@ -413,6 +425,10 @@ _: {
             enabledCollectors = [
               "systemd"
               "processes"
+              # textfile collector — slurps any `*.prom` written into
+              # textfileDir below. server-backups.nix writes per-app
+              # restic snapshot sizes there once per nightly run.
+              "textfile"
             ];
             # Narrow the systemd collector to units we actually
             # dashboard/alert on. Without this, node_systemd_unit_state
@@ -425,6 +441,7 @@ _: {
             # module. Anything not matched here is invisible to
             # SystemdUnitFailed alerting.
             extraFlags = [
+              "--collector.textfile.directory=${textfileDir}"
               (
                 "--collector.systemd.unit-include=^("
                 # Core infra:
