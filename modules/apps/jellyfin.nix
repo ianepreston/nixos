@@ -158,6 +158,12 @@ _: {
           key = "{{HOMEPAGE_VAR_JELLYFIN_API_KEY}}";
           enableBlocks = true;
           enableNowPlaying = true;
+          enableMediaControl = false;
+          fields = [
+            "movies"
+            "series"
+            "episodes"
+          ];
         };
       };
 
