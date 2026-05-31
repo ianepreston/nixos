@@ -142,8 +142,12 @@ _: {
           umask 027
           # Apprise needs Discord webhooks in discord://ID/TOKEN form,
           # not the raw https URL stored in sops (which alertmanager
-          # consumes directly).
+          # consumes directly). Discord accepts (and pastes from its UI)
+          # both discord.com and the legacy discordapp.com hostnames, so
+          # strip either prefix — the second expansion is a no-op when
+          # the first matched.
           discord_path="''${DISCORD_WEBHOOK#https://discord.com/api/webhooks/}"
+          discord_path="''${discord_path#https://discordapp.com/api/webhooks/}"
           cat > ${appriseConfigFile} <<EOF
           urls:
             - discord://$discord_path
