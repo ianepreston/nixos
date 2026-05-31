@@ -330,7 +330,7 @@ _: {
           '';
         };
 
-        services.homepage-dashboard.environmentFile = lib.mkIf hasCredentials credentialsEnvFile;
+        services.homepage-dashboard.environmentFiles = lib.mkIf hasCredentials [ credentialsEnvFile ];
 
         systemd.services.homepage-dashboard = lib.mkIf hasCredentials {
           after = [ "homepage-credentials.service" ];
