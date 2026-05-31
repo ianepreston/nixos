@@ -165,21 +165,20 @@ entries:
       enabled: true
       timeout: 30
 
-  # Gate the flow itself: only allow access when `is_restored` is set
-  # (i.e. the user arrived via an admin-issued recovery URL whose token
-  # restored a flow plan with the user pinned). Direct hits to
-  # /if/flow/default-recovery-flow/ are denied at the door rather than
-  # failing partway through user-write — same security outcome, cleaner
-  # error.
+  # Remove the flow-level gating that hardening.yaml's predecessor added.
+  # It broke admin "Set recovery link" because authentik evaluates the
+  # flow's policies against the user before minting the URL — at which
+  # point `is_restored` is False (no token has been consumed yet) and
+  # the flow is reported "not applicable to user". Blueprint upserts
+  # don't delete removed entries, so we keep this stanza with
+  # `state: absent` to drop the binding from the DB. Safe to delete this
+  # stanza once every server (hpp-1, amos1) has applied it.
   - model: authentik_policies.policybinding
+    state: absent
     identifiers:
       policy: !KeyOf default-recovery-skip-if-restored
       target: !KeyOf flow
       order: 0
-    attrs:
-      negate: false
-      enabled: true
-      timeout: 30
 
   # Extend the bundled default brand (created by Default - Brand) with
   # the recovery flow and a custom title. Identifiers match the upstream
