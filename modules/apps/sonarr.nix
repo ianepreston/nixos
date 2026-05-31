@@ -28,7 +28,6 @@ _: {
             type = "sonarr";
             url = "http://localhost:8989";
             key = "{{HOMEPAGE_VAR_SONARR_API_KEY}}";
-            enableQueue = true;
           };
         };
       };
