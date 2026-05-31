@@ -21,6 +21,7 @@
       workstation
       gnome
       flatpak
+      ipad
       printing
       tailscale
       zsa-keeb
