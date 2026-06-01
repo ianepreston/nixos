@@ -282,6 +282,7 @@ _: {
             gnugrep
             gnused
             gawk
+            jq
             sqlite
           ];
           serviceConfig = {

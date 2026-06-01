@@ -28,8 +28,27 @@ _: {
           group = "Requests";
           icon = "jellyseerr";
           description = "Media requests";
+          widget = {
+            type = "jellyseerr";
+            url = "http://localhost:${toString port}";
+            key = "{{HOMEPAGE_VAR_SEERR_API_KEY}}";
+          };
         };
         displayName = "Seerr";
+      };
+
+      # Seerr API key lives in main.apiKey of its settings.json (the
+      # container's /app/config is bind-mounted at /var/lib/containers/seerr).
+      # Must use jq + explicit path — settings.json has additional
+      # `apiKey` fields under per-arr-server configs that a regex match
+      # would also pick up. The file is generated on first boot, so the
+      # homepage-credentials retry loop covers the case where seerr has
+      # just started but hasn't written it yet.
+      myHomepage.credentials.SEERR_API_KEY = {
+        sourceUnit = "podman-seerr.service";
+        readScript = ''
+          jq -r '.main.apiKey // empty' /var/lib/containers/seerr/settings.json
+        '';
       };
 
       systemd.tmpfiles.rules = [
