@@ -25,10 +25,9 @@
       url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # stylix has no release-26.05 branch yet — pinned to 25.11 release branch.
-    # Stylix pins its own nixpkgs internally, so the lag mostly affects whether
-    # its HM/NixOS module APIs still match. Bump when upstream tags it.
-    stylix.url = "github:danth/stylix/release-25.11";
+    # Stylix pins its own nixpkgs internally, so the channel lag mostly
+    # affects whether its HM/NixOS module APIs still match.
+    stylix.url = "github:danth/stylix/release-26.05";
     nix-flatpak.url = "github:gmodena/nix-flatpak/?ref=latest";
     # Declarative partitioning and formatting
     disko = {
