@@ -134,18 +134,15 @@ _: {
         image = "ghcr.io/manimatter/decluttarr:v2.1.0";
         volumes = [
           "${configFile}:/app/config/config.yaml:ro"
-          # Mounted so decluttarr's `detect_deletions` watcher can resolve
-          # the Sonarr/Radarr root folder paths (`/mnt/content/TV`,
-          # `/mnt/content/Movies`, …) — those paths come straight from
-          # the *arrs' root-folder API and need to exist at the same path
-          # inside the container or the watcher logs WARNING at every
-          # start. The job runs unconditionally upstream regardless of
-          # YAML config (`if settings.jobs.detect_deletions:` in main.py
-          # is a truthy check on the JobParams object, not its `.enabled`
-          # flag), so mounting is the only knob we have. Read-only because
-          # the watcher only inotify-watches; it triggers refreshes via
-          # the arr APIs, not via filesystem writes.
-          "/mnt/content:/mnt/content:ro"
+          # NOTE: /mnt/content is intentionally NOT bind-mounted, even
+          # though doing so silences the `Job 'detect_deletions' does
+          # not have access to '/mnt/content/{TV,Movies}'` warnings at
+          # startup. With the mount in place, decluttarr's watchdog
+          # Observer recursively walks the entire root folder tree
+          # adding inotify watches — fine on hpp-1's small share, but
+          # on amos1's real multi-TB Synology mount it hangs the main
+          # coroutine before the job loop ever starts running. The
+          # warnings are cosmetic; the cure was worse than the disease.
         ];
         environment = {
           TZ = config.time.timeZone;
