@@ -74,7 +74,7 @@ _: {
               # renovate: datasource=github-tags depName=caddy-dns/cloudflare
               "github.com/caddy-dns/cloudflare@v0.2.4"
             ];
-            hash = "sha256-bzMqxWTqrJ1skZmRTXyEMCKStXpljbqe5r0Ve2cnBfM=";
+            hash = "sha256-8yZDrejNKsaUnUaTUFYbarWNmxafqp2z2rWo+XRsxV8=";
           };
           globalConfig = ''
             acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
