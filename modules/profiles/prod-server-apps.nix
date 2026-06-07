@@ -80,6 +80,7 @@
         actualbudget
         audiobookshelf
         bazarr
+        decluttarr
         grimmory
         homeassistant
         jellyfin
