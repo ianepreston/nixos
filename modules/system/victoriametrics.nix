@@ -167,6 +167,42 @@ _: {
                 };
               }
               {
+                # Stale file under sabnzbd's incomplete dir (#276).
+                # Metric is published by the sabnzbd-incomplete-metrics
+                # oneshot in modules/apps/sabnzbd.nix every 5m. >24h
+                # means a download is stalled (missing articles across
+                # all configured providers, post-processing wedged, or
+                # the queue is paused and forgotten). Absent on hosts
+                # that don't run sabnzbd — `for: 30m` debounces the gap
+                # between the oneshot's first write and node_exporter's
+                # next scrape.
+                alert = "SabnzbdIncompleteStale";
+                expr = "sabnzbd_incomplete_oldest_seconds > 86400";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "sabnzbd has a stale file in incomplete/ on {{ $labels.instance }}";
+                  description = "A file under sabnzbd's incomplete dir has been there for >24h ({{ $value | humanizeDuration }}). Stalled download, wedged post-processing, or forgotten paused queue.";
+                };
+              }
+              {
+                # Incomplete dir filling up (#276). The dir lives under
+                # /persist, sharing the root filesystem — the existing
+                # FilesystemAlmostFull rule (above) covers truly-full
+                # /persist, but a stuck unrar can chew through 100s of
+                # GB inside a healthy-looking root. 200 GiB is well
+                # above any single in-flight release (~100 GB for a 4K
+                # blu-ray rip) and flags accumulation.
+                alert = "SabnzbdIncompleteLarge";
+                expr = "sabnzbd_incomplete_dir_bytes > 200 * 1024 * 1024 * 1024";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "sabnzbd incomplete dir over 200 GiB on {{ $labels.instance }}";
+                  description = "sabnzbd_incomplete_dir_bytes = {{ $value | humanize1024 }}B for 30m. Either a release got stuck in post-processing or multiple downloads are piling up faster than they're finishing.";
+                };
+              }
+              {
                 alert = "HighCaddy5xx";
                 expr = ''sum by (instance, server) (rate(caddy_http_requests_total{code=~"5.."}[5m])) > 0.1'';
                 for = "5m";
@@ -468,7 +504,7 @@ _: {
                 # web/scheduler/task-queue/consumer), prowlarr, radarr,
                 # readeck, sabnzbd, sonarr, spierscraper, unifi-os-server.
                 + "|audiobookshelf|bazarr|jellyfin|kavita|komga|mealie|miniflux"
-                + "|paperless(-.+)?|prowlarr|radarr|readeck|sabnzbd|sonarr"
+                + "|paperless(-.+)?|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
                 + "|spierscraper|unifi-os-server"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
