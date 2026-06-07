@@ -105,6 +105,10 @@ _: {
                 - "One or more episodes expected in this release were not imported or missing from the release"
             remove_failed_downloads:
             remove_stalled:
+            remove_metadata_missing:
+            remove_unmonitored:
+            remove_orphans:
+            remove_missing_files:
 
           instances:
             sonarr:
