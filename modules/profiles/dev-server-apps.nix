@@ -66,6 +66,7 @@
         "/var/lib/radarr"
         "/var/lib/readeck"
         "/var/lib/sabnzbd"
+        "/var/lib/sabnzbd-incomplete"
         "/var/lib/sonarr"
         # Container app whose volumes live OUTSIDE /var/lib/containers:
         # the upstream unifi-os-server flake module defaults its
