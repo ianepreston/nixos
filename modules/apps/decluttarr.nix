@@ -7,12 +7,12 @@
 # can't import because they wouldn't score above the on-disk file.
 #
 # Container only (no nixpkgs module). Stateless — no /var/lib state,
-# no preservation entry, no recovery task. Config.yaml is rendered at
-# pre-start time by a oneshot that scrapes the sonarr/radarr/sabnzbd
-# API keys out of their respective config files (same approach the
-# homepage credentials reader uses), so we don't have to mint and
-# rotate a separate sops secret for keys the arrs already manage
-# themselves.
+# no preservation entry, no recovery task. Config.yaml is rendered in
+# `podman-decluttarr.service`'s own preStart, which scrapes the
+# sonarr/radarr/sabnzbd API keys out of their respective config files
+# (same approach the homepage credentials reader uses), so we don't
+# have to mint and rotate a separate sops secret for keys the arrs
+# already manage themselves.
 #
 # Sonarr/Radarr/Sabnzbd are reachable from inside the podman bridge
 # at `host.containers.internal:<port>` — same trick as watchstate /
@@ -29,13 +29,20 @@ _: {
       configFile = "${configDir}/config.yaml";
     in
     {
-      systemd.services.decluttarr-config = {
-        description = "Render decluttarr config.yaml from arr config files";
+      # Render config.yaml as part of podman-decluttarr's own start
+      # cycle rather than via a separate oneshot — a previous split
+      # design hit a race where /run/decluttarr got cleared between
+      # deploys (RuntimeDirectoryPreserve didn't survive activation)
+      # and podman would then statfs the missing bind-mount source
+      # and fail. Inlining the render means every container start
+      # re-reads the API keys; there's no window where the file is
+      # stale or absent.
+      systemd.services.podman-decluttarr = {
         # Need the arrs to have actually written their config.xml /
-        # sabnzbd.ini before we try to read them. Same first-boot
-        # timing concern as homepage-credentials — handled with a
-        # retry loop in the script so a missing key blocks here
-        # rather than letting decluttarr boot with a broken config.
+        # sabnzbd.ini before we read them. Same first-boot timing
+        # concern as homepage-credentials — handled with a retry
+        # loop in the script so a missing key blocks here rather
+        # than letting decluttarr boot with a broken config.
         after = [
           "sonarr.service"
           "radarr.service"
@@ -46,21 +53,17 @@ _: {
           "radarr.service"
           "sabnzbd.service"
         ];
-        before = [ "podman-decluttarr.service" ];
-        wantedBy = [ "podman-decluttarr.service" ];
         path = with pkgs; [
           coreutils
           gnugrep
           gawk
         ];
         serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
           RuntimeDirectory = "decluttarr";
           RuntimeDirectoryPreserve = "yes";
           UMask = "0077";
         };
-        script = ''
+        preStart = ''
           set -euo pipefail
 
           read_key() {
@@ -127,17 +130,23 @@ _: {
         image = "ghcr.io/manimatter/decluttarr:v2.1.0";
         volumes = [
           "${configFile}:/app/config/config.yaml:ro"
+          # Mounted so decluttarr's `detect_deletions` watcher can resolve
+          # the Sonarr/Radarr root folder paths (`/mnt/content/TV`,
+          # `/mnt/content/Movies`, …) — those paths come straight from
+          # the *arrs' root-folder API and need to exist at the same path
+          # inside the container or the watcher logs WARNING at every
+          # start. The job runs unconditionally upstream regardless of
+          # YAML config (`if settings.jobs.detect_deletions:` in main.py
+          # is a truthy check on the JobParams object, not its `.enabled`
+          # flag), so mounting is the only knob we have. Read-only because
+          # the watcher only inotify-watches; it triggers refreshes via
+          # the arr APIs, not via filesystem writes.
+          "/mnt/content:/mnt/content:ro"
         ];
         environment = {
           TZ = config.time.timeZone;
         };
       };
 
-      # decluttarr-config writes /run/decluttarr/config.yaml; ensure
-      # podman waits for it before bind-mounting.
-      systemd.services.podman-decluttarr = {
-        after = [ "decluttarr-config.service" ];
-        requires = [ "decluttarr-config.service" ];
-      };
     };
 }
