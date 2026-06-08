@@ -95,6 +95,15 @@ _: {
             host = "0.0.0.0";
             inherit port;
             host_whitelist = "${sabnzbdHost},host.containers.internal";
+            # RAM article cache. Pinned here because the nixpkgs module
+            # declares cache_limit as an option with default "" and that
+            # empty default is rendered into public-settings.ini, which the
+            # preStart merge layers *over* the on-disk ini — so a UI-set
+            # value silently reverts to empty on every restart (same fate as
+            # any other declared-with-default misc field). sabnzbd recommends
+            # ~25% of RAM; 2G suits the 8GB+ servers this runs on. Empty
+            # cache means every article is written to disk before assembly.
+            cache_limit = "2G";
             # Incomplete on local SSD; finished media gets renamed onto
             # the NFS share by sabnzbd's post-processing step. See #276
             # for the throughput story (par2 + direct_unpack reading
