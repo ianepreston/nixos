@@ -12,10 +12,13 @@ Strategy:
   * Foods: for each junk food (no fdc_id / no properties), normalize its
     name (strip qty/unit parens, leading punctuation, prep adjectives,
     plural) and look it up against the canonical set (391 ODP foods).
-    Three buckets:
-      - merge:           normalized name == canonical name (high confidence)
-      - rename:          no canonical hit, but cleanable to a sensible name
-      - manual_review:   ambiguous / parser breakage / unrecognized
+    Buckets:
+      - merge:          normalized name == canonical name (high confidence)
+      - review_merges:  no exact hit, but cleaned name shares a content token
+                        with canonical(s) — ranked candidates for the operator
+                        to confirm (high-confidence singles ship pre-filled)
+      - rename:         no canonical candidate at all; pure name cleanup
+      - manual_review:  ambiguous / parser breakage / unrecognized
 """
 import json
 import re
@@ -135,24 +138,42 @@ DESCRIPTOR_TRAILERS = {
 }
 
 
+# Unicode vulgar-fraction glyphs that show up in imported quantities
+# ("½ tsp", "⅓ cup"). The ascii [\d./] class misses them, so a leading
+# "½ tsp () - " survived stripping and leaked into the food name.
+FRAC = "¼½¾⅓⅔⅛⅜⅝⅞⅕⅖⅗⅘⅙⅚⅐⅑⅒"
+_QTY = rf"[\d./{FRAC}]+(?:\s+[\d./{FRAC}]+)?"
+
+
 def strip_paren_qty(name: str) -> str:
     """Remove leading / embedded parenthesized quantity-unit groups."""
     # Strip a leading "(...)" that contains digits or unit-like words.
     out = re.sub(r"^\s*\([^)]*\d[^)]*\)\s*", "", name)
     # Also strip leading "- " or "+ " or "*"
     out = re.sub(r"^[\-\+\*\s]+", "", out)
-    # Strip a leading "qty unit" like "1 stick" or "100g".
+    # Strip a leading "qty [unit]" like "1 stick", "100g", or a bare "½".
+    # The unit is optional so a lone fraction/number prefix is also removed.
     out = re.sub(
-        r"^[\d\.\/]+\s*(?:oz|lb|lbs|g|kg|ml|l|tsp|tbsp|cup|cups|"
+        rf"^{_QTY}\s*(?:oz|lb|lbs|g|kg|ml|l|tsp|tbsp|cup|cups|"
         r"ounces?|pounds?|grams?|liters?|tablespoons?|teaspoons?|"
         r"stick|sticks|slices?|pieces?|cans?|packages?|bottles?|"
-        r"bunches?|cloves?|heads?|handfuls?|pinches?)\b\.?\s*",
+        r"bunches?|cloves?|heads?|handfuls?|pinches?)?\b\.?\s*",
+        "", out, flags=re.IGNORECASE,
+    )
+    # Strip an empty "()" left behind by the import ("½ tsp () - x").
+    out = re.sub(r"^\s*\(\s*\)\s*", "", out)
+    # Strip a leading bare measure-word with no number ("Big handful x",
+    # "Handful of x", "bunch of x"), optionally size-qualified.
+    out = re.sub(
+        r"^(?:big|small|large|a)?\s*(?:handful|bunch|pinch|dash)s?\s+"
+        r"(?:of\s+)?",
         "", out, flags=re.IGNORECASE,
     )
     # Strip leading "- " again (some have double prefix)
     out = re.sub(r"^[\-\+\*\s]+", "", out)
-    # Strip parenthetical TRAILERS (descriptors)
+    # Strip parenthetical TRAILERS (descriptors) and a trailing "*".
     out = re.sub(r"\s*\([^)]*\)\s*$", "", out)
+    out = re.sub(r"[\*\s]+$", "", out)
     return out.strip()
 
 
@@ -173,7 +194,11 @@ def singularize(word: str) -> str:
         return w[:-3] + "y"
     if w.endswith("oes") or w.endswith("ses") or w.endswith("xes"):
         return w[:-2]
-    if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+    # Latin / mass nouns that merely end in -s are already singular
+    # ("hummus", "asparagus", "couscous", "citrus"); don't chop the -s.
+    if w.endswith(("us", "is", "ous", "ss", "ics")):
+        return w
+    if w.endswith("s") and len(w) > 3:
         return w[:-1]
     return w
 
@@ -187,6 +212,47 @@ def normalize(name: str) -> str:
     n = re.sub(r"\s+", " ", n).strip().lower()
     # singularize word-by-word for matching
     return " ".join(singularize(w) for w in n.split()) if n else ""
+
+
+# --- MERGE-REVIEW CANDIDATE GENERATION -------------------------------------
+#
+# A rename row is "junk with no *exact* canonical norm match," but many are a
+# less-specific spelling of a real canonical ("baby spinach" -> Spinach,
+# "cayenne" -> Cayenne Pepper). We can't auto-merge them — token collisions
+# are real ("salted butter" shares "salted" with "Salted Pistachios", "pork
+# roast" shares "pork" with "Pork Bacon") — so instead we surface ranked
+# canonical candidates for the operator to confirm. The match key is a shared
+# *content* token: descriptors / colors / prep words (below) don't count on
+# their own, which is what kills the adjective-collision false positives.
+
+MATCH_DESCRIPTORS = {
+    "salted", "unsalted", "dried", "fresh", "frozen", "canned", "ground",
+    "smoked", "sweetened", "unsweetened", "ripe", "raw", "cooked", "whole",
+    "reduced", "fat", "lowfat", "nonfat", "light", "lean", "organic", "baby",
+    "red", "green", "black", "brown", "white", "yellow", "blanched",
+    "clarified", "fine", "sea", "kosher", "ancient", "hard", "soft", "small",
+    "medium", "large", "powder", "flake", "flakes", "of", "or", "and", "cut",
+    "into", "leave", "leaves", "stalk", "stalks", "piece", "pieces", "can",
+    "cans",
+}
+
+# The subset of descriptors that are *semantic* — they distinguish canonicals
+# (Butter Salted vs Unsalted; Oregano vs Dried Oregano; Clove vs Clove ground).
+# A high-confidence pre-filled suggestion is only emitted when junk and
+# canonical agree on these, so we never auto-collapse "smoked paprika" into
+# plain "Paprika" or "oregano" into "Dried Oregano".
+SEMANTIC_DESCRIPTORS = {
+    "salted", "unsalted", "dried", "smoked", "ground", "frozen", "canned",
+    "sweetened", "unsweetened", "ripe",
+}
+
+
+def content_tokens(norm: str) -> set:
+    return {t for t in norm.split() if t not in MATCH_DESCRIPTORS and len(t) > 2}
+
+
+def semantic_tokens(norm: str) -> set:
+    return {t for t in norm.split() if t in SEMANTIC_DESCRIPTORS}
 
 
 # --- BUILD MAPPING ---------------------------------------------------------
@@ -339,6 +405,52 @@ def main():
     food_merges.extend(rename_dedup_merges)
     food_renames = food_renames_final
 
+    # Split the rename keepers into merge_review (has a plausible canonical to
+    # merge into) and plain renames (pure cleanup, no canonical candidate).
+    # merge_review rows carry a ranked candidate list plus an empty dst_id the
+    # operator fills (or keeps, for the pre-filled high-confidence suggestions)
+    # to turn the row into a merge; left blank, the row applies as a rename.
+    canon_match = [
+        (c["id"], c["name"],
+         content_tokens(normalize(c["name"])),
+         semantic_tokens(normalize(c["name"])))
+        for c in canonical
+    ]
+    food_review_merges = []
+    food_renames_only = []
+    for r in food_renames:
+        jnorm = r["new_name"]  # already normalized
+        jcontent = content_tokens(jnorm)
+        jsem = semantic_tokens(jnorm)
+        cands = []
+        if jcontent:
+            for cid, cname, ccontent, csem in canon_match:
+                overlap = jcontent & ccontent
+                if overlap:
+                    cands.append((len(overlap), cid, cname, ccontent, csem))
+        if not cands:
+            food_renames_only.append(r)
+            continue
+        # Best overlap first, then name for stable ordering.
+        cands.sort(key=lambda t: (-t[0], t[2].lower()))
+        dst_id, dst_name = 0, ""
+        # Pre-fill a suggestion only when there is exactly one candidate, the
+        # junk is a strict less-specific form of it, and they agree on every
+        # semantic descriptor (no fresh->dried / smoked->plain collapses).
+        if len(cands) == 1:
+            _, cid, cname, ccontent, csem = cands[0]
+            if jcontent <= ccontent and jsem == csem:
+                dst_id, dst_name = cid, cname
+        cand_str = " | ".join(
+            f"{cid}={cname}" for _, cid, cname, _, _ in cands[:8]
+        )
+        food_review_merges.append({
+            "id": r["id"], "old_name": r["old_name"], "new_name": r["new_name"],
+            "dst_id": dst_id, "dst_name": dst_name,
+            "candidates": cand_str, "used_in": r["used_in"],
+        })
+    food_renames = food_renames_only
+
     # Supermarket bucket — all 47 are seeded defaults the user doesn't use.
     sm_deletes = [{"id": s["id"], "name": s["name"]} for s in supermarkets]
 
@@ -383,6 +495,18 @@ def main():
             f"dst_id: {m['dst_id']:4d}, dst_name: {m['dst_name']!r}, "
             f"used_in: {m['used_in']!r} }}"
         )
+    suggested = sum(1 for m in food_review_merges if m["dst_id"])
+    lines.append(
+        f"  review_merges: # {len(food_review_merges)} "
+        f"({suggested} pre-filled) — set/keep dst_id to merge, blank to rename"
+    )
+    for m in food_review_merges:
+        lines.append(
+            f"    - {{ id: {m['id']:4d}, old_name: {m['old_name']!r}, "
+            f"new_name: {m['new_name']!r}, dst_id: {m['dst_id']:4d}, "
+            f"dst_name: {m['dst_name']!r}, candidates: {m['candidates']!r}, "
+            f"used_in: {m['used_in']!r} }}"
+        )
     lines.append(f"  renames: # {len(food_renames)}")
     for r in food_renames:
         lines.append(
@@ -411,7 +535,9 @@ def main():
     print(f"  canonical (ODP, untouched): {len(canonical):4d}")
     print(f"  junk total:                 {len(junk):4d}")
     print(f"    merges to canonical:      {len(food_merges):4d}")
-    print(f"    renames (no canon match): {len(food_renames):4d}")
+    print(f"    review_merges (confirm):  {len(food_review_merges):4d}  "
+          f"({sum(1 for m in food_review_merges if m['dst_id'])} pre-filled)")
+    print(f"    renames (no candidate):   {len(food_renames):4d}")
     print(f"    manual_review:            {len(food_review):4d}")
     print(f"=== SUPERMARKET SUMMARY ===")
     print(f"  proposed deletes: {len(sm_deletes)} (all defaults)")

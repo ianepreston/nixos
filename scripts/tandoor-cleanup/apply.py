@@ -7,11 +7,12 @@ Usage:
     python3 apply.py --target amos1 --phase units --apply
 
 Phases:
-    units         — unit merges then deletes
-    food-merges   — high-confidence food merges
-    food-renames  — rename food rows (no canonical match)
-    supermarkets  — delete default supermarkets
-    all           — units → food-merges → supermarkets (no renames)
+    units              — unit merges then deletes
+    food-merges        — high-confidence food merges
+    food-review-merges — operator-confirmed merges (review_merges rows w/ dst_id)
+    food-renames       — rename food rows (renames bucket + blank-dst review rows)
+    supermarkets       — delete default supermarkets
+    all                — units → food-merges → supermarkets (no renames/reviews)
 
 The script is idempotent: skips ops where the source no longer exists
 (already-merged / already-deleted).
@@ -274,6 +275,76 @@ def run_supermarket_deletes(target: str, apply: bool) -> tuple[int, int]:
     return done, skipped
 
 
+def run_food_review_merges(target: str, apply: bool) -> tuple[int, int]:
+    """Merge the review rows whose dst_id the operator set (or kept, for the
+    pre-filled suggestions). Blank-dst rows are left for run_food_renames."""
+    rows = load_section("foods", "review_merges")
+    done = skipped = 0
+    for r in rows:
+        dst = r.get("dst_id") or 0
+        if not dst:
+            continue  # operator left it blank → handled as a rename
+        src = r["id"]
+        label = (f"food merge {src}({r.get('old_name')}) → "
+                 f"{dst}({r.get('dst_name')})")
+        if not exists_food(target, src):
+            print(f"  SKIP  {label}  (source already gone)")
+            skipped += 1
+            continue
+        if not apply:
+            print(f"  PLAN  {label}")
+            done += 1
+            continue
+        res = call(target, "PUT", f"/api/food/{src}/merge/{dst}/")
+        if res.ok:
+            print(f"  OK    {label}")
+            done += 1
+        else:
+            print(f"  FAIL  {label}  status={res.status} body={res.body[:200]}")
+            sys.exit(2)
+    return done, skipped
+
+
+def run_food_renames(target: str, apply: bool) -> tuple[int, int]:
+    """Rename food rows in place (PATCH name). Covers the `renames` bucket plus
+    every `review_merges` row the operator left without a dst_id. Idempotent:
+    skips a row whose food is already named new_name (or already gone)."""
+    work: list[tuple[int, str, str]] = []
+    for r in load_section("foods", "renames"):
+        work.append((r["id"], r["new_name"], r.get("old_name", "")))
+    for r in load_section("foods", "review_merges"):
+        if not (r.get("dst_id") or 0):
+            work.append((r["id"], r["new_name"], r.get("old_name", "")))
+    done = skipped = 0
+    for fid, new_name, old in work:
+        label = f"food rename {fid}({old!r}) → {new_name!r}"
+        res = call(target, "GET", f"/api/food/{fid}/")
+        if not res.ok:
+            print(f"  SKIP  {label}  (food gone)")
+            skipped += 1
+            continue
+        try:
+            cur = json.loads(res.body)
+        except json.JSONDecodeError:
+            cur = {}
+        if cur.get("name") == new_name:
+            print(f"  SKIP  {label}  (already named)")
+            skipped += 1
+            continue
+        if not apply:
+            print(f"  PLAN  {label}")
+            done += 1
+            continue
+        res = call(target, "PATCH", f"/api/food/{fid}/", {"name": new_name})
+        if res.ok:
+            print(f"  OK    {label}")
+            done += 1
+        else:
+            print(f"  FAIL  {label}  status={res.status} body={res.body[:200]}")
+            sys.exit(2)
+    return done, skipped
+
+
 def fetch_automations(target: str) -> list[dict]:
     res = call(target, "GET", "/api/automation/?page_size=500")
     if not res.ok:
@@ -342,6 +413,11 @@ PHASES = {
     "unit-deletes": [("Unit deletes", run_unit_deletes)],
     "units": [("Unit merges", run_unit_merges), ("Unit deletes", run_unit_deletes)],
     "food-merges": [("Food merges", run_food_merges)],
+    # Operator-confirmed merges from the review bucket (rows with a dst_id),
+    # then the residual renames (renames bucket + blank-dst review rows).
+    # Kept out of "all": both consume operator decisions in mapping.yaml.
+    "food-review-merges": [("Food review merges", run_food_review_merges)],
+    "food-renames": [("Food renames", run_food_renames)],
     "supermarkets": [("Supermarket deletes", run_supermarket_deletes)],
     # Forward-looking alias automations, generated from the same merge rows.
     # Deliberately standalone (not in "all") so they're run as a separate

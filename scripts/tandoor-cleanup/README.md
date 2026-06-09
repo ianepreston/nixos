@@ -70,6 +70,7 @@ That lands in the restic-backed dir, so it's also picked up by the nightly snaps
 python3 fetch_inventory.py            # -> inventory/*.json  (default --target amos1)
 python3 build_usage.py                # -> usage.json        (slow: fetches every recipe detail)
 python3 build_mapping.py              # -> mapping.yaml      (proposed merges/renames/deletes — review by hand)
+python3 recommend.py                  # annotates review_merges with a first-pass dst_id + rec note
 
 # dry-run (default) then apply, per phase.
 python3 apply.py --target amos1 --phase units            # dry-run
@@ -85,3 +86,52 @@ whose alias already exists, so re-running after a partial apply is safe.
 Alias phases (`unit-aliases`, `food-aliases`) are deliberately **separate** from
 the merge phases (not in `--phase all`): apply and verify the merges first, then
 generate the forward-looking aliases from the same validated mapping rows.
+
+### Food renames vs. review-merges (operator confirmation step)
+
+`build_mapping.py` splits non-canonical junk foods into three food buckets:
+
+- **`merges`** — normalized name exactly matched a canonical (ODP) food.
+  Auto-applied by `--phase food-merges`. No review needed.
+- **`review_merges`** — no exact match, but the cleaned name shares a *content*
+  token with one or more canonicals ("baby spinach" → Spinach, "ginger" →
+  Ginger root / ground / paste). These can't be auto-merged — token collisions
+  are real ("salted butter" shares "salted" with "Salted Pistachios") — so each
+  row lists ranked `candidates` and an empty `dst_id` for you to fill. A small
+  high-confidence subset (single candidate, junk is a strict less-specific form,
+  same semantic descriptors) ships **pre-filled** with a suggested `dst_id`.
+- **`renames`** — no canonical candidate at all; pure name cleanup.
+
+**`recommend.py` gives you a head start.** Run it after `build_mapping.py` to
+pre-fill a first-pass `dst_id` and a `rec:` note on each `review_merges` row.
+It scores each candidate by IDF-weighted token overlap (so "lemon juice" matches
+"Lemon Juice", not "Apple juice"), gated on descriptor compatibility (a merge
+needs matching colors / salted-dried-ground / fat-content, unless the recipe
+text justifies the difference) and a different-food guard (so "butter" doesn't
+merge into "Peanut Butter"). It also reads the recipe `used_in` quote for
+fresh-vs-dried / leaf-vs-seed signal (e.g. "Ginger // Peeled & Grated" →
+Ginger root). It is conservative — when unsure it leaves the row as a rename
+with a `rec: 'rename? closest …'` note rather than guessing a merge. Re-run it
+after every `build_mapping.py` (which drops the annotations).
+
+Operator pass: open `mapping.yaml` and for each `review_merges` row either
+
+- set `dst_id` (and `dst_name`) to a canonical from `candidates` → it **merges**, or
+- leave `dst_id: 0` → it falls through to an in-place **rename** to `new_name`.
+
+The `rec:` note is the script's recommendation; trust but verify, especially
+rows where the recipe quote contradicts the pick. Review the pre-filled
+suggestions too — clear a `dst_id` back to `0` to reject it. Then apply, merges
+before renames:
+
+```sh
+python3 apply.py --target amos1 --phase food-review-merges          # dry-run (rows with dst_id)
+python3 apply.py --target amos1 --phase food-review-merges --apply  # PUT /food/{src}/merge/{dst}/
+python3 apply.py --target amos1 --phase food-renames                # dry-run (renames + blank-dst review rows)
+python3 apply.py --target amos1 --phase food-renames --apply        # PATCH /food/{id}/ {name}
+```
+
+Both are idempotent: `food-review-merges` skips rows whose source food is gone;
+`food-renames` skips a food already named `new_name`. Like the alias phases,
+neither is in `--phase all` — they consume operator decisions, so they're run by
+hand after the mapping is reviewed.
