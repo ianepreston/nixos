@@ -357,7 +357,7 @@ _: {
           };
           laconia = {
             group = "Infrastructure";
-            href = "http://laconia.ipreston.net:5001";
+            href = "http://laconia.ipreston.net";
             icon = "synology";
             description = "NAS";
           };
