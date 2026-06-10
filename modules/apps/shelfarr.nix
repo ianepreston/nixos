@@ -42,7 +42,7 @@ _: {
         clientCredsInAppEnv = false;
         homepage = {
           group = "Requests";
-          icon = "shelfarr";
+          icon = "bookstack";
           description = "Book + audiobook requests";
         };
         displayName = "Shelfarr";

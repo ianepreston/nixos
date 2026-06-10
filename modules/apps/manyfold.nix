@@ -48,12 +48,9 @@ _: {
         inherit port;
         displayName = "Manyfold";
         authentikGroup = "Users";
-        # No upstream icon in dashboard-icons; fall back to the repo
-        # favicon (same approach as kapowarr).
-        iconUrl = "https://raw.githubusercontent.com/manyfold3d/manyfold/main/app/assets/images/logo.svg";
         homepage = {
           group = "Home";
-          icon = "https://raw.githubusercontent.com/manyfold3d/manyfold/main/app/assets/images/logo.svg";
+          icon = "manyfold";
           description = "3D model library";
         };
       };
