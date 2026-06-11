@@ -35,6 +35,7 @@
 _: {
   flake.modules.nixos.jellyfin =
     {
+      lib,
       pkgs,
       hostSpec,
       ...
@@ -183,25 +184,35 @@ _: {
 
       environment.systemPackages = [ trickplayCleanup ];
 
-      systemd.services.jellyfin-trickplay-cleanup = {
-        description = "Remove orphaned Jellyfin trickplay folders";
-        after = [ "remote-fs.target" ];
-        unitConfig.RequiresMountsFor = mediaRoots;
-        serviceConfig = {
-          Type = "oneshot";
-          User = "server-${hostSpec.serverEnvironment}";
-          Group = "servers";
-          ExecStart = "${trickplayCleanup}/bin/jellyfin-trickplay-cleanup ${toString mediaRoots}";
-        };
-      };
+      systemd = {
+        # The upstream module hardens jellyfin with UMask=0077, so every
+        # trickplay tile / metadata image it writes next to the media on
+        # the NFS share lands 0600 — unreadable to the NAS `guest` user
+        # (and anything not in the `servers` group) browsing over SMB/DSM.
+        # Relax to 0022 so generated files are other-readable (0644),
+        # matching the rest of the library. See README / NFS notes.
+        services.jellyfin.serviceConfig.UMask = lib.mkForce "0022";
 
-      systemd.timers.jellyfin-trickplay-cleanup = {
-        description = "Weekly Jellyfin trickplay orphan cleanup";
-        wantedBy = [ "timers.target" ];
-        timerConfig = {
-          OnCalendar = "Sun 03:30:00";
-          Persistent = true;
-          RandomizedDelaySec = "30m";
+        services.jellyfin-trickplay-cleanup = {
+          description = "Remove orphaned Jellyfin trickplay folders";
+          after = [ "remote-fs.target" ];
+          unitConfig.RequiresMountsFor = mediaRoots;
+          serviceConfig = {
+            Type = "oneshot";
+            User = "server-${hostSpec.serverEnvironment}";
+            Group = "servers";
+            ExecStart = "${trickplayCleanup}/bin/jellyfin-trickplay-cleanup ${toString mediaRoots}";
+          };
+        };
+
+        timers.jellyfin-trickplay-cleanup = {
+          description = "Weekly Jellyfin trickplay orphan cleanup";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = "Sun 03:30:00";
+            Persistent = true;
+            RandomizedDelaySec = "30m";
+          };
         };
       };
     };
