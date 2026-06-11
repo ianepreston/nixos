@@ -15,24 +15,19 @@ tasks:
   default:
     cmd: task --list
     silent: true
-  lint:
-    desc: Run nix linters
-    cmds:
-      - statix check . --ignore result 'modules/hosts/_*-hardware.nix'
-      - deadnix --no-underscore --exclude result 'modules/hosts/_*-hardware.nix' .
   fmt:
     desc: Format all Nix files
     cmds:
       - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
-  fmt-check:
-    desc: Check formatting without modifying
-    cmds:
-      - find . -name '*.nix' -not -path './result/*' -exec nixfmt --check {} +
   check:
-    desc: Full pre-push check (format, lint, flake check)
+    desc: Full pre-push check (nixfmt + statix + deadnix + flake eval)
+    # `nix flake check` builds the `checks.<system>.pre-commit` derivation,
+    # which runs nixfmt/statix/deadnix via git-hooks.nix — the single
+    # source of truth for lint config (incl. the hardware-file excludes).
+    # No separate fmt-check/lint tasks: those hand-rolled the same tooling
+    # and drifted out of sync (see #239 follow-up — the statix/deadnix CLI
+    # invocations didn't match the tools' actual flag semantics).
     cmds:
-      - task: fmt-check
-      - task: lint
       - nix flake check --all-systems
   build:
     desc: Build a specific host (default luna)
