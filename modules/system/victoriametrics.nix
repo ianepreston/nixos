@@ -110,6 +110,11 @@ _: {
               {
                 alert = "HostOOMKill";
                 expr = "rate(node_vmstat_oom_kill[5m]) > 0";
+                # The kernel OOM counter is monotonic and doesn't
+                # oscillate, so a 1m confirmation costs nothing but
+                # suppresses single-bad-sample false positives (see #239,
+                # where this fired with the counter flat at 0 all window).
+                for = "1m";
                 labels.severity = "warning";
                 annotations = {
                   summary = "OOM kill on {{ $labels.instance }}";
@@ -718,6 +723,15 @@ _: {
             # Match VM's scrape cadence so `rate()` and `for:` windows
             # behave the same as they did under Prometheus's evaluator.
             "evaluationInterval" = "30s";
+            # Persist alert state back into VictoriaMetrics. Without this
+            # there's no record of what fired once an alert resolves —
+            # #239's false positive left nothing to query after the fact.
+            # remoteWrite emits the `ALERTS` / `ALERTS_FOR_STATE` series
+            # (queryable in vmui for post-hoc correlation); remoteRead
+            # restores pending-alert state across vmalert restarts so a
+            # bounce doesn't reset every `for:` window.
+            "remoteWrite.url" = "http://127.0.0.1:${toString vmPort}";
+            "remoteRead.url" = "http://127.0.0.1:${toString vmPort}";
           };
         };
 
