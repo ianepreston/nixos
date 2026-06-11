@@ -1,0 +1,97 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Operational maintenance runbooks for the server hosts.
+#
+# ## pg-collation-fix
+#
+# Remediates postgres collation-version mismatches after a glibc bump
+# (issue #284). When the OS collation library is upgraded out from
+# under a running cluster, every database created against the old
+# version records a stale `datcollversion`; the symptom is a
+# `WARNING: database "<db>" has a collation version mismatch` log line
+# and the real risk is silent corruption of collation-ordered (text
+# b-tree) indexes.
+#
+# The task is data-driven — it discovers which databases are actually
+# mismatched at runtime (comparing recorded vs libc-provided version)
+# rather than hardcoding a db list, so it stays correct as apps come
+# and go. For each affected db it: takes a `pg_dump -Fc` safety net,
+# `REINDEX DATABASE` (rebuilds indexes against current libc collation),
+# then `ALTER DATABASE ... REFRESH COLLATION VERSION` (clears the
+# recorded mismatch). REINDEX must come first — REFRESH alone just
+# silences the warning while leaving potentially-miscollated indexes.
+#
+#   task maintenance:pg-collation-fix          # acts on HOST
+#       HOST=hpp-1                             # default
+#       [TARGET_USER=ipreston]
+#
+# Validate on hpp-1 before amos1, as usual. Idempotent: a second run
+# finds nothing mismatched and no-ops. Dumps are left under the data
+# directory (collation-fix-dumps-<date>/) as a manual safety net —
+# delete them once you've confirmed the apps are healthy.
+
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+  pg-collation-fix:
+    desc: REINDEX + REFRESH COLLATION VERSION on collation-mismatched postgres dbs (issue #284)
+    vars:
+      HOST: '{{.HOST | default "hpp-1"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        echo -e "\x1B[32m[+] Checking postgres collation versions on {{.HOST}}\x1B[0m"
+        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} 'sudo -u postgres bash -se' <<'EOF'
+        set -euo pipefail
+
+        # Databases whose recorded collation version no longer matches
+        # what libc currently provides. template0 is frozen (datallowconn
+        # = false, null version) and is correctly excluded.
+        mapfile -t mismatched < <(psql -tAX -c "
+          SELECT datname
+          FROM pg_database
+          WHERE datcollversion IS NOT NULL
+            AND datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid)
+          ORDER BY datname;")
+
+        if [ ${#mismatched[@]} -eq 0 ]; then
+          echo "[+] No collation-version mismatches — nothing to do."
+          exit 0
+        fi
+
+        echo "[+] Mismatched databases: ${mismatched[*]}"
+
+        DUMPDIR="$(psql -tAX -c 'SHOW data_directory;')/collation-fix-dumps-$(date +%Y%m%d)"
+        mkdir -p "$DUMPDIR"
+        echo "[+] Safety-net dumps -> $DUMPDIR"
+
+        for db in "${mismatched[@]}"; do
+          # postgres / template1 are system dbs with nothing worth
+          # dumping; skip the dump but still reindex + refresh them.
+          case "$db" in
+            postgres|template1) ;;
+            *)
+              echo "[+] pg_dump $db"
+              pg_dump -Fc -f "$DUMPDIR/$db.dump" "$db"
+              ;;
+          esac
+        done
+
+        for db in "${mismatched[@]}"; do
+          echo "[+] REINDEX DATABASE $db"
+          reindexdb "$db"
+          echo "[+] REFRESH COLLATION VERSION $db"
+          psql -c "ALTER DATABASE \"$db\" REFRESH COLLATION VERSION;" "$db"
+        done
+
+        echo "[+] Post-fix state:"
+        psql -tAX -c "
+          SELECT datname, datcollversion,
+                 pg_database_collation_actual_version(oid) AS actual
+          FROM pg_database
+          WHERE datcollversion IS NOT NULL
+          ORDER BY datname;"
+        EOF
