@@ -30,32 +30,21 @@
 # covers the bulk of IoT devices. Closes #201.
 #
 # IoT VLAN access: HA needs L2 reachability on vlan30 for mDNS /
-# discovery / broadcast traffic. Topology:
-#   <hostSpec.iotTrunkInterface> ──┬── (untagged mgmt VLAN, host's primary IP)
-#                                  └── iot (host VLAN sub-iface, no host IP)
-#                                       └── macvlan child in HA netns (DHCP)
-# The trunk NIC name varies per host (PCI-topology-dependent predictable
-# names) so it's threaded through hostSpec; on hpp-1 it's enp1s0, on
-# amos1 it's enp4s0. When the field is null (e.g. quickemu test VMs
-# with no IoT VLAN), the VLAN/macvlan/dhcp-proxy stack is skipped and
-# HA runs on the podman bridge only — discovery via vlan30 is lost,
-# but the container starts and is probeable through Caddy.
-# HA keeps its primary NIC on the default podman bridge so Caddy still
-# reaches it on 127.0.0.1:8123 — only the second NIC lives on vlan30.
-# DHCP is via netavark's dhcp-proxy so prod and dev pick up distinct
-# leases without static-IP bookkeeping in hostSpec; if leases ever
-# collide we add an `iotIp` field there and switch ipam to static.
-# Caveat: macvlan children are L2-isolated from their parent host, so
-# the host kernel can't talk to HA's vlan30 IP (only other vlan30
-# devices can). Non-issue for Caddy (uses the bridge); revisit if a
-# host-side service ever needs to probe HA on that interface.
+# discovery / broadcast traffic. The vlan30 macvlan + dhcp-proxy stack
+# is shared infrastructure owned by modules/system/iot-network.nix
+# (Bambuddy is the other consumer); see that module for the topology
+# and the L2-isolation caveats. HA just attaches the `iot` macvlan as a
+# second NIC and orders its container after the shared units — its
+# primary NIC stays on the default podman bridge so Caddy still reaches
+# it on 127.0.0.1:8123. When hostSpec.iotTrunkInterface is null
+# (quickemu test VMs) the stack is skipped and HA runs on the bridge
+# only — discovery via vlan30 is lost but the container still starts.
 _: {
   flake.modules.nixos.homeassistant =
     {
       config,
       hostSpec,
       lib,
-      pkgs,
       ...
     }:
     let
@@ -88,19 +77,6 @@ _: {
         displayName = "Home Assistant";
       };
 
-      networking = lib.mkIf iotEnabled {
-        # Tagged sub-interface for vlan30 on the host trunk. Host gets
-        # no IP here — only HA does, via the macvlan child below.
-        vlans.iot = {
-          id = 30;
-          interface = hostSpec.iotTrunkInterface;
-        };
-        interfaces.iot.useDHCP = false;
-        # NetworkManager would otherwise probe the trunk and fight us
-        # for the netdev.
-        networkmanager.unmanaged = [ "interface-name:iot" ];
-      };
-
       systemd = {
         # HA writes to /config as root inside the container; we let the
         # container manage ownership and just ensure the host dir exists.
@@ -108,61 +84,11 @@ _: {
           "d /var/lib/containers/homeassistant 0750 root root -"
         ];
 
+        # Order the container after the shared vlan30 macvlan stack
+        # (owned by modules/system/iot-network.nix) so podman doesn't
+        # try to attach to a non-existent network on boot. The
+        # `requires` edge is what pulls those units in.
         services = lib.mkIf iotEnabled {
-          # netavark ships dhcp-proxy as a subcommand; no NixOS module
-          # for it yet, so we run it directly. Listens on
-          # /run/podman/nv-proxy.sock and brokers DHCP leases for
-          # containers on macvlan networks with `--ipam-driver dhcp`.
-          # netavark doesn't unlink the socket on shutdown, so a
-          # restart (e.g. across `nixos-rebuild switch`) hits
-          # EADDRINUSE and the unit crash-loops; ExecStartPre /
-          # ExecStopPost clear it on both sides.
-          netavark-dhcp-proxy = {
-            description = "netavark DHCP proxy for podman macvlan IPAM";
-            wantedBy = [ "multi-user.target" ];
-            after = [ "network.target" ];
-            serviceConfig = {
-              Type = "simple";
-              ExecStartPre = "-${pkgs.coreutils}/bin/rm -f /run/podman/nv-proxy.sock";
-              ExecStart = "${pkgs.netavark}/bin/netavark dhcp-proxy";
-              ExecStopPost = "-${pkgs.coreutils}/bin/rm -f /run/podman/nv-proxy.sock";
-              Restart = "on-failure";
-            };
-          };
-
-          # Idempotent oneshot: bring the iot sub-interface up and
-          # create the macvlan podman network if it doesn't exist.
-          # Parent is the `iot` netdev; children get DHCP via the proxy.
-          podman-network-iot = {
-            description = "podman macvlan network on vlan30";
-            wantedBy = [ "podman-homeassistant.service" ];
-            before = [ "podman-homeassistant.service" ];
-            after = [
-              "network-online.target"
-              "podman.service"
-              "sys-subsystem-net-devices-iot.device"
-            ];
-            wants = [ "network-online.target" ];
-            bindsTo = [ "sys-subsystem-net-devices-iot.device" ];
-            serviceConfig = {
-              Type = "oneshot";
-              RemainAfterExit = true;
-            };
-            script = ''
-              ${pkgs.iproute2}/bin/ip link set iot up
-              if ! ${pkgs.podman}/bin/podman network exists iot; then
-                ${pkgs.podman}/bin/podman network create \
-                  --driver macvlan \
-                  --opt parent=iot \
-                  --ipam-driver dhcp \
-                  iot
-              fi
-            '';
-          };
-
-          # Ensure the container service waits on the network and DHCP
-          # proxy so podman doesn't try to attach to a non-existent
-          # network on boot.
           podman-homeassistant = {
             after = [
               "netavark-dhcp-proxy.service"
