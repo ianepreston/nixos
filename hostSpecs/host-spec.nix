@@ -72,6 +72,16 @@
               default = null;
               description = "Name of the physical NIC that carries the tagged IoT VLAN (vlan30) for Home Assistant's macvlan child. Host-specific because predictable interface names depend on PCI topology. null on hosts that don't run HA, or that run HA without IoT VLAN access (e.g. test VMs).";
             };
+            bambuddyVpMac = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Pinned MAC for bambuddy's Virtual Printer macvlan leg on vlan30. podman assigns a fresh random MAC on every container re-creation, which re-rolls the DHCP lease and drifts the VP's IP — breaking the proxy's bind and the slicer's by-IP device entry. Pinning the MAC (paired with a DHCP reservation matching bambuddyVpIp) keeps the dedicated address stable, which bambuddy requires. null on hosts that don't run bambuddy with IoT access.";
+            };
+            bambuddyVpIp = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "The DHCP-reserved vlan30 address bambuddy's Virtual Printer binds (reserved against bambuddyVpMac on the router). bambuddy requires a dedicated, stable IP per VP for all services (MQTT/FTP/SSDP/Bind); this is the single source for it — set the VP Bind IP and the slicer's printer IP to this. null on hosts that don't run bambuddy with IoT access.";
+            };
             isWork = lib.mkOption {
               type = lib.types.bool;
               default = false;
