@@ -28,6 +28,7 @@
         caddy
         gatus
         homepage
+        iot-network
         mariadb
         mosquitto
         nfsclient

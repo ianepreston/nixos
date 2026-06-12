@@ -41,6 +41,7 @@
           calibre
           freecad
           obsidian
+          orca-slicer
           browser
           ssh-homelan
         ];

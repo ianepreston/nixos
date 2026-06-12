@@ -285,6 +285,24 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
 
+  bambuddy:
+    desc: Restore bambuddy (container + sqlite-quiesce)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: bambuddy
+          UNITS: 'podman-bambuddy.service'
+          PATHS: '/var/lib/containers/bambuddy /var/backup/sqlite/bambuddy'
+          SWAPS: '/var/backup/sqlite/bambuddy/bambuddy.db:/var/lib/containers/bambuddy/data/bambuddy.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: bambuddy, URL: 'http://127.0.0.1:8008/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
   bazarr:
     desc: Restore bazarr (native + sqlite-quiesce)
     requires: { vars: [HOST] }
@@ -802,6 +820,7 @@ tasks:
       - task: authentik
       - task: actualbudget
       - task: audiobookshelf
+      - task: bambuddy
       - task: bazarr
       - task: gatus
       - task: grimmory

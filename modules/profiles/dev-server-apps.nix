@@ -82,6 +82,7 @@
       imports = with inputs.self.modules.nixos; [
         actualbudget
         audiobookshelf
+        bambuddy
         bazarr
         decluttarr
         grimmory
