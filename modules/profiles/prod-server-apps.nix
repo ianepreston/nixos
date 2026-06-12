@@ -80,7 +80,8 @@
       imports = with inputs.self.modules.nixos; [
         actualbudget
         audiobookshelf
-        bambuddy
+        # bambuddy — code kept but dormant; proxy-mode printing is blocked on
+        # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
         bazarr
         decluttarr
         grimmory

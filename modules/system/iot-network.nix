@@ -43,6 +43,13 @@ _: {
     }:
     let
       iotEnabled = hostSpec.iotTrunkInterface != null;
+      # vlan30 (IoT VLAN) + mgmt VLAN addressing — fixed for this homelab,
+      # used only for bambuddy's static VP macvlan (HA uses DHCP on `iot`).
+      # mgmtSubnet is where the slicers live; the VP macvlan needs an explicit
+      # return route to it via the vlan30 gateway (see the network below).
+      iotSubnet = "192.168.30.0/24";
+      iotGateway = "192.168.30.1";
+      mgmtSubnet = "192.168.10.0/24";
     in
     {
       config = lib.mkIf iotEnabled {
@@ -105,6 +112,45 @@ _: {
                   --opt parent=iot \
                   --ipam-driver dhcp \
                   iot
+              fi
+            '';
+          };
+        }
+        // lib.optionalAttrs (hostSpec.bambuddyVpIp != null) {
+          # Static macvlan for bambuddy's Virtual Printer. The VP needs a
+          # fixed, dedicated vlan30 IP, but DHCP reservations aren't honored
+          # here (netavark's DHCP client sends a client-id the router matches
+          # on instead of the MAC), so bambuddy rides this host-local (static)
+          # IPAM network on the same vlan30 parent and requests a specific
+          # --ip. We add an explicit --route to the slicer (mgmt) subnet via
+          # the vlan30 gateway rather than a --gateway default: a macvlan
+          # default would compete with the podman-bridge default (both metric
+          # 100), and the kernel's nondeterministic tie-break can send replies
+          # out the bridge (NAT'd, wrong source), making the VP unreachable.
+          # The specific route always wins for slicer traffic. Only stood up
+          # on hosts that pin a bambuddy VP IP (hostSpec.bambuddyVpIp).
+          podman-network-iot-static = {
+            description = "podman static macvlan on vlan30 (bambuddy VP)";
+            after = [
+              "network-online.target"
+              "podman.service"
+              "sys-subsystem-net-devices-iot.device"
+            ];
+            wants = [ "network-online.target" ];
+            bindsTo = [ "sys-subsystem-net-devices-iot.device" ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+            };
+            script = ''
+              ${pkgs.iproute2}/bin/ip link set iot up
+              if ! ${pkgs.podman}/bin/podman network exists iot-static; then
+                ${pkgs.podman}/bin/podman network create \
+                  --driver macvlan \
+                  --opt parent=iot \
+                  --subnet ${iotSubnet} \
+                  --route ${mgmtSubnet},${iotGateway} \
+                  iot-static
               fi
             '';
           };
