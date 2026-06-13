@@ -208,6 +208,32 @@ _: {
                 };
               }
               {
+                # Stuck Mylar grab (#299 follow-up). Metric published by
+                # the mylar3-snatched-metrics oneshot in
+                # modules/apps/mylar3.nix every 5m; absent on hosts not
+                # running mylar3. Mylar's SAB completed-download-handling
+                # tracks each grab by the SAB nzo_id and never recovers
+                # when that id vanishes (SAB retry/re-add, or a failed
+                # slot purged by sab_remove_failed) — the issue sits in
+                # Snatched, the historycheck loops "Cannot find nzb …"
+                # forever, and nothing imports even though the file is
+                # usually complete on disk. Also catches genuinely
+                # unavailable releases (out of retention) that need a
+                # manual re-search. 6h is well past any real comic
+                # download (tens of MB) yet tolerates a long SAB queue;
+                # `for: 30m` debounces the publish/scrape gap. Recover
+                # with the manual post_process runbook in mylar3.nix,
+                # then `podman restart mylar3`.
+                alert = "MylarSnatchedStuck";
+                expr = "mylar3_snatched_oldest_seconds > 21600";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Mylar has a stuck Snatched issue on {{ $labels.instance }}";
+                  description = "A Mylar issue has been Snatched for >6h ({{ $value | humanizeDuration }}) without importing — completed-download-handling likely lost the SAB nzo_id, or the release is unavailable. See the manual post_process runbook in modules/apps/mylar3.nix.";
+                };
+              }
+              {
                 alert = "HighCaddy5xx";
                 expr = ''sum by (instance, server) (rate(caddy_http_requests_total{code=~"5.."}[5m])) > 0.1'';
                 for = "5m";
