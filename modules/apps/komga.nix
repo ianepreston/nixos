@@ -5,10 +5,10 @@
 # OIDC against authentik via Spring's relaxed-binding env vars
 # (SPRING_SECURITY_OAUTH2_CLIENT_*).
 #
-# Komga doesn't have a sign-up toggle for OAuth — first OIDC login
-# creates an account, but only if the email address matches an
-# already-existing Komga user. To onboard new users, log in once as
-# the Komga admin and pre-create their accounts (email-only is fine).
+# KOMGA_OAUTH2ACCOUNTCREATION=true lets a first OIDC login auto-create
+# a Komga user when no account matches the email (random password the
+# user can later set from Account Settings for OPDS/Mihon). Komga warns
+# to enable this only with providers you control — authentik qualifies.
 _: {
   flake.modules.nixos.komga =
     {
@@ -44,6 +44,7 @@ _: {
 
       systemd.services.komga = {
         environment = {
+          KOMGA_OAUTH2ACCOUNTCREATION = "true";
           SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_NAME = "Authentik";
           SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_SCOPE = "openid,profile,email";
           SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_AUTHENTIK_ISSUER_URI = "https://${authentikHost}/application/o/komga/";
