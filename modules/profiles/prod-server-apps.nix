@@ -54,7 +54,7 @@
         "/var/lib/audiobookshelf"
         "/var/lib/bazarr"
         "/var/lib/jellyfin"
-        "/var/lib/kavita"
+        "/var/lib/komga"
         "/var/lib/mosquitto"
         "/var/lib/private/matter-server"
         "/var/lib/paperless-ngx"
@@ -62,7 +62,6 @@
         "/var/lib/private/authentik"
         "/var/lib/prowlarr"
         "/var/lib/radarr"
-        "/var/lib/readeck"
         "/var/lib/sabnzbd"
         "/var/lib/sabnzbd-incomplete"
         "/var/lib/sonarr"
@@ -84,10 +83,9 @@
         # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
         bazarr
         decluttarr
-        grimmory
         homeassistant
         jellyfin
-        kavita
+        komga
         matter-server
         manyfold
         miniflux
