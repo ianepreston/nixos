@@ -49,6 +49,12 @@
       # whole point of running the upgrade timer unattended.
       system.autoUpgrade.allowReboot = true;
 
+      # sqlite CLI for poking at app databases (mylar3, *arr, etc.)
+      # during incident debugging — several apps ship rollback-journal
+      # sqlite dbs under /var/lib/containers that a root `sqlite3
+      # -readonly` reads cleanly alongside the running service.
+      environment.systemPackages = [ pkgs.sqlite ];
+
       # Swap Redis for Valkey across every `services.redis.servers.*`
       # instance on this profile. Valkey is the LF fork of Redis 7.2
       # under the original BSD-3-Clause license (Redis Inc. relicensed
