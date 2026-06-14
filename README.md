@@ -799,6 +799,7 @@ entries:
       client_type: confidential
       client_id: !Env MEALIE_OIDC_CLIENT_ID
       client_secret: !Env MEALIE_OIDC_CLIENT_SECRET
+      grant_types: [authorization_code, refresh_token]  # see note below — required on 2026.x
       authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
       authorization_flow:  !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
       invalidation_flow:   !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
@@ -813,6 +814,20 @@ entries:
       group: !Find [authentik_core.group, [name, Users]]
       enabled: true
 ```
+
+**Always set `grant_types` explicitly.** authentik 2026.x added
+`OAuth2Provider.grant_types` (defaults to an empty list) and the
+authorize view now rejects any flow whose grant isn't listed
+(`Invalid grant_type for provider` → the app sees a malformed-request
+error and bounces back to its login page). Providers created under an
+older authentik were back-filled by the migration, so the omission is
+invisible until a provider is created **fresh** on 2026.x — a new app,
+a new host, or a `recovery:all` / `bootstrap:reinstall` rebuild (which
+recreates every provider at once and would otherwise break all SSO
+simultaneously). `[authorization_code, refresh_token]` is authentik's
+own UI default and the right value for every app here, including
+`public`/PKCE clients (grimmory). This bit komga on amos1 — see the
+blueprint comments for the full trace.
 
 Reference: [model fields](https://docs.goauthentik.io/customize/blueprints/v1/models),
 [YAML tags](https://docs.goauthentik.io/customize/blueprints/v1/tags).
