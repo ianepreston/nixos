@@ -177,6 +177,7 @@ _: {
         ];
 
         services = {
+          sabnzbd.path = [ (pkgs.python3.withPackages (ps: [ ps.requests ])) ];
           # Publish two textfile-collector metrics for #276's alerts:
           #   sabnzbd_incomplete_oldest_seconds — age of the oldest file
           #     in the incomplete dir. >24h is a stalled download /
