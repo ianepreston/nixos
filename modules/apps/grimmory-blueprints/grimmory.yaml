@@ -17,6 +17,12 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-email"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # authentik 2026.x added OAuth2Provider.grant_types (default empty); the
+      # authorize view rejects flows whose grant is not listed. Required so a
+      # provider created fresh on 2026.x is usable (see komga.yaml for detail).
+      grant_types:
+        - authorization_code
+        - refresh_token
       redirect_uris:
         - matching_mode: strict
           url: https://grimmory.@serverDomain@/oauth2-callback

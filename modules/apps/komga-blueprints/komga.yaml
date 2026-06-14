@@ -36,6 +36,16 @@ entries:
         - !KeyOf scope-komga-email
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # authentik 2026.x added OAuth2Provider.grant_types (ArrayField,
+      # default=[]). The authorize view rejects any flow whose grant isn't
+      # listed ("Invalid grant_type for provider" -> request malformed), so a
+      # provider created fresh on 2026.x from a blueprint that omits this is
+      # unusable. Providers created under older authentik were back-filled by
+      # the migration, which is why this only bit on a freshly-provisioned host
+      # (amos1) and not one carried over from an earlier version (hpp-1).
+      grant_types:
+        - authorization_code
+        - refresh_token
       redirect_uris:
         - matching_mode: strict
           url: https://komga.@serverDomain@/login/oauth2/code/authentik
