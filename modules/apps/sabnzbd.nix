@@ -55,6 +55,24 @@ _: {
       # this out to whatever URLs sabnzbd.yml lists (currently the
       # shared discord alerts webhook).
       appriseUrl = "apprise://localhost:8002/sabnzbd";
+      # Comic post-processing scripts (ComicRN.py under
+      # /mnt/content/Downloads/sabnzbd_scripts) use `#!/usr/bin/env python`
+      # and prefer the `requests` module (falling back to urllib if absent).
+      # They can't find an interpreter because nixpkgs' sabnzbd wrapper does
+      # an *absolute* `--set PATH` to its own tool list (par2/unrar/…) — which
+      # wipes whatever systemd puts on PATH, so `systemd.services.sabnzbd.path`
+      # never reaches the script subprocess (sabnzbd's create_env copies the
+      # already-clobbered os.environ). Inject python into the wrapper's PATH
+      # directly. `--replace-fail` is a canary: if upstream stops emitting
+      # `export PATH='`, the build fails loudly instead of silently dropping
+      # python again.
+      scriptPython = pkgs.python3.withPackages (ps: [ ps.requests ]);
+      sabnzbdPackage = pkgs.sabnzbd.overrideAttrs (old: {
+        postFixup = (old.postFixup or "") + ''
+          substituteInPlace $out/bin/sabnzbd \
+            --replace-fail "export PATH='" "export PATH='${scriptPython}/bin:"
+        '';
+      });
     in
     {
       myAuthentik.forwardAuthApps.sabnzbd = {
@@ -81,6 +99,7 @@ _: {
 
       services.sabnzbd = {
         enable = true;
+        package = sabnzbdPackage;
         user = sabnzbdUser;
         group = "servers";
         # Opt out of the stateVersion < 26.05 default that points
@@ -177,7 +196,6 @@ _: {
         ];
 
         services = {
-          sabnzbd.path = [ (pkgs.python3.withPackages (ps: [ ps.requests ])) ];
           # Publish two textfile-collector metrics for #276's alerts:
           #   sabnzbd_incomplete_oldest_seconds — age of the oldest file
           #     in the incomplete dir. >24h is a stalled download /
