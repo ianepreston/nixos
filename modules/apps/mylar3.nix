@@ -12,9 +12,13 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
+      serverUser = "server-${hostSpec.serverEnvironment}";
+      serverUid = config.users.users.${serverUser}.uid;
       serverGid = config.users.groups.servers.gid;
       port = 8090;
+      # Comics library on the NFS share. The perms-sweep below keeps it
+      # world-readable; see the mylar3-comics-perms unit for the why.
+      comicsDir = "/mnt/content/Comics";
       # LinuxServer image nests its app data under /config/mylar, so the
       # SQLite DB lands here on the host (the /config mount is
       # /var/lib/containers/mylar3). Rollback-journal mode + local btrfs,
@@ -124,6 +128,56 @@ _: {
             OnBootSec = "3m";
             OnUnitActiveSec = "5m";
             AccuracySec = "30s";
+          };
+        };
+
+        # World-readable comics sweep.
+        #
+        # Mylar metatags every grab (enable_meta): comictagger rewrites
+        # the .cbz into a fresh file via Python's tempfile.mkstemp, which
+        # hardcodes mode 0600 and ignores umask. So every imported comic
+        # lands -rw------- owned by server-${env}, readable only by that
+        # user — anything browsing the NFS share as another account (SMB,
+        # other tooling) is locked out. Mylar's own enable_perm chmod is
+        # capped at chmod_file=0660 (no other-read), fires unreliably over
+        # NFS from inside the container, and only touches new grabs.
+        #
+        # Instead: a host-side sweep running as the file owner
+        # (server-${env}; root is squashed on the NAS and can't chmod
+        # these) that ensures a+r on files / a+rx on dirs. The `! -perm`
+        # predicates skip anything already correct, so steady-state runs
+        # only stat the tree and chmod the handful of new imports.
+        services.mylar3-comics-perms = {
+          description = "ensure comics under ${comicsDir} stay world-readable";
+          serviceConfig = {
+            Type = "oneshot";
+            User = serverUser;
+            Group = "servers";
+            Environment = [
+              "DIR=${comicsDir}"
+              "PATH=${
+                pkgs.lib.makeBinPath [
+                  pkgs.coreutils
+                  pkgs.findutils
+                ]
+              }"
+            ];
+          };
+          script = ''
+            set -eu
+            [ -d "$DIR" ] || exit 0
+            find "$DIR" -type d ! -perm -0555 -exec chmod a+rx {} + || true
+            find "$DIR" -type f ! -perm -0444 -exec chmod a+r {} + || true
+          '';
+        };
+
+        timers.mylar3-comics-perms = {
+          description = "Periodic comics world-readable sweep";
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = "5m";
+            OnUnitActiveSec = "15m";
+            AccuracySec = "1m";
           };
         };
       };
