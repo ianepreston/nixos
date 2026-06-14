@@ -14,6 +14,7 @@ _: {
     {
       config,
       hostSpec,
+      pkgs,
       ...
     }:
     let
@@ -40,6 +41,10 @@ _: {
         user = "server-${hostSpec.serverEnvironment}";
         group = "servers";
         settings.server.port = port;
+        # The jar (unlike the bundled Docker/desktop distros) doesn't ship
+        # kepubify, so point Komga at the nixpkgs binary. Required for
+        # on-the-fly EPUB->KEPUB conversion when syncing to a Kobo.
+        settings.komga.kobo.kepubify-path = "${pkgs.kepubify}/bin/kepubify";
       };
 
       systemd.services.komga = {
