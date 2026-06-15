@@ -83,6 +83,7 @@
         # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
         bazarr
         decluttarr
+        flaresolverr
         homeassistant
         jellyfin
         komga
