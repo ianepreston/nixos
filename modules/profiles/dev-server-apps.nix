@@ -84,6 +84,7 @@
         audiobookshelf
         bazarr
         decluttarr
+        flaresolverr
         grimmory
         homeassistant
         jellyfin
