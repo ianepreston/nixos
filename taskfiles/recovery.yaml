@@ -321,6 +321,24 @@ tasks:
       - task: _health
         vars: { HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
 
+  bookorbit:
+    desc: Restore bookorbit (containerized + postgres)
+    requires: { vars: [HOST] }
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: bookorbit
+          UNITS: 'podman-bookorbit.service'
+          PATHS: '/var/lib/containers/bookorbit'
+          DB: bookorbit
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: { HOST: '{{.HOST}}', APP: bookorbit, URL: 'http://127.0.0.1:3017/api/v1/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
+
   gatus:
     desc: Restore gatus (native + sqlite-quiesce)
     requires: { vars: [HOST] }
@@ -822,6 +840,7 @@ tasks:
       - task: audiobookshelf
       - task: bambuddy
       - task: bazarr
+      - task: bookorbit
       - task: gatus
       - task: grimmory
       - task: homeassistant

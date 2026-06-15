@@ -83,6 +83,7 @@
         actualbudget
         audiobookshelf
         bazarr
+        bookorbit
         decluttarr
         flaresolverr
         grimmory
