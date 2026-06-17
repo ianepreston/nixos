@@ -25,6 +25,7 @@
         git
         curl
         wget
+        tmux
       ];
 
       # ========== User & Shell ==========
