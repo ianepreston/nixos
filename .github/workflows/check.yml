@@ -22,7 +22,7 @@ jobs:
     runs-on: [self-hosted, nixos]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
@@ -86,7 +86,7 @@ jobs:
         host: [hpp-1, terra, amos1]
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
