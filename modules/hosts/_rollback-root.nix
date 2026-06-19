@@ -75,6 +75,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # If the initrd ever fails (e.g. a future rollback bug), drop to an
+    # unauthenticated emergency shell on the console instead of hanging
+    # unreachable — recovering hpp-1 in #310 otherwise needed a rescue
+    # ISO. Acceptable here: the root disk is unencrypted, so console
+    # access already implies data access.
+    boot.initrd.systemd.emergencyAccess = true;
+
     boot.initrd.systemd.services.rollback-root = {
       description = "Roll back @root to blank snapshot";
       wantedBy = [ "initrd.target" ];
