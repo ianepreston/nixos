@@ -98,6 +98,28 @@ _: {
                 };
               }
               {
+                # initrd @old_roots prune failed (#310). The host still
+                # boots — @root is recreated from @root-blank *before*
+                # the prune — but the initrd rollback left a
+                # /persist/var/lib/rollback-root/prune-failed marker, so
+                # old roots are accumulating on the root filesystem.
+                # Metric published every 5m by the
+                # rollback-root-prune-metrics oneshot in
+                # modules/hosts/_rollback-root.nix; absent on hosts
+                # without the rollback service. Recover by checking the
+                # next boot's `rollback-root` journal and rebooting,
+                # which re-runs the prune (and clears the marker on
+                # success).
+                alert = "RollbackRootPruneFailed";
+                expr = "rollback_root_prune_failed == 1";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "initrd @old_roots prune failed on {{ $labels.instance }}";
+                  description = "The btrfs rollback service could not prune old @old_roots on the last boot; the host booted fine but old roots are piling up under the root filesystem. Check the rollback-root journal and reboot to re-run the prune. See modules/hosts/_rollback-root.nix (#310).";
+                };
+              }
+              {
                 alert = "HostHighMemory";
                 expr = "(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10";
                 for = "10m";

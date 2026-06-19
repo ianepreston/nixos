@@ -22,9 +22,20 @@
 # the awk dependency by letting `btrfs subvolume delete --recursive`
 # handle nested subvolumes, (b) recreates @root *before* the prune, and
 # (c) makes the prune strictly best-effort so it can never block boot.
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.rollbackRoot;
+
+  # node_exporter textfile collector drop dir (same path the rest of the
+  # observability stack uses, e.g. modules/system/victoriametrics.nix).
+  textfileDir = "/var/lib/node-exporter-textfile-collector";
+  # Marker the initrd writes (under @persist) when the prune fails.
+  marker = "/persist/var/lib/rollback-root/prune-failed";
   # systemd-escape the partlabel for the .device unit name: every "-"
   # in the path component becomes "\x2d". e.g. "disk-primary-root" ->
   # "disk\x2dprimary\x2droot".
@@ -73,6 +84,51 @@ in
       unitConfig.DefaultDependencies = "no";
       serviceConfig.Type = "oneshot";
       script = scriptText;
+    };
+
+    # Publish the prune-failed marker (written by the initrd service
+    # above) as a node_exporter textfile metric so vmalert can fire
+    # RollbackRootPruneFailed — journald isn't persisted across the
+    # rollback, so the marker is the only post-boot trace. Atomic write
+    # via tempfile + rename. See #310.
+    systemd.services.rollback-root-prune-metrics = {
+      description = "publish initrd @old_roots prune health to node_exporter textfile collector";
+      serviceConfig = {
+        Type = "oneshot";
+        User = "root";
+        Environment = [ "PATH=${lib.makeBinPath [ pkgs.coreutils ]}" ];
+      };
+      script = ''
+        set -eu
+        out=${textfileDir}/rollback-root.prom
+        mkdir -p "$(dirname "$out")"
+        failed=0
+        ts=0
+        if [ -e ${marker} ]; then
+          failed=1
+          ts=$(stat -c %Y ${marker} 2>/dev/null || echo 0)
+        fi
+        tmp=$(mktemp -p "$(dirname "$out")" .rollback-root.prom.XXXXXX)
+        {
+          echo "# HELP rollback_root_prune_failed Whether the last initrd @old_roots prune failed (1) or not (0)."
+          echo "# TYPE rollback_root_prune_failed gauge"
+          echo "rollback_root_prune_failed $failed"
+          echo "# HELP rollback_root_prune_last_failure_timestamp_seconds Unix time the prune-failed marker was last written (0 if none)."
+          echo "# TYPE rollback_root_prune_last_failure_timestamp_seconds gauge"
+          echo "rollback_root_prune_last_failure_timestamp_seconds $ts"
+        } > "$tmp"
+        chmod 0644 "$tmp"
+        mv "$tmp" "$out"
+      '';
+    };
+
+    systemd.timers.rollback-root-prune-metrics = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnBootSec = "2m";
+        OnUnitActiveSec = "5m";
+        Unit = "rollback-root-prune-metrics.service";
+      };
     };
   };
 }
