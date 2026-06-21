@@ -65,7 +65,7 @@ _: {
 
       virtualisation.oci-containers.containers.tandoor = {
         # renovate: datasource=docker depName=vabene1111/recipes
-        image = "vabene1111/recipes:2.6.9";
+        image = "vabene1111/recipes:2.6.10";
         ports = [ "127.0.0.1:8083:8080" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
