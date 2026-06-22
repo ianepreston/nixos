@@ -14,9 +14,6 @@ _:
       size = 10000;
     };
     initContent = ''
-      if [ -d "$HOME/.local/bin" ]; then
-        export PATH="$HOME/.local/bin:$PATH"
-      fi
       alias vim="nvim"
       alias vi="nvim"
       # Can probably get rid of this with some better config but whatever
@@ -35,6 +32,9 @@ _:
       fi
     '';
   };
+  # Lands in hm-session-vars.sh (sourced by ~/.zshenv) so it is available to
+  # non-interactive shells too, not just interactive ones via .zshrc.
+  home.sessionPath = [ "$HOME/.local/bin" ];
   home.file.".bashrc".text = ''
     # Added just so zsh will launch from non NixOS setups
     # If not running interactively, don't do anything
