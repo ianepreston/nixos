@@ -1,7 +1,12 @@
 # Jellyfin - media server
 # Native services.jellyfin from nixpkgs (system user `jellyfin`,
-# /var/lib/jellyfin for state). Hardware transcoding is tracked as
-# a follow-up.
+# /var/lib/jellyfin for state). Hardware transcoding (NVENC/NVDEC on
+# the host's NVIDIA GPU) is enabled, but configured via the Jellyfin
+# UI — it lives in runtime state, not this module: encode/decode in
+# /var/lib/jellyfin/config/encoding.xml (HardwareAccelerationType=nvenc),
+# trickplay in config/system.xml (<TrickplayOptions> EnableHwAcceleration).
+# Note: not all CPU load is transcoding — the chromaprint media-segment
+# (intro-detection) scan is audio-only and stays on CPU regardless.
 #
 # Auth: shared credentials with authentik via LDAP rather than OIDC.
 # Most jellyfin clients are TVs / native apps that can't do an SSO
