@@ -24,6 +24,55 @@ entries:
       groups:
         - !Find [authentik_core.group, [name, Users]]
 
+  # Dedicated authentication flow for LDAP binds (Jellyfin et al).
+  # Mirrors default-authentication-flow but WITHOUT the
+  # authenticator-validation (MFA) stage. The LDAP outpost cannot
+  # satisfy a WebAuthn/passkey challenge (and `mfa_support: false`
+  # below disables even TOTP-appended-to-password), so once a user
+  # enrols any MFA device the shared default flow fails every LDAP
+  # bind with "no compatible authenticator class found" — the flow
+  # validates the password, then dies at the MFA stage. TV/native
+  # clients can't do MFA anyway, so LDAP stays password-only here
+  # while browser SSO keeps full MFA via the default flow. Reuses the
+  # existing identification/password/login stages so flow UX and
+  # source config stay in sync with the default.
+  - model: authentik_flows.flow
+    id: flow-ldap-auth
+    state: present
+    identifiers:
+      slug: ldap-authentication-flow
+    attrs:
+      name: LDAP Authentication
+      title: LDAP Authentication
+      designation: authentication
+      authentication: none
+      layout: stacked
+      denied_action: message_continue
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow-ldap-auth
+      order: 10
+    attrs:
+      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow-ldap-auth
+      order: 20
+    attrs:
+      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+
+  - model: authentik_flows.flowstagebinding
+    state: present
+    identifiers:
+      target: !KeyOf flow-ldap-auth
+      order: 100
+    attrs:
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+
   - model: authentik_providers_ldap.ldapprovider
     id: prov-ldap
     state: present
@@ -31,7 +80,7 @@ entries:
       name: ldap
     attrs:
       name: ldap
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !KeyOf flow-ldap-auth
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       base_dn: dc=ldap,dc=goauthentik,dc=io
       uid_start_number: 2000
