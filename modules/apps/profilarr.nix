@@ -37,7 +37,7 @@ _: {
 
       virtualisation.oci-containers.containers.profilarr = {
         # renovate: datasource=docker depName=santiagosayshey/profilarr
-        image = "santiagosayshey/profilarr:v1.1.4";
+        image = "santiagosayshey/profilarr:v1.1.5";
         ports = [ "127.0.0.1:${toString port}:6868" ];
         volumes = [
           "/var/lib/containers/profilarr:/config"
