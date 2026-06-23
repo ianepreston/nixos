@@ -14,8 +14,14 @@
 # wasn't worth depending on the archived 9p4/jellyfin-plugin-sso.
 # `jellyfin/jellyfin-plugin-ldapauth` is officially maintained under
 # the jellyfin org and binds against the authentik LDAP outpost
-# (services.authentik-ldap on loopback :3389). This module requests
-# the outpost via `myAuthentik.ldap.enable`; the blueprint creates
+# (services.authentik-ldap on loopback :3389). LDAP binds run a
+# dedicated, MFA-free authentik flow (`ldap-authentication-flow`, see
+# authentik-blueprints-ldap/ldap.yaml): the outpost can't satisfy a
+# WebAuthn/passkey challenge, so a user with any MFA device would
+# otherwise fail every bind with "no compatible authenticator class
+# found". LDAP is therefore password-only; browser SSO keeps full MFA.
+# This module requests the outpost via `myAuthentik.ldap.enable`; the
+# blueprint creates
 # everything including a pre-stamped outpost token so no UI steps are
 # needed (see goauthentik/authentik#9711). Only manual one-time bit
 # is installing the LDAP plugin DLL inside jellyfin and filling its
