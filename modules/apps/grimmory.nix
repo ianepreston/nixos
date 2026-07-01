@@ -111,7 +111,7 @@ _: {
 
       virtualisation.oci-containers.containers.grimmory = {
         # renovate: datasource=docker depName=grimmory/grimmory
-        image = "grimmory/grimmory:v3.2.2";
+        image = "grimmory/grimmory:v3.2.4";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/grimmory/data:/app/data"
