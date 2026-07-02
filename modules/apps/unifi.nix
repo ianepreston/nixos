@@ -77,6 +77,15 @@
       # the container.
       preservation.preserveAt."/persist".directories = [ "/var/lib/unifi-os-server" ];
 
+      # Preservation keeps this dir across reboots, but that's orthogonal
+      # to backup: the blanket `/var/lib/containers` restic path in
+      # server-backups.nix only covers containerized app state under that
+      # tree, and UniFi's state lives outside it. Add an explicit restic
+      # path so the controller's data is captured in the nightly snapshot
+      # (and `task recovery:unifi` has something to restore). List-typed
+      # `paths` merges with the base declaration across modules.
+      services.restic.backups.server.paths = [ "/var/lib/unifi-os-server" ];
+
       myAuthentik.forwardAuthApps.unifi = {
         port = 11443;
         displayName = "UniFi";
