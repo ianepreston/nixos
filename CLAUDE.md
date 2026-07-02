@@ -299,9 +299,11 @@ Exceptions:
   oneshot is the example.
 
 Existing modules that have it on both the secret and the template
-(`readeck.nix`, `manyfold.nix`, `pinchflat.nix`, `valheim.nix`) are
+(`readeck.nix`, `manyfold.nix`, `pinchflat.nix`) are
 not broken — converge them to template-only on drive-by edits rather
-than a dedicated cleanup pass. Closes #142.
+than a dedicated cleanup pass. Closes #142. (`valheim.nix` had the
+inverse defect — `restartUnits` on the secret only, not the template
+— fixed to template-only per #336.)
 
 ## Authentik notes
 

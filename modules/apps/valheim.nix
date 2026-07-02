@@ -45,12 +45,20 @@ _: {
     {
       sops.secrets."valheim/server_password" = {
         inherit (hostSpec) sopsFile;
-        restartUnits = [ "podman-valheim.service" ];
       };
 
-      sops.templates."valheim.env".content = ''
-        SERVER_PASS=${config.sops.placeholder."valheim/server_password"}
-      '';
+      # restartUnits lives on the template (not the secret): the container
+      # consumes the rendered template via environmentFiles, and sops-nix
+      # writes secrets and re-renders templates in separate phases. Binding
+      # the restart to the template guarantees it fires after the re-render
+      # flushes the rotated credential. See CLAUDE.md "restartUnits goes on
+      # the template, not the secret".
+      sops.templates."valheim.env" = {
+        content = ''
+          SERVER_PASS=${config.sops.placeholder."valheim/server_password"}
+        '';
+        restartUnits = [ "podman-valheim.service" ];
+      };
 
       systemd.tmpfiles.rules = [
         "d /var/lib/containers/valheim 0750 ${toString serverUid} ${toString serverGid} -"
