@@ -152,17 +152,17 @@ _: {
         };
       };
 
+      myAppState.sabnzbd = {
+        stateDir = "/var/lib/sabnzbd";
+        user = sabnzbdUser;
+      };
+
+      # Incomplete dir: bind-mounted from /persist so partial downloads
+      # survive a reboot (sabnzbd resumes them on start). Kept as a
+      # preserve-only entry (deliberately NOT a myAppState app) — there's
+      # nothing worth a backup in a half-finished NZB unpack, so it must
+      # stay out of `restic.backups.server.paths`.
       preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/sabnzbd";
-          user = sabnzbdUser;
-          group = "servers";
-          mode = "0700";
-        }
-        # Incomplete dir: bind-mounted from /persist so partial downloads
-        # survive a reboot (sabnzbd resumes them on start). Not added to
-        # `restic.backups.server.paths` — there's nothing worth a backup
-        # in a half-finished NZB unpack.
         {
           directory = incompleteDir;
           user = sabnzbdUser;
@@ -170,8 +170,6 @@ _: {
           mode = "0700";
         }
       ];
-
-      services.restic.backups.server.paths = [ "/var/lib/sabnzbd" ];
 
       # Apprise notifications. sabnzbd's bundled apprise library posts
       # to our apprise-api container under the `sabnzbd` stateful key;

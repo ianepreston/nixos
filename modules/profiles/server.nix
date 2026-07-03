@@ -21,6 +21,7 @@
     { hostSpec, pkgs, ... }:
     {
       imports = with inputs.self.modules.nixos; [
+        app-state
         apprise
         auto-rebuild
         authentik

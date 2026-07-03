@@ -15,61 +15,38 @@
   flake.modules.nixos.prod-server-apps =
     { config, lib, ... }:
     let
-      # Native server-apps (and the one container-app whose volumes
-      # live outside /var/lib/containers) that need an explicit
-      # preservation entry on impermanence hosts. Container-only apps
-      # (kapowarr, mylar3, profilarr, valheim, watchstate,
-      # spierscraper, seerr, …) are covered transitively by the
-      # wholesale `/var/lib/containers` entry in preservation-server.nix
-      # and don't appear here. Stateless natives (miniflux — backed by
-      # postgres, no local state) are also omitted.
+      # State dirs the impermanence guard expects to be preserved. The
+      # app tier is derived from `config.myAppState` — the single source
+      # of truth for native-app on-disk state (see
+      # modules/system/app-state.nix, which emits the preservation and
+      # restic entries from the same declaration). Adding a native app is
+      # therefore one `myAppState.<app>` block in the app module and no
+      # edit here.
       #
-      # Issue #136 was exactly this class of bug: 5 native arrs / readeck
+      # Issue #136 was exactly this class of bug: native arrs / readeck
       # shipped on hpp-1 with impermanence enabled and no preservation
       # entries; only the lack of a reboot between deploy and the audit
-      # kept it from silently wiping arr history. The assertion below
-      # makes the check structural rather than human-memory.
+      # kept it from silently wiping arr history. `myAppState` now makes
+      # the preserve+restic pair structural (they can't drift apart);
+      # this assertion stays as the belt-and-suspenders that every
+      # expected dir is actually present in `preservation.preserveAt` on
+      # impermanence hosts.
       #
-      # When you add a new native app with persistent state:
-      #   1. Add a `preservation.preserveAt."/persist".directories`
-      #      entry in that app's module (see modules/apps/bazarr.nix for
-      #      the canonical pattern).
-      #   2. Append the on-disk state-dir path to the list below.
-      #
-      # NOTE: Paths are the public /var/lib/<app>, not the DynamicUser
-      # /var/lib/private/<app>. The exception is authentik, whose
-      # preservation entry intentionally targets the private dir (see
-      # modules/apps/authentik.nix for the why).
-      #
-      # NOTE: The check is hardcoded rather than fully generic because
-      # nix doesn't expose a uniform "this service has a StateDirectory"
-      # handle: modules variously use systemd `StateDirectory=`,
-      # `services.<app>.dataDir`, `services.<app>.stateDir`, or
-      # DynamicUser symlinks under /var/lib/private. Walking the
-      # systemd unit table for `StateDirectory=` would catch most but
-      # miss the dataDir/stateDir overrides — the hardcoded list keeps
-      # the assertion simple and unambiguous at the cost of needing one
-      # list update per new native app.
-      expectedPreservedDirs = [
-        "/var/lib/audiobookshelf"
-        "/var/lib/bazarr"
-        "/var/lib/jellyfin"
-        "/var/lib/komga"
+      # `residualPreservedDirs` covers preserved state NOT modeled as a
+      # myAppState app, so it isn't in the derived set:
+      #   /var/lib/mosquitto          - system MQTT broker (modules/system/mosquitto.nix)
+      #   /var/lib/private/authentik  - DynamicUser SSO, bare-string preserve entry (modules/apps/authentik.nix)
+      #   /var/lib/unifi-os-server    - container app whose state lives outside /var/lib/containers (modules/apps/unifi.nix)
+      #   /var/lib/sabnzbd-incomplete - preserve-only bind mount, deliberately not backed up (modules/apps/sabnzbd.nix)
+      residualPreservedDirs = [
         "/var/lib/mosquitto"
-        "/var/lib/private/matter-server"
-        "/var/lib/paperless-ngx"
-        "/var/lib/pinchflat"
         "/var/lib/private/authentik"
-        "/var/lib/prowlarr"
-        "/var/lib/radarr"
-        "/var/lib/sabnzbd"
         "/var/lib/sabnzbd-incomplete"
-        "/var/lib/sonarr"
-        # Container app whose volumes live OUTSIDE /var/lib/containers:
-        # the upstream unifi-os-server flake module defaults its
-        # `stateDir` to /var/lib/unifi-os-server.
         "/var/lib/unifi-os-server"
       ];
+
+      expectedPreservedDirs =
+        map (a: a.stateDir) (lib.attrValues config.myAppState) ++ residualPreservedDirs;
 
       preservedDirs = map (d: d.directory) (config.preservation.preserveAt."/persist".directories or [ ]);
 
@@ -122,9 +99,10 @@
 
               ${lib.concatStringsSep "\n  " missing}
 
-            Add an entry in the owning app module (see e.g.
-            modules/apps/bazarr.nix for the pattern) and update
-            `expectedPreservedDirs` in modules/profiles/server-apps.nix.
+            Declare `myAppState.<app>` in the owning app module (see
+            e.g. modules/apps/bazarr.nix for the pattern) — that single
+            source emits both the preservation entry and the restic path,
+            and feeds the derived guard here. No profile edit needed.
           '';
         }
       ];

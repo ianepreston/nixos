@@ -60,16 +60,10 @@ _: {
         secretsFile = config.sops.templates."pinchflat.env".path;
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/pinchflat";
-          user = "server-${hostSpec.serverEnvironment}";
-          group = "servers";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/pinchflat" ];
+      myAppState.pinchflat = {
+        stateDir = "/var/lib/pinchflat";
+        user = "server-${hostSpec.serverEnvironment}";
+      };
 
       mySqliteQuiesce.apps.pinchflat.databases = [
         "/var/lib/pinchflat/db/pinchflat.db"

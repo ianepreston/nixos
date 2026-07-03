@@ -31,16 +31,14 @@ _: {
       enable = true;
     };
 
-    preservation.preserveAt."/persist".directories = [
-      {
-        # DynamicUser puts state under /var/lib/private/<service>;
-        # the public /var/lib/matter-server is a symlink. Preserve
-        # the actual storage path (same pattern as authentik).
-        directory = "/var/lib/private/matter-server";
-        mode = "0700";
-      }
-    ];
-
-    services.restic.backups.server.paths = [ "/var/lib/private/matter-server" ];
+    # DynamicUser puts state under /var/lib/private/<service>; the public
+    # /var/lib/matter-server is a symlink. Preserve the actual storage
+    # path (same pattern as authentik). user/group left null so the
+    # preservation entry omits them (DynamicUser manages ownership).
+    myAppState.matter-server = {
+      stateDir = "/var/lib/private/matter-server";
+      user = null;
+      group = null;
+    };
   };
 }

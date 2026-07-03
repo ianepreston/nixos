@@ -106,18 +106,13 @@ _: {
       # startup (django framework check) and fails if the top-level
       # dir isn't owned by the paperless user — subdirs being owned
       # correctly isn't enough. Match the service user/group.
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = dataDir;
-          user = "paperless";
-          group = "paperless";
-          mode = "0700";
-        }
-      ];
+      myAppState.paperless-ngx = {
+        stateDir = dataDir;
+        user = "paperless";
+        group = "paperless";
+      };
 
       services = {
-        restic.backups.server.paths = [ dataDir ];
-
         # Open a loopback TCP port on the upstream module's per-app redis
         # so redis_exporter (in modules/system/victoriametrics.nix) can
         # scrape it. Paperless itself keeps talking to the unix socket;

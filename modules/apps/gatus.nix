@@ -220,16 +220,11 @@ _: {
 
       # Persistence: sqlite uptime history lives here. Static uid
       # pinned above so preservation can restore correct ownership.
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/gatus";
-          user = "gatus";
-          group = "gatus";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/gatus" ];
+      myAppState.gatus = {
+        stateDir = "/var/lib/gatus";
+        user = "gatus";
+        group = "gatus";
+      };
 
       # Quiesce the sqlite file before restic snapshots — matches the
       # pattern in 9886a1d for all other sqlite-backed apps.
