@@ -91,16 +91,11 @@ _: {
         RestrictSUIDSGID = true;
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/mealie";
-          user = "mealie";
-          group = "mealie";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/mealie" ];
+      myAppState.mealie = {
+        stateDir = "/var/lib/mealie";
+        user = "mealie";
+        group = "mealie";
+      };
 
       myCaddy.apps.mealie = {
         host = mealieHost;

@@ -137,16 +137,10 @@ _: {
       # Preservation defaults to root:root, but jellyfin runs as
       # server-${env}:servers and needs to mkdir under its own dir
       # (the bind-mount root). Match the service user/group.
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/jellyfin";
-          user = "server-${hostSpec.serverEnvironment}";
-          group = "servers";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/jellyfin" ];
+      myAppState.jellyfin = {
+        stateDir = "/var/lib/jellyfin";
+        user = "server-${hostSpec.serverEnvironment}";
+      };
 
       mySqliteQuiesce.apps.jellyfin.databases = [
         "/var/lib/jellyfin/data/jellyfin.db"

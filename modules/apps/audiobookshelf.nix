@@ -31,16 +31,10 @@ _: {
         inherit port;
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/audiobookshelf";
-          user = "server-${hostSpec.serverEnvironment}";
-          group = "servers";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/audiobookshelf" ];
+      myAppState.audiobookshelf = {
+        stateDir = "/var/lib/audiobookshelf";
+        user = "server-${hostSpec.serverEnvironment}";
+      };
 
       mySqliteQuiesce.apps.audiobookshelf.databases = [
         "/var/lib/audiobookshelf/config/absdatabase.sqlite"

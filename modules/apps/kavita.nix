@@ -56,16 +56,11 @@ _: {
       # the file owner.
       users.users.${kavitaUser}.group = lib.mkForce "servers";
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/kavita";
-          user = kavitaUser;
-          group = "servers";
-          mode = "0750";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/kavita" ];
+      myAppState.kavita = {
+        stateDir = "/var/lib/kavita";
+        user = kavitaUser;
+        mode = "0750";
+      };
 
       mySqliteQuiesce.apps.kavita.databases = [
         "/var/lib/kavita/config/kavita.db"

@@ -69,16 +69,11 @@ _: {
         RestrictSUIDSGID = true;
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/prowlarr";
-          user = "prowlarr";
-          group = "prowlarr";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/prowlarr" ];
+      myAppState.prowlarr = {
+        stateDir = "/var/lib/prowlarr";
+        user = "prowlarr";
+        group = "prowlarr";
+      };
 
       mySqliteQuiesce.apps.prowlarr.databases = [
         "/var/lib/prowlarr/prowlarr.db"

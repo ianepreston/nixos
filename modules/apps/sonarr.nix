@@ -45,16 +45,10 @@ _: {
         group = "servers";
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/sonarr";
-          user = "server-${hostSpec.serverEnvironment}";
-          group = "servers";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/sonarr" ];
+      myAppState.sonarr = {
+        stateDir = "/var/lib/sonarr";
+        user = "server-${hostSpec.serverEnvironment}";
+      };
 
       mySqliteQuiesce.apps.sonarr.databases = [
         "/var/lib/sonarr/.config/NzbDrone/sonarr.db"

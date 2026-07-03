@@ -45,16 +45,10 @@ _: {
         group = "servers";
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/radarr";
-          user = "server-${hostSpec.serverEnvironment}";
-          group = "servers";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/radarr" ];
+      myAppState.radarr = {
+        stateDir = "/var/lib/radarr";
+        user = "server-${hostSpec.serverEnvironment}";
+      };
 
       mySqliteQuiesce.apps.radarr.databases = [
         "/var/lib/radarr/.config/Radarr/radarr.db"

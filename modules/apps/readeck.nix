@@ -103,16 +103,11 @@ _: {
         RestrictSUIDSGID = true;
       };
 
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = "/var/lib/readeck";
-          user = "readeck";
-          group = "readeck";
-          mode = "0700";
-        }
-      ];
-
-      services.restic.backups.server.paths = [ "/var/lib/readeck" ];
+      myAppState.readeck = {
+        stateDir = "/var/lib/readeck";
+        user = "readeck";
+        group = "readeck";
+      };
 
       mySqliteQuiesce.apps.readeck.databases = [
         "/var/lib/readeck/data/db.sqlite3"
