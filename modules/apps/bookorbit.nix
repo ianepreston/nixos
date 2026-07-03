@@ -128,7 +128,7 @@ _: {
         # tags — so we pin `latest` to its digest for reproducibility;
         # renovate tracks `latest` and bumps the digest on its own.
         # renovate: datasource=docker depName=ghcr.io/bookorbit/bookorbit
-        image = "ghcr.io/bookorbit/bookorbit:latest@sha256:70bef7bef8b0d0fa938c980b5a128f86bbde656cde04f4ab0549b9b91ebb2e14";
+        image = "ghcr.io/bookorbit/bookorbit:latest@sha256:30024b0cc6b5960565c99ce9f2994271fb62f12a54129136e2648754b52e8b56";
         ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         # The image starts as root (caps below), repairs /data ownership,
         # then drops to PUID:PGID. Don't set `user` — it short-circuits
