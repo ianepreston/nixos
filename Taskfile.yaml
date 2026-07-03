@@ -41,6 +41,7 @@ tasks:
       - nix build .#nixosConfigurations.luna.config.system.build.toplevel
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
       - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
+      - nix build .#nixosConfigurations.amos1.config.system.build.toplevel
   rebuild:
     desc: rebuild nixos config
     cmd: sudo nixos-rebuild switch --flake . --override-input nix-secrets path:../nix-secrets
