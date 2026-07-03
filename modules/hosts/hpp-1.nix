@@ -19,7 +19,7 @@
     ++ (with inputs.self.modules.nixos; [
       intel-quicksync
       server
-      dev-server-apps
+      server-apps
       # Imported here rather than via a profile so a future move to a
       # dedicated runner box is a one-line change. See #180.
       github-runner
