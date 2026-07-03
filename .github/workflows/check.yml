@@ -78,12 +78,17 @@ jobs:
       # on the first red.
       fail-fast: false
       matrix:
-        # Every real-hardware host: hpp-1 exercises the full server
-        # profile (server + server-apps); terra and luna exercise the
-        # workstation profile; amos1 is the second prod server. Builds on
-        # hpp-1 hit the warm store for everything except host-specific
-        # hardware/wm bits — net: a few seconds-to-minutes cold, free
-        # warm. (Test/VM/ISO targets stay excluded.)
+        # Actively-maintained hosts built in CI: hpp-1 exercises the
+        # full server profile (server + server-apps); terra and luna
+        # exercise the workstation profile; amos1 is the second prod
+        # server. Builds on hpp-1 hit the warm store for everything
+        # except host-specific hardware/wm bits — net: a few
+        # seconds-to-minutes cold, free warm. (Test/VM/ISO targets stay
+        # excluded.) Note: xps13 and toshibachromebook are real-hardware
+        # NixOS hosts intentionally NOT built here — spare/experimental
+        # machines (xps13 is headless, its monitor doesn't work;
+        # toshibachromebook is a test/spare box) — to be revisited
+        # separately.
         host: [hpp-1, terra, amos1, luna]
     steps:
       - name: Checkout
