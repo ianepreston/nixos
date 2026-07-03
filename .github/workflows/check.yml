@@ -105,3 +105,48 @@ jobs:
           nix build \
             --print-build-logs \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
+  checks:
+    name: build NixOS VM checks
+    # Builds the flake's NixOS VM integration checks. Building a
+    # `runNixOSTest` derivation *runs* the test in a QEMU VM and fails
+    # on any assertion failure — so `nix build` of the derivation is
+    # the test run. Today that's checks.x86_64-linux.rollback-root-resilience
+    # (modules/flake/checks-rollback-root.nix), guarding the
+    # btrfs-rollback-with-nested-subvolumes regression (#310). Neither
+    # flake-check (evals each config's drvPath) nor build (builds each
+    # host's toplevel) touches checks.*, so without this job the VM
+    # test is never built and never runs.
+    #
+    # We build the check derivation directly rather than via
+    # `nix flake check` on purpose: `nix flake check --all-systems`
+    # races on concurrent addToStore for filtered sub-paths of
+    # transitive flake inputs on this runner (see the long comment on
+    # flake-check above). A targeted `nix build` sidesteps that race
+    # while still exercising the VM test.
+    #
+    # Same fork-PR guard as build: the workflow YAML can be edited by
+    # fork PRs, which would otherwise run arbitrary code on our host.
+    if: >-
+      github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, nixos]
+    needs: flake-check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            lazy-trees = false
+            always-allow-substitutes = false
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      - name: Build rollback-root-resilience VM test
+        run: |
+          nix build \
+            --print-build-logs \
+            ".#checks.x86_64-linux.rollback-root-resilience"
