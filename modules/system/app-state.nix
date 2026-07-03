@@ -7,8 +7,8 @@
 #      survives a reboot under impermanence),
 #   2. `services.restic.backups.server.paths` (so it lands in the
 #      nightly snapshot),
-#   3. `expectedPreservedDirs` in BOTH modules/profiles/dev-server-apps.nix
-#      and modules/profiles/prod-server-apps.nix (the structural guard).
+#   3. `expectedPreservedDirs` in modules/profiles/server-apps.nix (the
+#      structural guard).
 #
 # #136 was exactly this class of bug: native arrs / readeck shipped on
 # hpp-1 with impermanence enabled but no preservation entry, and only

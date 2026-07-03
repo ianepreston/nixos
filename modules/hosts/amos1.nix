@@ -20,7 +20,7 @@
       nvidia-server
       nvidia-exporter
       server
-      prod-server-apps
+      server-apps
     ])
     ++ [
       {

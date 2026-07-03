@@ -6,15 +6,69 @@
 # This is a flake-parts module that registers:
 # - flake.modules.nixos.server-apps (NixOS app bundle)
 #
+# The import set is parameterized by `hostSpec.serverEnvironment`:
+# `commonApps` ship on every server; `devOnlyApps` ship only where
+# `serverEnvironment == "dev"` (hpp-1, tests-server), not on prod
+# (amos1). Promoting an app dev->prod is a one-line move between the
+# two lists; adding a shared app is a single append to `commonApps`.
+#
 # Structural guard at the bottom: every native server-app with
 # persistent state on /var/lib/<app> must have a matching
 # `preservation.preserveAt."/persist".directories` entry. See the
 # block-level comment above `expectedPreservedDirs` for the rationale.
 { inputs, ... }:
 {
-  flake.modules.nixos.prod-server-apps =
-    { config, lib, ... }:
+  flake.modules.nixos.server-apps =
+    {
+      config,
+      lib,
+      hostSpec,
+      ...
+    }:
     let
+      # Apps that ship on every server, dev and prod alike.
+      commonApps = with inputs.self.modules.nixos; [
+        actualbudget
+        audiobookshelf
+        # bambuddy — code kept but dormant; proxy-mode printing is blocked on
+        # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
+        bazarr
+        decluttarr
+        flaresolverr
+        homeassistant
+        jellyfin
+        komga
+        matter-server
+        manyfold
+        miniflux
+        mylar3
+        paperless-ngx
+        pinchflat
+        profilarr
+        prowlarr
+        radarr
+        readeck
+        readmeabook
+        sabnzbd
+        seerr
+        shelfarr
+        sonarr
+        spierscraper
+        tandoor
+        unifi
+        valheim
+        watchstate
+      ];
+
+      # Apps that ship only on dev-environment servers.
+      devOnlyApps = with inputs.self.modules.nixos; [
+        bookorbit
+        grimmory
+        kapowarr
+        kavita
+        mealie
+      ];
+
       # State dirs the impermanence guard expects to be preserved. The
       # app tier is derived from `config.myAppState` — the single source
       # of truth for native-app on-disk state (see
@@ -53,38 +107,7 @@
       missing = lib.subtractLists preservedDirs expectedPreservedDirs;
     in
     {
-      imports = with inputs.self.modules.nixos; [
-        actualbudget
-        audiobookshelf
-        # bambuddy — code kept but dormant; proxy-mode printing is blocked on
-        # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
-        bazarr
-        decluttarr
-        flaresolverr
-        homeassistant
-        jellyfin
-        komga
-        matter-server
-        manyfold
-        miniflux
-        mylar3
-        paperless-ngx
-        pinchflat
-        profilarr
-        prowlarr
-        radarr
-        readeck
-        readmeabook
-        sabnzbd
-        seerr
-        shelfarr
-        sonarr
-        spierscraper
-        tandoor
-        unifi
-        valheim
-        watchstate
-      ];
+      imports = commonApps ++ lib.optionals (hostSpec.serverEnvironment == "dev") devOnlyApps;
 
       assertions = [
         {

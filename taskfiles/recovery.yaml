@@ -809,7 +809,7 @@ tasks:
       - task: actualbudget
       - task: audiobookshelf
       # bambuddy disabled pending upstream OrcaSlicer fix — see #298.
-      # Re-enable when prod-server-apps re-adds it.
+      # Re-enable when the server-apps profile re-adds it.
       # - task: bambuddy
       - task: bazarr
       - task: bookorbit
