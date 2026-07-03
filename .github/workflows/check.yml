@@ -48,8 +48,11 @@ jobs:
       # for sub-paths from git-cache-backed flake inputs races and
       # leaves the path registered-but-empty. Walking every NixOS
       # config sequentially via drvPath avoids the race and is the
-      # coverage that matters (darwin/home configs are deployed from
-      # local Darwin where local task check already gates them).
+      # coverage that matters. The darwin/home configs are evaluated in
+      # the same sequential-drvPath style below (see #349) — they pull
+      # the private nix-secrets input too, so they belong on this
+      # deploy-key-authorized, fork-guarded job rather than the public
+      # cloud-runner lint job.
       - name: Eval each NixOS config
         run: |
           set -euo pipefail
@@ -61,6 +64,25 @@ jobs:
             echo
             echo "::endgroup::"
           done
+      # darwin/home configs only *build* on macOS, but they *evaluate*
+      # fine on Linux — so eval their drvPaths here to catch a Renovate
+      # input bump that breaks them (closes #349). They're not in
+      # nixosConfigurations, so they need their own eval calls (darwin
+      # via config.system.build.toplevel, home-manager via
+      # activationPackage).
+      - name: Eval darwin and home configs
+        run: |
+          set -euo pipefail
+          echo "::group::darwinConfigurations.work"
+          nix eval --raw \
+            ".#darwinConfigurations.work.config.system.build.toplevel.drvPath"
+          echo
+          echo "::endgroup::"
+          echo "::group::homeConfigurations.penguin"
+          nix eval --raw \
+            ".#homeConfigurations.penguin.activationPackage.drvPath"
+          echo
+          echo "::endgroup::"
   build:
     name: build ${{ matrix.host }}
     # Self-hosted runner on hpp-1 shares its warm /nix/store with CI,
@@ -150,3 +172,35 @@ jobs:
           nix build \
             --print-build-logs \
             ".#checks.x86_64-linux.rollback-root-resilience"
+  lint:
+    name: pre-commit hooks
+    # Builds checks.x86_64-linux.pre-commit — the check the
+    # git-hooks.flakeModule exposes (nixfmt, statix, deadnix,
+    # ripsecrets, check-yaml/json, whitespace; see
+    # modules/flake/git-hooks.nix). Building the check derivation runs
+    # every hook against the tree and fails on any lint/format
+    # violation, so this is the CI gate that keeps regressions off main
+    # (closes #349). The bespoke drvPath loop in flake-check never ran
+    # the hooks.
+    #
+    # Runs on ubuntu-latest with NO fork guard and NO nix-secrets deploy
+    # key: the pre-commit check doesn't touch the private nix-secrets
+    # input, so it carries no host-access or secret-exposure risk and can
+    # safely cover fork PRs (unlike the self-hosted build/eval jobs).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            lazy-trees = false
+            always-allow-substitutes = false
+      - name: Run pre-commit hooks
+        run: |
+          nix build \
+            --print-build-logs \
+            ".#checks.x86_64-linux.pre-commit"
