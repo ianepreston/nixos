@@ -12,7 +12,22 @@ _: {
       system.autoUpgrade = {
         enable = true;
         flake = "github:ianepreston/nixos#${hostSpec.hostName}";
-        operation = "switch";
+        # Policy default: stage the new generation to the bootloader
+        # ("boot") rather than activating it in the running system
+        # ("switch"). The impermanent servers (hpp-1, amos1) roll `@root`
+        # back to `@root-blank` in initrd on every boot (via
+        # `_rollback-root.nix`). With "boot" the upgrade sequence is
+        # deterministic: reboot -> btrfs rollback -> preservation
+        # bind-mounts -> new generation activates. "switch" instead
+        # activates mid-session before the reboot, which can restart
+        # units (sops-install-secrets, preservation mounts) against
+        # state that the subsequent rollback then discards. `allowReboot
+        # = true` on servers still fires the reboot that activates the
+        # staged entry, so the end state is unchanged. Interactive hosts
+        # (workstation profile) override this back to "switch" so an
+        # overnight upgrade activates immediately without waiting for a
+        # manual reboot.
+        operation = lib.mkDefault "boot";
         dates = "04:40";
         randomizedDelaySec = "1h";
         persistent = true;

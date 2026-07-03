@@ -23,6 +23,14 @@
     # updates land at the user's next manual reboot.
     system.autoUpgrade.allowReboot = false;
 
+    # Since workstations don't reboot themselves, keep "switch" so the
+    # nightly upgrade activates in the running system immediately. The
+    # base module defaults to "boot" (deterministic activation on the
+    # controlled reboot) for the impermanent servers; here that would
+    # only stage the generation and leave it inert until the user's next
+    # manual reboot — a behaviour change we don't want.
+    system.autoUpgrade.operation = "switch";
+
     # Home-manager modules common to all workstations
     home-manager.sharedModules = with inputs.self.modules.homeManager; [
       core
