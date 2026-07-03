@@ -11,8 +11,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       actualHost = "actualbudget.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 5006;
@@ -31,20 +29,15 @@ _: {
         displayName = "Actual Budget";
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/actualbudget 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.actualbudget.port = port;
 
       virtualisation.oci-containers.containers.actualbudget = {
         # renovate: datasource=docker depName=actualbudget/actual-server
         image = "actualbudget/actual-server:26.7.0";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/actualbudget:/data"
         ];
         environment = {
-          TZ = config.time.timeZone;
           ACTUAL_LOGIN_METHOD = "openid";
           ACTUAL_ALLOWED_LOGIN_METHODS = "password,openid";
           ACTUAL_USER_CREATION_MODE = "login";

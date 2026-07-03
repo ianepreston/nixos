@@ -35,8 +35,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       manyfoldHost = "manyfold.${hostSpec.serverDomain}";
       port = 3214;
       redisPort = 6380;
@@ -86,15 +84,18 @@ _: {
         settings.protected-mode = "no";
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/manyfold 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/manyfold/config 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.manyfold = {
+        inherit port;
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/manyfold"
+          "/var/lib/containers/manyfold/config"
+        ];
+      };
 
       virtualisation.oci-containers.containers.manyfold = {
         # renovate: datasource=docker depName=ghcr.io/manyfold3d/manyfold
         image = "ghcr.io/manyfold3d/manyfold:0.146.0";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         # The image runs an s6 supervisor as root and gosus down to
         # PUID:PGID for the rails + sidekiq processes. Don't set
         # `user` here — it would short-circuit the entrypoint.
@@ -103,10 +104,6 @@ _: {
           "/mnt/content/3d-models:/models"
         ];
         environment = {
-          TZ = config.time.timeZone;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
-
           DATABASE_ADAPTER = "postgresql";
           DATABASE_HOST = "host.containers.internal";
           DATABASE_PORT = "5432";

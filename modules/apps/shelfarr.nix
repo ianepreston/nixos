@@ -26,13 +26,10 @@
 _: {
   flake.modules.nixos.shelfarr =
     {
-      config,
       hostSpec,
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       shelfarrHost = "shelfarr.${hostSpec.serverDomain}";
       port = 5056;
     in
@@ -48,11 +45,15 @@ _: {
         displayName = "Shelfarr";
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/shelfarr 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/shelfarr/data 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/shelfarr/tmp 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.shelfarr = {
+        inherit port;
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/shelfarr"
+          "/var/lib/containers/shelfarr/data"
+          "/var/lib/containers/shelfarr/tmp"
+        ];
+      };
 
       virtualisation.oci-containers.containers.shelfarr = {
         # Upstream only publishes `latest`, `main`, `dev`, and per-commit
@@ -62,7 +63,6 @@ _: {
         # digest on its own (see renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/pedro-revez-silva/shelfarr
         image = "ghcr.io/pedro-revez-silva/shelfarr:latest@sha256:f6013df21e05a83c26fc18e6658e04af78aa28e0f3241ed2ee4f6ba0c54a9592";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/shelfarr/data:/rails/storage"
           "/var/lib/containers/shelfarr/tmp:/rails/tmp"
@@ -71,9 +71,6 @@ _: {
           "/mnt/content/Downloads:/downloads"
         ];
         environment = {
-          TZ = config.time.timeZone;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           HTTP_PORT = toString port;
           SOLID_QUEUE_IN_PUMA = "1";
         };
