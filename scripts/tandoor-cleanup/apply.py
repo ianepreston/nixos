@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MAPPING = Path.home() / "src/tandoor-cleanup/mapping.yaml"
-TOKEN = (Path.home() / ".config/tandoor-cleanup/amos1.token").read_text().strip()
 
 # Order for generated aliases. Tandoor runs automations ascending (lower
 # first); the operator's existing guard rules (never-unit / transpose) sit
@@ -135,7 +134,7 @@ def call(target: str, method: str, path: str, payload: dict | None = None) -> Re
         f"curl -sS -o /tmp/_tandoor_resp -w '%{{http_code}}' "
         f"-X {method} "
         f"-H 'Host: {cfg['host_hdr']}' "
-        f"-H 'Authorization: Bearer {TOKEN}' "
+        f"-H 'Authorization: Bearer {cfg['token']}' "
         f"-H 'Content-Type: application/json' "
     )
     url = f"'http://127.0.0.1:8083{path}'"
@@ -440,6 +439,15 @@ def main():
     ap.add_argument("--apply", action="store_true",
                     help="Actually execute. Default: dry-run.")
     args = ap.parse_args()
+
+    # Resolve the bearer token from the selected target (mirrors
+    # fetch_inventory.py) rather than a hardcoded instance — otherwise an
+    # explicit --target would authenticate with the wrong credential. A
+    # missing token file raises FileNotFoundError here, surfacing the
+    # misconfiguration before any request is made.
+    TARGETS[args.target]["token"] = (
+        Path.home() / f".config/tandoor-cleanup/{args.target}.token"
+    ).read_text().strip()
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"=== {mode} on {args.target} — phase={args.phase} ===")
