@@ -4,7 +4,11 @@
 # NFS-mounted Movies share land with the UID/GID the NAS expects).
 # auth/caddy/homepage wiring is generated from
 # `myAuthentik.forwardAuthApps.radarr` by modules/apps/authentik.nix.
-_: {
+_:
+let
+  arrLib = import ./_arr-lib.nix;
+in
+{
   flake.modules.nixos.radarr =
     { hostSpec, ... }:
     {
@@ -35,7 +39,7 @@ _: {
       myHomepage.credentials.RADARR_API_KEY = {
         sourceUnit = "radarr.service";
         readScript = ''
-          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/radarr/.config/Radarr/config.xml
+          ${arrLib.mkArrApiKeyScript "/var/lib/radarr/.config/Radarr/config.xml"}
         '';
       };
 

@@ -13,6 +13,7 @@ _: {
   flake.modules.nixos.prowlarr =
     { lib, ... }:
     let
+      arrLib = import ./_arr-lib.nix;
       port = 9696;
       uid = 891;
     in
@@ -35,7 +36,7 @@ _: {
       myHomepage.credentials.PROWLARR_API_KEY = {
         sourceUnit = "prowlarr.service";
         readScript = ''
-          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/prowlarr/config.xml
+          ${arrLib.mkArrApiKeyScript "/var/lib/prowlarr/config.xml"}
         '';
       };
 
