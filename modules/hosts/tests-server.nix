@@ -9,16 +9,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.tests-server = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.tests-server;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.tests-server = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.tests-server;
+    extraModules = [
       ./_tests-server-hardware.nix
       inputs.disko.nixosModules.disko
       ./_vm-disks.nix
@@ -35,7 +34,6 @@
         };
 
         networking = {
-          hostName = "tests-server";
           networkmanager.enable = true;
         };
 

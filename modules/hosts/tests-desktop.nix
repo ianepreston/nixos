@@ -7,16 +7,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.tests-desktop = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.tests-desktop;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.tests-desktop = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.tests-desktop;
+    extraModules = [
       ./_tests-desktop-hardware.nix
       inputs.disko.nixosModules.disko
       ./_vm-disks.nix
@@ -39,7 +38,6 @@
         boot.initrd.systemd.enable = true;
 
         networking = {
-          hostName = "tests-desktop";
           networkmanager.enable = true;
         };
 

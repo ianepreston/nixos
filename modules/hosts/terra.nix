@@ -2,16 +2,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.terra = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.terra;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.terra = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.terra;
+    extraModules = [
       ./_terra-hardware.nix
       inputs.hardware.nixosModules.common-cpu-amd
       inputs.disko.nixosModules.disko
@@ -55,7 +54,6 @@
         };
 
         networking = {
-          hostName = "terra";
           networkmanager.enable = true;
         };
 

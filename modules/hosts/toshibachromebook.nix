@@ -2,16 +2,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.toshibachromebook = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.toshibachromebook;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.toshibachromebook = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.toshibachromebook;
+    extraModules = [
       ./_toshibachromebook-hardware.nix
       inputs.hardware.nixosModules.common-cpu-intel
       inputs.disko.nixosModules.disko
@@ -43,7 +42,6 @@
           };
 
           networking = {
-            hostName = "toshibachromebook";
             networkmanager.enable = true;
           };
 
