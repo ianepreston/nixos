@@ -117,6 +117,25 @@ evaluation will see them. This applies to non-`.nix` files referenced from
 modules too (e.g. blueprint YAMLs under `modules/apps/authentik-blueprints/`)
 — `nix eval` will error with "path … does not exist" until they're tracked.
 
+### Module placement: `modules/programs/` vs `modules/system/`
+
+- `modules/programs/*.nix` — home-manager modules for user-facing
+  programs (ghostty, neovim, browser, comms, …). Each registers
+  `flake.modules.homeManager.<name>` **only** — no `flake.modules.nixos.*`.
+- `modules/system/*.nix` — NixOS system modules, plus "multi-context
+  aspects" that pair a NixOS module with a co-located HM module in one
+  file. `ssh.nix` registers both `nixos.ssh` and `homeManager.ssh`;
+  `sops.nix` registers both `nixos.sops` and `homeManager.sops`;
+  `hm-core.nix` registers `homeManager.core` (bootstrap HM coupled to
+  system setup). Co-locate the HM half here when it is tightly coupled
+  to a system service — SSH client config paired with sshd, sops
+  age-key bootstrap paired with sops-nix activation, and the like — so
+  the two halves stay in lockstep. A standalone HM module with no such
+  coupling belongs in `modules/programs/`.
+- **Known anomaly:** `modules/programs/printing.nix` registers
+  `flake.modules.nixos.printing` (a NixOS-only module) and really
+  belongs at `modules/system/printing.nix`; movable on a drive-by edit.
+
 ## App packaging: prefer nixpkgs services over containers
 
 Default to a native NixOS module (`services.<app>`) when one exists in
