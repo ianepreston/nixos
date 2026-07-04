@@ -39,8 +39,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       bookorbitHost = "bookorbit.${hostSpec.serverDomain}";
       # 3000 is grafana's on the server hosts; pick a free port and let
       # the container's PORT match it (publish + caddy + app all agree).
@@ -117,10 +115,14 @@ _: {
         '';
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/bookorbit 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/bookorbit/data 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.bookorbit = {
+        inherit port;
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/bookorbit"
+          "/var/lib/containers/bookorbit/data"
+        ];
+      };
 
       virtualisation.oci-containers.containers.bookorbit = {
         # Upstream publishes semver git releases but only a rolling
@@ -129,7 +131,6 @@ _: {
         # renovate tracks `latest` and bumps the digest on its own.
         # renovate: datasource=docker depName=ghcr.io/bookorbit/bookorbit
         image = "ghcr.io/bookorbit/bookorbit:latest@sha256:30024b0cc6b5960565c99ce9f2994271fb62f12a54129136e2648754b52e8b56";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         # The image starts as root (caps below), repairs /data ownership,
         # then drops to PUID:PGID. Don't set `user` — it short-circuits
         # the entrypoint's permission fix.
@@ -139,10 +140,7 @@ _: {
         ];
         environment = {
           NODE_ENV = "production";
-          TZ = config.time.timeZone;
           PORT = toString port;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           APP_URL = "https://${bookorbitHost}";
           # authentik.<serverDomain> resolves to a private/LAN address on
           # this network; bookorbit rejects local issuer/discovery URLs

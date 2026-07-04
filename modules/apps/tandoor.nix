@@ -23,8 +23,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       tandoorHost = "tandoor.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
     in
@@ -57,23 +55,24 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/tandoor 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/tandoor/staticfiles 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/tandoor/mediafiles 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.tandoor = {
+        port = 8083;
+        containerPort = 8080;
+        stateDirs = [
+          "/var/lib/containers/tandoor"
+          "/var/lib/containers/tandoor/staticfiles"
+          "/var/lib/containers/tandoor/mediafiles"
+        ];
+      };
 
       virtualisation.oci-containers.containers.tandoor = {
         # renovate: datasource=docker depName=vabene1111/recipes
         image = "vabene1111/recipes:2.6.12";
-        ports = [ "127.0.0.1:8083:8080" ];
-        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/tandoor/staticfiles:/opt/recipes/staticfiles"
           "/var/lib/containers/tandoor/mediafiles:/opt/recipes/mediafiles"
         ];
         environment = {
-          TZ = config.time.timeZone;
           TANDOOR_PORT = "8080";
           DEBUG = "0";
           ALLOWED_HOSTS = tandoorHost;

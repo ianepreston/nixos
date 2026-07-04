@@ -60,13 +60,21 @@ _: {
         ensureDatabases = [ "grimmory" ];
       };
 
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/grimmory 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/grimmory/data 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/grimmory/bookdrop 0750 ${toString serverUid} ${toString serverGid} -"
+      # grimmory takes its runtime uid/gid via the image's own
+      # USER_ID/GROUP_ID env vars (set below), not `user=` or PUID/PGID —
+      # so manageUser = false and the serverUid/serverGid bindings above
+      # feed those vars directly.
+      myContainerApp.grimmory = {
+        inherit port;
+        manageUser = false;
+        stateDirs = [
+          "/var/lib/containers/grimmory"
+          "/var/lib/containers/grimmory/data"
+          "/var/lib/containers/grimmory/bookdrop"
         ];
+      };
 
+      systemd = {
         services = {
           # Explicit ordering on mariadb so the container stops before
           # mariadb on shutdown. Transitive ordering through
@@ -112,14 +120,12 @@ _: {
       virtualisation.oci-containers.containers.grimmory = {
         # renovate: datasource=docker depName=grimmory/grimmory
         image = "grimmory/grimmory:v3.2.4";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/grimmory/data:/app/data"
           "/mnt/content/books:/books"
           "/var/lib/containers/grimmory/bookdrop:/bookdrop"
         ];
         environment = {
-          TZ = config.time.timeZone;
           USER_ID = toString serverUid;
           GROUP_ID = toString serverGid;
           DATABASE_URL = "jdbc:mariadb://host.containers.internal:3306/grimmory";

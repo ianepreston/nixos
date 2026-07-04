@@ -10,13 +10,10 @@
 _: {
   flake.modules.nixos.seerr =
     {
-      config,
       hostSpec,
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       seerrHost = "seerr.${hostSpec.serverDomain}";
       port = 5055;
     in
@@ -51,20 +48,15 @@ _: {
         '';
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/seerr 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.seerr.port = port;
 
       virtualisation.oci-containers.containers.seerr = {
         # renovate: datasource=docker depName=ghcr.io/seerr-team/seerr
         image = "ghcr.io/seerr-team/seerr:v3.3.0";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/seerr:/app/config"
         ];
         environment = {
-          TZ = config.time.timeZone;
           PORT = toString port;
         };
       };

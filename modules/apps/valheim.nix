@@ -38,8 +38,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       gamePort = 2456;
     in
     {
@@ -60,11 +58,17 @@ _: {
         restartUnits = [ "podman-valheim.service" ];
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/valheim 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/valheim/config 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/valheim/cache 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      # No `port` — valheim uses `--network=host` and opens its UDP game
+      # ports on the firewall directly (below), so nothing is published on
+      # 127.0.0.1. linuxServer drives the in-image PUID/PGID drop.
+      myContainerApp.valheim = {
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/valheim"
+          "/var/lib/containers/valheim/config"
+          "/var/lib/containers/valheim/cache"
+        ];
+      };
 
       networking.firewall.allowedUDPPortRanges = [
         {
@@ -85,15 +89,12 @@ _: {
           "/var/lib/containers/valheim/cache:/opt/valheim"
         ];
         environment = {
-          TZ = config.time.timeZone;
           SERVER_NAME = "hpp-valheim";
           WORLD_NAME = "hpp";
           # SERVER_PUBLIC=false keeps the server out of the Steam
           # community browser; tailscale peers join by direct
           # connect-IP entry from the Valheim "Join Game" screen.
           SERVER_PUBLIC = "false";
-          PUID = toString serverUid;
-          PGID = toString serverGid;
         };
         environmentFiles = [ config.sops.templates."valheim.env".path ];
         extraOptions = [ "--network=host" ];

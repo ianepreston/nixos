@@ -4,14 +4,8 @@
 # `--user` directly rather than via PUID/PGID env vars.
 _: {
   flake.modules.nixos.kapowarr =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
+    _:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 5656;
     in
     {
@@ -32,26 +26,24 @@ _: {
       # the bundled user can't write there, so mount the logs dir off
       # of the host state tree to keep them writable (and conveniently
       # included in the /var/lib/containers restic snapshot).
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/kapowarr 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/kapowarr/db 0750 ${toString serverUid} ${toString serverGid} -"
-        "d /var/lib/containers/kapowarr/logs 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.kapowarr = {
+        inherit port;
+        stateDirs = [
+          "/var/lib/containers/kapowarr"
+          "/var/lib/containers/kapowarr/db"
+          "/var/lib/containers/kapowarr/logs"
+        ];
+      };
 
       virtualisation.oci-containers.containers.kapowarr = {
         # renovate: datasource=docker depName=mrcas/kapowarr
         image = "mrcas/kapowarr:v1.3.1";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
-        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/kapowarr/db:/app/db"
           "/var/lib/containers/kapowarr/logs:/app/logs"
           "/mnt/content/Comics:/content"
           "/mnt/content/Downloads:/app/temp_downloads"
         ];
-        environment = {
-          TZ = config.time.timeZone;
-        };
       };
     };
 }

@@ -6,15 +6,12 @@
 _: {
   flake.modules.nixos.mylar3 =
     {
-      config,
       hostSpec,
       pkgs,
       ...
     }:
     let
       serverUser = "server-${hostSpec.serverEnvironment}";
-      serverUid = config.users.users.${serverUser}.uid;
-      serverGid = config.users.groups.servers.gid;
       port = 8090;
       # Comics library on the NFS share. The perms-sweep below keeps it
       # world-readable; see the mylar3-comics-perms unit for the why.
@@ -41,11 +38,12 @@ _: {
         };
       };
 
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/mylar3 0750 ${toString serverUid} ${toString serverGid} -"
-        ];
+      myContainerApp.mylar3 = {
+        inherit port;
+        linuxServer = true;
+      };
 
+      systemd = {
         # Stuck-Snatched detector (#299 follow-up). Mylar's SAB
         # completed-download-handling tracks each grab by the nzo_id SAB
         # returns at send time and has no recovery when that id vanishes
@@ -185,17 +183,11 @@ _: {
       virtualisation.oci-containers.containers.mylar3 = {
         # renovate: datasource=docker depName=lscr.io/linuxserver/mylar3
         image = "lscr.io/linuxserver/mylar3:0.10.0";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/mylar3:/config"
           "/mnt/content/Comics:/comics"
           "/mnt/content/Downloads:/downloads"
         ];
-        environment = {
-          PUID = toString serverUid;
-          PGID = toString serverGid;
-          TZ = config.time.timeZone;
-        };
       };
     };
 }

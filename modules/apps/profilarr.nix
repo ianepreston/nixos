@@ -10,14 +10,8 @@
 # user via PUID/PGID env vars set to server-${env}:servers.
 _: {
   flake.modules.nixos.profilarr =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
+    _:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 6868;
     in
     {
@@ -31,22 +25,17 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/profilarr 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.profilarr = {
+        inherit port;
+        linuxServer = true;
+      };
 
       virtualisation.oci-containers.containers.profilarr = {
         # renovate: datasource=docker depName=santiagosayshey/profilarr
         image = "santiagosayshey/profilarr:v1.1.5";
-        ports = [ "127.0.0.1:${toString port}:6868" ];
         volumes = [
           "/var/lib/containers/profilarr:/config"
         ];
-        environment = {
-          TZ = config.time.timeZone;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
-        };
       };
     };
 }

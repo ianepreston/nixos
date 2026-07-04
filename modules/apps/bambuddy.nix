@@ -71,14 +71,11 @@
 _: {
   flake.modules.nixos.bambuddy =
     {
-      config,
       hostSpec,
       lib,
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       bambuddyHost = "bambuddy.${hostSpec.serverDomain}";
       # Bambuddy listens on 8000 inside the container; readeck already
       # owns 127.0.0.1:8000 on the host, so publish on a distinct host
@@ -114,13 +111,21 @@ _: {
         "/var/lib/containers/bambuddy/data/bambuddy.db"
       ];
 
-      systemd = {
-        tmpfiles.rules = [
-          "d /var/lib/containers/bambuddy 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/bambuddy/data 0750 ${toString serverUid} ${toString serverGid} -"
-          "d /var/lib/containers/bambuddy/logs 0750 ${toString serverUid} ${toString serverGid} -"
+      # bambuddy listens on 8000 inside the container; readeck already owns
+      # 127.0.0.1:8000 on the host, so publish on a distinct host port
+      # (hostPort) and point Caddy at that.
+      myContainerApp.bambuddy = {
+        port = hostPort;
+        containerPort = port;
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/bambuddy"
+          "/var/lib/containers/bambuddy/data"
+          "/var/lib/containers/bambuddy/logs"
         ];
+      };
 
+      systemd = {
         # Order bambuddy after the static vlan30 macvlan (owned by
         # modules/system/iot-network.nix); the `requires` edge pulls it in.
         # That unit brings up the vlan30 netdev and creates `iot-static`, so
@@ -150,9 +155,6 @@ _: {
         # macvlan is attached via extraOptions below (so its MAC can be
         # pinned), not here.
         networks = [ "podman" ];
-        ports = [
-          "127.0.0.1:${toString hostPort}:${toString port}"
-        ];
         # The image ships a Docker HEALTHCHECK. podman runs it via a
         # transient systemd unit that exits non-zero while the container
         # is still in its "starting" grace window — and any deploy that
@@ -181,9 +183,6 @@ _: {
           "/var/lib/containers/bambuddy/logs:/app/logs"
         ];
         environment = {
-          TZ = config.time.timeZone;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           PORT = toString port;
         };
       };

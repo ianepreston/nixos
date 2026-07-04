@@ -44,8 +44,6 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       readmeabookHost = "readmeabook.${hostSpec.serverDomain}";
       port = 3030;
       redisPort = 6381;
@@ -88,11 +86,19 @@ _: {
         settings.protected-mode = "no";
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/readmeabook 0750 root root -"
-        "d /var/lib/containers/readmeabook/config 0750 root root -"
-        "d /var/lib/containers/readmeabook/cache 0750 root root -"
-      ];
+      # stateDirs stay root:root (the image chowns /app/config + /app/cache
+      # to PUID:PGID itself on start); only PUID/PGID drive the runtime user.
+      myContainerApp.readmeabook = {
+        inherit port;
+        linuxServer = true;
+        stateDirs = [
+          "/var/lib/containers/readmeabook"
+          "/var/lib/containers/readmeabook/config"
+          "/var/lib/containers/readmeabook/cache"
+        ];
+        stateDirOwner = "root";
+        stateDirGroup = "root";
+      };
 
       virtualisation.oci-containers.containers.readmeabook = {
         # Upstream only publishes `latest` and per-commit `sha-*` tags
@@ -102,7 +108,6 @@ _: {
         # renovate.json's digest manager).
         # renovate: datasource=docker depName=ghcr.io/kikootwo/readmeabook
         image = "ghcr.io/kikootwo/readmeabook:latest@sha256:374bdcb2947ad6794d1ef14fd0c004fd8fedeb861339275c53457168e2ec5609";
-        ports = [ "127.0.0.1:${toString port}:${toString port}" ];
         volumes = [
           "/var/lib/containers/readmeabook/config:/app/config"
           "/var/lib/containers/readmeabook/cache:/app/cache"
@@ -110,9 +115,6 @@ _: {
           "/mnt/content/audiobooks:/media"
         ];
         environment = {
-          TZ = config.time.timeZone;
-          PUID = toString serverUid;
-          PGID = toString serverGid;
           PUBLIC_URL = "https://${readmeabookHost}";
         };
         environmentFiles = [ config.sops.templates."readmeabook.env".path ];

@@ -8,14 +8,8 @@
 # restic snapshot covers it.
 _: {
   flake.modules.nixos.watchstate =
-    {
-      config,
-      hostSpec,
-      ...
-    }:
+    _:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
       port = 8088;
     in
     {
@@ -30,21 +24,17 @@ _: {
         };
       };
 
-      systemd.tmpfiles.rules = [
-        "d /var/lib/containers/watchstate 0750 ${toString serverUid} ${toString serverGid} -"
-      ];
+      myContainerApp.watchstate = {
+        inherit port;
+        containerPort = 8080;
+      };
 
       virtualisation.oci-containers.containers.watchstate = {
         # renovate: datasource=docker depName=arabcoders/watchstate
         image = "arabcoders/watchstate:v1.9.1";
-        ports = [ "127.0.0.1:${toString port}:8080" ];
-        user = "${toString serverUid}:${toString serverGid}";
         volumes = [
           "/var/lib/containers/watchstate:/config"
         ];
-        environment = {
-          TZ = config.time.timeZone;
-        };
       };
     };
 }
