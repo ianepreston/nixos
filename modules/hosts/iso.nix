@@ -1,7 +1,12 @@
 # ISO - Recovery/installer image
 # Self-contained: doesn't use workstation profile or old host patterns.
 # Provides a minimal environment with SSH access for recovery.
-{ inputs, hostSpecs, ... }:
+{
+  inputs,
+  hostSpecs,
+  config,
+  ...
+}:
 let
   hostSpec = hostSpecs.iso;
   pubKeys = builtins.attrValues (
@@ -11,12 +16,10 @@ let
   );
 in
 {
-  flake.nixosConfigurations.iso = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs hostSpec;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.iso = config.flake.lib.mkNixosHost {
+    inherit inputs hostSpec;
+    extraModules = [
       "${inputs.nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
       "${inputs.nixpkgs}/nixos/modules/installer/cd-dvd/channel.nix"
       inputs.home-manager.nixosModules.home-manager
@@ -110,8 +113,6 @@ in
               "vfat"
             ];
           };
-
-          networking.hostName = "iso";
 
           systemd = {
             services.sshd.wantedBy = lib.mkForce [ "multi-user.target" ];

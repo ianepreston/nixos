@@ -2,16 +2,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.amos1 = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.amos1;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.amos1 = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.amos1;
+    extraModules = [
       ./_amos1-hardware.nix
       inputs.disko.nixosModules.disko
       ./_amos1-disks.nix
@@ -33,7 +32,6 @@
         };
 
         networking = {
-          hostName = "amos1";
           networkmanager.enable = true;
         };
 

@@ -2,16 +2,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.xps13 = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.xps13;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.xps13 = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.xps13;
+    extraModules = [
       ./_xps13-hardware.nix
       inputs.hardware.nixosModules.common-cpu-intel
       inputs.hardware.nixosModules.common-gpu-intel
@@ -50,7 +49,6 @@
           };
 
           networking = {
-            hostName = "xps13";
             networkmanager.enable = true;
           };
 

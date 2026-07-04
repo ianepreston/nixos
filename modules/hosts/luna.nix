@@ -3,16 +3,15 @@
 {
   inputs,
   hostSpecs,
+  config,
   ...
 }:
 {
-  flake.nixosConfigurations.luna = inputs.nixpkgs.lib.nixosSystem {
-    system = "x86_64-linux";
-    specialArgs = {
-      inherit inputs;
-      hostSpec = hostSpecs.luna;
-    };
-    modules = [
+  # networking.hostName is single-sourced from hostSpec by mkNixosHost.
+  flake.nixosConfigurations.luna = config.flake.lib.mkNixosHost {
+    inherit inputs;
+    hostSpec = hostSpecs.luna;
+    extraModules = [
       ./_luna-hardware.nix
       inputs.hardware.nixosModules.common-cpu-intel
       inputs.hardware.nixosModules.common-gpu-intel
@@ -55,7 +54,6 @@
           };
 
           networking = {
-            hostName = "luna";
             networkmanager.enable = true;
           };
 
