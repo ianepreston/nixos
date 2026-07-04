@@ -34,9 +34,8 @@ _: {
     let
       port = 18080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
-      sabnzbdUser = "server-${hostSpec.serverEnvironment}";
-      serverUid = config.users.users.${sabnzbdUser}.uid;
-      serverGid = config.users.groups.servers.gid;
+      sabnzbdUser = hostSpec.serverUser;
+      inherit (hostSpec) serverUid serverGid;
       # incomplete/ lives on the local SSD, not the NFS share. par2
       # verify and unrar then read it back without bouncing TLS-wrapped
       # NFS RX against simultaneous NFS TX. Sibling of /var/lib/sabnzbd

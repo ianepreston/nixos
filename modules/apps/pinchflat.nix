@@ -54,7 +54,7 @@ _: {
         # in the module is gated behind cfg.user == "pinchflat", so
         # overriding to the shared server-${env} user cleanly skips
         # the module's user block.
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
         mediaDir = "/mnt/content/youtube";
         secretsFile = config.sops.templates."pinchflat.env".path;
@@ -62,7 +62,7 @@ _: {
 
       myAppState.pinchflat = {
         stateDir = "/var/lib/pinchflat";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.pinchflat.databases = [

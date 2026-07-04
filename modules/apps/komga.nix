@@ -38,7 +38,7 @@ _: {
 
       services.komga = {
         enable = true;
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
         settings.server.port = port;
         # The jar (unlike the bundled Docker/desktop distros) doesn't ship
@@ -60,7 +60,7 @@ _: {
 
       myAppState.komga = {
         stateDir = "/var/lib/komga";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.komga.databases = [

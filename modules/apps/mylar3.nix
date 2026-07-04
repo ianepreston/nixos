@@ -11,7 +11,7 @@ _: {
       ...
     }:
     let
-      serverUser = "server-${hostSpec.serverEnvironment}";
+      inherit (hostSpec) serverUser;
       port = 8090;
       # Comics library on the NFS share. The perms-sweep below keeps it
       # world-readable; see the mylar3-comics-perms unit for the why.

@@ -24,8 +24,7 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
+      inherit (hostSpec) serverUid serverGid;
       grimmoryHost = "grimmory.${hostSpec.serverDomain}";
       port = 6060;
     in

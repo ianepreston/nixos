@@ -17,8 +17,7 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
+      inherit (hostSpec) serverUid serverGid;
       port = 8002;
     in
     {

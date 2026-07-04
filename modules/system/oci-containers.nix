@@ -20,8 +20,7 @@ _: {
       ...
     }:
     let
-      serverUid = config.users.users."server-${hostSpec.serverEnvironment}".uid;
-      serverGid = config.users.groups.servers.gid;
+      inherit (hostSpec) serverUid serverGid;
     in
     {
       options.myContainerApp = lib.mkOption {

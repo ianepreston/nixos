@@ -130,7 +130,7 @@ _: {
         # off the NFS-mounted Synology share at /mnt/content. UIDs are
         # pinned to match the NAS (server-dev=1029, server-prod=1030,
         # group servers=65536) so NFS doesn't have to translate.
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
       };
 
@@ -139,7 +139,7 @@ _: {
       # (the bind-mount root). Match the service user/group.
       myAppState.jellyfin = {
         stateDir = "/var/lib/jellyfin";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.jellyfin.databases = [
@@ -204,7 +204,7 @@ _: {
           unitConfig.RequiresMountsFor = mediaRoots;
           serviceConfig = {
             Type = "oneshot";
-            User = "server-${hostSpec.serverEnvironment}";
+            User = hostSpec.serverUser;
             Group = "servers";
             ExecStart = "${trickplayCleanup}/bin/jellyfin-trickplay-cleanup ${toString mediaRoots}";
           };
