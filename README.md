@@ -86,9 +86,11 @@ and resources if you want to build your own.
 | **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060       |
 | **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming |
 | **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding      |
+| **amos1**             | x86_64-linux   | `nixosConfigurations`  | Prod server — `server` + `server-apps` + NVIDIA transcoding              |
 | **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config     |
 | **penguin**           | x86_64-linux   | `homeConfigurations`   | Standalone home-manager (WSL / non-NixOS Linux)                          |
 | **toshibachromebook** | x86_64-linux   | `nixosConfigurations`  | Minimal ChromeBook config                                                |
+| **xps13**             | x86_64-linux   | `nixosConfigurations`  | Dell XPS 13 laptop — headless workstation + GNOME (built-in display dead) |
 | **tests-server**      | x86_64-linux   | `nixosConfigurations`  | Server-shaped VM target — drives `task recovery:test:full` restore drill |
 | **tests-desktop**     | x86_64-linux   | `nixosConfigurations`  | Desktop-shaped VM target — workstation profile iteration                 |
 | **iso**               | x86_64-linux   | `nixosConfigurations`  | Custom NixOS installer/recovery ISO                                      |
