@@ -25,6 +25,11 @@ _: {
       ...
     }:
     let
+      arrLib = import ./_arr-lib.nix;
+      # Same API-key extraction fragment the homepage credential
+      # readers use (radarr.nix / sonarr.nix), sourced from one place.
+      sonarrKeyScript = arrLib.mkArrApiKeyScript "/var/lib/sonarr/.config/NzbDrone/config.xml";
+      radarrKeyScript = arrLib.mkArrApiKeyScript "/var/lib/radarr/.config/Radarr/config.xml";
       configDir = "/run/decluttarr";
       configFile = "${configDir}/config.yaml";
     in
@@ -78,8 +83,8 @@ _: {
             return 1
           }
 
-          sonarr_key="$(read_key sonarr "grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/sonarr/.config/NzbDrone/config.xml")"
-          radarr_key="$(read_key radarr "grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/radarr/.config/Radarr/config.xml")"
+          sonarr_key="$(read_key sonarr "${sonarrKeyScript}")"
+          radarr_key="$(read_key radarr "${radarrKeyScript}")"
           sabnzbd_key="$(read_key sabnzbd "awk -F= '/^[[:space:]]*api_key[[:space:]]*=/ { gsub(/^[[:space:]]+|[[:space:]]+\$/,\"\",\$2); print \$2; exit }' /var/lib/sabnzbd/sabnzbd.ini")"
 
           tmp="${configFile}.tmp"

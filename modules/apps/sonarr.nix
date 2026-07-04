@@ -4,7 +4,11 @@
 # NFS-mounted TV share land with the UID/GID the NAS expects).
 # auth/caddy/homepage wiring is generated from
 # `myAuthentik.forwardAuthApps.sonarr` by modules/apps/authentik.nix.
-_: {
+_:
+let
+  arrLib = import ./_arr-lib.nix;
+in
+{
   flake.modules.nixos.sonarr =
     { hostSpec, ... }:
     {
@@ -35,7 +39,7 @@ _: {
       myHomepage.credentials.SONARR_API_KEY = {
         sourceUnit = "sonarr.service";
         readScript = ''
-          grep -oP '(?<=<ApiKey>)[^<]+' /var/lib/sonarr/.config/NzbDrone/config.xml
+          ${arrLib.mkArrApiKeyScript "/var/lib/sonarr/.config/NzbDrone/config.xml"}
         '';
       };
 
