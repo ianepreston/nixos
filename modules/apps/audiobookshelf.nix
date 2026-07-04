@@ -26,14 +26,14 @@ _: {
 
       services.audiobookshelf = {
         enable = true;
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
         inherit port;
       };
 
       myAppState.audiobookshelf = {
         stateDir = "/var/lib/audiobookshelf";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.audiobookshelf.databases = [

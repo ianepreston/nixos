@@ -29,16 +29,15 @@
 #     1030   server-prod
 #
 # Apps that consume the shared server-{dev,prod} UID (containers, sabnzbd's
-# DynamicUser override, etc.) read it from
-# `config.users.users."server-${hostSpec.serverEnvironment}".uid` — they do
+# DynamicUser override, etc.) read it from `hostSpec.serverUid` — they do
 # not need their own entry above.
 #
-# TODO #151: the `uidByEnv` table here and the NFS share tables in
-# nfsclient.nix both hard-code the dev/prod environment set.
-# Consolidate into one `attrsOf int` table (likely derived onto
-# hostSpec as `serverUid`) so adding a third environment (e.g. staging)
-# is a one-file change. Not required for the fail-fast assertion layer
-# that is the primary goal of issue #151.
+# The username/uid/group/gid are now derived on hostSpec
+# (serverUser/serverUid/serverGroup/serverGid, see hostSpecs/_host-spec.nix)
+# and this module is their sole materialiser — the former inline `uidByEnv`
+# table lived here. Remaining half of #151: the NFS share tables in
+# nfsclient.nix still hard-code the dev/prod environment set; folding those
+# onto hostSpec too would make adding a third environment a one-file change.
 # ──────────────────────────────────────────────────────────────────────────
 { lib, ... }:
 {
@@ -49,11 +48,6 @@
       ...
     }:
     let
-      uidByEnv = {
-        dev = 1029;
-        prod = 1030;
-      };
-
       # Detect colliding statically-pinned UIDs across the whole
       # nixosConfiguration. Builds { "<uid>" = [ "<userA>" "<userB>" … ]; }
       # then filters to entries with more than one holder.
@@ -85,13 +79,13 @@
         }
       ];
 
-      users.groups.servers.gid = 65536;
+      users.groups.${hostSpec.serverGroup}.gid = hostSpec.serverGid;
 
-      users.users = lib.optionalAttrs (hostSpec.serverEnvironment != null) {
-        "server-${hostSpec.serverEnvironment}" = {
-          uid = uidByEnv.${hostSpec.serverEnvironment};
+      users.users = lib.optionalAttrs (hostSpec.serverUser != null) {
+        ${hostSpec.serverUser} = {
+          uid = hostSpec.serverUid;
           isSystemUser = true;
-          group = "servers";
+          group = hostSpec.serverGroup;
           # Hardware-accelerated transcoding (jellyfin and friends)
           # needs read/write access to /dev/dri. Render-only access
           # is the modern split; keep `video` for legacy nodes.

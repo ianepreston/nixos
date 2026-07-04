@@ -45,13 +45,13 @@ in
 
       services.sonarr = {
         enable = true;
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
       };
 
       myAppState.sonarr = {
         stateDir = "/var/lib/sonarr";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.sonarr.databases = [

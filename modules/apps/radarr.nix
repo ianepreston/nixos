@@ -45,13 +45,13 @@ in
 
       services.radarr = {
         enable = true;
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
       };
 
       myAppState.radarr = {
         stateDir = "/var/lib/radarr";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.radarr.databases = [

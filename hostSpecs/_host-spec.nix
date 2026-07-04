@@ -57,6 +57,47 @@
               default = null;
               description = "Server environment: \"dev\" => server-dev (1029), \"prod\" => server-prod (1030). null on non-server hosts.";
             };
+            # Derived NFS-pinned server identity. These consolidate the
+            # username/uid/group/gid that used to be reconstructed inline at
+            # ~34 call sites as raw "server-${serverEnvironment}" interpolations
+            # and `config.users.users."server-${env}".uid` lookups. They are
+            # readOnly (computed, not host-set) so there is a single source of
+            # truth: modules/system/server-users.nix creates the user/group
+            # from these, and every consumer reads them off hostSpec. See #346.
+            serverUser = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              readOnly = true;
+              default = if config.serverEnvironment != null then "server-${config.serverEnvironment}" else null;
+              defaultText = lib.literalExpression ''if config.serverEnvironment != null then "server-''${config.serverEnvironment}" else null'';
+              description = "NFS-pinned shared server username (\"server-dev\"/\"server-prod\"). null on non-server hosts.";
+            };
+            serverUid = lib.mkOption {
+              type = lib.types.nullOr lib.types.int;
+              readOnly = true;
+              default =
+                if config.serverEnvironment != null then
+                  {
+                    dev = 1029;
+                    prod = 1030;
+                  }
+                  .${config.serverEnvironment}
+                else
+                  null;
+              defaultText = lib.literalExpression "{ dev = 1029; prod = 1030; }.\${config.serverEnvironment} (null on non-server hosts)";
+              description = "UID for serverUser, aligned to the Synology NAS (dev=1029, prod=1030). null on non-server hosts.";
+            };
+            serverGroup = lib.mkOption {
+              type = lib.types.str;
+              readOnly = true;
+              default = "servers";
+              description = "Group name for the shared server user (matches the NAS group).";
+            };
+            serverGid = lib.mkOption {
+              type = lib.types.int;
+              readOnly = true;
+              default = 65536;
+              description = "GID for serverGroup, aligned to the Synology NAS.";
+            };
             serverDomain = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;

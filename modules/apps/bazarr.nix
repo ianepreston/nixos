@@ -20,13 +20,13 @@ _: {
 
       services.bazarr = {
         enable = true;
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
         group = "servers";
       };
 
       myAppState.bazarr = {
         stateDir = "/var/lib/bazarr";
-        user = "server-${hostSpec.serverEnvironment}";
+        user = hostSpec.serverUser;
       };
 
       mySqliteQuiesce.apps.bazarr.databases = [

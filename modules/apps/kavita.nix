@@ -21,7 +21,7 @@ _: {
       kavitaHost = "kavita.${hostSpec.serverDomain}";
       port = 5000;
       tokenKeyFile = "/var/lib/kavita/token-key";
-      kavitaUser = "server-${hostSpec.serverEnvironment}";
+      kavitaUser = hostSpec.serverUser;
     in
     {
       myAuthentik.oidcApps.kavita = {
