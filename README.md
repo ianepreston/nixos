@@ -56,7 +56,7 @@ and resources if you want to build your own.
 ├── flake.nix              # Entrypoint — uses flake-parts + import-tree to auto-discover modules
 ├── Taskfile.yaml          # Task runner for build, rebuild, lint, format, etc.
 ├── hostSpecs/             # Declarative host specifications (hostname, platform, features)
-│   ├── host-spec.nix      # Schema definition for host specs
+│   ├── _host-spec.nix     # Schema definition for host specs
 │   ├── luna.nix
 │   ├── terra.nix
 │   ├── work.nix
