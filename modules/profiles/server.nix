@@ -9,7 +9,7 @@
 #
 # Top-level assertions enforce the server-tier hostSpec contract:
 # `serverDomain` and `serverEnvironment` are typed as `nullOr ...` in
-# `hostSpecs/host-spec.nix` so workstation hosts can leave them unset,
+# `hostSpecs/_host-spec.nix` so workstation hosts can leave them unset,
 # but every consumer of those fields under this profile (caddy,
 # authentik, server-users, nfsclient, …) reads them unguarded. The
 # fail-fast check lives here so importing `server` on a host that

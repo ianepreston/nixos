@@ -110,7 +110,7 @@ testing against published secrets.
   bundle on top of `server`). Hosts that run apps import both.
 - `modules/hosts/<host>.nix` — per-host `nixosConfiguration` wiring.
 - `hostSpecs/<host>.nix` — declarative host metadata (hostname, environment,
-  email). Schema lives in `hostSpecs/host-spec.nix`.
+  email). Schema lives in `hostSpecs/_host-spec.nix`.
 
 New modules need to be tracked by git (even just `git add -N`) before flake
 evaluation will see them. This applies to non-`.nix` files referenced from

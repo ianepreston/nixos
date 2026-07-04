@@ -56,7 +56,7 @@ and resources if you want to build your own.
 ├── flake.nix              # Entrypoint — uses flake-parts + import-tree to auto-discover modules
 ├── Taskfile.yaml          # Task runner for build, rebuild, lint, format, etc.
 ├── hostSpecs/             # Declarative host specifications (hostname, platform, features)
-│   ├── host-spec.nix      # Schema definition for host specs
+│   ├── _host-spec.nix     # Schema definition for host specs
 │   ├── luna.nix
 │   ├── terra.nix
 │   ├── work.nix
@@ -985,8 +985,9 @@ Before bootstrapping, the target host needs configuration in this repo:
 - `modules/hosts/_newhostname-disks.nix` — disko disk layout
 - `modules/hosts/newhostname.nix` — host module (which modules to compose)
 
-Also add the new host to `hostSpecs/default.nix` imports list, then `git add`
-all new files — the flake uses `git+file://` and won't see untracked files.
+`git add` all new files — the flake uses `git+file://` and won't see
+untracked files. (Host files under `hostSpecs/` are auto-discovered — no
+need to edit `hostSpecs/default.nix`.)
 
 The hardware config is automatically fetched from the target during
 `bootstrap:install` if the file doesn't exist yet. It gets refreshed from
