@@ -75,7 +75,7 @@ and resources if you want to build your own.
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
 │   ├── programs/          # Application modules (browser, ghostty, comms, media, obsidian, etc.)
 │   └── hosts/             # Per-host configurations and hardware/disk definitions
-├── scripts/               # Utility scripts (dconf capture, sops check, system-install)
+├── scripts/               # Utility scripts (dconf capture)
 └── assets/                # Static assets (wallpapers)
 ```
 
