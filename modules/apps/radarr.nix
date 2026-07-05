@@ -46,7 +46,7 @@ in
       services.radarr = {
         enable = true;
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
       };
 
       myAppState.radarr = {

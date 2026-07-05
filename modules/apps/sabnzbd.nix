@@ -100,7 +100,7 @@ _: {
         enable = true;
         package = sabnzbdPackage;
         user = sabnzbdUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
         # Opt out of the stateVersion < 26.05 default that points
         # configFile at /var/lib/sabnzbd/sabnzbd.ini (deprecated). With
         # null + allowConfigWrite=true (also a stateVersion < 26.05
@@ -165,7 +165,7 @@ _: {
         {
           directory = incompleteDir;
           user = sabnzbdUser;
-          group = "servers";
+          group = hostSpec.serverGroup;
           mode = "0700";
         }
       ];
@@ -189,7 +189,7 @@ _: {
         # impermanence hosts; tmpfiles covers the non-impermanent case
         # and pins ownership either way).
         tmpfiles.rules = [
-          "d ${incompleteDir} 0700 ${sabnzbdUser} servers - -"
+          "d ${incompleteDir} 0700 ${sabnzbdUser} ${hostSpec.serverGroup} - -"
         ];
 
         services = {

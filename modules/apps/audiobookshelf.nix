@@ -27,7 +27,7 @@ _: {
       services.audiobookshelf = {
         enable = true;
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
         inherit port;
       };
 

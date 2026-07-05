@@ -54,7 +54,7 @@ _: {
       # `server-${env}` group kavita also creates is dangling but
       # harmless since user-perm checks always win when EUID matches
       # the file owner.
-      users.users.${kavitaUser}.group = lib.mkForce "servers";
+      users.users.${kavitaUser}.group = lib.mkForce hostSpec.serverGroup;
 
       myAppState.kavita = {
         stateDir = "/var/lib/kavita";

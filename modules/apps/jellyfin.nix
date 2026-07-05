@@ -131,7 +131,7 @@ _: {
         # pinned to match the NAS (server-dev=1029, server-prod=1030,
         # group servers=65536) so NFS doesn't have to translate.
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
       };
 
       # Preservation defaults to root:root, but jellyfin runs as
