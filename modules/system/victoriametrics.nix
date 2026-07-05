@@ -241,11 +241,17 @@ _: {
                 # forever, and nothing imports even though the file is
                 # usually complete on disk. Also catches genuinely
                 # unavailable releases (out of retention) that need a
-                # manual re-search. 6h is well past any real comic
-                # download (tens of MB) yet tolerates a long SAB queue;
-                # `for: 30m` debounces the publish/scrape gap. Recover
-                # with the manual post_process runbook in mylar3.nix,
-                # then `podman restart mylar3`.
+                # manual re-search, and mis-matched grabs (a search that
+                # fetched the wrong issue number). The metric unions the
+                # `issues` and `annuals` tables, so annual-only stucks —
+                # which live in a separate table and would otherwise
+                # never surface — are covered too. 6h is well past any
+                # real comic download (tens of MB) yet tolerates a long
+                # SAB queue; `for: 30m` debounces the publish/scrape gap.
+                # Recover with the manual post_process runbook in
+                # mylar3.nix (annuals-table stucks take the markissues
+                # Retry path documented there instead), then
+                # `podman restart mylar3`.
                 alert = "MylarSnatchedStuck";
                 expr = "mylar3_snatched_oldest_seconds > 21600";
                 for = "30m";

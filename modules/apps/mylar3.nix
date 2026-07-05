@@ -56,14 +56,28 @@ _: {
         #   curl 'http://localhost:8090/post_process?nzb_name=Manual+Run&nzb_folder=/downloads/complete/comics/<folder>'
         # then `podman restart mylar3` to flush the in-memory CDH list.
         #
-        # `issues.Status='Snatched'` is the authoritative "awaiting
+        # `Status='Snatched'` is the authoritative "awaiting
         # download/import" state (the `snatched` table accumulates stale
         # rows and isn't reliable on its own); we join to `snatched` only
         # for the per-issue snatch timestamp (DateAdded, stored in local
         # time — both sides of the subtraction are interpreted as UTC by
-        # strftime so the tz offset cancels and the age is true). Two
-        # gauges land in the textfile collector; the >6h threshold lives
-        # in the MylarSnatchedStuck rule in victoriametrics.nix.
+        # strftime so the tz offset cancels and the age is true).
+        #
+        # Annuals live in a SEPARATE `annuals` table, not `issues` — a
+        # stuck annual (e.g. a mis-matched grab that filed the wrong
+        # issue number) never appears in `issues` and so would silently
+        # escape a `issues`-only count. Both gauges therefore union the
+        # two tables (annuals filtered by `NOT Deleted` — soft-deleted
+        # rows aren't real stucks). Recovering an annuals-table stuck is
+        # different from the runbook above: `/failed_handling` aborts on
+        # annuals ("issuenzb not found … sandwich was not defined"), and
+        # for a mis-matched grab it would wrongly blacklist the good
+        # release it actually fetched — reset it with
+        #   curl -sG http://localhost:8090/markissues --data-urlencode action=Retry --data-urlencode 'issueids[]=<IssueID>'
+        # (annuals-aware; sets Wanted + re-searches, no blacklist).
+        #
+        # Two gauges land in the textfile collector; the >6h threshold
+        # lives in the MylarSnatchedStuck rule in victoriametrics.nix.
         services.mylar3-snatched-metrics = {
           description = "publish mylar3 stuck-Snatched metrics to node_exporter textfile collector";
           serviceConfig = {
@@ -92,9 +106,9 @@ _: {
               # so the timeout only matters for the brief window Mylar
               # holds an EXCLUSIVE write lock.
               count=$(sqlite3 -readonly -cmd '.timeout 5000' -batch "$DB" \
-                "SELECT COUNT(*) FROM issues WHERE Status='Snatched';" 2>/dev/null || echo "")
+                "SELECT (SELECT COUNT(*) FROM issues WHERE Status='Snatched') + (SELECT COUNT(*) FROM annuals WHERE Status='Snatched' AND NOT Deleted);" 2>/dev/null || echo "")
               oldest=$(sqlite3 -readonly -cmd '.timeout 5000' -batch "$DB" \
-                "SELECT COALESCE(MAX(strftime('%s','now','localtime') - strftime('%s', latest)), 0) FROM (SELECT MAX(s.DateAdded) AS latest FROM issues i JOIN snatched s ON s.IssueID=i.IssueID WHERE i.Status='Snatched' GROUP BY i.IssueID);" 2>/dev/null || echo "")
+                "SELECT COALESCE(MAX(strftime('%s','now','localtime') - strftime('%s', latest)), 0) FROM (SELECT MAX(s.DateAdded) AS latest FROM issues i JOIN snatched s ON s.IssueID=i.IssueID WHERE i.Status='Snatched' GROUP BY i.IssueID UNION ALL SELECT MAX(s.DateAdded) AS latest FROM annuals a JOIN snatched s ON s.IssueID=a.IssueID WHERE a.Status='Snatched' AND NOT a.Deleted GROUP BY a.IssueID);" 2>/dev/null || echo "")
             fi
             # On a read failure (db locked / query error) leave the
             # previous .prom in place rather than publishing a misleading
@@ -107,7 +121,7 @@ _: {
             case "$oldest" in ""|*[!0-9]*) oldest=0 ;; esac
             tmp=$(mktemp -p "$(dirname "$OUT")" .mylar3.prom.XXXXXX)
             {
-              echo "# HELP mylar3_snatched_issues Issues currently in Mylar's Snatched state (awaiting download/import)."
+              echo "# HELP mylar3_snatched_issues Issues (incl. annuals) currently in Mylar's Snatched state (awaiting download/import)."
               echo "# TYPE mylar3_snatched_issues gauge"
               echo "mylar3_snatched_issues $count"
               echo "# HELP mylar3_snatched_oldest_seconds Age in seconds of the longest-outstanding Snatched issue, measured from its most recent snatch."
