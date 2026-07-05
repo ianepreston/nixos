@@ -67,6 +67,7 @@
         kapowarr
         kavita
         mealie
+        ytdlp-web-player
       ];
 
       # State dirs the impermanence guard expects to be preserved. The
