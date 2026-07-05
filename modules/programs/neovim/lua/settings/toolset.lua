@@ -11,8 +11,8 @@ M.ts_languages = {
 }
 -- LSP Servers according to nvim-lspconfig. `lua/plugins/lspconfig.lua` configures LSP servers with defaults which you can extend:
 -- https://github.com/neovim/nvim-lspconfig/blob/master/doc/configs.md
--- Each LSP server specified here may have a custom configuration in `lua/settings/{server}.lua` which will automatically loaded.
--- For example, if `lua/settings/nixd.lua` exists, options in it will be merged with nvim-lspconfig defaults and used to configure nixd.
+-- Each LSP server specified here may have a custom configuration in `lsp/{server}.lua` which is automatically loaded (Neovim 0.11 native `vim.lsp.config`).
+-- For example, if `lsp/nixd.lua` exists, options in it will be merged with nvim-lspconfig defaults and used to configure nixd.
 -- It's NOT Mason installation list: only a list of LSP servers to be configured and set up with nvim-lspconfig.
 M.lsp_servers = {
   "basedpyright",
@@ -30,7 +30,7 @@ M.lsp_servers = {
   "jsonls",
   "lua_ls",
   "nil_ls",
-  -- Edit settings/nixd.lua for better Nix autocompletion
+  -- Edit lsp/nixd.lua for better Nix autocompletion
   "nixd",
   "ruff",
   "rust_analyzer",

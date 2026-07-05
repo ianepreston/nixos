@@ -11,7 +11,6 @@ local M = {
   event = { "BufReadPre", "BufNewFile" },
   dependencies = {
     "hrsh7th/cmp-nvim-lsp",
-    "folke/neodev.nvim",
     "b0o/schemastore.nvim",
   },
   opts = {
@@ -25,7 +24,7 @@ function M.config(_, opts)
     capabilities = require("cmp_nvim_lsp").default_capabilities(), -- snippet & cmp support
   })
 
-  -- 2) Enable all servers listed in your toolset (Neovim will merge lsp/<server>.lua)
+  -- 2) Enable all servers listed in your toolset (Neovim will merge the per-server config from `lsp/<server>.lua`)
   local servers = {}
   for _, s in ipairs(require("settings.toolset").lsp_servers) do
     local name = vim.split(s, "@")[1] -- strip optional version suffix
