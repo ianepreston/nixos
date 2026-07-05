@@ -189,7 +189,7 @@ _: {
         # impermanence hosts; tmpfiles covers the non-impermanent case
         # and pins ownership either way).
         tmpfiles.rules = [
-          "d ${incompleteDir} 0700 ${sabnzbdUser} servers - -"
+          "d ${incompleteDir} 0700 ${sabnzbdUser} ${hostSpec.serverGroup} - -"
         ];
 
         services = {
