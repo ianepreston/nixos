@@ -552,19 +552,24 @@ _: {
                 # NUT client + per-master exporters (issue #82).
                 + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using
-                # services.<app>): audiobookshelf, bazarr, jellyfin,
-                # kavita, komga, mealie, miniflux, paperless (multi-unit:
-                # web/scheduler/task-queue/consumer), prowlarr, radarr,
-                # readeck, sabnzbd, sonarr, spierscraper, unifi-os-server.
-                + "|audiobookshelf|bazarr|jellyfin|kavita|komga|mealie|miniflux"
-                + "|paperless(-.+)?|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
-                + "|spierscraper|unifi-os-server"
+                # services.<app>): audiobookshelf, bazarr, flaresolverr,
+                # jellyfin, kavita, komga, matter-server, mealie, miniflux,
+                # paperless (multi-unit: web/scheduler/task-queue/consumer),
+                # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
+                # spierscraper.
+                + "|audiobookshelf|bazarr|flaresolverr|jellyfin|kavita|komga"
+                + "|matter-server|mealie|miniflux|paperless(-.+)?|pinchflat"
+                + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr|spierscraper"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
-                # podman-<name>.service unit.
-                + "|podman-(actualbudget|grimmory|homeassistant|kapowarr"
-                + "|mylar3|profilarr|readmeabook|seerr|shelfarr"
-                + "|tandoor|valheim|watchstate))\\.service$"
+                # podman-<name>.service unit. Includes unifi-os-server —
+                # it runs as an OCI container (podman-unifi-os-server),
+                # not a native service. bookorbit is dev-only, so the
+                # token simply never matches on prod hosts.
+                + "|podman-(actualbudget|bookorbit|decluttarr|grimmory"
+                + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
+                + "|readmeabook|seerr|shelfarr|tandoor|unifi-os-server"
+                + "|valheim|watchstate))\\.service$"
               )
             ];
           };
