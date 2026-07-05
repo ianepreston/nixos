@@ -563,7 +563,7 @@ _: {
                 # virtualisation.oci-containers): each registers a
                 # podman-<name>.service unit.
                 + "|podman-(actualbudget|grimmory|homeassistant|kapowarr"
-                + "|maintainerr|mylar3|profilarr|readmeabook|seerr|shelfarr"
+                + "|mylar3|profilarr|readmeabook|seerr|shelfarr"
                 + "|tandoor|valheim|watchstate))\\.service$"
               )
             ];
