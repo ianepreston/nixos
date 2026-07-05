@@ -30,7 +30,7 @@ M.lsp_servers = {
   "jsonls",
   "lua_ls",
   "nil_ls",
-  -- Edit settings/nixd.lua for better Nix autocompletion
+  -- Edit lsp/nixd.lua for better Nix autocompletion
   "nixd",
   "ruff",
   "rust_analyzer",
