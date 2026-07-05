@@ -106,6 +106,17 @@ _: {
       };
 
       config = {
+        # Guard the port-bind emitter above: it builds
+        # "127.0.0.1:${port}:${containerPort}" whenever `port` is set, so a
+        # null `containerPort` would emit a malformed bind ending in a bare
+        # colon. `containerPort` defaults to `config.port`, so nothing trips
+        # this today — it's a latent guard against a future app decoupling
+        # the two.
+        assertions = lib.mapAttrsToList (name: app: {
+          assertion = app.port == null || app.containerPort != null;
+          message = "myContainerApp.${name}: containerPort must not be null when port is set";
+        }) config.myContainerApp;
+
         virtualisation = {
           podman = {
             enable = true;
