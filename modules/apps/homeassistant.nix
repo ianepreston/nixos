@@ -102,6 +102,9 @@ _: {
         };
       };
 
+      # Not migrated to myContainerApp: home-assistant runs as root
+      # in-container, so myContainerApp's user/PUID/PGID identity model
+      # doesn't apply — it keeps its own ports/TZ instead.
       virtualisation.oci-containers.containers.homeassistant = {
         # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
         image = "ghcr.io/home-assistant/home-assistant:2026.7";

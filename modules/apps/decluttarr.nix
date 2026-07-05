@@ -134,6 +134,9 @@ _: {
         '';
       };
 
+      # Not migrated to myContainerApp: decluttarr is stateless (no state
+      # dirs, no user override), so myContainerApp's stateDirs/user plumbing
+      # buys nothing — it keeps its own TZ instead.
       virtualisation.oci-containers.containers.decluttarr = {
         # renovate: datasource=docker depName=ghcr.io/manimatter/decluttarr
         image = "ghcr.io/manimatter/decluttarr:v2.1.0";
