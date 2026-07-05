@@ -1,5 +1,4 @@
 -- Signature help, docs and completion for the Neovim Lua API
--- Successor to the archived folke/neodev.nvim
 -- https://github.com/folke/lazydev.nvim
 
 return {
