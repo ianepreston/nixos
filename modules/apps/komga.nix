@@ -39,7 +39,7 @@ _: {
       services.komga = {
         enable = true;
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
         settings.server.port = port;
         # The jar (unlike the bundled Docker/desktop distros) doesn't ship
         # kepubify, so point Komga at the nixpkgs binary. Required for

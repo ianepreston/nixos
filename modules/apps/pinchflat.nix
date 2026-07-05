@@ -55,7 +55,7 @@ _: {
         # overriding to the shared server-${env} user cleanly skips
         # the module's user block.
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
         mediaDir = "/mnt/content/youtube";
         secretsFile = config.sops.templates."pinchflat.env".path;
       };

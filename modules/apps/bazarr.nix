@@ -21,7 +21,7 @@ _: {
       services.bazarr = {
         enable = true;
         user = hostSpec.serverUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
       };
 
       myAppState.bazarr = {

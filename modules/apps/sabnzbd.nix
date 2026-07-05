@@ -100,7 +100,7 @@ _: {
         enable = true;
         package = sabnzbdPackage;
         user = sabnzbdUser;
-        group = "servers";
+        group = hostSpec.serverGroup;
         # Opt out of the stateVersion < 26.05 default that points
         # configFile at /var/lib/sabnzbd/sabnzbd.ini (deprecated). With
         # null + allowConfigWrite=true (also a stateVersion < 26.05
@@ -165,7 +165,7 @@ _: {
         {
           directory = incompleteDir;
           user = sabnzbdUser;
-          group = "servers";
+          group = hostSpec.serverGroup;
           mode = "0700";
         }
       ];
