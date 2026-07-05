@@ -67,7 +67,7 @@ _: {
 
       virtualisation.oci-containers.containers.tandoor = {
         # renovate: datasource=docker depName=vabene1111/recipes
-        image = "vabene1111/recipes:2.6.12";
+        image = "vabene1111/recipes:2.6.13";
         volumes = [
           "/var/lib/containers/tandoor/staticfiles:/opt/recipes/staticfiles"
           "/var/lib/containers/tandoor/mediafiles:/opt/recipes/mediafiles"
