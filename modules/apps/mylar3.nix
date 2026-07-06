@@ -31,6 +31,11 @@ _: {
       myAuthentik.forwardAuthApps.mylar = {
         inherit port;
         displayName = "Mylar";
+        # Skip forward_auth for Mylar's REST API (single `/api` endpoint,
+        # authenticated by an `apikey` query param) so non-browser clients
+        # can reach it with the native API key instead of the authentik
+        # session cookie they don't have.
+        bypassAuthPaths = [ "/api" ];
         homepage = {
           group = "Acquisition";
           icon = "mylar";
