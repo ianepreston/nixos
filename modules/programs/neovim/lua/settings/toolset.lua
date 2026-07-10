@@ -2,13 +2,11 @@
 -- To understand internals, please read "Core Tools and Language Support" under "Customization" in README.md
 
 local M = {}
--- Treesitter languages for automatic installation
--- NOTE: if `auto_install = true` in `lua/plugins/treesitter.lua`, grammars are installed
--- automatically on demand if `tree-sitter` CLI tool is available. Otherwise, you can manually
--- specify grammars in the list below -- they will be pre-installed even if you never use them.
-M.ts_languages = {
-  "regex",
-}
+-- Treesitter parsers + queries are vendored from nixpkgs, not managed here.
+-- The vendored language list lives in `modules/programs/neovim.nix` (`tsLangs`)
+-- and the runtime wiring in `lua/treesitter.lua`. Neovim's core langs (c, lua,
+-- markdown, markdown_inline, query, vim, vimdoc) ship parsers + queries and are
+-- auto-activated, so they are deliberately not vendored.
 -- LSP Servers according to nvim-lspconfig. `lua/plugins/lspconfig.lua` configures LSP servers with defaults which you can extend:
 -- https://github.com/neovim/nvim-lspconfig/blob/master/doc/configs.md
 -- Each LSP server specified here may have a custom configuration in `lsp/{server}.lua` which is automatically loaded (Neovim 0.11 native `vim.lsp.config`).

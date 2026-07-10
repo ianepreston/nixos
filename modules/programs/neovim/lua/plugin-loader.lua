@@ -45,6 +45,13 @@ local opts = {
     },
     reset_packpath = true, -- reset the package path to improve startup time
     rtp = {
+      -- Keep the nixpkgs-vendored tree-sitter parsers + queries on the
+      -- runtimepath. lazy resets the rtp (`reset = true`), so this explicit
+      -- entry is what keeps `parser/` and `queries/` discoverable. Placed by
+      -- home-manager (see modules/programs/neovim.nix).
+      paths = {
+        vim.fn.stdpath "data" .. "/site/pack/nix-ts/start/nvim-treesitter-vendored",
+      },
       disabled_plugins = {
         -- -- Disabled in many distros to cut few msec of startup time, but it allows remote development:
         -- -- `nvim scp://root@server//etc/nginx/` will open a remote folder and sync changes, pure ssh
