@@ -21,12 +21,31 @@ api.nvim_create_autocmd("FileType", {
   end,
 })
 
+-- Catch up buffers already loaded before this autocmd was registered (e.g. a
+-- file passed on the command line, or a restored session). A no-op when the
+-- FileType autocmd above already started highlighting; guards the very-first
+-- buffer against any startup-ordering surprise.
+for _, buf in ipairs(api.nvim_list_bufs()) do
+  if api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype ~= "" then
+    pcall(ts.start, buf)
+  end
+end
+
 -- Incremental selection ------------------------------------------------------
 -- Reimplements nvim-treesitter.incremental_selection (removed with the plugin)
 -- on the core node API. <C-space> expands the Visual selection to the next
 -- larger node; <bs> shrinks it back. Move/swap motions are intentionally not
 -- reimplemented.
 local selection_stack = {}
+
+-- Drop a buffer's selection stack on teardown so we don't retain stale node
+-- userdata for buffers that no longer exist.
+api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+  desc = "Clear treesitter incremental-selection state for the buffer",
+  callback = function(ev)
+    selection_stack[ev.buf] = nil
+  end,
+})
 
 local function same_range(a, b)
   local ar1, ac1, ar2, ac2 = a:range()
