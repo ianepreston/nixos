@@ -26,6 +26,7 @@ jobs:
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
@@ -113,6 +114,7 @@ jobs:
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
@@ -158,6 +160,7 @@ jobs:
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
@@ -194,6 +197,7 @@ jobs:
       - name: Install nix
         uses: DeterminateSystems/nix-installer-action@main
         with:
+          determinate: false
           extra-conf: |
             experimental-features = nix-command flakes
             accept-flake-config = true
