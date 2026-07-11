@@ -47,6 +47,84 @@
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*\"[^\"]+@(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update the primary NixOS nixpkgs release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "nixpkgs\\.url\\s*=\\s*\"github:NixOS/nixpkgs/nixos-(?<currentValue>\\d{2}\\.(?:05|11))\""
+      ],
+      "depNameTemplate": "nixpkgs",
+      "packageNameTemplate": "https://github.com/NixOS/nixpkgs",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^nixos-(?<version>\\d{2}\\.(?:05|11))$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the nixpkgs Darwin release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "nixpkgs-darwin\\.url\\s*=\\s*\"github:NixOS/nixpkgs/nixpkgs-(?<currentValue>\\d{2}\\.(?:05|11))-darwin\""
+      ],
+      "depNameTemplate": "nixpkgs-darwin",
+      "packageNameTemplate": "https://github.com/NixOS/nixpkgs",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^nixpkgs-(?<version>\\d{2}\\.(?:05|11))-darwin$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the stable nixpkgs release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "nixpkgs-stable\\.url\\s*=\\s*\"github:NixOS/nixpkgs/nixos-(?<currentValue>\\d{2}\\.(?:05|11))\""
+      ],
+      "depNameTemplate": "nixpkgs-stable",
+      "packageNameTemplate": "https://github.com/NixOS/nixpkgs",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^nixos-(?<version>\\d{2}\\.(?:05|11))$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the nix-darwin release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "nix-darwin\\.url\\s*=\\s*\"github:nix-darwin/nix-darwin/nix-darwin-(?<currentValue>\\d{2}\\.(?:05|11))\""
+      ],
+      "depNameTemplate": "nix-darwin",
+      "packageNameTemplate": "https://github.com/nix-darwin/nix-darwin",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^nix-darwin-(?<version>\\d{2}\\.(?:05|11))$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the home-manager release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "home-manager\\s*=\\s*\\{[\\s\\S]*?url\\s*=\\s*\"github:nix-community/home-manager/release-(?<currentValue>\\d{2}\\.(?:05|11))\""
+      ],
+      "depNameTemplate": "home-manager",
+      "packageNameTemplate": "https://github.com/nix-community/home-manager",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^release-(?<version>\\d{2}\\.(?:05|11))$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the Stylix release channel in flake.nix",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "stylix\\.url\\s*=\\s*\"github:danth/stylix/release-(?<currentValue>\\d{2}\\.(?:05|11))\""
+      ],
+      "depNameTemplate": "stylix",
+      "packageNameTemplate": "https://github.com/danth/stylix",
+      "datasourceTemplate": "git-refs",
+      "extractVersionTemplate": "^release-(?<version>\\d{2}\\.(?:05|11))$",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)$"
     }
   ]
 }
