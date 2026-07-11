@@ -1,5 +1,13 @@
 ---
 name: update flake.lock
+# One-time GitHub App setup for this workflow:
+# - Create a GitHub App owned by the repository owner.
+# - Grant repository permissions: Contents = Read and write, Pull requests = Read and write.
+# - Install the app only on ianepreston/nixos.
+# - Store its app ID and private key in FLAKE_UPDATE_APP_ID and
+#   FLAKE_UPDATE_APP_PRIVATE_KEY repository Actions secrets.
+# - Do not grant the app access to nix-secrets; this workflow uses
+#   NIX_SECRETS_DEPLOY_KEY for that private flake input.
 on:
   schedule:
     # 09:30 UTC is before 04:00 Monday in America/Edmonton year-round.
@@ -42,7 +50,10 @@ jobs:
       - name: Trust github.com host key
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          touch ~/.ssh/known_hosts
+          ssh-keyscan github.com | while read -r key; do
+            grep -qxF "$key" ~/.ssh/known_hosts || printf '%s\n' "$key" >> ~/.ssh/known_hosts
+          done
       - name: Mint flake update app token
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
         id: app-token
@@ -58,7 +69,7 @@ jobs:
           git --no-pager diff -- flake.lock
       - name: Update flake.lock
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
-        uses: DeterminateSystems/update-flake-lock@main
+        uses: DeterminateSystems/update-flake-lock@v28
         with:
           token: ${{ steps.app-token.outputs.token }}
           branch: automated/flake-update
@@ -68,20 +79,4 @@ jobs:
           pr-body: |
             Automated weekly `nix flake update` run on the self-hosted NixOS runner.
 
-            This workflow does not change or replace the hosted Renovate app's Docker/container image patching. Renovate remains responsible for the existing container managers, customManagers, packageRules, and automerge behavior; only Renovate's redundant Nix lockfile maintenance is disabled.
-
-            Required repository Actions secrets:
-            - `FLAKE_UPDATE_APP_ID`
-            - `FLAKE_UPDATE_APP_PRIVATE_KEY`
-
-            GitHub App setup:
-            1. Create a GitHub App owned by the repository owner.
-            2. Grant repository permissions: Contents = Read and write, Pull requests = Read and write.
-            3. Install the app on only the `ianepreston/nixos` repository.
-            4. Do not grant the app access to `nix-secrets`; the workflow uses `NIX_SECRETS_DEPLOY_KEY` for that private flake input.
-            5. Store the app ID and private key in the two Actions secrets listed above.
-
-            Validation:
-            - Run this workflow manually with `dryRun` set to `true`.
-            - Confirm the job resolves the private `nix-secrets` input, runs `nix flake update`, and prints the `flake.lock` diff.
-            - The dry run path does not open a pull request.
+            Renovate still owns Docker/container image patching; this PR only refreshes `flake.lock`.
