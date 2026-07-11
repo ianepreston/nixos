@@ -57,7 +57,7 @@ jobs:
       - name: Mint flake update app token
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.FLAKE_UPDATE_APP_ID }}
           private-key: ${{ secrets.FLAKE_UPDATE_APP_PRIVATE_KEY }}
