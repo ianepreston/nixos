@@ -11,6 +11,10 @@ _: {
       myAuthentik.forwardAuthApps.bazarr = {
         port = 6767;
         displayName = "Bazarr";
+        # Skip forward_auth for the REST API so non-browser clients can
+        # authenticate with the native X-API-KEY header instead of an
+        # authentik session cookie.
+        bypassAuthPaths = [ "/api/*" ];
         homepage = {
           group = "Acquisition";
           icon = "bazarr";

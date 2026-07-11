@@ -310,6 +310,19 @@ not the template — fixed to template-only per #336.)
 - Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`),
   _not_ containers — see README "Authentik (SSO)" for the rationale and the
   per-app onboarding pattern.
+- **`bypassAuthPaths` for key-gated APIs.** When registering
+  `myAuthentik.forwardAuthApps.<app>`, declare `bypassAuthPaths` for the routes
+  the app gates with its own API key (`/api/*`, healthchecks, feeds) so
+  non-browser clients can use the native key instead of an authentik session
+  cookie — with a rationale comment, following `modules/apps/radarr.nix`. Never
+  bypass routes that serve data unauthenticated (gatus, pinchflat feeds, …);
+  for those apps omit the option entirely and leave everything gated. Verify
+  the "key-gated" claim by actually curling the bypassed routes without a key —
+  kapowarr's `POST /api/auth` returns the API key unauthenticated when no UI
+  password is set, which is why it has no bypass despite having an API key
+  scheme. Keep path
+  lists per-module — they genuinely differ per app (sabnzbd is the single exact
+  path `/api`, prowlarr has no `/feed`).
 - **Don't use `pkgs.symlinkJoin` for `blueprints_dir`.** Authentik's
   `retrieve_file` resolves paths and rejects anything outside the configured
   `blueprints_dir`; symlinkJoin's top-level entries dereference back to upstream
