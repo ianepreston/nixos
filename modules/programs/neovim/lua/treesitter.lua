@@ -10,6 +10,24 @@
 local ts = vim.treesitter
 local api = vim.api
 
+-- Filetype -> parser-language aliases.
+--
+-- `vim.treesitter.start` resolves a buffer's parser from its *filetype* via
+-- `vim.treesitter.language.get_lang(ft)`. When the filetype name differs from
+-- the tree-sitter parser name, that lookup misses and highlighting never
+-- starts. nvim-treesitter used to register these aliases; since we dropped it,
+-- we register the ones our vendored parsers need. Only vendored langs whose
+-- filetype != parser name belong here (identity cases like python/go/json need
+-- nothing); extend this alongside `tsLangs` in modules/programs/neovim.nix when
+-- a newly vendored lang has a mismatched filetype.
+local ft_aliases = {
+  bash = { "sh", "bash" }, -- *.sh => ft "sh"
+  hcl = { "hcl", "terraform", "tfvars" }, -- *.tf => ft "terraform"
+}
+for lang, filetypes in pairs(ft_aliases) do
+  ts.language.register(lang, filetypes)
+end
+
 -- Activate tree-sitter highlighting (and thereby foldexpr/indents) for any
 -- buffer whose language has a parser on the runtimepath. Both the core langs
 -- Neovim ships (c, lua, markdown, markdown_inline, query, vim, vimdoc) and the

@@ -21,7 +21,17 @@ _: {
       # re-vendor those (re-vendoring risks ABI skew vs core). Phase 2 expands
       # this list (python, yaml, bash, json, hcl, go, rust, toml) — a one-line
       # edit here.
-      tsLangs = [ "nix" ];
+      tsLangs = [
+        "nix"
+        "python"
+        "yaml"
+        "bash"
+        "json"
+        "hcl"
+        "go"
+        "rust"
+        "toml"
+      ];
 
       tsPlugin = pkgs.vimPlugins.nvim-treesitter;
       tsTextobjectsSrc = pkgs.vimPlugins.nvim-treesitter-textobjects.src;
