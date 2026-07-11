@@ -57,7 +57,6 @@
         tandoor
         unifi
         valheim
-        watchstate
       ];
 
       # Apps that ship only on dev-environment servers.

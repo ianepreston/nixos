@@ -26,12 +26,10 @@
 # restores mealie + miniflux + jellyfin from SOURCE_HOST's restic repo
 # (exercising the three app shapes), and tears the VM down. Quarterly
 # cadence — see issue #135 for the rationale.
-
 version: '3'
 set: [pipefail]
 shopt: [globstar]
 tasks:
-
   # ---------------------------------------------------------------------------
   # Internal templates
   # ---------------------------------------------------------------------------
@@ -40,7 +38,6 @@ tasks:
   # Per-app dispatchers below populate UNITS / PATHS / DB / SWAPS and
   # call the matching template. Marked `internal: true` so they don't
   # appear in `task --list`.
-
   _restore-volume:
     internal: true
     requires:
@@ -86,7 +83,6 @@ tasks:
           systemctl start "\$u"
         done
         EOF
-
   _restore-pg:
     internal: true
     requires:
@@ -147,7 +143,6 @@ tasks:
           systemctl start "\$u"
         done
         EOF
-
   _restore-sqlite:
     internal: true
     requires:
@@ -202,7 +197,6 @@ tasks:
           systemctl start "\$u"
         done
         EOF
-
   _health:
     internal: true
     requires:
@@ -228,17 +222,15 @@ tasks:
           echo '{{.APP}}: did not return {{.EXPECT}} within {{.RETRIES}}x{{.SLEEP}}s (last code: '\$code')'
           exit 1
         "
-
   # ---------------------------------------------------------------------------
   # Per-app dispatchers
   # ---------------------------------------------------------------------------
   # Keep this list in sync with modules/profiles/server-apps.nix and
   # the `all` aggregate below. See CLAUDE.md "Recovery tasks" for the
   # shape → template mapping.
-
   actualbudget:
     desc: Restore actualbudget (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -250,10 +242,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   audiobookshelf:
     desc: Restore audiobookshelf (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -267,11 +258,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: audiobookshelf, URL: 'http://127.0.0.1:13378/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: audiobookshelf, URL: 'http://127.0.0.1:13378/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   authentik:
     desc: Restore authentik (native + postgres, peer auth)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -284,10 +274,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   bambuddy:
     desc: Restore bambuddy (container + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -301,11 +290,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: bambuddy, URL: 'http://127.0.0.1:8008/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: bambuddy, URL: 'http://127.0.0.1:8008/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   bazarr:
     desc: Restore bazarr (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -319,11 +307,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   bookorbit:
     desc: Restore bookorbit (containerized + postgres)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -337,11 +324,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: bookorbit, URL: 'http://127.0.0.1:3017/api/v1/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: bookorbit, URL: 'http://127.0.0.1:3017/api/v1/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   gatus:
     desc: Restore gatus (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -354,10 +340,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   grimmory:
     desc: Restore grimmory (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -369,10 +354,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   homeassistant:
     desc: Restore home-assistant (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -384,10 +368,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   jellyfin:
     desc: Restore jellyfin (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -401,11 +384,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: jellyfin, URL: 'http://127.0.0.1:8096/health', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: jellyfin, URL: 'http://127.0.0.1:8096/health', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   kapowarr:
     desc: Restore kapowarr (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -417,10 +399,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   kavita:
     desc: Restore kavita (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -433,10 +414,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   komga:
     desc: Restore komga (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -449,10 +429,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   matter-server:
     desc: Restore matter-server (native, DynamicUser state under /var/lib/private)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -464,10 +443,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   mosquitto:
     desc: Restore mosquitto (native MQTT broker)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -479,10 +457,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   manyfold:
     desc: Restore manyfold (containerized + postgres)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -495,10 +472,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   mealie:
     desc: Restore mealie (native + postgres, peer auth)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -512,11 +488,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: mealie, URL: 'http://127.0.0.1:9925/', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: mealie, URL: 'http://127.0.0.1:9925/', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   miniflux:
     desc: Restore miniflux (native + postgres only, no on-disk state)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -529,11 +504,10 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
-        vars: { HOST: '{{.HOST}}', APP: miniflux, URL: 'http://127.0.0.1:8089/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}' }
-
+        vars: {HOST: '{{.HOST}}', APP: miniflux, URL: 'http://127.0.0.1:8089/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   mylar3:
     desc: Restore mylar3 (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -545,10 +519,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   paperless-ngx:
     desc: Restore paperless-ngx (native + postgres, four units)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -561,10 +534,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   pinchflat:
     desc: Restore pinchflat (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -577,10 +549,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   profilarr:
     desc: Restore profilarr (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -592,10 +563,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   prowlarr:
     desc: Restore prowlarr (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -608,10 +578,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   radarr:
     desc: Restore radarr (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -624,10 +593,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   readeck:
     desc: Restore readeck (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -640,10 +608,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   readmeabook:
     desc: Restore readmeabook (containerized + postgres)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -656,10 +623,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   sabnzbd:
     desc: Restore sabnzbd (native, volume only)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -671,10 +637,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   seerr:
     desc: Restore seerr (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -686,10 +651,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   shelfarr:
     desc: Restore shelfarr (container volume)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -701,10 +665,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   sonarr:
     desc: Restore sonarr (native + sqlite-quiesce)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-sqlite
         vars:
@@ -717,10 +680,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   spierscraper:
     desc: Restore spierscraper cache (timer-driven container; nothing to stop)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -732,10 +694,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   tandoor:
     desc: Restore tandoor (containerized + postgres)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
@@ -748,10 +709,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   unifi:
     desc: Restore unifi-os-server (container, state outside /var/lib/containers)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -763,10 +723,9 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   valheim:
     desc: Restore valheim (container volume — config + cache)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: _restore-volume
         vars:
@@ -778,32 +737,15 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-
-  watchstate:
-    desc: Restore watchstate (container volume)
-    requires: { vars: [HOST] }
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: watchstate
-          UNITS: 'podman-watchstate.service'
-          PATHS: '/var/lib/containers/watchstate'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-
   # ---------------------------------------------------------------------------
   # Catastrophic restore — every app
   # ---------------------------------------------------------------------------
   # Order matters where there are explicit dependencies (authentik
   # first, since most apps' OIDC integrations want it reachable),
   # otherwise the rest are per-app independent.
-
   all:
     desc: Catastrophic restore — every app on HOST from SOURCE_HOST (default same host)
-    requires: { vars: [HOST] }
+    requires: {vars: [HOST]}
     cmds:
       - task: authentik
       - task: actualbudget
@@ -841,8 +783,6 @@ tasks:
       - task: tandoor
       - task: unifi
       - task: valheim
-      - task: watchstate
-
   # ---------------------------------------------------------------------------
   # End-to-end drill: VM up → install → restore three shapes → teardown
   # ---------------------------------------------------------------------------
@@ -854,7 +794,6 @@ tasks:
   # VM lifecycle (up/install/down/sops-authorize) lives under `task vm:*`
   # in taskfiles/vm.yaml — generic enough to also drive tests-desktop
   # iteration and not tied to the restore drill.
-
   test:full:
     desc: Quarterly end-to-end drill — VM up, reinstall, restore mealie/miniflux/jellyfin from SOURCE_HOST, teardown
     vars:
@@ -863,7 +802,7 @@ tasks:
     cmds:
       - task: :vm:up
       - task: :vm:sops-authorize
-        vars: { TARGET: '{{.SOURCE_HOST}}' }
+        vars: {TARGET: '{{.SOURCE_HOST}}'}
       # vm:install routes through bootstrap:reinstall with LOCAL_SECRETS=true
       # (default), so the installed system already reflects local repo
       # state — including the uncommitted sops envelope edits the previous
@@ -919,11 +858,11 @@ tasks:
         echo "[+] sentinels placed"
         EOF
       - task: mealie
-        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
       - task: miniflux
-        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
       - task: jellyfin
-        vars: { HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}' }
+        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Asserting sentinels were removed by --delete\x1B[0m"
