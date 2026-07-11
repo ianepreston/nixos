@@ -68,6 +68,21 @@ jobs:
           set -euo pipefail
           nix flake update
           git --no-pager diff -- flake.lock
+      # DeterminateSystems/update-flake-lock@v28 is a `using: composite` action
+      # whose core step runs `node "$GITHUB_ACTION_PATH/dist/index.js"` as a
+      # shell `run:` step. The self-hosted runner injects its bundled node only
+      # for `using: node20` JS actions, not for composite `run:` steps, so node
+      # is not on the shell PATH and that step dies with `node: command not
+      # found` (exit 127). Realize nodejs from the already-installed nix and
+      # prepend its bin dir to PATH for the following step. `nix build` is
+      # idempotent, so this is safe to re-run on the persistent runner.
+      - name: Provide node for update-flake-lock
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
+        run: |
+          set -euo pipefail
+          node_bin="$(nix build --no-link --print-out-paths nixpkgs#nodejs)/bin"
+          "$node_bin/node" --version
+          printf '%s\n' "$node_bin" >> "$GITHUB_PATH"
       - name: Update flake.lock
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
         uses: DeterminateSystems/update-flake-lock@v28
