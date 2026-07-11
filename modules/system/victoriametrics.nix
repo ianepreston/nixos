@@ -575,7 +575,7 @@ _: {
                 + "|podman-(actualbudget|bookorbit|decluttarr|grimmory"
                 + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
                 + "|readmeabook|seerr|shelfarr|tandoor|unifi-os-server"
-                + "|valheim|watchstate))\\.service$"
+                + "|valheim))\\.service$"
               )
             ];
           };

@@ -15,8 +15,7 @@
 # already manage themselves.
 #
 # Sonarr/Radarr/Sabnzbd are reachable from inside the podman bridge
-# at `host.containers.internal:<port>` — same trick as watchstate /
-# grimmory.
+# at `host.containers.internal:<port>` — same trick as grimmory.
 _: {
   flake.modules.nixos.decluttarr =
     {
