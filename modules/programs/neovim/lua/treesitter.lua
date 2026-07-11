@@ -22,7 +22,7 @@ local api = vim.api
 -- a newly vendored lang has a mismatched filetype.
 local ft_aliases = {
   bash = { "sh", "bash" }, -- *.sh => ft "sh"
-  hcl = { "hcl", "terraform", "tfvars" }, -- *.tf => ft "terraform"
+  hcl = { "hcl", "terraform", "terraform-vars" }, -- *.tf => ft "terraform"; *.tfvars => ft "terraform-vars"
 }
 for lang, filetypes in pairs(ft_aliases) do
   ts.language.register(lang, filetypes)
