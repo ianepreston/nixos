@@ -9,6 +9,59 @@ _: {
       lib,
       ...
     }:
+    let
+      # ---- Tree-sitter parsers + queries, vendored from nixpkgs ----------
+      # The archived nvim-treesitter Lua plugin is gone; we consume nixpkgs'
+      # native tree-sitter artifacts (parsers + queries) directly and put them
+      # on Neovim's packpath, with no nvim-treesitter Lua runtime involved.
+      #
+      # Phase 1 vendors ONLY `nix`. Neovim 0.12 already ships parsers AND
+      # queries for the core langs (c, lua, markdown, markdown_inline, query,
+      # vim, vimdoc) and auto-activates them, so we deliberately do NOT
+      # re-vendor those (re-vendoring risks ABI skew vs core). Phase 2 expands
+      # this list (python, yaml, bash, json, hcl, go, rust, toml) — a one-line
+      # edit here.
+      tsLangs = [
+        "nix"
+        "python"
+        "yaml"
+        "bash"
+        "json"
+        "hcl"
+        "go"
+        "rust"
+        "toml"
+      ];
+
+      tsPlugin = pkgs.vimPlugins.nvim-treesitter;
+      tsTextobjectsSrc = pkgs.vimPlugins.nvim-treesitter-textobjects.src;
+
+      # One package holding, per vendored lang: `parser/<lang>.so` (correctly
+      # renamed by nixpkgs' to-nvim-treesitter-grammar.sh) plus its
+      # neovim-adapted `queries/<lang>/*.scm` (highlights, folds, indents,
+      # injections, locals) and the textobjects.scm queries. The textobjects
+      # queries come straight from the nixpkgs-pinned textobjects source — we
+      # take its `queries/` only, never the archived textobjects Lua runtime —
+      # so query content stays in ABI lockstep with the grammars (query-content
+      # decision B: everything follows the nixpkgs pin). This carries no
+      # nvim-treesitter Lua runtime.
+      #
+      # We assemble into real directories with `cp -L` rather than symlinkJoin:
+      # lndir symlinks a lang's whole `queries/<lang>` dir from the first source
+      # that provides it, which would drop the textobjects.scm coming from a
+      # second source. A file-level copy merges all query groups cleanly.
+      nvimTreesitterVendored = pkgs.runCommandLocal "nvim-treesitter-vendored" { } ''
+        mkdir -p "$out/parser"
+        ${lib.concatMapStringsSep "\n" (l: ''
+          cp -L ${tsPlugin.passthru.grammarPlugins.${l}}/parser/*.so "$out/parser/"
+          mkdir -p "$out/queries/${l}"
+          cp -L ${tsPlugin.passthru.queries.${l}}/queries/${l}/*.scm "$out/queries/${l}/"
+          if [ -d "${tsTextobjectsSrc}/queries/${l}" ]; then
+            cp -L "${tsTextobjectsSrc}/queries/${l}"/*.scm "$out/queries/${l}/"
+          fi
+        '') tsLangs}
+      '';
+    in
     {
       programs.neovim = {
         enable = true;
@@ -80,6 +133,12 @@ _: {
             include_document_start: true
         '';
       };
+
+      # Vendored tree-sitter parsers + queries on Neovim's packpath. Neovim
+      # auto-adds `pack/*/start/*` dirs, and lazy.nvim re-adds it via
+      # `performance.rtp.paths` in lua/plugin-loader.lua (lazy resets the rtp,
+      # so the explicit path entry is what keeps it discoverable).
+      xdg.dataFile."nvim/site/pack/nix-ts/start/nvim-treesitter-vendored".source = nvimTreesitterVendored;
       # Tools available during activation
       home.extraActivationPath = with pkgs; [
         git

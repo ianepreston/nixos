@@ -198,12 +198,12 @@ Lazy loading is a great optimization strategy, but it can be tricky to debug. If
 
 ### Core tools and Language support
 Next is `lua/settings/toolset.lua`, which specifies the tools that should be available, covering:
-- **Treesitter language parsers (`lua/plugins/treesitter.lua`)**: provide syntactic support for code highlighting, context-aware comments, and text objects (e.g., functions, statement bodies). To do so, it builds a syntax tree for a source file.
+- **Treesitter language parsers**: provide syntactic support for code highlighting, context-aware comments, and text objects (e.g., functions, statement bodies). To do so, it builds a syntax tree for a source file. In this repo the archived `nvim-treesitter` Lua plugin is not used — parsers and queries are vendored from nixpkgs (see `modules/programs/neovim.nix`, `tsLangs`) and activated by `lua/treesitter.lua`.
 - **LSP Servers (`lua/plugins/lspconfig.lua`)**: in ideal world, they provide all language intelligence tools like code actions, refactoring routines, documentation popups, analysis-based code completion, and more. Technically, LSP Servers implement Language Server Protocol, which is based on a JSON-RPC.
 - **DAP Debug Adapters (`lua/plugins/dap.lua`)**: debug adapters used for language-specific debugging with `nvim-dap`.
 - **`null-ls` Sources (`lua/plugins/null-ls.lua`)**: specialized external tools like linters and formatters that are not LSP servers. When we say `null-ls`, we actually refer to its maintained fork `none-ls`.
 
-**`nvim-treesitter`** supports automatic parser installation but requires a C compiler or pre-compiled binaries. Tree-sitter parser generators output C code, and Neovim interacts with these parsers as compiled shared libraries (e.g., `parser/{language}.so` files in Neovim’s `runtimepath`). Parsers for all languages in `toolset.ts_languages` are pre-installed as specified in `lua/plugins/treesitter.lua`.
+Neovim interacts with tree-sitter parsers as compiled shared libraries (e.g., `parser/{language}.so` files in Neovim’s `runtimepath`). Rather than compiling them at runtime via the (now archived) `nvim-treesitter` plugin, this repo vendors nixpkgs' pre-built parsers and neovim-adapted queries into a single package on the packpath (`~/.local/share/nvim/site/pack/nix-ts/start/`). The vendored language list is `tsLangs` in `modules/programs/neovim.nix`; core langs shipped by Neovim are not re-vendored. `lua/treesitter.lua` starts highlighting on those parsers and reimplements incremental selection.
 
 **Mason (`mason.nvim`)** is a plugin manager for external dependencies, and it is configured as follows:
 - `lua/settings/toolset.lua` specifies tools that may be installed automatically with Mason.
@@ -424,8 +424,7 @@ programs.neovim.extraPackages = with pkgs; [
 > I cross-referenced common tools installed by Mason (some of them extracted from VS Code) to corresponding `nixpkgs` packages. See the list in the [Home-Manager Example to Copy and Paste](#full-home-manager-example-to-copy-and-paste) section.
 
 > [!NOTE]
-> Treesitter parsers are compiled binaries that can be managed through Nix. However, they also work well when compiled locally using `clang` which we use for C/C++ LSP anyway. To maintain consistency between Nix and non-Nix setups, EdenVim defaults to local compilation.
-> If you prefer Nix-managed parsers, add `pkgs.vimPlugins.nvim-treesitter.withAllGrammars` to `programs.neovim.plugins` and set `auto_install = false` in `lua/plugins/treesitter.lua`.
+> Treesitter parsers are compiled binaries that can be managed through Nix. Upstream EdenVim defaults to compiling them locally with `clang`; this repo instead vendors nixpkgs' pre-built parsers + queries directly (see `tsLangs` in `modules/programs/neovim.nix`), so no runtime compilation happens and the `tree-sitter` CLI is kept in `extraPackages` only as a Neovim-runtime safety net.
 
 #### 3. Link or Clone your Neovim configuration
 
