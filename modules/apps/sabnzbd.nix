@@ -77,6 +77,12 @@ _: {
       myAuthentik.forwardAuthApps.sabnzbd = {
         inherit port;
         displayName = "Sabnzbd";
+        # Skip forward_auth for the API so non-browser clients (shelfarr,
+        # scripts) can authenticate with the native apikey instead of an
+        # authentik session cookie. The whole API is the single /api path
+        # (url_base is unset, so no /sabnzbd prefix); query params don't
+        # affect Caddy path matching.
+        bypassAuthPaths = [ "/api" ];
         homepage = {
           group = "Acquisition";
           icon = "sabnzbd";

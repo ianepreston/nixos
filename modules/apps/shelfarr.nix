@@ -67,7 +67,7 @@ _: {
           "/var/lib/containers/shelfarr/data:/rails/storage"
           "/var/lib/containers/shelfarr/tmp:/rails/tmp"
           "/mnt/content/audiobooks:/audiobooks"
-          "/mnt/content/books:/ebooks"
+          "/mnt/content/books_intake:/ebooks"
           "/mnt/content/Downloads:/downloads"
         ];
         environment = {

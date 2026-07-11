@@ -12,6 +12,11 @@ _: {
       myAuthentik.forwardAuthApps.kapowarr = {
         inherit port;
         displayName = "Kapowarr";
+        # Deliberately NO bypassAuthPaths: with no UI password set (never
+        # needed behind forward_auth), kapowarr's `POST /api/auth` hands
+        # out the API key unauthenticated, so bypassing /api/* would let
+        # any LAN client mint full API access. Set a kapowarr auth
+        # password first if its API ever needs to be reachable.
         # No upstream icon in dashboard-icons yet; fall back to repo favicon.
         iconUrl = "https://raw.githubusercontent.com/Casvt/Kapowarr/master/frontend/static/img/favicon.svg";
         homepage = {

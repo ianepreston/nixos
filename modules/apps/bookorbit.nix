@@ -137,6 +137,7 @@ _: {
         volumes = [
           "/var/lib/containers/bookorbit/data:/data"
           "/mnt/content/books:/books"
+          "/mnt/content/books_intake:/data/book-dock"
         ];
         environment = {
           NODE_ENV = "production";

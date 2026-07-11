@@ -21,6 +21,18 @@ _: {
       myAuthentik.forwardAuthApps.prowlarr = {
         inherit port;
         displayName = "Prowlarr";
+        # Skip forward_auth for the REST API, healthcheck, and per-indexer
+        # Torznab paths so non-browser clients can authenticate with the
+        # native API key. The Torznab wildcards matter for sabnzbd: prowlarr
+        # generates release download links from the request Host header, and
+        # sabnzbd (native host service) fetches those NZBs through caddy —
+        # /{indexerId}/download must reach prowlarr, whose own 401 gates it.
+        bypassAuthPaths = [
+          "/api/*"
+          "/ping"
+          "/*/api"
+          "/*/download"
+        ];
         homepage = {
           group = "Acquisition";
           icon = "prowlarr";
