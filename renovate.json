@@ -21,6 +21,14 @@
       "description": "Caddy plugin bumps require regenerating the pkgs.caddy.withPlugins hash in modules/system/caddy.nix; keep manual.",
       "matchPackageNames": ["/caddy/"],
       "automerge": false
+    },
+    {
+      "description": "Group Nix release-channel bumps and keep them manual.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["git-refs"],
+      "matchDepNames": ["nixpkgs", "nixpkgs-darwin", "nixpkgs-stable", "nix-darwin", "home-manager", "stylix"],
+      "groupName": "nix release channels",
+      "automerge": false
     }
   ],
   "customManagers": [
