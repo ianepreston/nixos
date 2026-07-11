@@ -1,0 +1,82 @@
+---
+name: update flake.lock
+# One-time GitHub App setup for this workflow:
+# - Create a GitHub App owned by the repository owner.
+# - Grant repository permissions: Contents = Read and write, Pull requests = Read and write.
+# - Install the app only on ianepreston/nixos.
+# - Store its app ID and private key in FLAKE_UPDATE_APP_ID and
+#   FLAKE_UPDATE_APP_PRIVATE_KEY repository Actions secrets.
+# - Do not grant the app access to nix-secrets; this workflow uses
+#   NIX_SECRETS_DEPLOY_KEY for that private flake input.
+on:
+  schedule:
+    # 09:30 UTC is before 04:00 Monday in America/Edmonton year-round.
+    - cron: "30 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: Run nix flake update and print the flake.lock diff without opening a PR.
+        required: false
+        type: boolean
+        default: true
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  update-flake-lock:
+    name: update flake.lock
+    runs-on: [self-hosted, nixos]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+            lazy-trees = false
+            always-allow-substitutes = false
+      # nix-secrets is the only private flake input. Load its read-only
+      # deploy key before any nix command so nix's git fetcher can clone it.
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      - name: Trust github.com host key
+        run: |
+          mkdir -p ~/.ssh
+          touch ~/.ssh/known_hosts
+          ssh-keyscan github.com | while read -r key; do
+            grep -qxF "$key" ~/.ssh/known_hosts || printf '%s\n' "$key" >> ~/.ssh/known_hosts
+          done
+      - name: Mint flake update app token
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.FLAKE_UPDATE_APP_ID }}
+          private-key: ${{ secrets.FLAKE_UPDATE_APP_PRIVATE_KEY }}
+      - name: Dry-run flake update
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun == true }}
+        run: |
+          set -euo pipefail
+          nix flake update
+          git --no-pager diff -- flake.lock
+      - name: Update flake.lock
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
+        uses: DeterminateSystems/update-flake-lock@v28
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automated/flake-update
+          pr-title: "chore(deps): update flake.lock"
+          pr-labels: |
+            enhancement
+          pr-body: |
+            Automated weekly `nix flake update` run on the self-hosted NixOS runner.
+
+            Renovate still owns Docker/container image patching; this PR only refreshes `flake.lock`.
