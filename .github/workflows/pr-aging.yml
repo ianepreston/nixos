@@ -9,14 +9,14 @@ name: pr aging
 #      `chore(deps): update flake.lock`). The branch is hardcoded there, so it
 #      is a reliable signal.
 #   2. Renovate *digest* PRs — image content repointed to a new sha256; these
-#      are now manual (see renovate.json). Identified by: bot author + a
-#      `renovate/` head branch + a "docker digest to" title. This repo's hosted
-#      Renovate applies no labels and no `-digest` branch topic, so the title
-#      is the ground-truth signal that separates digest PRs from tag/patch/
-#      minor/major bumps (whose titles say "docker tag to" / "action to" etc.).
-#      A follow-up `addLabels: ["digest"]` rule in renovate.json would make this
-#      more robust — intentionally not done here to avoid conflicting with the
-#      open renovate-cooldown PR.
+#      are manual (renovate.json keeps them out of the auto-merge rule).
+#      Identified by: bot author + a `renovate/` head branch + EITHER the
+#      `digest` label (added by renovate.json's `matchUpdateTypes: ["digest"]`
+#      -> `addLabels: ["digest"]` rule) OR a "docker digest to" title. The label
+#      is the primary signal; the title check is a fallback that still catches
+#      any digest PR opened before the label rule took effect. That title text
+#      is also what separates digest PRs from tag/patch/minor/major bumps
+#      (whose titles say "docker tag to" / "action to" etc.).
 #
 # Non-digest Renovate PRs (tag/patch/minor/major, Caddy, Nix release channels)
 # are deliberately NOT watched.
@@ -86,7 +86,10 @@ jobs:
                   or (
                     .author.is_bot
                     and (.headRefName | startswith("renovate/"))
-                    and (.title | ascii_downcase | contains("docker digest to"))
+                    and (
+                      ([.labels[].name] | index("digest"))
+                      or (.title | ascii_downcase | contains("docker digest to"))
+                    )
                   )
                 )
               | select((now - (.createdAt | fromdateiso8601)) >= $cutoff)
