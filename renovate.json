@@ -4,6 +4,8 @@
     "config:recommended",
     ":dependencyDashboard"
   ],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
   "nix": {
     "enabled": false
   },
@@ -13,8 +15,8 @@
   },
   "packageRules": [
     {
-      "description": "Auto-merge low-risk updates (patch versions + image digest refreshes) after CI green.",
-      "matchUpdateTypes": ["patch", "digest", "pinDigest"],
+      "description": "Auto-merge low-risk updates (patch versions + first-time digest pinning) after CI green; content-changing image digest refreshes are left manual for review.",
+      "matchUpdateTypes": ["patch", "pinDigest"],
       "automerge": true
     },
     {
