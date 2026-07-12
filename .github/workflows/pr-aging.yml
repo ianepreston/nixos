@@ -1,0 +1,107 @@
+---
+name: pr aging
+# Pings the maintainer once a manually-merged automated dependency PR has been
+# open long enough to clear a ~7-day cooldown, so it's ready to merge by hand.
+#
+# Watch set (scope: only the automated PRs that are merged manually):
+#   1. The weekly flake.lock PR — matched on its deterministic head branch
+#      `automated/flake-update` (opened by flake-update.yml, title
+#      `chore(deps): update flake.lock`). The branch is hardcoded there, so it
+#      is a reliable signal.
+#   2. Renovate *digest* PRs — image content repointed to a new sha256; these
+#      are now manual (see renovate.json). Identified by: bot author + a
+#      `renovate/` head branch + a "docker digest to" title. This repo's hosted
+#      Renovate applies no labels and no `-digest` branch topic, so the title
+#      is the ground-truth signal that separates digest PRs from tag/patch/
+#      minor/major bumps (whose titles say "docker tag to" / "action to" etc.).
+#      A follow-up `addLabels: ["digest"]` rule in renovate.json would make this
+#      more robust — intentionally not done here to avoid conflicting with the
+#      open renovate-cooldown PR.
+#
+# Non-digest Renovate PRs (tag/patch/minor/major, Caddy, Nix release channels)
+# are deliberately NOT watched.
+#
+# The `aged` label is the idempotency marker: a matching PR is commented on
+# exactly once, then labelled, so it is skipped on every subsequent run.
+on:
+  schedule:
+    # 14:00 UTC daily ≈ 07:00 (MST) / 08:00 (MDT) in America/Edmonton — a
+    # morning ping. flake-update.yml documents the same TZ-offset reasoning.
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+permissions:
+  # Least privilege: comment + label on PRs. Labels are issue objects, so
+  # adding one needs issues:write; commenting/label-listing needs
+  # pull-requests:write; contents:read is the checkout-free default. The
+  # built-in GITHUB_TOKEN can do all three on bot-authored PRs in this repo.
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  notify-aged:
+    name: notify aged automated PRs
+    # Cloud runner — this job only shells out to `gh`, so keep it off the
+    # self-hosted NixOS runner (check.yml reserves that for nix builds).
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      MAINTAINER: ianepreston
+      COOLDOWN_DAYS: "7"
+    steps:
+      - name: Ensure the aged label exists
+        run: |
+          set -euo pipefail
+          # --force creates the label, or no-op-updates it if it already exists.
+          gh label create aged \
+            --description "Automated PR has cleared the ${COOLDOWN_DAYS}-day merge cooldown" \
+            --color "0e8a16" \
+            --force
+      - name: Comment and label aged automated PRs
+        run: |
+          set -euo pipefail
+
+          cutoff=$(( COOLDOWN_DAYS * 86400 ))
+
+          # Snapshot open PRs, then select the watch set with jq:
+          #   - not a draft, not already labelled `aged`
+          #   - flake.lock (exact head branch) OR renovate digest (bot author +
+          #     renovate/ branch + "docker digest to" title)
+          #   - age (now - createdAt) has cleared the cooldown
+          prs_json=$(
+            gh pr list --state open --limit 200 \
+              --json number,title,headRefName,author,labels,createdAt,isDraft
+          )
+
+          mapfile -t prs < <(
+            printf '%s' "$prs_json" | jq -r --argjson cutoff "$cutoff" '
+              .[]
+              | select(.isDraft | not)
+              | select([.labels[].name] | index("aged") | not)
+              | select(
+                  .headRefName == "automated/flake-update"
+                  or (
+                    .author.is_bot
+                    and (.headRefName | startswith("renovate/"))
+                    and (.title | ascii_downcase | contains("docker digest to"))
+                  )
+                )
+              | select((now - (.createdAt | fromdateiso8601)) >= $cutoff)
+              | .number
+            '
+          )
+
+          if [ "${#prs[@]}" -eq 0 ]; then
+            echo "No automated PRs have aged past the ${COOLDOWN_DAYS}-day cooldown."
+            exit 0
+          fi
+
+          for pr in "${prs[@]}"; do
+            echo "PR #${pr} has aged past the cooldown — commenting and labelling."
+            gh pr comment "$pr" --body \
+              "@${MAINTAINER} this automated dependency PR has been open past the ${COOLDOWN_DAYS}-day cooldown and is ready to review/merge."
+            gh pr edit "$pr" --add-label aged
+          done
