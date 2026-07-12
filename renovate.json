@@ -4,6 +4,8 @@
     "config:recommended",
     ":dependencyDashboard"
   ],
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
   "nix": {
     "enabled": false
   },
