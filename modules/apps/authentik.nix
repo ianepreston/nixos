@@ -609,6 +609,19 @@
               "authentik.service"
               "authentik-worker.service"
             ];
+            # RemainAfterExit keeps this oneshot "active" after its first
+            # success, so a deploy that restarts authentik.service but leaves
+            # this unit untouched would leave a *stale* ready gate active —
+            # dependents (After=authentik-ready) then start immediately against
+            # a mid-restart authentik and hit 503 "authentik starting" on the
+            # OIDC discovery URL (komga crash-looped once on exactly this).
+            # PartOf propagates authentik's stop/restart here, so the gate is
+            # torn down with authentik and re-runs its poll before dependents
+            # that restart in the same transaction proceed.
+            partOf = [
+              "authentik.service"
+              "authentik-worker.service"
+            ];
             serviceConfig = {
               Type = "oneshot";
               RemainAfterExit = true;
