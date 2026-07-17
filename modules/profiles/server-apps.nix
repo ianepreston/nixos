@@ -52,7 +52,6 @@
         seerr
         shelfarr
         sonarr
-        spierscraper
         tandoor
         unifi
         valheim

@@ -565,7 +565,7 @@ _: {
                 # spierscraper.
                 + "|audiobookshelf|bazarr|flaresolverr|jellyfin|kavita|komga"
                 + "|matter-server|mealie|miniflux|paperless(-.+)?|pinchflat"
-                + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr|spierscraper"
+                + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
                 # podman-<name>.service unit. Includes unifi-os-server —
