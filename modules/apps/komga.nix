@@ -50,6 +50,15 @@ _: {
       systemd.services.komga = {
         environment = {
           KOMGA_OAUTH2ACCOUNTCREATION = "true";
+          # Whole-book downloads (OPDS clients like Apex Comics fetch the entire
+          # CBZ via getBookFileInternal) stream async through Tomcat. On a slow
+          # mobile connection a single socket write can block past Tomcat's ~20s
+          # default write timeout, so Komga aborts mid-download with a
+          # SocketTimeoutException and the reader stalls. Raise the connection
+          # timeout and disable the async request timeout so large files finish
+          # over flaky Wi-Fi. Spring relaxed-binding env vars.
+          SERVER_TOMCAT_CONNECTION_TIMEOUT = "300000";
+          SPRING_MVC_ASYNC_REQUEST_TIMEOUT = "-1";
           SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_NAME = "Authentik";
           SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_SCOPE = "openid,profile,email";
           SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_AUTHENTIK_ISSUER_URI = "https://${authentikHost}/application/o/komga/";
