@@ -13,7 +13,7 @@ _: {
     }:
     let
       # renovate: datasource=docker depName=ghcr.io/ianepreston/spierscraper
-      image = "ghcr.io/ianepreston/spierscraper:2026.03.29.1";
+      image = "ghcr.io/ianepreston/spierscraper:2026.07.17.1";
 
       configFile = pkgs.writeText "spierscraper-config.yaml" ''
         filters:
@@ -67,14 +67,22 @@ _: {
           after = [
             "network-online.target"
             "podman.service"
+            "flaresolverr.service"
           ];
-          wants = [ "network-online.target" ];
+          wants = [
+            "network-online.target"
+            # S&M now sit behind Cloudflare, which 403s plain HTTP clients.
+            # The scraper primes its session (cookies + UA) through
+            # FlareSolverr's headless browser; want it up first.
+            "flaresolverr.service"
+          ];
           serviceConfig = {
             Type = "oneshot";
             EnvironmentFile = config.sops.templates."spierscraper.env".path;
             ExecStart = pkgs.writeShellScript "spierscraper-run" ''
               exec ${pkgs.podman}/bin/podman run --rm \
                 --env DISCORD_WEBHOOK_URL \
+                --env FLARESOLVERR_URL=http://host.containers.internal:8191/v1 \
                 -v ${configFile}:/config/config.yaml:ro \
                 -v /var/lib/containers/spierscraper/cache:/data/cache \
                 ${image} \
