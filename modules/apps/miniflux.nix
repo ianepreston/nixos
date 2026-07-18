@@ -60,6 +60,16 @@ _: {
           # "Miniflux/x.y.z") clears it while still honestly identifying the
           # client. Matches upstream guidance in miniflux/v2#3236.
           HTTP_CLIENT_USER_AGENT = "Miniflux/${pkgs.miniflux.version}";
+          # Raise the parsing-error limit above the default (3). Once a feed
+          # hits the limit miniflux stops auto-refreshing it until someone
+          # refreshes it manually — so a short run of transient upstream errors
+          # silently benches a feed for good. This bit all 14 kill-the-newsletter
+          # feeds: a spell of 502 Bad Gateway responses from KTN in late June /
+          # July pushed each of them to 3 errors and froze them, and they never
+          # recovered on their own even after KTN came back up. 10 gives real
+          # outages room to resolve themselves while still surfacing feeds that
+          # are genuinely, persistently dead.
+          POLLING_PARSING_ERROR_LIMIT = 10;
         };
       };
 
