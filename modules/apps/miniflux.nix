@@ -19,6 +19,7 @@ _: {
     {
       config,
       hostSpec,
+      pkgs,
       ...
     }:
     let
@@ -51,6 +52,14 @@ _: {
           OAUTH2_REDIRECT_URL = "https://${minifluxHost}/oauth2/oidc/callback";
           OAUTH2_USER_CREATION = 1;
           DISABLE_LOCAL_AUTH = 1;
+          # Override the default User-Agent. Miniflux's default
+          # ("Mozilla/5.0 (compatible; Miniflux/x.y.z; +https://miniflux.app)")
+          # trips CDN bot protection on some publishers — CBC (Akamai) rejects
+          # it with an HTTP/2 INTERNAL_ERROR / HTTP/1.1 hang, so those feeds
+          # never fetch. Dropping the "+https://…" bot-signal wrapper (bare
+          # "Miniflux/x.y.z") clears it while still honestly identifying the
+          # client. Matches upstream guidance in miniflux/v2#3236.
+          HTTP_CLIENT_USER_AGENT = "Miniflux/${pkgs.miniflux.version}";
         };
       };
 
