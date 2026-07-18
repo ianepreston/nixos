@@ -51,6 +51,11 @@ _: {
           OAUTH2_REDIRECT_URL = "https://${minifluxHost}/oauth2/oidc/callback";
           OAUTH2_USER_CREATION = 1;
           DISABLE_LOCAL_AUTH = 1;
+          # Never permanently stop auto-refreshing a feed: the default limit (3)
+          # freezes a feed out of the scheduler after 3 consecutive errors until
+          # someone refreshes it manually. Transient upstream hiccups (CDN bot
+          # protection, timeouts) then silently kill feeds. 0 = keep retrying.
+          POLLING_PARSING_ERROR_LIMIT = 0;
         };
       };
 
