@@ -559,12 +559,12 @@ _: {
                 + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using
                 # services.<app>): audiobookshelf, bazarr, flaresolverr,
-                # jellyfin, kavita, komga, matter-server, mealie, miniflux,
+                # jellyfin, komga, matter-server, miniflux,
                 # paperless (multi-unit: web/scheduler/task-queue/consumer),
                 # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
                 # spierscraper.
-                + "|audiobookshelf|bazarr|flaresolverr|jellyfin|kavita|komga"
-                + "|matter-server|mealie|miniflux|paperless(-.+)?|pinchflat"
+                + "|audiobookshelf|bazarr|flaresolverr|jellyfin|komga"
+                + "|matter-server|miniflux|paperless(-.+)?|pinchflat"
                 + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
@@ -572,9 +572,9 @@ _: {
                 # it runs as an OCI container (podman-unifi-os-server),
                 # not a native service. bookorbit is dev-only, so the
                 # token simply never matches on prod hosts.
-                + "|podman-(actualbudget|bookorbit|decluttarr|grimmory"
+                + "|podman-(actualbudget|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
-                + "|readmeabook|seerr|shelfarr|tandoor|unifi-os-server"
+                + "|seerr|shelfarr|tandoor|unifi-os-server"
                 + "|valheim))\\.service$"
               )
             ];
