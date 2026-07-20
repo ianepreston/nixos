@@ -23,7 +23,7 @@
 # ## Verification drill (recovery:test:full)
 #
 # Spins up a tests-server quickemu VM, reinstalls it from this flake,
-# restores mealie + miniflux + jellyfin from SOURCE_HOST's restic repo
+# restores bookorbit + miniflux + jellyfin from SOURCE_HOST's restic repo
 # (exercising the three app shapes), and tears the VM down. Quarterly
 # cadence — see issue #135 for the rationale.
 version: '3'
@@ -340,20 +340,6 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-  grimmory:
-    desc: Restore grimmory (container volume)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: grimmory
-          UNITS: 'podman-grimmory.service'
-          PATHS: '/var/lib/containers/grimmory'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
   homeassistant:
     desc: Restore home-assistant (container volume)
     requires: {vars: [HOST]}
@@ -395,21 +381,6 @@ tasks:
           APP: kapowarr
           UNITS: 'podman-kapowarr.service'
           PATHS: '/var/lib/containers/kapowarr'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  kavita:
-    desc: Restore kavita (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: kavita
-          UNITS: 'kavita.service'
-          PATHS: '/var/lib/kavita /var/backup/sqlite/kavita'
-          SWAPS: '/var/backup/sqlite/kavita/kavita.db:/var/lib/kavita/config/kavita.db:@env@'
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
@@ -472,23 +443,6 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-  mealie:
-    desc: Restore mealie (native + postgres, peer auth)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: mealie
-          UNITS: 'mealie.service'
-          PATHS: '/var/lib/mealie'
-          DB: mealie
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: mealie, URL: 'http://127.0.0.1:9925/', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   miniflux:
     desc: Restore miniflux (native + postgres only, no on-disk state)
     requires: {vars: [HOST]}
@@ -604,21 +558,6 @@ tasks:
           UNITS: 'readeck.service'
           PATHS: '/var/lib/readeck /var/backup/sqlite/readeck'
           SWAPS: '/var/backup/sqlite/readeck/db.sqlite3:/var/lib/readeck/data/db.sqlite3:readeck'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  readmeabook:
-    desc: Restore readmeabook (containerized + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: readmeabook
-          UNITS: 'podman-readmeabook.service'
-          PATHS: '/var/lib/containers/readmeabook'
-          DB: readmeabook
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
@@ -742,15 +681,12 @@ tasks:
       - task: bazarr
       - task: bookorbit
       - task: gatus
-      - task: grimmory
       - task: homeassistant
       - task: jellyfin
       - task: kapowarr
-      - task: kavita
       - task: komga
       - task: manyfold
       - task: matter-server
-      - task: mealie
       - task: miniflux
       - task: mosquitto
       - task: mylar3
@@ -760,7 +696,6 @@ tasks:
       - task: prowlarr
       - task: radarr
       - task: readeck
-      - task: readmeabook
       - task: sabnzbd
       - task: seerr
       - task: shelfarr
@@ -780,7 +715,7 @@ tasks:
   # in taskfiles/vm.yaml — generic enough to also drive tests-desktop
   # iteration and not tied to the restore drill.
   test:full:
-    desc: Quarterly end-to-end drill — VM up, reinstall, restore mealie/miniflux/jellyfin from SOURCE_HOST, teardown
+    desc: Quarterly end-to-end drill — VM up, reinstall, restore bookorbit/miniflux/jellyfin from SOURCE_HOST, teardown
     vars:
       SOURCE_HOST: '{{.SOURCE_HOST | default "hpp-1"}}'
       SSH_PORT: '{{.SSH_PORT | default "22322"}}'
@@ -836,13 +771,13 @@ tasks:
         ssh -p {{.SSH_PORT}} -o StrictHostKeyChecking=accept-new ipreston@127.0.0.1 \
           'sudo bash -se' <<'EOF'
         set -euo pipefail
-        mkdir -p /var/lib/mealie /var/lib/jellyfin /var/backup/sqlite/jellyfin
-        touch /var/lib/mealie/.recovery-overlay-sentinel
+        mkdir -p /var/lib/containers/bookorbit /var/lib/jellyfin /var/backup/sqlite/jellyfin
+        touch /var/lib/containers/bookorbit/.recovery-overlay-sentinel
         touch /var/lib/jellyfin/.recovery-overlay-sentinel
         touch /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel
         echo "[+] sentinels placed"
         EOF
-      - task: mealie
+      - task: bookorbit
         vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
       - task: miniflux
         vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
@@ -855,7 +790,7 @@ tasks:
         set -euo pipefail
         failed=0
         for f in \
-          /var/lib/mealie/.recovery-overlay-sentinel \
+          /var/lib/containers/bookorbit/.recovery-overlay-sentinel \
           /var/lib/jellyfin/.recovery-overlay-sentinel \
           /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel; do
           if [ -e "$f" ]; then

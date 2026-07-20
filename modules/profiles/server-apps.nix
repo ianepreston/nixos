@@ -59,12 +59,8 @@
 
       # Apps that ship only on dev-environment servers.
       devOnlyApps = with inputs.self.modules.nixos; [
-        grimmory
         readeck
         kapowarr
-        readmeabook
-        kavita
-        mealie
         ytdlp-web-player
       ];
 

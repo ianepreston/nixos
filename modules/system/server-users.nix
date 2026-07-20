@@ -21,7 +21,6 @@
 #   890-899   server apps with bypassed DynamicUser (native services that
 #             need a fixed UID for NFS share access or persistent state)
 #     891    prowlarr          (modules/apps/prowlarr.nix)
-#     892    mealie            (modules/apps/mealie.nix)
 #     893    readeck           (modules/apps/readeck.nix)
 #
 #   1029-1030 Shared server-{dev,prod} NFS user (UID matches Synology NAS)
