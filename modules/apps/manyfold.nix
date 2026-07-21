@@ -5,10 +5,14 @@
 # so no separate worker container is needed (see the upstream
 # Procfile: rails / default_worker / performance_worker).
 #
-# Auth via myAuthentik.forwardAuthApps to start. Upstream does
-# document native OIDC envs (OIDC_CLIENT_ID/_SECRET/_ISSUER/_NAME
-# since v0.83.0) — once basic deployment is verified, this can
-# migrate to myAuthentik.oidcApps with a blueprint (mealie pattern).
+# Auth via myAuthentik.oidcApps: manyfold speaks OIDC natively
+# (OIDC_CLIENT_ID/_SECRET/_ISSUER/_NAME since v0.83.0). FORCE_OIDC=enabled
+# disables local-account login so authentik is the only way in — there
+# are no local users in either instance. The client_id/_secret land in
+# manyfold's env file (clientCredsInAppEnv default true); the issuer and
+# button name are plain non-secret container env. The blueprint pins the
+# redirect URI to manyfold's fixed callback path
+# (/users/auth/openid_connect/callback).
 #
 # Postgres via myPostgresApp (TCP + sops password — Rails apps read
 # DATABASE_PASSWORD from env, no peer-auth path). Redis is a per-app
@@ -36,16 +40,36 @@ _: {
     }:
     let
       manyfoldHost = "manyfold.${hostSpec.serverDomain}";
+      authentikHost = "authentik.${hostSpec.serverDomain}";
       port = 3214;
       redisPort = 6380;
     in
     {
       myPostgresApp.manyfold.consumerService = [ "podman-manyfold.service" ];
 
-      myAuthentik.forwardAuthApps.manyfold = {
-        inherit port;
+      # SECRET_KEY_BASE signs browser cookies; the upstream docs ask
+      # for a 128-char random hex string. Lives alongside the DB
+      # password in the host's sops yaml. No restartUnits here — the
+      # oidcApps-generated manyfold.env template references this
+      # placeholder and re-renders (bouncing podman-manyfold via its
+      # own restartUnits) whenever the secret changes.
+      sops.secrets."manyfold/secret_key_base" = {
+        inherit (hostSpec) sopsFile;
+      };
+
+      # OIDC against authentik. client_id/_secret flow into manyfold's env
+      # file; DATABASE_PASSWORD and SECRET_KEY_BASE ride along as extra
+      # env lines (this replaces the previously hand-rolled manyfold.env
+      # template). Non-secret OIDC config (issuer, button name, FORCE_OIDC)
+      # is plain container env below.
+      myAuthentik.oidcApps.manyfold = {
+        blueprintsDir = ./manyfold-blueprints;
+        appRestartUnit = [ "podman-manyfold.service" ];
         displayName = "Manyfold";
-        authentikGroup = "Users";
+        extraEnvLines = ''
+          DATABASE_PASSWORD=${config.sops.placeholder."manyfold/db_password"}
+          SECRET_KEY_BASE=${config.sops.placeholder."manyfold/secret_key_base"}
+        '';
         homepage = {
           group = "Home";
           icon = "manyfold";
@@ -53,20 +77,22 @@ _: {
         };
       };
 
-      # SECRET_KEY_BASE signs browser cookies; the upstream docs ask
-      # for a 128-char random hex string. Lives alongside the DB
-      # password in the host's sops yaml.
-      sops.secrets."manyfold/secret_key_base" = {
-        inherit (hostSpec) sopsFile;
-        restartUnits = [ "podman-manyfold.service" ];
-      };
-
-      sops.templates."manyfold.env" = {
-        content = ''
-          DATABASE_PASSWORD=${config.sops.placeholder."manyfold/db_password"}
-          SECRET_KEY_BASE=${config.sops.placeholder."manyfold/secret_key_base"}
+      # Manyfold terminates OIDC/login itself, so its upstream reverse-proxy
+      # docs require these SSL-termination headers on a proxied HTTPS setup;
+      # without X-Forwarded-Ssl/-Port in particular manyfold emits CORS
+      # origin errors. Caddy preserves the inbound Host and sets
+      # X-Forwarded-For / X-Forwarded-Proto by default; the four below are
+      # what manyfold additionally documents as required.
+      myCaddy.apps.manyfold = {
+        host = manyfoldHost;
+        routeConfig = ''
+          reverse_proxy localhost:${toString port} {
+            header_up X-Forwarded-Ssl on
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Port 443
+            header_up X-Forwarded-Host ${manyfoldHost}
+          }
         '';
-        restartUnits = [ "podman-manyfold.service" ];
       };
 
       # Per-app redis on 6380 (loopback only). Sidekiq is busy enough
@@ -116,6 +142,14 @@ _: {
           HTTPS_ONLY = "enabled";
           PUBLIC_HOSTNAME = manyfoldHost;
           PUBLIC_PORT = "443";
+
+          # OIDC (non-secret config; client_id/_secret come from the env
+          # file). OIDC_ISSUER is authentik's per-provider issuer — the
+          # matching /.well-known/openid-configuration lives directly
+          # under it. FORCE_OIDC disables local-account login entirely.
+          OIDC_ISSUER = "https://${authentikHost}/application/o/manyfold/";
+          OIDC_NAME = "Authentik";
+          FORCE_OIDC = "enabled";
         };
         environmentFiles = [ config.sops.templates."manyfold.env".path ];
       };
