@@ -3,6 +3,35 @@ version: 1
 metadata:
   name: manyfold
 entries:
+  # Migration cleanup: manyfold used to authenticate via
+  # myAuthentik.forwardAuthApps (a proxy/forward-auth provider), and the
+  # embedded outpost owned a ProxyProvider named "manyfold". The OIDC
+  # migration (PR #426) dropped the forward-auth declaration but that only
+  # removes the rendered forward-auth blueprint — it does not delete the
+  # already-created DB object. Because a ProxyProvider is a subclass of
+  # OAuth2Provider (Django multi-table inheritance: one row, same id), the
+  # OAuth2Provider entry below matched the leftover proxy provider by name
+  # and merged into it instead of creating a clean provider. authentik's
+  # proxy save logic then re-derives redirect_uris from the external host
+  # to the outpost callbacks (…/outpost.goauthentik.io/callback) on every
+  # save — e.g. an authentik restart on nightly auto-upgrade — clobbering
+  # the OIDC callback the entry below sets. The result is the
+  # "mismatching redirect_uri" error against manyfold's real callback
+  # (/users/auth/openid_connect/callback).
+  #
+  # Deleting the proxy provider deletes the whole MTI object (both rows);
+  # the OAuth2Provider entry that follows then recreates a clean,
+  # proxy-free provider whose redirect_uris stick. Ordered first so the
+  # delete happens before the recreate within a single apply. Idempotent:
+  # once the object is a plain OAuth2Provider this find-by-name matches
+  # nothing and is a no-op, so it is safe to leave in place. (Application
+  # .provider is on_delete=SET_NULL, so the application survives the
+  # delete and the application entry below re-links it.)
+  - model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: manyfold
+    state: absent
+
   # As of authentik 2025.10 the default email scope mapping returns
   # email_verified: false (security change, goauthentik/authentik#16205).
   # Manyfold's User.from_omniauth refuses to link an OIDC identity to an
