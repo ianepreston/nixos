@@ -1,0 +1,75 @@
+---
+version: 1
+metadata:
+  name: manyfold
+entries:
+  # As of authentik 2025.10 the default email scope mapping returns
+  # email_verified: false (security change, goauthentik/authentik#16205).
+  # Manyfold's User.from_omniauth refuses to link an OIDC identity to an
+  # existing account unless email_verified is true ("Email not verified"),
+  # so use a custom email scope that hardcodes true — same pattern komga
+  # needs. Safe here because all authentik users are admin-provisioned.
+  - model: authentik_providers_oauth2.scopemapping
+    id: scope-manyfold-email
+    identifiers:
+      name: "Manyfold email (verified)"
+    attrs:
+      scope_name: email
+      description: "Email scope returning email_verified: true for Manyfold"
+      expression: |
+        return {
+            "email": request.user.email,
+            "email_verified": True,
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-manyfold
+    identifiers:
+      name: manyfold
+    attrs:
+      client_type: confidential
+      client_id: !Env MANYFOLD_OIDC_CLIENT_ID
+      client_secret: !Env MANYFOLD_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !KeyOf scope-manyfold-email
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # authentik 2026.x added OAuth2Provider.grant_types (default empty); the
+      # authorize view rejects flows whose grant is not listed. Required so a
+      # provider created fresh on 2026.x is usable (see komga.yaml for detail).
+      grant_types:
+        - authorization_code
+        - refresh_token
+      # Manyfold (omniauth_openid_connect) posts back to a fixed callback path
+      # derived from PUBLIC_HOSTNAME; see manyfold docs "OIDC configuration".
+      redirect_uris:
+        - matching_mode: strict
+          url: https://manyfold.@serverDomain@/users/auth/openid_connect/callback
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+  - model: authentik_core.application
+    id: app-manyfold
+    identifiers:
+      slug: manyfold
+    attrs:
+      name: Manyfold
+      provider: !KeyOf prov-manyfold
+      group: Users
+      open_in_new_tab: true
+      meta_launch_url: https://manyfold.@serverDomain@
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/manyfold.png
+      policy_engine_mode: all
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-manyfold
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Users]]
+      enabled: true
