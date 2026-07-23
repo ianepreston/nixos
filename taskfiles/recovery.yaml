@@ -341,19 +341,22 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
   homeassistant:
-    desc: Restore home-assistant (container volume)
+    desc: Restore home-assistant (native + postgres)
     requires: {vars: [HOST]}
     cmds:
-      - task: _restore-volume
+      - task: _restore-pg
         vars:
           HOST: '{{.HOST}}'
           APP: homeassistant
-          UNITS: 'podman-homeassistant.service'
-          PATHS: '/var/lib/containers/homeassistant'
+          UNITS: 'home-assistant.service'
+          DB: hass
+          PATHS: '/var/lib/hass'
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: homeassistant, URL: 'http://127.0.0.1:8123/manifest.json', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   jellyfin:
     desc: Restore jellyfin (native + sqlite-quiesce)
     requires: {vars: [HOST]}
