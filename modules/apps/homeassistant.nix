@@ -116,6 +116,19 @@
         config = {
           default_config = { };
 
+          # UI-authored automations/scripts/scenes write to these files in the
+          # config dir (the visual editors are file-based, not .storage-based).
+          # The `!include` lines are what wire them in — without them the UI
+          # editors have nowhere to write. `!include` is unquoted by the
+          # module's renderer just like `!secret`. The target files are
+          # UI-owned runtime state, seeded empty by the tmpfiles rules below;
+          # they are NOT store-managed, so UI edits persist. Device onboarding
+          # (config-flow: Hue pairing, discovery, OAuth) is separate again — it
+          # lives in .storage/ and needs none of this.
+          automation = "!include automations.yaml";
+          script = "!include scripts.yaml";
+          scene = "!include scenes.yaml";
+
           http = {
             use_x_forwarded_for = true;
             # Caddy proxies to 127.0.0.1:8123 in the host netns — no podman
@@ -176,6 +189,18 @@
             "postgresql.service"
             "sops-install-secrets.service"
           ];
+          # Seed the UI-editor include targets before HA parses
+          # configuration.yaml, else the `!include` lines fail on a fresh dir
+          # and HA drops into recovery mode. A preStart (part of this unit's
+          # own start) is race-free on `switch` — a tmpfiles rule isn't,
+          # because `systemd-tmpfiles-resetup` has no ordering edge to this
+          # unit. Only writes when absent, so UI/agent edits survive rebuilds.
+          # Empty list for automations/scenes, empty dict for scripts.
+          preStart = lib.mkAfter ''
+            [ -e /var/lib/hass/automations.yaml ] || echo '[]' > /var/lib/hass/automations.yaml
+            [ -e /var/lib/hass/scenes.yaml ] || echo '[]' > /var/lib/hass/scenes.yaml
+            [ -e /var/lib/hass/scripts.yaml ] || echo '{}' > /var/lib/hass/scripts.yaml
+          '';
         };
 
         # Symlink secrets.yaml into the config dir (see sops template above).
