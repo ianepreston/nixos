@@ -49,6 +49,101 @@
       };
 
       secretsFile = config.sops.templates."homeassistant-secrets.yaml".path;
+
+      # Custom components for devices with no core integration, packaged the
+      # same way as auth_oidc (buildHomeAssistantComponent) so they stay
+      # declarative — no HACS. Built against the base unstable HA python set
+      # (pkgsUnstable.home-assistant.python3Packages); the module's
+      # extraComponents/extraPackages override doesn't change that interpreter,
+      # so composition is sound (nixpkgs#341366).
+      hapy = pkgsUnstable.home-assistant.python3Packages;
+
+      # Python libs the components require but nixpkgs doesn't package. Versions
+      # are pinned to the component manifests' `requirements` — the
+      # manifestRequirementsCheckHook fails the component build otherwise.
+      hoymiles-wifi = hapy.buildPythonPackage {
+        pname = "hoymiles-wifi";
+        version = "0.5.5";
+        pyproject = true;
+        src = pkgsUnstable.fetchFromGitHub {
+          owner = "suaveolent";
+          repo = "hoymiles-wifi";
+          tag = "v0.5.5";
+          hash = "sha256-lI6uEAXhzxQMz2jZ9oDLTnICOc0+ECbWK2MNuK/aUOw=";
+        };
+        build-system = [ hapy.setuptools ];
+        dependencies = with hapy; [
+          protobuf
+          crcmod
+          cryptography
+        ];
+        pythonImportsCheck = [ "hoymiles_wifi" ];
+        doCheck = false;
+      };
+
+      blueair-api = hapy.buildPythonPackage {
+        pname = "blueair-api";
+        version = "1.56.0";
+        pyproject = true;
+        src = pkgsUnstable.fetchPypi {
+          pname = "blueair_api";
+          version = "1.56.0";
+          hash = "sha256-3tAjJqMuuDtbpvYpM5jpTcSIw66Y3OJsTMYmWOhvdTw=";
+        };
+        build-system = [ hapy.setuptools ];
+        dependencies = with hapy; [
+          aiohttp
+          paho-mqtt
+        ];
+        pythonImportsCheck = [ "blueair_api" ];
+        doCheck = false;
+      };
+
+      # Bambu Lab 3D printer (HACS greghesp/ha-bambulab). Only python dep is
+      # beautifulsoup4; its manifest also declares the ffmpeg/mqtt HA components
+      # (added to extraComponents below) for the chamber camera + MQTT link.
+      bambu_lab = pkgsUnstable.buildHomeAssistantComponent {
+        owner = "greghesp";
+        domain = "bambu_lab";
+        version = "2.2.22";
+        src = pkgsUnstable.fetchFromGitHub {
+          owner = "greghesp";
+          repo = "ha-bambulab";
+          tag = "v2.2.22";
+          hash = "sha256-JRJ+tfllDuMrtz+5VQL2l5nkhJQXRoNvsvFnrReSZHE=";
+        };
+        dependencies = [ hapy.beautifulsoup4 ];
+      };
+
+      # Hoymiles solar DTU (HACS suaveolent/ha-hoymiles-wifi). Polls the DTU-Pro
+      # directly over the local network via the hoymiles-wifi lib — no cloud, no
+      # flashing.
+      hoymiles_wifi = pkgsUnstable.buildHomeAssistantComponent {
+        owner = "suaveolent";
+        domain = "hoymiles_wifi";
+        version = "0.5.1";
+        src = pkgsUnstable.fetchFromGitHub {
+          owner = "suaveolent";
+          repo = "ha-hoymiles-wifi";
+          tag = "v0.5.1";
+          hash = "sha256-6NxsnRAo8KjlKYfyqosdS0Q34j0KBNNRUWbZmQOvxJk=";
+        };
+        dependencies = [ hoymiles-wifi ];
+      };
+
+      # Blueair Blue Pure 211i (HACS dahlb/ha_blueair). Domain is `ha_blueair`.
+      ha_blueair = pkgsUnstable.buildHomeAssistantComponent {
+        owner = "dahlb";
+        domain = "ha_blueair";
+        version = "1.56.0";
+        src = pkgsUnstable.fetchFromGitHub {
+          owner = "dahlb";
+          repo = "ha_blueair";
+          tag = "v1.56.0";
+          hash = "sha256-KXMHpQwH9UyqElgtPorOncwZPVHs2UX6oD8WT1xq1wY=";
+        };
+        dependencies = [ blueair-api ];
+      };
     in
     {
       # MQTT broker user. ACL grants HA full access — HA bridges every
@@ -110,12 +205,28 @@
           "hue" # Philips Hue bridge + bulbs/switches
           "sense" # Sense whole-home power monitor
           "ring" # Ring doorbell / camera (OAuth + 2FA on setup)
-          "nest" # Nest thermostat (needs SDM API: GCP project + Device Access)
+          # Nest thermostat. Setup is involved and one-time — do it when ready:
+          #   1. Enable the Smart Device Management (SDM) API + register at the
+          #      Device Access Console (one-time ~$5 USD fee) in a Google Cloud
+          #      project.
+          #   2. Create OAuth 2.0 (Web) client credentials in that GCP project;
+          #      add https://my.home-assistant.io/redirect/oauth as an authorized
+          #      redirect URI.
+          #   3. In HA add the Nest integration and paste the client_id/secret
+          #      (Application Credentials) + the SDM project_id, then complete the
+          #      Google OAuth consent + Pub/Sub authorization it walks you through.
+          # The component only needs to be present (this line); the rest is UI.
+          "nest"
           "flo" # Flo by Moen leak sensors
           "androidtv" # Fire TV (ADB debugging) + Shield fallback
           "androidtv_remote" # NVIDIA Shield / Google TV remote protocol
           "cast" # Google Cast targets (Shield)
           "jellyfin" # Jellyfin sessions — watch-state automations
+          "ffmpeg" # bambu_lab chamber camera (custom component, below)
+
+          # Automation helpers
+          "workday" # binary_sensor for work/holiday days
+          "season" # current season sensor
 
           # Platform fits
           "prometheus" # export HA metrics to the existing Prometheus/Grafana
@@ -125,9 +236,15 @@
         # Postgres recorder backend needs the psycopg2 driver injected.
         extraPackages = ps: [ ps.psycopg2 ];
 
-        # Declarative OIDC — the component previously hand-installed via HACS.
-        # Same unstable set as the package so the python interpreters match.
-        customComponents = [ pkgsUnstable.home-assistant-custom-components.auth_oidc ];
+        # Declarative custom integrations (HACS components packaged in the let
+        # block above) — no HACS runtime. auth_oidc is the SSO provider; the
+        # rest are devices with no core integration.
+        customComponents = [
+          pkgsUnstable.home-assistant-custom-components.auth_oidc
+          bambu_lab
+          hoymiles_wifi
+          ha_blueair
+        ];
 
         # Fully declarative configuration.yaml (immutable symlink from the
         # store; `configWritable` stays at its false default — the repo's
