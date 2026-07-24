@@ -103,7 +103,23 @@
           "met"
           "esphome"
           "mqtt"
-          "roomba" # iRobot Roomba/Braava (needs roombapy)
+
+          # Devices
+          "roomba" # iRobot Roomba/Braava
+          "airgradient" # AirGradient air-quality monitor
+          "hue" # Philips Hue bridge + bulbs/switches
+          "sense" # Sense whole-home power monitor
+          "ring" # Ring doorbell / camera (OAuth + 2FA on setup)
+          "nest" # Nest thermostat (needs SDM API: GCP project + Device Access)
+          "flo" # Flo by Moen leak sensors
+          "androidtv" # Fire TV (ADB debugging) + Shield fallback
+          "androidtv_remote" # NVIDIA Shield / Google TV remote protocol
+          "cast" # Google Cast targets (Shield)
+          "jellyfin" # Jellyfin sessions — watch-state automations
+
+          # Platform fits
+          "prometheus" # export HA metrics to the existing Prometheus/Grafana
+          "matter" # pairs with the matter-server app in this repo
         ];
 
         # Postgres recorder backend needs the psycopg2 driver injected.
