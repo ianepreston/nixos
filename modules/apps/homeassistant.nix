@@ -202,11 +202,21 @@
         # Extend as integrations are added (zha, matter, …).
         extraComponents = [
           "default_config"
-          "met"
+
+          # Weather + external data sources. All core; each is a UI config
+          # flow after deploy, some need a free API token (noted inline).
+          "met" # met.no — kept for side-by-side comparison with ECCC
           # Environment Canada (ECCC): local weather + outdoor air quality
-          # (AQHI). One config flow yields a weather entity and an AQHI sensor,
-          # more accurate over Canada than met.no. Set up via the UI.
+          # (AQHI) + ECCC weather warnings. One config flow yields a weather
+          # entity, an AQHI sensor, and alert entities — more accurate over
+          # Canada than met.no.
           "environment_canada"
+          "forecast_solar" # PV production forecast — pairs with hoymiles solar
+          "co2signal" # grid carbon intensity (Electricity Maps; free API token)
+          "purpleair" # hyperlocal outdoor PM2.5 / wildfire smoke
+          "openuv" # UV index + safe-exposure time (free API token)
+          "aurora" # NOAA northern-lights probability
+
           "esphome"
           "mqtt"
 
@@ -234,6 +244,22 @@
           "cast" # Google Cast targets (Shield)
           "jellyfin" # Jellyfin sessions — watch-state automations
           "ffmpeg" # bambu_lab chamber camera (custom component, below)
+
+          # Zigbee / Z-Wave radios (coordinator hardware not yet acquired).
+          # Declaring a serial-using component makes the nixpkgs HA module
+          # auto-grant device access (adds `dialout` + ttyUSB/ttyACM/ttyAMA
+          # DeviceAllow), so a plugged-in USB coordinator works with no extra
+          # systemd rules.
+          "zha" # Zigbee — plug in a coordinator, pick its serial port in the UI
+          # Z-Wave: the zwave_js integration talks to a zwave-js-server over a
+          # websocket, NOT the stick directly. When the coordinator arrives,
+          # enable NixOS `services.zwave-js` (serialPort = the stick, plus a
+          # sops-provided `secretsConfigFile` holding the S0/S2 network keys),
+          # then add the Z-Wave JS integration in the UI pointing at
+          # ws://127.0.0.1:3000. Matter over Wi-Fi is already covered by the
+          # `matter` component + matter-server app below; Matter over Thread
+          # would additionally need a Thread border router (`thread`/`otbr`).
+          "zwave_js"
 
           # Automation helpers
           "workday" # binary_sensor for work/holiday days
