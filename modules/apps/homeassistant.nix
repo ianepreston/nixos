@@ -203,6 +203,10 @@
         extraComponents = [
           "default_config"
           "met"
+          # Environment Canada (ECCC): local weather + outdoor air quality
+          # (AQHI). One config flow yields a weather entity and an AQHI sensor,
+          # more accurate over Canada than met.no. Set up via the UI.
+          "environment_canada"
           "esphome"
           "mqtt"
 
