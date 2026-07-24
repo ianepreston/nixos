@@ -92,14 +92,18 @@
         package = pkgsUnstable.home-assistant;
         configDir = "/var/lib/hass";
 
-        # default_config pulls in the discovery/onboarding stack; mqtt is
-        # added explicitly so its deps are present even though the broker is
-        # UI-configured. Extend as integrations are added (zha, matter, …).
+        # default_config pulls in the discovery/onboarding stack, but the
+        # native module only ships python deps for the components listed here
+        # (unlike the container image, which bundles everything). Any
+        # integration you want to add in the UI must be listed so its handler
+        # loads — otherwise the config flow fails "Invalid handler specified".
+        # Extend as integrations are added (zha, matter, …).
         extraComponents = [
           "default_config"
           "met"
           "esphome"
           "mqtt"
+          "roomba" # iRobot Roomba/Braava (needs roombapy)
         ];
 
         # Postgres recorder backend needs the psycopg2 driver injected.
