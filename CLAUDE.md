@@ -164,9 +164,13 @@ Stay on the container path when:
   sabnzbd applies `SABNZBD__HOST_WHITELIST_ENTRIES` on every entrypoint run; the
   nix package doesn't, so the module fakes it with a oneshot — that worked, but
   if the missing behaviour is deeper than a sed-script, container is fine.
-- **The app is upstream-hostile to native packaging.** Home Assistant is the
-  canonical case — its add-on ecosystem and version churn don't fit the nixpkgs
-  cadence.
+- **The app's plugin/add-on ecosystem assumes a container runtime you'd have to
+  reproduce.** Home Assistant was the canonical case cited here — but it moved
+  native anyway (see the HA note in the gotchas below). The stated reason
+  ("python deps don't fit the nixpkgs cadence") was wrong; the real cost turned
+  out to be integration-declaration friction, which is acceptable for a stable
+  install. Keep this category for an app that genuinely can't be expressed, but
+  don't assume "big/churny" means "must containerize" — verify.
 
 When you do switch to a nix module, watch for these gotchas (all encountered on
 the containerize-to-nixos-modules branch):
@@ -194,6 +198,26 @@ the containerize-to-nixos-modules branch):
 - **Module-imposed `PrivateNetwork`.** Paperless's `database.createLocally`
   enables `PrivateNetwork=true` on scheduler/consumer. That's fine for workers
   (no OIDC traffic) but check what each unit actually does before relying on it.
+- **Home Assistant: integration breadth is the real native cost, not python
+  isolation.** HA runs native (`modules/apps/homeassistant.nix`) on an
+  `nixpkgs-unstable` per-package overlay — stable freezes HA at a yearly
+  snapshot while HA ships ~monthly and its integrations track fast-moving APIs.
+  The friction the container hid: native ships python deps only for *declared*
+  components. Adding a device is therefore a config change, not just a UI click
+  — each integration must be in `services.home-assistant.extraComponents` (core)
+  or packaged as a `customComponents` entry via `buildHomeAssistantComponent`
+  (HACS-only: bambu_lab, hoymiles_wifi, ha_blueair), else the UI config flow
+  fails "Invalid handler specified". This taxes experimentation, not steady
+  state, so it fits a stable device set and the declarative/reproducible payoff.
+  Custom-component versions are renovate-tracked (the `github-releases` `tag`
+  custom manager in `renovate.json`, kept manual — the fetch hash is regenerated
+  from the failing build); their unpackaged python libs are pinned to each
+  manifest's `requirements` and bumped in lockstep by hand. OIDC creds reach HA
+  via `!secret` from a sops-rendered `secrets.yaml` (not env), and UI-authored
+  automations/scripts/scenes are file-based `!include` targets seeded by the
+  service `preStart`. Stateful config (`/var/lib/hass/.storage`) does not merge
+  between instances — do device pairing directly on the target host; only the
+  `automations.yaml`/`scripts.yaml`/`scenes.yaml` files port cleanly.
 
 ## NFS UID alignment
 
