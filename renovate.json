@@ -30,6 +30,16 @@
       "automerge": false
     },
     {
+      "description": "Home Assistant custom-component bumps need the fetchFromGitHub hash regenerated (build prints it), and possibly a matching python-lib version+hash bump; keep manual and grouped.",
+      "matchDepNames": [
+        "greghesp/ha-bambulab",
+        "suaveolent/ha-hoymiles-wifi",
+        "dahlb/ha_blueair"
+      ],
+      "groupName": "home-assistant custom components",
+      "automerge": false
+    },
+    {
       "description": "Group Nix release-channel bumps and keep them manual.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["git-refs"],
@@ -61,6 +71,14 @@
       "managerFilePatterns": ["/\\.nix$/"],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*\"[^\"]+@(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update fetchFromGitHub tags in Nix files (tag = \"vX.Y.Z\"), e.g. Home Assistant custom components. Hash is regenerated manually from the failing build.",
+      "managerFilePatterns": ["/\\.nix$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*tag\\s*=\\s*\"(?<currentValue>[^\"]+)\""
       ]
     },
     {

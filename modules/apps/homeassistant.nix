@@ -60,7 +60,11 @@
 
       # Python libs the components require but nixpkgs doesn't package. Versions
       # are pinned to the component manifests' `requirements` — the
-      # manifestRequirementsCheckHook fails the component build otherwise.
+      # manifestRequirementsCheckHook fails the component build otherwise. These
+      # are intentionally NOT renovate-tracked: they must move in lockstep with
+      # the component (renovate bumps the component `tag` below; regenerate its
+      # hash from the failing build, and if the new manifest pins a different lib
+      # version, bump the lib version + hash here at the same time).
       hoymiles-wifi = hapy.buildPythonPackage {
         pname = "hoymiles-wifi";
         version = "0.5.5";
@@ -109,6 +113,7 @@
         src = pkgsUnstable.fetchFromGitHub {
           owner = "greghesp";
           repo = "ha-bambulab";
+          # renovate: datasource=github-releases depName=greghesp/ha-bambulab
           tag = "v2.2.22";
           hash = "sha256-JRJ+tfllDuMrtz+5VQL2l5nkhJQXRoNvsvFnrReSZHE=";
         };
@@ -125,6 +130,7 @@
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
+          # renovate: datasource=github-releases depName=suaveolent/ha-hoymiles-wifi
           tag = "v0.5.1";
           hash = "sha256-6NxsnRAo8KjlKYfyqosdS0Q34j0KBNNRUWbZmQOvxJk=";
         };
@@ -139,6 +145,7 @@
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
+          # renovate: datasource=github-releases depName=dahlb/ha_blueair
           tag = "v1.56.0";
           hash = "sha256-KXMHpQwH9UyqElgtPorOncwZPVHs2UX6oD8WT1xq1wY=";
         };
