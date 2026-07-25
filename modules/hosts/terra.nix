@@ -39,6 +39,7 @@
           adb
           calibre
           freecad
+          mesh-tools
           obsidian
           # orca-slicer — code kept but dormant; printing through bambuddy is
           # blocked upstream (see #298). Re-add when fixed.
