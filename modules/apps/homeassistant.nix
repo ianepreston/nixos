@@ -363,24 +363,26 @@
             "postgresql.service"
             "sops-install-secrets.service"
           ];
-          # Seed the UI-editor include targets before HA parses
-          # configuration.yaml, else the `!include` lines fail on a fresh dir
-          # and HA drops into recovery mode. A preStart (part of this unit's
-          # own start) is race-free on `switch` — a tmpfiles rule isn't,
-          # because `systemd-tmpfiles-resetup` has no ordering edge to this
-          # unit. Only writes when absent, so UI/agent edits survive rebuilds.
-          # Empty list for automations/scenes, empty dict for scripts.
+          # Seed the UI-editor include targets and link secrets.yaml into the
+          # config dir before HA parses configuration.yaml, else the `!include`
+          # lines fail on a fresh dir and `!secret` can't resolve — both drop HA
+          # into recovery mode. A preStart (part of this unit's own start) is
+          # race-free on `switch` AND on a first boot — a tmpfiles rule isn't,
+          # because `systemd-tmpfiles-setup` runs early (before hass's
+          # StateDirectory `/var/lib/hass` exists on a fresh host, so an `L+`
+          # link into it silently fails) and `systemd-tmpfiles-resetup` has no
+          # ordering edge back to this unit to retry. That first-boot race left
+          # amos1's secrets.yaml symlink uncreated → recovery mode. The include
+          # seeds only write when absent, so UI/agent edits survive rebuilds;
+          # the secrets.yaml link is refreshed every start (`ln -sf`) so the
+          # target stays correct across sops re-renders.
           preStart = lib.mkAfter ''
+            ln -sf ${secretsFile} /var/lib/hass/secrets.yaml
             [ -e /var/lib/hass/automations.yaml ] || echo '[]' > /var/lib/hass/automations.yaml
             [ -e /var/lib/hass/scenes.yaml ] || echo '[]' > /var/lib/hass/scenes.yaml
             [ -e /var/lib/hass/scripts.yaml ] || echo '{}' > /var/lib/hass/scripts.yaml
           '';
         };
-
-        # Symlink secrets.yaml into the config dir (see sops template above).
-        tmpfiles.rules = [
-          "L+ /var/lib/hass/secrets.yaml - - - - ${secretsFile}"
-        ];
       };
 
       # Native on-disk state → preservation + restic, and satisfies the
