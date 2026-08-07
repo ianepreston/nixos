@@ -39,6 +39,15 @@
       url = "github:mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Game streaming server for Moonlight clients. Each stream runs in its
+    # own headless compositor, so it doesn't depend on the host's physical
+    # display being awake (see modules/desktop/moonshine.nix, issue #119).
+    # Follows our nixpkgs so the Vulkan WSI layer it drops into
+    # /run/opengl-driver matches the system's loader and driver.
+    moonshine = {
+      url = "github:hgaiser/moonshine";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     systems.url = "github:nix-systems/default";
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";

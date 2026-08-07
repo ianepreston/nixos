@@ -23,12 +23,12 @@
       flatpak
       gaming
       keyd
+      moonshine
       nvidia-rtx5080
       printing
       rgb
       smbclient
       quickemu
-      sunshine
       xreal-headset
       zsa-keeb
     ])
