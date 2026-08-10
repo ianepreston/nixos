@@ -33,7 +33,7 @@ _: {
 
       virtualisation.oci-containers.containers.actualbudget = {
         # renovate: datasource=docker depName=actualbudget/actual-server
-        image = "actualbudget/actual-server:26.7.0";
+        image = "actualbudget/actual-server:26.8.0";
         volumes = [
           "/var/lib/containers/actualbudget:/data"
         ];
