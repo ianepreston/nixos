@@ -146,7 +146,7 @@
           owner = "dahlb";
           repo = "ha_blueair";
           # renovate: datasource=github-releases depName=dahlb/ha_blueair
-          tag = "v1.56.0";
+          tag = "v1.56.1";
           hash = "sha256-KXMHpQwH9UyqElgtPorOncwZPVHs2UX6oD8WT1xq1wY=";
         };
         dependencies = [ blueair-api ];
