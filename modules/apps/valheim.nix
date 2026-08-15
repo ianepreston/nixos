@@ -29,7 +29,27 @@
 #   ssh hpp-1 -- sudo podman logs valheim 2>&1 | grep -i 'join code' | tail -1
 #
 # which prints a line of the form
-#   Session "hpp-valheim" with join code 123456 and IP a.b.c.d:2456 is active ...
+#   Session "hpp-1-g1-valheim" with join code 123456 and IP a.b.c.d:2456 is active ...
+#
+# ## Restart cadence vs. the join code
+#
+# The image runs its own cron inside the container: `UPDATE_CRON` checks
+# for a game update every 15 minutes and `RESTART_CRON` restarts daily at
+# 05:10 — both left at their upstream defaults here. Every one of those
+# restarts rotates the join code (it's a fresh PlayFab session), which is
+# what valheim-joincode-notify below exists to announce.
+#
+# That is less disruptive than it sounds because `UPDATE_IF_IDLE` and
+# `RESTART_IF_IDLE` also default to `true`: the container only takes
+# either action when no players are connected, so the code never rotates
+# out from under a live session. The cost is entirely "look up the new
+# code before you next sit down to play" — a player holding yesterday's
+# code has a stale one, and the saved server entry (Join Game -> Add
+# server) is keyed on the code, so it needs deleting and re-adding rather
+# than reconnecting. Upstream Valheim offers no way to pin a code across
+# restarts; there is no config to change here, only the choice to disable
+# the crons and restart manually, which trades an updated server for a
+# stabler code. Not worth it.
 #
 # Some mods misbehave under the PlayFab backend, which is why the
 # image leaves crossplay off by default — relevant if BEPINEX is ever
@@ -65,6 +85,25 @@ _: {
       hostSpec,
       ...
     }:
+    let
+      # Bump to reseed. WORLD_NAME is the basename of the world's .db/.fwl in
+      # /config/worlds_local; the image generates a fresh map whenever that
+      # basename has no save behind it. So incrementing this starts a brand
+      # new world on next container start — which is the intended mechanism
+      # for wiping and re-rolling when 1.0 lands.
+      #
+      # This is deliberately one value shared by every host rather than a
+      # hostSpec option: a reseed is a "start over everywhere" decision, and
+      # a per-host knob would just be two numbers to keep in sync. The
+      # hostName prefix is what keeps hpp-1's and amos1's worlds distinct.
+      #
+      # The old world's files are *not* deleted — they stay in
+      # /var/lib/containers/valheim/config/worlds_local (and in restic) under
+      # the previous name, so a bump is reversible by reverting this number.
+      # Delete them by hand once you're sure you don't want them back.
+      worldGeneration = 1;
+      worldName = "${hostSpec.hostName}-g${toString worldGeneration}";
+    in
     {
       sops = {
         secrets = {
@@ -254,8 +293,13 @@ _: {
           "/var/lib/containers/valheim/cache:/opt/valheim"
         ];
         environment = {
-          SERVER_NAME = "hpp-valheim";
-          WORLD_NAME = "hpp";
+          # Both derive from hostSpec.hostName + worldGeneration (see the
+          # `let` at the top of the module) so hpp-1 and amos1 don't share a
+          # server identity or a world save name. SERVER_NAME is what the
+          # join-code notifier puts in the Discord message, so it wants to
+          # say which host it is.
+          SERVER_NAME = "${worldName}-valheim";
+          WORLD_NAME = worldName;
           # SERVER_PUBLIC=false keeps the server out of the public
           # community browser. Joining is by 6-digit join code (see
           # the crossplay notes at the top of this file) — the code is
