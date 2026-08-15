@@ -57,6 +57,18 @@ tasks:
   build_darwin:*:
     desc: Rebuild nix-darwin, pass :[flaketarget] for the target
     cmd: sudo darwin-rebuild switch --flake .#{{ index .MATCH 0 }}
+  valheim:joincode:
+    desc: Print the current Valheim crossplay join code (default HOST=hpp-1)
+    # PlayFab issues a fresh 6-digit code on every server start, so this
+    # has to be re-read (and re-shared with players) after any restart of
+    # podman-valheim.service. The code is only in the server's stdout.
+    vars:
+      HOST: '{{.HOST | default "hpp-1"}}'
+    cmd: |
+      set -euo pipefail
+      ssh ipreston@{{.HOST}} 'sudo podman logs valheim 2>&1' \
+        | grep -oiE 'join code [0-9]+' | tail -1 \
+        || { echo "No join code in the log — is CROSSPLAY=true and has the server finished starting?" >&2; exit 1; }
   update:
     desc: patch the flake
     cmd: nix flake update
