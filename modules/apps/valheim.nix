@@ -1,12 +1,10 @@
 # Valheim - dedicated server (lloesche/valheim-server container).
-# Gameplay is UDP and there's no web UI to put behind Caddy/Authentik,
-# so the exposed surface is just the three game UDP ports. They're
-# open on every interface (LAN + tailscale0) — joining over LAN is
-# the path used from machines without tailscale. The host sits behind
-# the home router's NAT, so WAN reachability isn't part of the
-# threat model. If hpp-1 ever moves to a routable address, tighten
-# this to `networking.firewall.interfaces.<lan>.allowedUDPPortRanges`
-# + the tailscale0 rule.
+# Gameplay is UDP and there's no web UI to put behind Caddy/Authentik.
+# Since crossplay went on there is no inbound listening surface at all:
+# the server reaches PlayFab outbound and players arrive over that
+# relay, so the game UDP ports are commented out further down rather
+# than opened. Joining is by 6-digit join code, from every client —
+# LAN, tailnet and console alike.
 #
 # ## Crossplay (CROSSPLAY=true)
 #
@@ -67,9 +65,6 @@ _: {
       hostSpec,
       ...
     }:
-    let
-      gamePort = 2456;
-    in
     {
       sops = {
         secrets = {
@@ -217,14 +212,35 @@ _: {
         '';
       };
 
-      # gamePort..gamePort+2 — the third port is what the PlayFab
+      # Inbound game ports — deliberately commented out, not deleted.
+      #
+      # Under crossplay the client cannot connect by LAN or loopback
+      # address at all (verified on this server: joining by IP stopped
+      # working the moment CROSSPLAY=true landed, while the join code
+      # works), and outbound relay traffic to PlayFab needs no inbound
+      # rule. So nothing can reach these ports by design and leaving
+      # them open is exposure that buys nothing.
+      #
+      # Kept here as the revert path for the day PlayFab has an outage
+      # and direct connect is the only way in. To restore: uncomment
+      # the block below *and* set CROSSPLAY = "false" in the container
+      # environment — the ports alone won't help while the server is on
+      # the PlayFab backend. That also drops non-Steam clients, so it's
+      # a deliberate fallback, not a both-ways config.
+      #
+      # gamePort..gamePort+2; the third port is the one the PlayFab
       # backend uses under crossplay.
-      networking.firewall.allowedUDPPortRanges = [
-        {
-          from = gamePort;
-          to = gamePort + 2;
-        }
-      ];
+      #
+      # networking.firewall.allowedUDPPortRanges =
+      #   let
+      #     gamePort = 2456;
+      #   in
+      #   [
+      #     {
+      #       from = gamePort;
+      #       to = gamePort + 2;
+      #     }
+      #   ];
 
       virtualisation.oci-containers.containers.valheim = {
         # lloesche tags by date (`latest`, `YYYY-MM-DD`) rather than
