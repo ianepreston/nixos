@@ -156,9 +156,21 @@ _: {
       #
       # Source is journalctl rather than `podman logs` so the watcher
       # survives the container being recreated (a new container id
-      # orphans a `podman logs -f`). `-b -f` replays this boot before
-      # following, which re-emits the current code when the watcher
-      # itself restarts; the dedupe below is what makes that harmless.
+      # orphans a `podman logs -f`). `-b --lines=all -f` replays this
+      # boot before following, which re-emits the current code when the
+      # watcher itself restarts; the dedupe below is what makes that
+      # harmless.
+      #
+      # `--lines=all` is load-bearing, not belt-and-braces: `-f` implies
+      # `--lines=10`, and that cap wins over `-b`, so `-b -f` alone
+      # backfills only the last ten lines rather than the boot. The
+      # join-code line is thousands of lines back in a running server's
+      # journal, so a watcher that starts (or crashloops and recovers)
+      # any time after server startup silently never matches it and
+      # never announces. That is exactly what happened on amos1: the
+      # missing discord_webhook secret crashlooped this unit, and once
+      # the secret landed the watcher came up healthy but mute, because
+      # the code had long since scrolled out of the ten-line window.
       #
       # Dedupe state lives in RuntimeDirectory (/run), not /var/lib, on
       # purpose: a reboot restarts the server and therefore rotates the
@@ -243,7 +255,7 @@ _: {
 
           # `-oE 'registered with join code [0-9]+'` yields exactly five
           # whitespace-separated fields; the code is the last.
-          ${pkgs.systemd}/bin/journalctl -u podman-valheim.service -b -f -o cat \
+          ${pkgs.systemd}/bin/journalctl -u podman-valheim.service -b -f --lines=all -o cat \
             | ${pkgs.gnugrep}/bin/grep --line-buffered -oE 'registered with join code [0-9]+' \
             | while read -r _ _ _ _ code; do
                 notify "$code"
