@@ -156,21 +156,38 @@ _: {
       #
       # Source is journalctl rather than `podman logs` so the watcher
       # survives the container being recreated (a new container id
-      # orphans a `podman logs -f`). `-b --lines=all -f` replays this
-      # boot before following, which re-emits the current code when the
-      # watcher itself restarts; the dedupe below is what makes that
-      # harmless.
+      # orphans a `podman logs -f`).
       #
-      # `--lines=all` is load-bearing, not belt-and-braces: `-f` implies
-      # `--lines=10`, and that cap wins over `-b`, so `-b -f` alone
-      # backfills only the last ten lines rather than the boot. The
-      # join-code line is thousands of lines back in a running server's
-      # journal, so a watcher that starts (or crashloops and recovers)
-      # any time after server startup silently never matches it and
-      # never announces. That is exactly what happened on amos1: the
-      # missing discord_webhook secret crashlooped this unit, and once
-      # the secret landed the watcher came up healthy but mute, because
-      # the code had long since scrolled out of the ten-line window.
+      # The read is deliberately two passes rather than one following
+      # invocation, because neither single-pass form is correct:
+      #
+      #   `-b -f`               `-f` implies `--lines=10` and that cap
+      #                         beats `-b`, so this backfills ten lines,
+      #                         not the boot. The join-code line sits
+      #                         thousands of lines back in a running
+      #                         server's journal, so a watcher starting
+      #                         any time after server startup matches
+      #                         nothing and stays mute forever.
+      #   `-b -f --lines=all`   Replays every code line since boot on
+      #                         every watcher start. The marker below
+      #                         only suppresses repeats of the code it
+      #                         last announced, so a boot that saw
+      #                         several distinct codes re-announces the
+      #                         whole sequence on each restart — one
+      #                         burst of stale Discord messages per
+      #                         deploy.
+      #
+      # So: pass 1 reads the backlog and announces only the newest code
+      # in it; pass 2 follows from a cursor for live changes. Exactly one
+      # announcement per distinct code.
+      #
+      # The cursor is captured *before* the backlog scan, not after. That
+      # ordering is what closes the gap: a code landing between the two
+      # reads is at or after the cursor, so it is caught by the follow
+      # (and possibly also by the backlog scan — an overlap the marker
+      # collapses). Reading the cursor after the scan would instead leave
+      # a window in which a code is in neither pass and is never
+      # announced.
       #
       # Dedupe state lives in RuntimeDirectory (/run), not /var/lib, on
       # purpose: a reboot restarts the server and therefore rotates the
@@ -253,10 +270,42 @@ _: {
             fi
           }
 
-          # `-oE 'registered with join code [0-9]+'` yields exactly five
-          # whitespace-separated fields; the code is the last.
-          ${pkgs.systemd}/bin/journalctl -u podman-valheim.service -b -f --lines=all -o cat \
-            | ${pkgs.gnugrep}/bin/grep --line-buffered -oE 'registered with join code [0-9]+' \
+          journalctl=${pkgs.systemd}/bin/journalctl
+          grep=${pkgs.gnugrep}/bin/grep
+
+          # Position first, read second — see the cursor note above.
+          # `--show-cursor` appends a `-- cursor: <id>` line after the
+          # last entry, which is what -n 1 is here to produce cheaply.
+          cursor="$("$journalctl" -u podman-valheim.service -b -n 1 -o cat --show-cursor 2>/dev/null \
+            | ${pkgs.gnused}/bin/sed -n 's/^-- cursor: //p')"
+
+          # Pass 1 — backlog. `-oE 'registered with join code [0-9]+'`
+          # yields exactly five whitespace-separated fields; the code is
+          # the last, so ''${line##* } is the code. Only the newest match
+          # is announced; earlier ones in this boot are already stale.
+          backlog="$("$journalctl" -u podman-valheim.service -b --lines=all -o cat 2>/dev/null \
+            | "$grep" -oE 'registered with join code [0-9]+' \
+            | tail -1)"
+          if [ -n "$backlog" ]; then
+            notify "''${backlog##* }"
+          else
+            echo "no join code in the journal for this boot yet; following for one"
+          fi
+
+          # Pass 2 — live. Following from the cursor means no historical
+          # entry is re-emitted, so the marker is a guard against the
+          # server relogging one unchanged code rather than the thing
+          # holding back a replay burst.
+          if [ -n "$cursor" ]; then
+            set -- -f --after-cursor="$cursor"
+          else
+            # Empty journal for this unit this boot: nothing to anchor
+            # to, so follow from now and take only new entries.
+            set -- -b -f --lines=0
+          fi
+
+          "$journalctl" -u podman-valheim.service "$@" -o cat \
+            | "$grep" --line-buffered -oE 'registered with join code [0-9]+' \
             | while read -r _ _ _ _ code; do
                 notify "$code"
               done
