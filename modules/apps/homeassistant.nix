@@ -141,13 +141,18 @@
       ha_blueair = pkgsUnstable.buildHomeAssistantComponent {
         owner = "dahlb";
         domain = "ha_blueair";
-        version = "1.56.0";
+        version = "1.56.3";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
-          # renovate: datasource=github-releases depName=dahlb/ha_blueair
-          tag = "v1.56.1";
-          hash = "sha256-KXMHpQwH9UyqElgtPorOncwZPVHs2UX6oD8WT1xq1wY=";
+          # Pinned by immutable commit rev, not tag: dahlb/ha_blueair re-cuts
+          # release tags in place, which silently invalidates a tag-pinned
+          # fetch hash (see #454). Renovate bumps rev+version comment via the
+          # "fetchFromGitHub rev pins" custom manager; hash is regenerated
+          # manually from the failing build.
+          # renovate: datasource=github-tags depName=dahlb/ha_blueair
+          rev = "3de0caee435fcdbb7eff2884eba98494a185cacd"; # v1.56.3
+          hash = "sha256-vSx7ztWzVbENixOASV13z065DRNNE1/zlguHP5TqsuA=";
         };
         dependencies = [ blueair-api ];
       };

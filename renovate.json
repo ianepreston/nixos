@@ -83,6 +83,14 @@
     },
     {
       "customType": "regex",
+      "description": "Update fetchFromGitHub rev pins in Nix files (rev = \"<sha>\"; # vX.Y.Z), for sources whose upstream re-cuts tags in place (e.g. dahlb/ha_blueair). currentDigest is the immutable commit; the trailing comment carries currentValue so Renovate can look up newer releases and re-pin the digest. Hash is regenerated manually from the failing build.",
+      "managerFilePatterns": ["/\\.nix$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*rev\\s*=\\s*\"(?<currentDigest>[0-9a-f]{7,40})\";\\s*#\\s*(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Update the primary NixOS nixpkgs release channel in flake.nix",
       "managerFilePatterns": ["/^flake\\.nix$/"],
       "matchStrings": [
