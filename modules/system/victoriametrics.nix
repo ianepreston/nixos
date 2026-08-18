@@ -559,12 +559,12 @@ _: {
                 + "|upsmon|nut-exporter-(router|nas)"
                 # Native NixOS app services (modules/apps/*.nix using
                 # services.<app>): audiobookshelf, bazarr, flaresolverr,
-                # jellyfin, komga, matter-server, miniflux,
+                # jellyfin, komga, lidarr, matter-server, miniflux,
                 # paperless (multi-unit: web/scheduler/task-queue/consumer),
                 # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
                 # spierscraper.
                 + "|audiobookshelf|bazarr|flaresolverr|jellyfin|komga"
-                + "|matter-server|miniflux|paperless(-.+)?|pinchflat"
+                + "|lidarr|matter-server|miniflux|paperless(-.+)?|pinchflat"
                 + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a

@@ -248,8 +248,8 @@ immediately before each restic run. The staging root is added to the
 restic paths automatically, so each snapshot contains both the (hot,
 possibly torn) live file under `/var/lib/<app>/...` and a
 guaranteed-consistent copy under `/var/backup/sqlite/<app>/`. Apps
-currently using it: jellyfin, sonarr, radarr, prowlarr, bazarr,
-kavita, komga, readeck, audiobookshelf.
+currently using it: jellyfin, sonarr, radarr, lidarr, prowlarr,
+bazarr, kavita, komga, readeck, audiobookshelf.
 
 Only server-local app state is in scope. NAS-resident media under
 `/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
@@ -462,7 +462,7 @@ Media files themselves live on the NAS under `/mnt/content` and are
 out of scope for restic — Synology snapshots cover them.
 
 The same pattern applies to every app that opts into `mySqliteQuiesce`
-(sonarr, radarr, prowlarr, bazarr, kavita, komga, readeck,
+(sonarr, radarr, lidarr, prowlarr, bazarr, kavita, komga, readeck,
 audiobookshelf): stop the unit, `restic restore` both `/var/lib/<app>`
 (or `/var/lib/private/<app>` for DynamicUser apps like prowlarr and
 readeck) and `/var/backup/sqlite/<app>`, then `install` each staged

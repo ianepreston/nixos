@@ -47,6 +47,7 @@ in
         enable = true;
         user = hostSpec.serverUser;
         group = hostSpec.serverGroup;
+        settings = arrLib.externalAuthSettings;
       };
 
       myAppState.radarr = {

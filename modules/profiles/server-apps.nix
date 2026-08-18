@@ -39,6 +39,7 @@
         homeassistant
         jellyfin
         komga
+        lidarr
         matter-server
         manyfold
         miniflux
