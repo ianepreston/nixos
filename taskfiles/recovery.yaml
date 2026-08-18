@@ -403,6 +403,21 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+  lidarr:
+    desc: Restore lidarr (native + sqlite-quiesce)
+    requires: {vars: [HOST]}
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: lidarr
+          UNITS: 'lidarr.service'
+          PATHS: '/var/lib/lidarr /var/backup/sqlite/lidarr'
+          SWAPS: '/var/backup/sqlite/lidarr/lidarr.db:/var/lib/lidarr/.config/Lidarr/lidarr.db:@env@ /var/backup/sqlite/lidarr/logs.db:/var/lib/lidarr/.config/Lidarr/logs.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
   matter-server:
     desc: Restore matter-server (native, DynamicUser state under /var/lib/private)
     requires: {vars: [HOST]}
@@ -688,6 +703,7 @@ tasks:
       - task: jellyfin
       - task: kapowarr
       - task: komga
+      - task: lidarr
       - task: manyfold
       - task: matter-server
       - task: miniflux
