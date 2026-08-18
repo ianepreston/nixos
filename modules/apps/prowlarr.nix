@@ -54,9 +54,11 @@ _: {
 
       services.prowlarr = {
         enable = true;
-        settings.server = {
-          inherit port;
-          bindAddress = "*";
+        settings = arrLib.externalAuthSettings // {
+          server = {
+            inherit port;
+            bindAddress = "*";
+          };
         };
       };
 
