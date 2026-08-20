@@ -72,7 +72,7 @@ and resources if you want to build your own.
 │   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
 │   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
 │   ├── hardware/          # Hardware-specific modules (intel-quicksync, nvidia, yubikey, keyboards, rgb, xreal-headset)
-│   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes, sunshine, quickemu)
+│   ├── desktop/           # Desktop environment modules (gnome, cosmic, audio, gaming, flatpak, themes, moonshine, quickemu)
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
 │   ├── programs/          # Application modules (browser, ghostty, comms, media, obsidian, etc.)
 │   └── hosts/             # Per-host configurations and hardware/disk definitions
@@ -85,7 +85,7 @@ and resources if you want to build your own.
 | Host                  | Platform       | Config Type            | Description                                                              |
 | --------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------ |
 | **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060       |
-| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming |
+| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + moonshine streaming (COSMIC remote desktop) |
 | **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding      |
 | **amos1**             | x86_64-linux   | `nixosConfigurations`  | Prod server — `server` + `server-apps` + NVIDIA transcoding              |
 | **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config     |

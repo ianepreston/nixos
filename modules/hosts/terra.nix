@@ -19,6 +19,8 @@
     ++ (with inputs.self.modules.nixos; [
       workstation
       gnome
+      cosmic
+      hyprland
       docker
       flatpak
       gaming

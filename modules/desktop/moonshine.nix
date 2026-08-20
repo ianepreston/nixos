@@ -13,17 +13,84 @@
 { inputs, ... }:
 {
   flake.modules.nixos.moonshine =
-    { hostSpec, pkgs, ... }:
+    {
+      hostSpec,
+      pkgs,
+      ...
+    }:
+    let
+      # The user's uid is allocated, not declared (base.nix doesn't pin one),
+      # so the module can't derive it from users.users.<user>.uid. 1000 is what
+      # the first normal user gets.
+      uid = 1000;
+
+      # Status of the "Remote Desktop" tile: not working yet. See issue for
+      # the full evidence; the load-bearing facts are:
+      #
+      # Moonshine gives an application 60s to report a successful launch before
+      # returning 503 to the client. That bound is the hardcoded constant
+      # APP_LAUNCH_HTTP_TIMEOUT_SECS in moonshine-core/src/session/mod.rs; the
+      # `launch_timeout_secs` option below is a different budget (the systemd
+      # start job) and cannot raise it.
+      #
+      # Moonshine's compositor implements compositor (v6), shm, dmabuf, output,
+      # seat, xdg shell (xdg_wm_base v7), viewporter, presentation,
+      # pointer_constraints, relative_pointer, data_device and xwayland_shell —
+      # and nothing else. Per-compositor consequences:
+      #
+      #   GNOME    — cannot nest. gnome-shell 50 always runs as a Wayland
+      #              display server and takes logind control (#439).
+      #   Plasma   — kwin's Wayland backend requires
+      #              wp_single_pixel_buffer_manager_v1, which moonshine does not
+      #              implement, so kwin exits immediately and plasma_session
+      #              restart-loops it.
+      #   Hyprland — nests as far as dmabuf negotiation, then produces no output
+      #              inside the 60s bound.
+      #   COSMIC   — cosmic-comp nests successfully; cosmic-session's component
+      #              startup is what fails.
+      #
+      # Do not use sway as a stand-in host when testing this: it advertises
+      # xdg_wm_base v5, and both cosmic-comp and aquamarine require v6, so
+      # nesting under sway fails for a reason that does not apply to moonshine.
+      #
+      # start-cosmic runs dbus-run-session itself when DBUS_SESSION_BUS_ADDRESS
+      # is unset. Under moonshine's user unit it is inherited as
+      # /run/user/<uid>/bus, so do not wrap this in another dbus-run-session:
+      # that yields a private bus with no org.freedesktop.systemd1 on it and
+      # every StartTransientUnit call cosmic-session makes then fails.
+      cosmicLaunch = pkgs.writeShellScript "moonshine-cosmic-launch" ''
+        set -eu
+        export XDG_SESSION_TYPE=wayland
+        export XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/${toString uid}}"
+        exec /run/current-system/sw/bin/start-cosmic
+      '';
+
+      # cosmic-session registers components as scopes/units in the *user*
+      # systemd manager, which is shared with the physical seat's session, and
+      # they can outlive the stream. Moonshine reuses one unit name,
+      # moonshine-session.service, for every stream and allows its Stop job 2s,
+      # so a leftover — an orphaned cosmic-greeter.scope, active with no
+      # processes left in it, is enough — fails the *next* launch of any tile
+      # with "UnitExists", Steam Big Picture included. Reap them when the
+      # stream ends.
+      #
+      # Units only, no pkill: a COSMIC session on the physical seat would share
+      # these process names.
+      cosmicCleanup = pkgs.writeShellScript "moonshine-cosmic-cleanup" ''
+        units="cosmic-*.scope cosmic-*.service"
+        # shellcheck disable=SC2086 # deliberate glob expansion by systemctl
+        ${pkgs.systemd}/bin/systemctl --user stop $units 2>/dev/null || true
+        # shellcheck disable=SC2086
+        ${pkgs.systemd}/bin/systemctl --user reset-failed $units 2>/dev/null || true
+      '';
+    in
     {
       imports = [ inputs.moonshine.nixosModules.default ];
 
       services.moonshine = {
         enable = true;
         user = hostSpec.username;
-        # The user's uid is allocated, not declared (base.nix doesn't pin
-        # one), so the module can't derive it from users.users.<user>.uid.
-        # 1000 is what the first normal user gets.
-        uid = 1000;
+        inherit uid;
         openFirewall = true;
         settings = {
           application = [
@@ -66,12 +133,20 @@
                 ]
               ];
             }
-            # A full-desktop "Remote Desktop" tile alongside this one is
-            # blocked on GNOME, not on moonshine: gnome-shell 50 always runs
-            # as a Wayland display server and takes logind control, so it
-            # cannot nest inside a stream's compositor while the seat session
-            # holds that control. Needs a nesting-capable compositor to
-            # revisit — see #439.
+            {
+              # A full desktop, not a mirror of the physical monitor —
+              # moonshine has no mirroring mechanism, so this is a second
+              # independent session booted inside the stream's headless
+              # compositor. See the compositor notes above; this tile does not
+              # work yet, it is checked in as the current state of #439.
+              title = "Remote Desktop";
+              command = [ "${cosmicLaunch}" ];
+              post_command = [ [ "${cosmicCleanup}" ] ];
+              # Only bounds the systemd start job. The client-facing bound is
+              # moonshine's hardcoded 60s, which is what this tile currently
+              # exceeds.
+              launch_timeout_secs = 180;
+            }
           ];
         };
       };
