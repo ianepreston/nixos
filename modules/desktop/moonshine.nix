@@ -24,8 +24,8 @@
       # the first normal user gets.
       uid = 1000;
 
-      # Status of the "Remote Desktop" tile: not working yet. See issue for
-      # the full evidence; the load-bearing facts are:
+      # Status of the "Remote Desktop" tile: not working yet. Full evidence
+      # in #456; the load-bearing facts are:
       #
       # Moonshine gives an application 60s to report a successful launch before
       # returning 503 to the client. That bound is the hardcoded constant
@@ -138,7 +138,7 @@
               # moonshine has no mirroring mechanism, so this is a second
               # independent session booted inside the stream's headless
               # compositor. See the compositor notes above; this tile does not
-              # work yet, it is checked in as the current state of #439.
+              # work yet, it is checked in as the current state of #439 / #456.
               title = "Remote Desktop";
               command = [ "${cosmicLaunch}" ];
               post_command = [ [ "${cosmicCleanup}" ] ];
