@@ -367,6 +367,22 @@ _: {
             icon = "pikvm";
             description = "KVM over IP";
           };
+          # Same NAS as the Infrastructure tile above, surfaced again in
+          # Home next to its photo app for day-to-day file access.
+          laconia-home = {
+            group = "Home";
+            displayName = "Laconia";
+            href = "http://laconia.ipreston.net";
+            icon = "synology";
+            description = "NAS";
+          };
+          synology-photos = {
+            group = "Home";
+            displayName = "Photos";
+            href = "http://photos.laconia.ipreston.net";
+            icon = "synology-photos";
+            description = "Photo library";
+          };
         };
       };
     };
