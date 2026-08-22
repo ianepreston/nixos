@@ -2,6 +2,35 @@ version: 1
 metadata:
   name: shelfmark
 entries:
+  # Migration cleanup: shelfmark used to authenticate via
+  # myAuthentik.forwardAuthApps, and the embedded outpost owned a
+  # ProxyProvider named "shelfmark". Removing the module in ff60ffd
+  # dropped the rendered forward-auth blueprint but did not delete the
+  # already-created DB object, so it was still sitting there when this
+  # module came back. Because a ProxyProvider is a subclass of
+  # OAuth2Provider (Django multi-table inheritance: one row, same id),
+  # the OAuth2Provider entry below matched the leftover by name and
+  # merged into it instead of creating a clean provider — it took the
+  # client_id/secret fine, but authentik's proxy save logic re-derives
+  # redirect_uris from the external host to the outpost callbacks
+  # (…/outpost.goauthentik.io/callback) on every save, clobbering the
+  # OIDC callback set below. The symptom is authentik refusing the
+  # login with "missing, invalid, or mismatching redirection URI".
+  #
+  # Deleting the proxy provider deletes the whole MTI object (both
+  # rows); the OAuth2Provider entry below then recreates a clean,
+  # proxy-free provider whose redirect_uris stick. Ordered first so the
+  # delete happens before the recreate within a single apply.
+  # Idempotent: once the object is a plain OAuth2Provider this
+  # find-by-name matches nothing and is a no-op, so it is safe to leave
+  # in place. (Application .provider is on_delete=SET_NULL, so the
+  # application survives and the application entry below re-links it.)
+  # Same trap manyfold hit in PR #428 — see manyfold.yaml.
+  - model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: shelfmark
+    state: absent
+
   # Shelfmark links an OIDC identity to an existing local account only when
   # the IdP asserts email_verified: true, and authentik's stock email scope
   # has returned false since 2025.10 (goauthentik/authentik#16205). We run
