@@ -42,7 +42,8 @@
 # second --env-file. Both run natively on the host, hence
 # host.containers.internal rather than a container name; sabnzbd's
 # `host_whitelist` already includes that name.
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.shelfmark =
     {
       config,
@@ -50,6 +51,7 @@ _: {
       ...
     }:
     let
+      sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
       shelfmarkHost = "shelfmark.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
       # Native host services, reached over the podman bridge.
@@ -66,6 +68,21 @@ _: {
         blueprintsDir = ./shelfmark-blueprints;
         appRestartUnit = [ "podman-shelfmark.service" ];
         displayName = "Shelfmark";
+        # Anna's Archive donator key, which buys fast (no-wait,
+        # no-bypasser) Direct Download slots. It rides along in the
+        # OIDC env file rather than a template of its own — that file
+        # already exists, already bounces the container on rotation,
+        # and this is the only other secret shelfmark reads.
+        #
+        # Deliberately NOT under the `<app>/<key>` convention: the key
+        # belongs to the AA account, not to shelfmark, so it lives in
+        # shared.yaml where a second consumer can reach it without a
+        # per-host copy. No `restartUnits` on the secret — the template
+        # referencing it re-renders on rotation and carries them.
+        extraSecrets."annas-archive/authkey".sopsFile = "${sopsFolder}/shared.yaml";
+        extraEnvLines = ''
+          AA_DONATOR_KEY=${config.sops.placeholder."annas-archive/authkey"}
+        '';
         homepage = {
           group = "Requests";
           icon = "shelfmark";
