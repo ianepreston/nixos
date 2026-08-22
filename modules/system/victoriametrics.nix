@@ -174,13 +174,25 @@ _: {
                 };
               }
               {
-                alert = "ContainerRestartLoop";
-                expr = ''changes(container_start_time_seconds{name!=""}[15m]) >= 3'';
+                # Was ContainerRestartLoop, keyed on
+                # `container_start_time_seconds{name!=""}`. That selector
+                # matched nothing and the alert could never fire for any
+                # container on any host: cAdvisor discovers podman
+                # containers by cgroup and never populates a `name` label,
+                # so while `count(container_start_time_seconds)` was 141,
+                # `count(container_start_time_seconds{name!=""})` was 0.
+                #
+                # systemd's own NRestarts counter is the honest source —
+                # it is what actually decides a restart happened, it comes
+                # pre-scoped by the unit-include regex above, and it covers
+                # native services too, hence the rename off "Container".
+                alert = "ServiceRestartLoop";
+                expr = "increase(node_systemd_service_restart_total[15m]) >= 3";
                 for = "0m";
                 labels.severity = "warning";
                 annotations = {
-                  summary = "Container {{ $labels.name }} restart-looping";
-                  description = "Container {{ $labels.name }} on {{ $labels.instance }} has restarted {{ $value }} times in the last 15m.";
+                  summary = "Unit {{ $labels.name }} restart-looping on {{ $labels.instance }}";
+                  description = "Unit {{ $labels.name }} on {{ $labels.instance }} has been restarted {{ $value }} times by systemd in the last 15m.";
                 };
               }
               {
@@ -259,6 +271,111 @@ _: {
                 annotations = {
                   summary = "Mylar has a stuck Snatched issue on {{ $labels.instance }}";
                   description = "A Mylar issue has been Snatched for >6h ({{ $value | humanizeDuration }}) without importing — completed-download-handling likely lost the SAB nzo_id, or the release is unavailable. See the manual post_process runbook in modules/apps/mylar3.nix.";
+                };
+              }
+              {
+                # Valheim's three alerts below all read metrics published
+                # by the valheim-metrics oneshot in modules/apps/valheim.nix
+                # — nothing else on the host can see the game server. It is
+                # UDP-only under crossplay so gatus has no endpoint to poll,
+                # and supervisord restarts it *inside* the container, so
+                # SystemdUnitFailed sees podman-valheim.service sitting
+                # `active` throughout a crash loop. Metrics are absent on
+                # hosts without the valheim module, so these simply never
+                # evaluate there.
+                #
+                # 15m rather than the usual 5m: a nixos-upgrade that pulls a
+                # new image takes the container down for several minutes
+                # (measured at ~6m on amos1 across the 2026-08-18 reboot),
+                # and a deploy is not an outage worth paging for.
+                alert = "ValheimServerDown";
+                expr = "valheim_server_up == 0";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server process is down on {{ $labels.instance }}";
+                  description = "valheim_server.x86_64 has not been running for 15m on {{ $labels.instance }}. supervisord restarts it automatically, so this means the restart is failing — check `podman logs valheim`.";
+                };
+              }
+              {
+                # Uptime that stays low is the crash-loop signal: the gauge
+                # resets to 0 on every supervisord restart, so if it never
+                # climbs past 10m the server is dying and being restarted
+                # repeatedly. ValheimServerDown can't catch this — each
+                # individual restart succeeds, so valheim_server_up reads 1
+                # nearly every scrape.
+                #
+                # max_over_time rather than a bare `< 600` with a long
+                # `for`: the exporter publishes uptime 0 while the process
+                # is down, so in a fast crash loop any sample that lands in
+                # a restart gap would reset a `for` clock and the alert
+                # would never mature. Asking whether uptime *ever* exceeded
+                # 10m in the window has no such gap sensitivity.
+                #
+                # `and valheim_server_up == 1` keeps this off a server that
+                # is simply down — that is ValheimServerDown's job, and
+                # uptime reads 0 in both cases. The 15m `for` is what stops
+                # an ordinary restart (deploy, update, RESTART_CRON) from
+                # tripping it: a healthy server passes uptime 600 ten
+                # minutes in, which falsifies the expression well before
+                # the clock expires.
+                alert = "ValheimServerRestartLoop";
+                expr = "max_over_time(valheim_server_uptime_seconds[30m]) < 600 and valheim_server_up == 1";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server restart-looping on {{ $labels.instance }}";
+                  description = "valheim_server has not stayed up longer than 10m at any point in the last 30m (currently {{ $value | humanizeDuration }}). supervisord is restarting it repeatedly — check `podman logs valheim` for the crash.";
+                };
+              }
+              {
+                # The leak detector, and the reason the metrics exist at
+                # all. RSS rather than the cgroup total: memory.current
+                # includes page cache from steamcmd and world saves and
+                # sits several GiB above the process, which would make any
+                # threshold meaningless.
+                #
+                # 4 GiB against a ~1.1 GiB idle baseline (measured on both
+                # hpp-1 and amos1, 2026-08-22) — high enough that ordinary
+                # growth under a full server won't trip it, low enough to
+                # leave days of warning on a 32 GiB host. The failure mode
+                # this front-runs is HostHighMemory, which needs valheim to
+                # reach ~19 GiB before firing and then blames the host
+                # rather than naming the app.
+                #
+                # Revisit the threshold once there is real player load —
+                # a populated world legitimately holds more ZDOs, and the
+                # baseline this was set against is an empty one.
+                alert = "ValheimMemoryHigh";
+                expr = "valheim_server_rss_bytes > 4 * 1024 * 1024 * 1024";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server memory high on {{ $labels.instance }}";
+                  description = "valheim_server RSS has been above 4 GiB for 30m on {{ $labels.instance }} (currently {{ $value | humanize1024 }}B), against a ~1.1 GiB idle baseline. Suspect the upstream memory leak that RESTART_CRON exists to paper over; restart the container and see modules/apps/valheim.nix.";
+                };
+              }
+              {
+                # Everything above trusts a .prom file on disk, which
+                # fails silently in the worst possible way: if the
+                # valheim-metrics timer stops running, the last-written
+                # values persist and `valheim_server_up` reads a
+                # reassuring 1 forever. This is the liveness check on the
+                # checker.
+                #
+                # Watching mtime rather than the unit covers every way the
+                # pipeline can stall — unit failed, timer not firing, disk
+                # full, exporter wedged mid-write — in one rule, which is
+                # why valheim-metrics.service is deliberately *not* added
+                # to the systemd unit-include regex above. 15m is roughly
+                # seven missed runs of the 2m timer.
+                alert = "ValheimMetricsStale";
+                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/valheim.prom"} > 900'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim metrics are stale on {{ $labels.instance }}";
+                  description = "valheim.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so every Valheim alert is now evaluating stale data and cannot be trusted. Check valheim-metrics.service and its timer.";
                 };
               }
               {
@@ -537,6 +654,13 @@ _: {
             # SystemdUnitFailed alerting.
             extraFlags = [
               "--collector.textfile.directory=${textfileDir}"
+              # Publishes node_systemd_service_restart_total (systemd's own
+              # NRestarts counter) per unit. Off by default in node_exporter.
+              # ServiceRestartLoop below is built on it — see the note there
+              # for why the cAdvisor-based predecessor never worked.
+              # Scoped by the same unit-include regex below, so this adds one
+              # series per already-tracked unit rather than per unit on the host.
+              "--collector.systemd.enable-restarts-metrics"
               (
                 "--collector.systemd.unit-include=^("
                 # Core infra:
