@@ -95,7 +95,7 @@ _: {
         };
       };
 
-      myHomepage.credentials.SABNZBD_API_KEY = {
+      myRuntimeCredentials.readers.SABNZBD_API_KEY = {
         sourceUnit = "sabnzbd.service";
         readScript = ''
           awk -F= '/^[[:space:]]*api_key[[:space:]]*=/ { gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit }' /var/lib/sabnzbd/sabnzbd.ini

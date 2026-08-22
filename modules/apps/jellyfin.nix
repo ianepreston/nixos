@@ -179,7 +179,7 @@ _: {
       # convention works for this since the API key name is just a
       # label). Until the row exists the reader emits nothing and the
       # widget shows an error; homepage itself stays up.
-      myHomepage.credentials.JELLYFIN_API_KEY = {
+      myRuntimeCredentials.readers.JELLYFIN_API_KEY = {
         sourceUnit = "jellyfin.service";
         readScript = ''
           sqlite3 -readonly /var/lib/jellyfin/data/jellyfin.db \

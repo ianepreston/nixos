@@ -42,7 +42,7 @@ in
         };
       };
 
-      myHomepage.credentials.LIDARR_API_KEY = {
+      myRuntimeCredentials.readers.LIDARR_API_KEY = {
         sourceUnit = "lidarr.service";
         readScript = ''
           ${arrLib.mkArrApiKeyScript "/var/lib/lidarr/.config/Lidarr/config.xml"}

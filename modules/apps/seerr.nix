@@ -41,7 +41,7 @@ _: {
       # would also pick up. The file is generated on first boot, so the
       # homepage-credentials retry loop covers the case where seerr has
       # just started but hasn't written it yet.
-      myHomepage.credentials.SEERR_API_KEY = {
+      myRuntimeCredentials.readers.SEERR_API_KEY = {
         sourceUnit = "podman-seerr.service";
         readScript = ''
           jq -r '.main.apiKey // empty' /var/lib/containers/seerr/settings.json

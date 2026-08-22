@@ -45,7 +45,7 @@ _: {
         };
       };
 
-      myHomepage.credentials.PROWLARR_API_KEY = {
+      myRuntimeCredentials.readers.PROWLARR_API_KEY = {
         sourceUnit = "prowlarr.service";
         readScript = ''
           ${arrLib.mkArrApiKeyScript "/var/lib/prowlarr/config.xml"}

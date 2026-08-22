@@ -32,6 +32,16 @@
 # USING_EXTERNAL_BYPASSER + EXT_BYPASSER_URL) is slower and less
 # reliable. It wants ~2GB of headroom; swap to lite + flaresolverr if
 # this ever lands on a host that can't spare it.
+#
+# Prowlarr and sabnzbd are wired from env too, so the search and
+# download path comes up configured on a fresh install. Both generate
+# their own API key into their own config file, so the values can't come
+# from sops — they're read off disk at boot by
+# `myRuntimeCredentials` (modules/system/runtime-credentials.nix), the
+# same registry homepage's widgets pull from, and handed to podman as a
+# second --env-file. Both run natively on the host, hence
+# host.containers.internal rather than a container name; sabnzbd's
+# `host_whitelist` already includes that name.
 _: {
   flake.modules.nixos.shelfmark =
     {
@@ -42,6 +52,9 @@ _: {
     let
       shelfmarkHost = "shelfmark.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
+      # Native host services, reached over the podman bridge.
+      prowlarrUrl = "http://host.containers.internal:9696";
+      sabnzbdUrl = "http://host.containers.internal:18080";
       # gatus already owns 127.0.0.1:8084 on the host, so publish on a
       # distinct host port and leave the container on the image default
       # (which is also what its built-in HEALTHCHECK probes).
@@ -94,8 +107,26 @@ _: {
           # Caddy terminates TLS and shelfmark is never reachable over
           # plain HTTP, so the session cookie can be Secure-only.
           SESSION_COOKIE_SECURE = "true";
+
+          # Prowlarr is the indexer source and sabnzbd the usenet
+          # download client; the matching API keys arrive via the
+          # credentials env file below. Both sabnzbd categories already
+          # exist on the host and land under complete_dir, i.e. inside
+          # the /mnt/content/Downloads mount above — which is what makes
+          # the identical-path trick work end to end. The audiobook
+          # category has to be named explicitly; left empty, audiobooks
+          # would be filed under `books`.
+          PROWLARR_ENABLED = "true";
+          PROWLARR_URL = prowlarrUrl;
+          PROWLARR_USENET_CLIENT = "sabnzbd";
+          SABNZBD_URL = sabnzbdUrl;
+          SABNZBD_CATEGORY = "books";
+          SABNZBD_CATEGORY_AUDIOBOOK = "audiobooks";
         };
-        environmentFiles = [ config.sops.templates."shelfmark.env".path ];
+        environmentFiles = [
+          config.sops.templates."shelfmark.env".path
+          config.myRuntimeCredentials.consumers.shelfmark.envFile
+        ];
       };
 
       # Shelfmark builds its OIDC callback URL from the incoming request,
@@ -107,6 +138,18 @@ _: {
         routeConfig = ''
           reverse_proxy localhost:${toString hostPort}
         '';
+      };
+
+      # Prowlarr's and sabnzbd's self-generated API keys, rendered into
+      # /run/shelfmark-credentials/env at boot. The readers themselves
+      # are declared in prowlarr.nix / sabnzbd.nix next to the services
+      # that write the keys.
+      myRuntimeCredentials.consumers.shelfmark = {
+        vars = [
+          "PROWLARR_API_KEY"
+          "SABNZBD_API_KEY"
+        ];
+        units = [ "podman-shelfmark.service" ];
       };
 
       # users.db holds the accounts, per-user delivery preferences and
