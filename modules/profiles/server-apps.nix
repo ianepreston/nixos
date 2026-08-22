@@ -62,6 +62,7 @@
       devOnlyApps = with inputs.self.modules.nixos; [
         readeck
         kapowarr
+        shelfmark
         ytdlp-web-player
       ];
 

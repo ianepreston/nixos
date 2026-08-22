@@ -622,6 +622,23 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+  shelfmark:
+    desc: Restore shelfmark (container + sqlite-quiesce)
+    requires: {vars: [HOST]}
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: shelfmark
+          UNITS: 'podman-shelfmark.service'
+          PATHS: '/var/lib/containers/shelfmark /var/backup/sqlite/shelfmark'
+          SWAPS: '/var/backup/sqlite/shelfmark/users.db:/var/lib/containers/shelfmark/config/users.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: shelfmark, URL: 'http://127.0.0.1:8085/api/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   sonarr:
     desc: Restore sonarr (native + sqlite-quiesce)
     requires: {vars: [HOST]}
@@ -718,6 +735,7 @@ tasks:
       - task: sabnzbd
       - task: seerr
       - task: shelfarr
+      - task: shelfmark
       - task: sonarr
       - task: tandoor
       - task: unifi
