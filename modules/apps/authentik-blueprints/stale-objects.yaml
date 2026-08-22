@@ -1,0 +1,91 @@
+---
+# Graveyard: authentik objects left behind by apps that no longer exist
+# in this flake.
+#
+# Removing an app module stops rendering its blueprint, but blueprint
+# applies are upserts — they never delete. Every app that has ever been
+# retired or renamed therefore left its provider, application and policy
+# binding sitting in authentik's database, invisible to the flake and
+# un-managed by anything.
+#
+# Mostly that is harmless clutter (a dead tile on the user's
+# applications page). It stops being harmless the moment a name gets
+# reclaimed: a leftover ProxyProvider is an OAuth2Provider subclass under
+# Django multi-table inheritance, so a new OIDC provider blueprint with
+# the same `name:` merges into the corpse instead of creating a clean
+# object, and authentik's proxy save logic then rewrites redirect_uris to
+# the outpost callbacks on every save. That is exactly how shelfmark's
+# first login failed with "missing, invalid, or mismatching redirection
+# URI" — see the migration-cleanup stanza at the top of
+# shelfmark-blueprints/shelfmark.yaml, and manyfold's in PR #428.
+#
+# Everything listed here was verified dead on BOTH servers before being
+# added — absent from `myCaddy.apps`, `myAuthentik.forwardAuthApps` and
+# `myAuthentik.oidcApps` on hpp-1 and amos1 alike. That matters because
+# this blueprint applies everywhere: a name that is retired on one host
+# but live on the other (readeck, which is dev-only and so orphaned on
+# amos1) must NOT be listed, or the deletion would break the host where
+# it still runs.
+#
+# `state: absent` is idempotent — once an object is gone the identifier
+# matches nothing and the entry is a no-op — so entries can stay
+# indefinitely. Add to this file when retiring an app rather than
+# leaving the objects behind.
+#
+#   maintainerr  retired *arr-adjacent media-request janitor
+#   metube       retired yt-dlp frontend, replaced by pinchflat
+#   mylar3       renamed: the live forward-auth app is now `mylar`
+#   prometheus   retired, replaced by victoriametrics + vmalert
+#   watchstate   retired play-state sync
+version: 1
+metadata:
+  name: stale-objects
+entries:
+  # Applications first, so the dead tile disappears even if a provider
+  # delete were ever to fail. Application.provider is on_delete=SET_NULL
+  # and policy bindings cascade off the application, so removing the pair
+  # takes the binding with it.
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: maintainerr
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: maintainerr
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: metube
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: metube
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: mylar3
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: mylar3
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: prometheus
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: prometheus
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: watchstate
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: watchstate
