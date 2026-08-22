@@ -351,21 +351,40 @@ _: {
         myHomepage.tiles = {
           pfsense = {
             group = "Infrastructure";
+            displayName = "pfSense";
             href = "https://behemoth.ipreston.net:10443";
             icon = "pfsense";
             description = "router";
           };
           laconia = {
             group = "Infrastructure";
+            displayName = "Laconia";
             href = "http://laconia.ipreston.net";
             icon = "synology";
             description = "NAS";
           };
           blikvm = {
             group = "Infrastructure";
+            displayName = "BliKVM";
             href = "http://blikvm.ipreston.net";
             icon = "pikvm";
             description = "KVM over IP";
+          };
+          # Same NAS as the Infrastructure tile above, surfaced again in
+          # Home next to its photo app for day-to-day file access.
+          laconia-home = {
+            group = "Home";
+            displayName = "Laconia";
+            href = "http://laconia.ipreston.net";
+            icon = "synology";
+            description = "NAS";
+          };
+          synology-photos = {
+            group = "Home";
+            displayName = "Photos";
+            href = "http://photos.laconia.ipreston.net";
+            icon = "synology-photos";
+            description = "Photo library";
           };
         };
       };
