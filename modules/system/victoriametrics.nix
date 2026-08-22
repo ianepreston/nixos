@@ -174,13 +174,25 @@ _: {
                 };
               }
               {
-                alert = "ContainerRestartLoop";
-                expr = ''changes(container_start_time_seconds{name!=""}[15m]) >= 3'';
+                # Was ContainerRestartLoop, keyed on
+                # `container_start_time_seconds{name!=""}`. That selector
+                # matched nothing and the alert could never fire for any
+                # container on any host: cAdvisor discovers podman
+                # containers by cgroup and never populates a `name` label,
+                # so while `count(container_start_time_seconds)` was 141,
+                # `count(container_start_time_seconds{name!=""})` was 0.
+                #
+                # systemd's own NRestarts counter is the honest source —
+                # it is what actually decides a restart happened, it comes
+                # pre-scoped by the unit-include regex above, and it covers
+                # native services too, hence the rename off "Container".
+                alert = "ServiceRestartLoop";
+                expr = "increase(node_systemd_service_restart_total[15m]) >= 3";
                 for = "0m";
                 labels.severity = "warning";
                 annotations = {
-                  summary = "Container {{ $labels.name }} restart-looping";
-                  description = "Container {{ $labels.name }} on {{ $labels.instance }} has restarted {{ $value }} times in the last 15m.";
+                  summary = "Unit {{ $labels.name }} restart-looping on {{ $labels.instance }}";
+                  description = "Unit {{ $labels.name }} on {{ $labels.instance }} has been restarted {{ $value }} times by systemd in the last 15m.";
                 };
               }
               {
@@ -537,6 +549,13 @@ _: {
             # SystemdUnitFailed alerting.
             extraFlags = [
               "--collector.textfile.directory=${textfileDir}"
+              # Publishes node_systemd_service_restart_total (systemd's own
+              # NRestarts counter) per unit. Off by default in node_exporter.
+              # ServiceRestartLoop below is built on it — see the note there
+              # for why the cAdvisor-based predecessor never worked.
+              # Scoped by the same unit-include regex below, so this adds one
+              # series per already-tracked unit rather than per unit on the host.
+              "--collector.systemd.enable-restarts-metrics"
               (
                 "--collector.systemd.unit-include=^("
                 # Core infra:
