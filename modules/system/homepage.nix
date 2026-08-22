@@ -351,18 +351,21 @@ _: {
         myHomepage.tiles = {
           pfsense = {
             group = "Infrastructure";
+            displayName = "pfSense";
             href = "https://behemoth.ipreston.net:10443";
             icon = "pfsense";
             description = "router";
           };
           laconia = {
             group = "Infrastructure";
+            displayName = "Laconia";
             href = "http://laconia.ipreston.net";
             icon = "synology";
             description = "NAS";
           };
           blikvm = {
             group = "Infrastructure";
+            displayName = "BliKVM";
             href = "http://blikvm.ipreston.net";
             icon = "pikvm";
             description = "KVM over IP";
