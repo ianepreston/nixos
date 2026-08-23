@@ -32,8 +32,9 @@
         audiobookshelf
         # bambuddy — code kept but dormant; proxy-mode printing is blocked on
         # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
-        bookorbit
         bazarr
+        bindery
+        bookorbit
         decluttarr
         flaresolverr
         homeassistant
@@ -51,7 +52,7 @@
         radarr
         sabnzbd
         seerr
-        shelfarr
+        shelfmark
         sonarr
         tandoor
         unifi
@@ -60,8 +61,8 @@
 
       # Apps that ship only on dev-environment servers.
       devOnlyApps = with inputs.self.modules.nixos; [
-        readeck
         kapowarr
+        readeck
         ytdlp-web-player
       ];
 

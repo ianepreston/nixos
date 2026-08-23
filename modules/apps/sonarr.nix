@@ -36,7 +36,7 @@ in
         };
       };
 
-      myHomepage.credentials.SONARR_API_KEY = {
+      myRuntimeCredentials.readers.SONARR_API_KEY = {
         sourceUnit = "sonarr.service";
         readScript = ''
           ${arrLib.mkArrApiKeyScript "/var/lib/sonarr/.config/NzbDrone/config.xml"}

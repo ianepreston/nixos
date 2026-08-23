@@ -88,9 +88,20 @@ secrets.
   `inputs.self.modules.nixos.<name>`. Cross-cutting option surfaces
   (`myCaddy.apps` in `caddy.nix`, `myPostgresApp` in `postgresql.nix`,
   `myHomepage.tiles` in `homepage.nix`, `mySqliteQuiesce.apps` in
-  `sqlite-quiesce.nix`) are declared inline next to the service that consumes
-  them — no separate "platform tier" directory. The `my`-prefix marks options
-  owned by this flake (vs upstream `services.*`).
+  `sqlite-quiesce.nix`, `myRuntimeCredentials` in `runtime-credentials.nix`)
+  are declared inline next to the service that consumes them — no separate
+  "platform tier" directory. The `my`-prefix marks options owned by this flake
+  (vs upstream `services.*`).
+
+  `myRuntimeCredentials` is the odd one out in shape: an app that generates
+  its own API key (the *arrs, sabnzbd, jellyfin) declares
+  `myRuntimeCredentials.readers.<VAR>` next to the service that writes it, and
+  any service that needs those keys at runtime declares
+  `myRuntimeCredentials.consumers.<name> = { vars; units; }` and reads
+  `.envFile`. Keys like these can't live in sops — nothing chose them — so
+  they're read off disk at boot into a tmpfs env file rather than baked into
+  /nix/store. Two consumers today: homepage (widget keys, `HOMEPAGE_VAR_`
+  prefix) and shelfmark (prowlarr + sabnzbd).
 - `modules/apps/*.nix` — server-app modules (jellyfin, mealie, miniflux,
   authentik, …). Each is self-contained: service (or container — see "App
   packaging" below), caddy route via `myCaddy.apps`, postgres via
@@ -156,7 +167,7 @@ per-package overlay rather than flipping the whole flake to unstable.
 Stay on the container path when:
 
 - **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3, readmeabook,
-  shelfarr, tandoor, grimmory.)
+  shelfmark, bindery, tandoor, grimmory.)
 - **The container is a fork or variant the nix module doesn't track.** Seerr is
   the seerr-team fork at v3.x; nixpkgs ships jellyseerr. They share lineage but
   aren't drop-in.

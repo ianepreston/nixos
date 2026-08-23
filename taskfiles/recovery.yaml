@@ -308,6 +308,23 @@ tasks:
           REPO_MOUNT: '{{.REPO_MOUNT}}'
       - task: _health
         vars: {HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
+  bindery:
+    desc: Restore bindery (container + sqlite-quiesce)
+    requires: {vars: [HOST]}
+    cmds:
+      - task: _restore-sqlite
+        vars:
+          HOST: '{{.HOST}}'
+          APP: bindery
+          UNITS: 'podman-bindery.service'
+          PATHS: '/var/lib/containers/bindery /var/backup/sqlite/bindery'
+          SWAPS: '/var/backup/sqlite/bindery/bindery.db:/var/lib/containers/bindery/config/bindery.db:@env@'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: bindery, URL: 'http://127.0.0.1:8787/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   bookorbit:
     desc: Restore bookorbit (containerized + postgres)
     requires: {vars: [HOST]}
@@ -608,20 +625,23 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-  shelfarr:
-    desc: Restore shelfarr (container volume)
+  shelfmark:
+    desc: Restore shelfmark (container + sqlite-quiesce)
     requires: {vars: [HOST]}
     cmds:
-      - task: _restore-volume
+      - task: _restore-sqlite
         vars:
           HOST: '{{.HOST}}'
-          APP: shelfarr
-          UNITS: 'podman-shelfarr.service'
-          PATHS: '/var/lib/containers/shelfarr'
+          APP: shelfmark
+          UNITS: 'podman-shelfmark.service'
+          PATHS: '/var/lib/containers/shelfmark /var/backup/sqlite/shelfmark'
+          SWAPS: '/var/backup/sqlite/shelfmark/users.db:/var/lib/containers/shelfmark/config/users.db:@env@'
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: shelfmark, URL: 'http://127.0.0.1:8085/api/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   sonarr:
     desc: Restore sonarr (native + sqlite-quiesce)
     requires: {vars: [HOST]}
@@ -697,6 +717,7 @@ tasks:
       # Re-enable when the server-apps profile re-adds it.
       # - task: bambuddy
       - task: bazarr
+      - task: bindery
       - task: bookorbit
       - task: gatus
       - task: homeassistant
@@ -717,7 +738,7 @@ tasks:
       - task: readeck
       - task: sabnzbd
       - task: seerr
-      - task: shelfarr
+      - task: shelfmark
       - task: sonarr
       - task: tandoor
       - task: unifi

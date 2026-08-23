@@ -696,9 +696,9 @@ _: {
                 # it runs as an OCI container (podman-unifi-os-server),
                 # not a native service. bookorbit is dev-only, so the
                 # token simply never matches on prod hosts.
-                + "|podman-(actualbudget|bookorbit|decluttarr"
+                + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
-                + "|seerr|shelfarr|tandoor|unifi-os-server"
+                + "|seerr|shelfmark|tandoor|unifi-os-server"
                 + "|valheim))\\.service$"
               )
             ];

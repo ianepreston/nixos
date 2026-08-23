@@ -1,0 +1,127 @@
+version: 1
+metadata:
+  name: shelfmark
+entries:
+  # Migration cleanup: shelfmark used to authenticate via
+  # myAuthentik.forwardAuthApps, and the embedded outpost owned a
+  # ProxyProvider named "shelfmark". Removing the module in ff60ffd
+  # dropped the rendered forward-auth blueprint but did not delete the
+  # already-created DB object, so it was still sitting there when this
+  # module came back. Because a ProxyProvider is a subclass of
+  # OAuth2Provider (Django multi-table inheritance: one row, same id),
+  # the OAuth2Provider entry below matched the leftover by name and
+  # merged into it instead of creating a clean provider — it took the
+  # client_id/secret fine, but authentik's proxy save logic re-derives
+  # redirect_uris from the external host to the outpost callbacks
+  # (…/outpost.goauthentik.io/callback) on every save, clobbering the
+  # OIDC callback set below. The symptom is authentik refusing the
+  # login with "missing, invalid, or mismatching redirection URI".
+  #
+  # Deleting the proxy provider deletes the whole MTI object (both
+  # rows); the OAuth2Provider entry below then recreates a clean,
+  # proxy-free provider whose redirect_uris stick. Ordered first so the
+  # delete happens before the recreate within a single apply.
+  # Idempotent: once the object is a plain OAuth2Provider this
+  # find-by-name matches nothing and is a no-op, so it is safe to leave
+  # in place. (Application .provider is on_delete=SET_NULL, so the
+  # application survives and the application entry below re-links it.)
+  # Same trap manyfold hit in PR #428 — see manyfold.yaml.
+  - model: authentik_providers_proxy.proxyprovider
+    identifiers:
+      name: shelfmark
+    state: absent
+
+  # Shelfmark links an OIDC identity to an existing local account only when
+  # the IdP asserts email_verified: true, and authentik's stock email scope
+  # has returned false since 2025.10 (goauthentik/authentik#16205). We run
+  # shelfmark with DISABLE_LOCAL_AUTH so there are no local accounts to link
+  # against today, but a false claim also shows up as a "skipping email-based
+  # account linking" debug line on every login. Same custom-scope fix komga
+  # needs; safe because every authentik user here is admin-provisioned.
+  - model: authentik_providers_oauth2.scopemapping
+    id: scope-shelfmark-email
+    identifiers:
+      name: "Shelfmark email (verified)"
+    attrs:
+      scope_name: email
+      description: "Email scope returning email_verified: true for Shelfmark"
+      expression: |
+        return {
+            "email": request.user.email,
+            "email_verified": True,
+        }
+
+  # Shelfmark appends its OIDC_GROUP_CLAIM name ("groups") to the requested
+  # scope list whenever admin-group authorization is on, so the authorize
+  # request asks for a literal `groups` scope on top of openid/email/profile.
+  # authentik's `profile` mapping already emits the groups claim, but nothing
+  # registers `groups` as a scope — declare it explicitly so the requested
+  # scope always resolves to a real mapping instead of depending on how
+  # authentik treats an unknown scope name.
+  - model: authentik_providers_oauth2.scopemapping
+    id: scope-shelfmark-groups
+    identifiers:
+      name: "Shelfmark groups"
+    attrs:
+      scope_name: groups
+      description: "Group membership claim consumed by Shelfmark's admin-group mapping"
+      expression: |
+        return {
+            "groups": [group.name for group in request.user.ak_groups.all()],
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-shelfmark
+    identifiers:
+      name: shelfmark
+    attrs:
+      client_type: confidential
+      client_id: !Env SHELFMARK_OIDC_CLIENT_ID
+      client_secret: !Env SHELFMARK_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !KeyOf scope-shelfmark-email
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !KeyOf scope-shelfmark-groups
+      # Shelfmark verifies the ID token against the provider's JWKS; an
+      # authentik provider with no signing key serves an empty JWKS and every
+      # login fails in the callback (documented upstream in docs/oidc.md).
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # authentik 2026.x added OAuth2Provider.grant_types (default empty); the
+      # authorize view rejects flows whose grant is not listed. Required so a
+      # provider created fresh on 2026.x is usable (see komga.yaml for detail).
+      grant_types:
+        - authorization_code
+        - refresh_token
+      redirect_uris:
+        - matching_mode: strict
+          url: https://shelfmark.@serverDomain@/api/auth/oidc/callback
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+
+  - model: authentik_core.application
+    id: app-shelfmark
+    identifiers:
+      slug: shelfmark
+    attrs:
+      name: Shelfmark
+      provider: !KeyOf prov-shelfmark
+      group: Users
+      open_in_new_tab: true
+      meta_launch_url: https://shelfmark.@serverDomain@
+      meta_icon: https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/shelfmark.png
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-shelfmark
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Users]]
+      enabled: true

@@ -39,6 +39,7 @@
         oci-containers
         postgresql
         preservation-server
+        runtime-credentials
         server-backups
         server-users
         sops

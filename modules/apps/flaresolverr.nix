@@ -1,6 +1,6 @@
 # FlareSolverr - proxy that solves Cloudflare/DDoS-GUARD challenges so
 # indexers can be scraped. Consumed internally by the *arr stack
-# (prowlarr) and shelfarr, which need it for indexers behind Cloudflare.
+# (prowlarr) and shelfmark, which need it for sources behind Cloudflare.
 #
 # Native services.flaresolverr from nixpkgs (3.5.x). Stateless — the
 # upstream service keeps no on-disk state (HOME is a RuntimeDirectory),
@@ -8,7 +8,7 @@
 # no recovery task.
 #
 # Native consumers reach it at http://localhost:8191; podman containers
-# (shelfarr) reach it at http://host.containers.internal:8191 over the
+# (shelfmark) reach it at http://host.containers.internal:8191 over the
 # already-trusted podman bridge — flaresolverr binds 0.0.0.0 by default.
 #
 # LAN exposure: 8191 is also opened to the home LAN subnet

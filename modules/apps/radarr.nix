@@ -36,7 +36,7 @@ in
         };
       };
 
-      myHomepage.credentials.RADARR_API_KEY = {
+      myRuntimeCredentials.readers.RADARR_API_KEY = {
         sourceUnit = "radarr.service";
         readScript = ''
           ${arrLib.mkArrApiKeyScript "/var/lib/radarr/.config/Radarr/config.xml"}
