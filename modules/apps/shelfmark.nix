@@ -139,6 +139,20 @@
           SABNZBD_URL = sabnzbdUrl;
           SABNZBD_CATEGORY = "books";
           SABNZBD_CATEGORY_AUDIOBOOK = "audiobooks";
+
+          # Audiobooks get their own destination rather than inheriting the
+          # ebook one — left empty (the upstream default) they land in /books
+          # alongside the ebooks, where audiobookshelf never sees them and
+          # bookorbit tries to ingest them. Hardlinking is off for the same
+          # reason it should be off for any library folder: the destination is
+          # a live library, not a staging dir, and hardlinks would also
+          # suppress archive extraction for the zip/rar releases audiobooks
+          # frequently arrive as.
+          DESTINATION_AUDIOBOOK = "/audiobooks";
+          HARDLINK_TORRENTS_AUDIOBOOK = "false";
+
+          # Header shortcuts to the libraries the downloads feed.
+          AUDIOBOOK_LIBRARY_URL = "https://audiobookshelf.${hostSpec.serverDomain}";
         };
         environmentFiles = [
           config.sops.templates."shelfmark.env".path
