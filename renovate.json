@@ -25,6 +25,11 @@
       "addLabels": ["digest"]
     },
     {
+      "description": "Container registries other than Docker Hub (ghcr.io, lscr.io) don't expose a per-tag publish time, so Renovate leaves releaseTimestamp unset for those images. Renovate's default minimumReleaseAgeBehaviour is 'timestamp-required', which treats an unknown age as 'not yet aged' — combined with the top-level internalChecksFilter 'strict' that withholds those updates forever rather than for 7 days, silently freezing every ghcr.io/lscr.io image (this is what stalled bookorbit at 2.3.0 for a month). Scope 'timestamp-optional' to the docker datasource so a missing timestamp means 'can't measure, let it through' instead of 'block indefinitely'. Images whose age IS known (Docker Hub) still serve the full 7-day cooldown, and non-docker datasources keep the strict default.",
+      "matchDatasources": ["docker"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
       "description": "Caddy plugin bumps require regenerating the pkgs.caddy.withPlugins hash in modules/system/caddy.nix; keep manual.",
       "matchPackageNames": ["/caddy/"],
       "automerge": false
