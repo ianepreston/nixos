@@ -119,7 +119,17 @@ _: {
           BINDERY_OIDC_GROUP_CLAIM = "groups";
           # Makes authentik authoritative for the admin role on every login:
           # promoted when Infrastructure is in the claim, demoted when it isn't.
+          # The app itself is open to the whole Users group (see the policy
+          # binding in the blueprint), so this is the only thing keeping the
+          # household out of indexer/download-client config — ian is the sole
+          # member of Infrastructure on both hosts.
           BINDERY_OIDC_ADMIN_GROUP = "Infrastructure";
+          # BINDERY_ENFORCE_TENANCY deliberately left off (its default): every
+          # authenticated user shares one catalogue and one set of monitored
+          # authors, because everything lands in the same bookorbit and
+          # audiobookshelf libraries anyway. Admin-only config gating applies
+          # regardless of this flag.
+
           # NOTE: BINDERY_LOCAL_AUTH_ENABLED is deliberately left at its `true`
           # default. Bindery's OIDC provider is created in its UI, so disabling
           # password login before that exists locks everyone out ("Contact your

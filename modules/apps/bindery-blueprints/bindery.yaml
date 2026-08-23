@@ -63,7 +63,7 @@ entries:
     attrs:
       name: Bindery
       provider: !KeyOf prov-bindery
-      group: Infrastructure
+      group: Users
       open_in_new_tab: true
       meta_launch_url: https://bindery.@serverDomain@
       # No upstream icon in dashboard-icons yet; fall back to the repo favicon
@@ -71,10 +71,15 @@ entries:
       meta_icon: https://raw.githubusercontent.com/vavallee/bindery/main/web/public/favicon.png
       policy_engine_mode: all
 
+  # Bound to Users, not Infrastructure: the household adds and monitors books
+  # here, same as they do in shelfmark. Admin rights are a separate axis —
+  # BINDERY_OIDC_ADMIN_GROUP=Infrastructure re-evaluates the role from the group
+  # claim on every login, so everyone admitted by this binding who isn't in
+  # Infrastructure is actively demoted to `user` each time they sign in.
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf app-bindery
       order: 0
     attrs:
-      group: !Find [authentik_core.group, [name, Infrastructure]]
+      group: !Find [authentik_core.group, [name, Users]]
       enabled: true
