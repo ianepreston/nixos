@@ -13,9 +13,34 @@
 # needs shelfmark's Direct Download path.
 #
 # Ebooks and audiobooks are independent slots on the same title, with separate
-# search/grab/import pipelines, so both destinations are wired here: ebooks to
-# the komga/bookorbit library, audiobooks to the audiobookshelf library. The
-# audiobook side moves multi-part m4b/mp3 folders as one unit.
+# search/grab/import pipelines, so both destinations are wired here. The
+# audiobook side moves multi-part m4b/mp3 folders as one unit and goes straight
+# into the audiobookshelf library.
+#
+# Ebooks go to bookorbit's book-dock rather than to the library directly, so
+# bookorbit ingests each file once and applies its own metadata. Mirroring
+# (write to the library *and* copy to the dock) was the other option and is
+# worse here: bindery's library dir and bookorbit's library are the same
+# directory, so it writes twice and bookorbit then discards the dock copy as a
+# duplicate — which is exactly the case where the metadata pass never runs.
+#
+# The cost is that bindery's ebook library reconciliation goes decorative:
+# bookorbit empties the dock, so every imported ebook keeps a `book_files` row
+# pointing at a path that no longer exists, the 6h library scan matches
+# nothing, and OPDS/file links for ebooks are dead. It does NOT cause
+# re-downloads — nothing in the import path ever moves a book back to `wanted`
+# (the scan is a reconciler that neither creates nor prunes, and missing-ness
+# is status-only, see upstream #1692 / #1634), so an imported book stays
+# imported.
+#
+# The clean version of this needs upstream #1632 (per-format import mode, or a
+# separate audiobook drop folder). With that, `External` mode drops ebooks to
+# the dock while BINDERY_LIBRARY_DIR points back at /mnt/content/books where
+# bookorbit lands the managed copy, and reconciliation works again. Today
+# `import.mode` is global and its single drop folder would send audiobooks into
+# the dock too. Redirecting only BINDERY_LIBRARY_DIR sidesteps that entirely,
+# because in the default Auto mode BINDERY_AUDIOBOOK_DIR is a separate write
+# target — #1632 is specifically about External mode's shared drop folder.
 #
 # Paths. `/mnt/content/Downloads` is mounted at its *host* path so the paths
 # sabnzbd reports over its API resolve unchanged inside the container — sabnzbd
@@ -87,17 +112,20 @@ _: {
         image = "ghcr.io/vavallee/bindery:v1.32.1";
         volumes = [
           "/var/lib/containers/bindery/config:/config"
+          # Not currently read or written: BINDERY_LIBRARY_DIR points at the
+          # book-dock instead. Kept mounted because it is where bookorbit
+          # lands the managed copy, so it becomes the reconcile target the
+          # moment upstream #1632 lets us switch to External mode.
           "/mnt/content/books:/books"
           "/mnt/content/audiobooks:/audiobooks"
-          # Optional hand-off target for bookorbit's book-dock; see the
-          # bookorbit note in the README.
           "/mnt/content/books_intake:/books_intake"
           # Same path inside and out — see the paths note above.
           "/mnt/content/Downloads:/mnt/content/Downloads"
         ];
         environment = {
           BINDERY_PORT = toString port;
-          BINDERY_LIBRARY_DIR = "/books";
+          # bookorbit's book-dock, not the library — see the header note.
+          BINDERY_LIBRARY_DIR = "/books_intake";
           BINDERY_AUDIOBOOK_DIR = "/audiobooks";
           BINDERY_DOWNLOAD_DIR = completeDir;
           BINDERY_AUDIOBOOK_DOWNLOAD_DIR = "${completeDir}/audiobooks";
