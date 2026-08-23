@@ -84,11 +84,11 @@
           AA_DONATOR_KEY=${config.sops.placeholder."annas-archive/authkey"}
         '';
         homepage = {
-          group = "Acquisition";
+          group = "Requests";
           icon = "shelfmark";
           # Bindery is the default path; shelfmark is where you go when
           # the indexers it searches don't have the book.
-          description = "Fallback search when Bindery can't find it";
+          description = "Book and Audiobook search";
         };
       };
 
