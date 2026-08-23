@@ -60,8 +60,9 @@
 
       # Apps that ship only on dev-environment servers.
       devOnlyApps = with inputs.self.modules.nixos; [
-        readeck
+        bindery
         kapowarr
+        readeck
         shelfmark
         ytdlp-web-player
       ];
