@@ -54,7 +54,7 @@ _: {
         clientCredsInAppEnv = false;
         displayName = "Bindery";
         homepage = {
-          group = "Acquisition";
+          group = "Requests";
           icon = "https://raw.githubusercontent.com/vavallee/bindery/main/web/public/favicon.png";
           # Bindery is the front door for books: monitor it here and it
           # arrives on its own. Shelfmark's tile points back the other way.
