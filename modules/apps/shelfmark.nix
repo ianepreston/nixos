@@ -153,6 +153,29 @@
           DESTINATION_AUDIOBOOK = "/audiobooks";
           HARDLINK_TORRENTS_AUDIOBOOK = "false";
 
+          # Upstream's default is `rename`, which renames single-file
+          # downloads but leaves multi-file ones with their original names
+          # and drops every part straight into the destination root — so a
+          # 39-part MP3 audiobook lands as 39 loose files in the top level of
+          # the audiobookshelf library. `organize` is upstream's own
+          # recommendation for Audiobookshelf: it builds the folder tree from
+          # the template and assigns zero-padded part numbers across a
+          # multi-file release.
+          FILE_ORGANIZATION_AUDIOBOOK = "organize";
+          # `{ (Year)}` and `{ - Part }{PartNumber}` are conditional blocks —
+          # a brace block whose token resolves empty renders as nothing at
+          # all, so a single-file m4b gets `Title.m4b` rather than
+          # `Title - Part .m4b`, and a book with no year gets `Title` rather
+          # than `Title ()`.
+          TEMPLATE_AUDIOBOOK_ORGANIZE = "{Author}/{Title}{ (Year)}/{Title}{ - Part }{PartNumber}";
+
+          # Ebooks stay on `rename`. Their destination is bookorbit's
+          # book-dock, and organize mode explicitly warns against ingest
+          # folders — bookorbit wants files to ingest, not a managed tree to
+          # walk. Pinned rather than left to the UI so it can't drift into
+          # organize and quietly break the hand-off.
+          FILE_ORGANIZATION = "rename";
+
           # Header shortcuts to the libraries the downloads feed.
           AUDIOBOOK_LIBRARY_URL = "https://audiobookshelf.${hostSpec.serverDomain}";
         };
