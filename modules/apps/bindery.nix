@@ -56,7 +56,9 @@ _: {
         homepage = {
           group = "Acquisition";
           icon = "https://raw.githubusercontent.com/vavallee/bindery/main/web/public/favicon.png";
-          description = "Book + audiobook monitoring";
+          # Bindery is the front door for books: monitor it here and it
+          # arrives on its own. Shelfmark's tile points back the other way.
+          description = "Books + audiobooks — start here";
         };
       };
 

@@ -86,7 +86,9 @@
         homepage = {
           group = "Requests";
           icon = "shelfmark";
-          description = "Book + audiobook search";
+          # Bindery is the default path; shelfmark is where you go when
+          # the indexers it searches don't have the book.
+          description = "Fallback search when Bindery can't find it";
         };
       };
 
