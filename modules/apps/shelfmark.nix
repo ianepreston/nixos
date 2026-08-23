@@ -17,7 +17,7 @@
 # identities instead of forward-auth.
 #
 # Volumes. `/books` is the ebook destination and points at the shared
-# ingest folder (bookorbit watches it, same as shelfarr's `/ebooks`);
+# ingest folder that bookorbit watches);
 # `/audiobooks` is the audiobookshelf library, selected per-user or
 # globally as the audiobook destination in Settings -> Downloads.
 # `/mnt/content/Downloads` is mounted at its *host* path deliberately:

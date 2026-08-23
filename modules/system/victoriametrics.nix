@@ -698,7 +698,7 @@ _: {
                 # token simply never matches on prod hosts.
                 + "|podman-(actualbudget|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
-                + "|seerr|shelfarr|tandoor|unifi-os-server"
+                + "|seerr|tandoor|unifi-os-server"
                 + "|valheim))\\.service$"
               )
             ];

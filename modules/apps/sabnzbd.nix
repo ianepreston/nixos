@@ -14,7 +14,7 @@
 # top of the existing on-disk ini (allowConfigWrite is true on
 # stateVersion < 26.05, so user-editable values like usenet provider
 # credentials are preserved). `host = 0.0.0.0` lets co-located
-# containers (e.g. shelfarr) reach sabnzbd via
+# containers (e.g. bindery) reach sabnzbd via
 # `host.containers.internal:<port>`; without that the service binds
 # to 127.0.0.1 only and bridge traffic gets refused at the TCP layer.
 # `host.containers.internal` is whitelisted alongside the public FQDN
@@ -77,7 +77,7 @@ _: {
       myAuthentik.forwardAuthApps.sabnzbd = {
         inherit port;
         displayName = "Sabnzbd";
-        # Skip forward_auth for the API so non-browser clients (shelfarr,
+        # Skip forward_auth for the API so non-browser clients (bindery,
         # scripts) can authenticate with the native apikey instead of an
         # authentik session cookie. The whole API is the single /api path
         # (url_base is unset, so no /sabnzbd prefix); query params don't

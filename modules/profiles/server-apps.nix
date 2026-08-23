@@ -51,7 +51,6 @@
         radarr
         sabnzbd
         seerr
-        shelfarr
         sonarr
         tandoor
         unifi

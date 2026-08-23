@@ -37,6 +37,10 @@
 #   mylar3       renamed: the live forward-auth app is now `mylar`
 #   prometheus   retired, replaced by victoriametrics + vmalert
 #   watchstate   retired play-state sync
+#   shelfarr     retired book request system, replaced by shelfmark (manual
+#                search) + bindery (monitoring). Unlike the others this one
+#                spoke OIDC directly, so it leaves an oauth2provider rather
+#                than a proxyprovider.
 version: 1
 metadata:
   name: stale-objects
@@ -89,3 +93,15 @@ entries:
     state: absent
     identifiers:
       name: watchstate
+
+  # shelfarr authenticated via myAuthentik.oidcApps, so its leftover is a plain
+  # OAuth2Provider — no MTI subclass to trip over, but the application tile and
+  # the client credentials should still go rather than sit in the IdP forever.
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: shelfarr
+  - model: authentik_providers_oauth2.oauth2provider
+    state: absent
+    identifiers:
+      name: shelfarr
