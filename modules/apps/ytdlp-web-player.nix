@@ -52,7 +52,7 @@ _: {
 
       virtualisation.oci-containers.containers.ytdlp-web-player = {
         # renovate: datasource=docker depName=matszwe02/ytdlp_web_player
-        image = "matszwe02/ytdlp_web_player:v1.1.0";
+        image = "matszwe02/ytdlp_web_player:v1.2.0";
         # PORT matches containerPort; DOWNLOAD_PATH defaults to ./download
         # inside the container, which is fine as an ephemeral cache.
         environment.PORT = toString containerPort;
