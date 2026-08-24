@@ -21,7 +21,9 @@
 # that fetch the OIDC discovery URL once at startup (actualbudget,
 # miniflux, komga) don't race authentik's Django worker and 502.
 # No per-app `After=authentik.service` is needed — adding one would
-# be redundant.
+# be redundant. An app with no `appRestartUnit` gets nothing from
+# this and must order itself against `authentik-ready.service` if it
+# probes discovery at startup (bindery does).
 #
 # Forward-auth specifics: the embedded outpost has a single global
 # `providers` list. To avoid two blueprints clobbering it, this module
@@ -823,8 +825,12 @@
             # restart units so apps that probe the OIDC discovery URL at
             # startup don't race the Django worker. Apps with empty
             # appRestartUnit (DB/UI-configured: audiobookshelf, kavita,
-            # seerr) end up no-op'd through genAttrs and are immune to
-            # the race anyway.
+            # seerr, bindery) no-op through genAttrs and have to order
+            # themselves — being UI-configured says where the creds live,
+            # not when the app probes discovery. bindery probes at boot and
+            # latches the failure permanently, so it declares its own
+            # After=authentik-ready in modules/apps/bindery.nix; check that
+            # behaviour before assuming a new DB/UI app is race-immune.
             (lib.mkMerge (
               lib.mapAttrsToList (
                 _appName: app:
