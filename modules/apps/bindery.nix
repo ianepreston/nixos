@@ -99,6 +99,27 @@ _: {
         restartUnits = [ "podman-bindery.service" ];
       };
 
+      # Bindery initialises its OIDC provider exactly once, at process start,
+      # and latches the result: a failed discovery leaves the provider in
+      # `state: "failed"` forever, and the only cure is a restart. On a rebuild
+      # that restarts both stacks, podman-bindery can start while authentik's
+      # Django worker is still coming up — caddy then answers the discovery URL
+      # with 502 and SSO is dead until the container is bounced by hand
+      # (observed on amos1: bindery up at 04:46:27, authentik.service at
+      # 04:46:36). authentik-ready.service is the real HTTP readiness gate, so
+      # order against it.
+      #
+      # `myAuthentik.oidcApps` normally injects this ordering, but only onto
+      # `appRestartUnit`, which is empty here because bindery keeps its OIDC
+      # config in its own database rather than in an env file. UI-configured
+      # doesn't mean race-immune — bindery still probes discovery at boot.
+      # `wants` (not `requires`) so a wedged authentik degrades bindery to
+      # local auth rather than keeping the container down.
+      systemd.services.podman-bindery = {
+        after = [ "authentik-ready.service" ];
+        wants = [ "authentik-ready.service" ];
+      };
+
       myContainerApp.bindery = {
         inherit port;
         stateDirs = [
