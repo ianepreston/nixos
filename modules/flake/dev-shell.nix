@@ -4,8 +4,11 @@ _: {
     { config, pkgs, ... }:
     {
       devShells.default = pkgs.mkShell {
-        # Pre-commit hook installation from git-hooks module
-        shellHook = config.pre-commit.installationScript;
+        # Installing git hooks pulls in pre-commit itself.  On Darwin that
+        # currently entails a costly local .NET SDK build, while this machine
+        # is not used for repository work that needs commit-hook enforcement.
+        # Keep automatic installation on Linux hosts.
+        shellHook = if pkgs.stdenv.isDarwin then "" else config.pre-commit.installationScript;
 
         packages =
           config.pre-commit.settings.enabledPackages
