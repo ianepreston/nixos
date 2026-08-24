@@ -201,7 +201,7 @@ _: {
 
       virtualisation.oci-containers.containers.mylar3 = {
         # renovate: datasource=docker depName=lscr.io/linuxserver/mylar3
-        image = "lscr.io/linuxserver/mylar3:0.10.0";
+        image = "lscr.io/linuxserver/mylar3:0.11.0";
         volumes = [
           "/var/lib/containers/mylar3:/config"
           "/mnt/content/Comics:/comics"
