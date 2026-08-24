@@ -125,12 +125,14 @@ _: {
       };
 
       virtualisation.oci-containers.containers.bookorbit = {
-        # Upstream publishes semver git releases but only a rolling
-        # `latest` (and per-commit `sha-*`) to ghcr — no semver image
-        # tags — so we pin `latest` to its digest for reproducibility;
-        # renovate tracks `latest` and bumps the digest on its own.
+        # Upstream now publishes semver image tags to ghcr alongside the
+        # rolling `latest` / per-commit `sha-*`, so track the version tag
+        # rather than `latest`: renovate PRs then carry a real version
+        # number and changelog instead of an opaque digest bump, and a
+        # too-new release can be held back by version instead of being
+        # all-or-nothing. Still pinned to the digest for reproducibility.
         # renovate: datasource=docker depName=ghcr.io/bookorbit/bookorbit
-        image = "ghcr.io/bookorbit/bookorbit:latest@sha256:62048532c82ad4cfe9b728707136f140516f0f35766c2dc97969f22ed67794ae";
+        image = "ghcr.io/bookorbit/bookorbit:2.6.0@sha256:a7fa6d124d99bb5cda302160be0736b67e858f6957153e711edbba19e1b93057";
         # The image starts as root (caps below), repairs /data ownership,
         # then drops to PUID:PGID. Don't set `user` — it short-circuits
         # the entrypoint's permission fix.
