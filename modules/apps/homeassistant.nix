@@ -401,9 +401,17 @@
 
       # L2 presence on the IoT VLAN for mDNS/SSDP discovery. iot-network.nix
       # already builds the host `iot` vlan30 sub-iface (no host IP by default,
-      # for bambuddy's macvlan children). Native HA is in the host netns, so
-      # give the host itself a DHCP lease on vlan30 — VLAN exposure accepted.
-      # The old container macvlan + podman-network unit ordering are gone.
+      # for bambuddy's static macvlan). Native HA is in the host netns, so
+      # give the host itself a DHCP lease on vlan30.
+      #
+      # What the lease buys is L2 reachability *outbound* — HA and
+      # matter-server initiating to devices, with conntrack letting the
+      # answers home. It is emphatically not a decision to answer on vlan30:
+      # the NixOS allowlist is global, so holding a lease here silently put
+      # the whole server allowlist (SSH, the UniFi admin ports) on the IoT
+      # segment until #476. iot-network.nix now gates the interface at the
+      # head of nixos-fw; keep that gate in mind before assuming a port
+      # opened elsewhere is reachable from a device.
       networking.interfaces.iot.useDHCP = lib.mkIf iotEnabled (lib.mkForce true);
 
       myCaddy.apps.homeassistant = {
