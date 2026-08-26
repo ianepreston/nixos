@@ -9,9 +9,20 @@
 # displayName), and feeds the result into the upstream
 # `services.homepage-dashboard.services` list-of-single-key shape.
 #
-# No auth in front of homepage. Per-app links go to apps that gate
-# their own access (Authentik OIDC or forward_auth), so the dashboard
-# itself only exposes link metadata.
+# No auth in front of homepage — a deliberate, accepted risk, re-confirmed
+# in the 2026-08-26 service-exposure audit. Per-app links go to apps that
+# gate their own access (Authentik OIDC or forward_auth).
+#
+# This is NOT "link metadata only" any more — that claim predates the
+# widgets. Unauthenticated, this page renders:
+#   - host CPU / memory / disk for this server (the `widgets` block below)
+#   - live queue + library activity for jellyfin, lidarr, prowlarr, radarr,
+#     sabnzbd, seerr, sonarr (tiles that declare a `widget`)
+#   - the internal hostname map, including behemoth's admin URL on :10443
+#
+# Anything added here is readable by anyone who can reach Caddy on this
+# host — which includes recipients of a tailnet node share, not just the
+# home network. Weigh new tiles and widgets accordingly.
 _: {
   flake.modules.nixos.homepage =
     {
