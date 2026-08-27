@@ -33,7 +33,7 @@ _: {
 
       virtualisation.oci-containers.containers.apprise = {
         # renovate: datasource=docker depName=caronc/apprise
-        image = "caronc/apprise:v1.5.1";
+        image = "caronc/apprise:v1.5.2";
         ports = [ "127.0.0.1:${toString port}:8000" ];
         user = "${toString serverUid}:${toString serverGid}";
         volumes = [
