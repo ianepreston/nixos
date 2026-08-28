@@ -130,7 +130,7 @@ _: {
 
       virtualisation.oci-containers.containers.bindery = {
         # renovate: datasource=docker depName=ghcr.io/vavallee/bindery
-        image = "ghcr.io/vavallee/bindery:v1.33.1";
+        image = "ghcr.io/vavallee/bindery:v1.33.2";
         volumes = [
           "/var/lib/containers/bindery/config:/config"
           # Not currently read or written: BINDERY_LIBRARY_DIR points at the
