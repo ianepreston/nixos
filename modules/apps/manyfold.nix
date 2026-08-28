@@ -121,7 +121,7 @@ _: {
 
       virtualisation.oci-containers.containers.manyfold = {
         # renovate: datasource=docker depName=ghcr.io/manyfold3d/manyfold
-        image = "ghcr.io/manyfold3d/manyfold:0.147.2";
+        image = "ghcr.io/manyfold3d/manyfold:0.148.0";
         # The image runs an s6 supervisor as root and gosus down to
         # PUID:PGID for the rails + sidekiq processes. Don't set
         # `user` here — it would short-circuit the entrypoint.
