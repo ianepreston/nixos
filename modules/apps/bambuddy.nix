@@ -150,7 +150,7 @@ _: {
 
       virtualisation.oci-containers.containers.bambuddy = {
         # renovate: datasource=docker depName=ghcr.io/maziggy/bambuddy
-        image = "ghcr.io/maziggy/bambuddy:1.2.5.4";
+        image = "ghcr.io/maziggy/bambuddy:1.2.5.5";
         # Default podman bridge for Caddy/host port mapping. The vlan30
         # macvlan is attached via extraOptions below (so its MAC can be
         # pinned), not here.
