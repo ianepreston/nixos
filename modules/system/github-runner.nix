@@ -15,12 +15,28 @@
 # ProtectSystem, PrivateDevices, ...).
 #
 # We pin an explicit `user = "github-runner"` rather than letting the
-# upstream module use DynamicUser. Reason: the runner agent invokes
-# `nix build` against the system daemon, which means the user needs to
-# appear in `nix.settings.trusted-users` to use flake settings /
-# substituters — and trusted-users is name-based. DynamicUser names
-# resolve through nss-systemd, which works but is one more moving
-# piece; a real user with a stable UID is simpler to reason about.
+# upstream module use DynamicUser: DynamicUser names resolve through
+# nss-systemd, which works but is one more moving piece, and a real user
+# with a stable UID is simpler to reason about.
+#
+# The runner is deliberately NOT in `nix.settings.trusted-users`. Nix's
+# own docs are blunt about what that grants: "Adding a user to
+# `trusted-users` is essentially equivalent to giving that user root
+# access to the system." A trusted user can point the daemon at their own
+# substituters and signing keys, set `build-users-group = ""` so builds
+# run as root, disable the sandbox, or install a `post-build-hook` — so
+# anything executing as the runner (a third-party action, a malicious
+# workflow) would own this host outright.
+#
+# CI does not need it. Trust governs the ability to *override* restricted
+# settings from the client, not to receive them: `experimental-features`
+# comes from `modules/profiles/base.nix` via /etc/nix/nix.conf and applies
+# to every user. There is no `nixConfig` block in flake.nix for
+# `accept-flake-config` to accept, and no custom substituters anywhere in
+# this repo. If CI ever does need a setting, declare it system-wide in
+# `nix.settings` (or, for caches specifically, `trusted-substituters` —
+# a pre-approved list an untrusted user may opt into) rather than handing
+# the runner blanket override rights.
 #
 # PR-from-fork safety lives in the workflow (`.github/workflows/check.yml`),
 # not here: a fork PR can edit workflow YAML, so the `build` job is
@@ -92,10 +108,6 @@ _: {
           pkgs.jq
         ];
       };
-
-      # `nix build` against the system daemon needs flake / substituter
-      # settings the daemon only honours for trusted users.
-      nix.settings.trusted-users = [ runnerUser ];
 
       # Preserve the runner's registration credentials across the
       # impermanence wipe. Without this, the agent re-registers with
