@@ -34,6 +34,25 @@
 # `snmp_pfsense` scrape job in victoriametrics.nix, and deliberate for
 # the same reason: neither host depends on the other being up.
 #
+# Firewall events arrive as pfSense's positional filterlog CSV, which is
+# split into `fw_*` fields at ingest so alerts and dashboards can filter
+# on action / interface / addresses / ports instead of substring-matching
+# a blob. See the pfsense_filterlog transform for the format notes.
+#
+# Operational hazard, learned the hard way: if this listener is down
+# while pfSense is sending, the kernel answers each datagram with an
+# ICMP port-unreachable (the firewall rule below accepts the packet, so
+# it reaches a closed port rather than being dropped). FreeBSD syslogd
+# takes the resulting ECONNREFUSED as fatal for that target, logs
+# `sendto: Connection refused`, and then stops sending to it *for good* —
+# it never retries and never logs again. Recovery requires restarting
+# syslogd on the router (`pfSsh.php playback svc restart syslogd`;
+# a SIGHUP kills it rather than reloading it). So a vector outage here
+# does not merely pause ingest, it silently detaches the router until
+# someone intervenes on the router. Any alerting built on this data
+# should therefore alert on *absence* of pfSense events, not only on
+# their content — a quiet feed is the failure mode, not a calm network.
+#
 # The journal side is loopback-only. The syslog listener is the one
 # externally-reachable surface in this module, and it is opened only to
 # the router's own address (see the firewall block below). The vector
@@ -151,13 +170,85 @@ _: {
                 }
               '';
             };
+
+            # pfSense's filterlog ships one positional CSV row per
+            # firewall event, which is queryable only by substring until
+            # it is split into fields — `fw_action:block AND
+            # fw_dst_port:22` is the shape alerts and dashboards need.
+            #
+            # The layout is NOT fixed-width: the first ten fields are
+            # common, then the IP header differs by version, and the
+            # tail differs by protocol. Observed on the live feed:
+            # v4/tcp is 29 fields, v4/udp and v4/icmp are 23, v4/igmp
+            # and v4/gre are 21 (their tail is a bare `datalength=N`,
+            # not ports). So every read past the common prefix is
+            # length-guarded rather than assumed present.
+            #
+            #   common   0 rule, 3 tracker, 4 interface, 6 action,
+            #            7 direction, 8 IP version
+            #   IPv4     16 proto name, 17 length, 18 src, 19 dst
+            #   IPv6     12 proto name, 13 proto id, 14 length,
+            #            15 src, 16 dst
+            #
+            # Note IPv6 orders the protocol *name* before its number
+            # while IPv4 does the reverse, which is why the two branches
+            # cannot share offsets. IPv6 also spells the name upper-case
+            # ("TCP", "ICMPv6"), so it is downcased to keep `fw_proto`
+            # queryable the same way across both.
+            #
+            # Ports stay strings like every other parsed field —
+            # VictoriaLogs parses numerically for `range()` filters, so
+            # nothing is lost, and a single type per column is kept.
+            # The raw CSV stays in `.message`; these are additions, the
+            # same "keep both" rationale as the enrich transforms above.
+            # Deliberately NOT added to `_stream_fields` — source IPs
+            # are unbounded and stream keys must stay low-cardinality.
+            pfsense_filterlog = {
+              type = "remap";
+              inputs = [ "pfsense_enrich" ];
+              source = ''
+                if .unit == "filterlog" {
+                  f = split(to_string(.message) ?? "", ",")
+                  if length(f) > 9 {
+                    .fw_rule = f[0]
+                    .fw_tracker = f[3]
+                    .fw_interface = f[4]
+                    .fw_action = f[6]
+                    .fw_direction = f[7]
+                    .fw_ipver = f[8]
+
+                    if f[8] == "4" && length(f) > 19 {
+                      proto = downcase(f[16]) ?? ""
+                      .fw_proto = proto
+                      .fw_src_ip = f[18]
+                      .fw_dst_ip = f[19]
+                      if (proto == "tcp" || proto == "udp") && length(f) > 21 {
+                        .fw_src_port = f[20]
+                        .fw_dst_port = f[21]
+                      }
+                    }
+
+                    if f[8] == "6" && length(f) > 16 {
+                      proto = downcase(f[12]) ?? ""
+                      .fw_proto = proto
+                      .fw_src_ip = f[15]
+                      .fw_dst_ip = f[16]
+                      if (proto == "tcp" || proto == "udp") && length(f) > 18 {
+                        .fw_src_port = f[17]
+                        .fw_dst_port = f[18]
+                      }
+                    }
+                  }
+                }
+              '';
+            };
           };
 
           sinks.victorialogs = {
             type = "elasticsearch";
             inputs = [
               "journal_enrich"
-              "pfsense_enrich"
+              "pfsense_filterlog"
             ];
             endpoints = [
               "http://127.0.0.1:${toString victorialogsPort}/insert/elasticsearch/"
