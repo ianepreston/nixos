@@ -8,6 +8,11 @@ name: update flake.lock
 #   FLAKE_UPDATE_APP_PRIVATE_KEY repository Actions secrets.
 # - Do not grant the app access to nix-secrets; this workflow uses
 #   NIX_SECRETS_DEPLOY_KEY for that private flake input.
+#
+# Third-party actions are pinned to full commit SHAs (tag in a trailing
+# comment for Renovate) — see the rationale header in check.yml. This job runs
+# on the self-hosted `nixos` runner, which already has Nix, so it does not
+# install it.
 on:
   schedule:
     # 09:30 UTC is before 04:00 Monday in America/Edmonton year-round.
@@ -30,22 +35,13 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            lazy-trees = false
-            always-allow-substitutes = false
       # nix-secrets is the only private flake input. Load its read-only
       # deploy key before any nix command so nix's git fetcher can clone it.
       - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.10.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
       - name: Trust github.com host key
@@ -58,7 +54,7 @@ jobs:
       - name: Mint flake update app token
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.FLAKE_UPDATE_APP_ID }}
           private-key: ${{ secrets.FLAKE_UPDATE_APP_PRIVATE_KEY }}
@@ -85,7 +81,7 @@ jobs:
           printf '%s\n' "$node_bin" >> "$GITHUB_PATH"
       - name: Update flake.lock
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dryRun != true }}
-        uses: DeterminateSystems/update-flake-lock@v28
+        uses: DeterminateSystems/update-flake-lock@834c491b2ece4de0bbd00d85214bb5e83b4da5c6 # v28
         with:
           token: ${{ steps.app-token.outputs.token }}
           branch: automated/flake-update
