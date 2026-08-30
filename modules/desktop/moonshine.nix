@@ -33,17 +33,22 @@
                 "/run/current-system/sw/bin/steam"
                 "steam://open/bigpicture"
               ];
-              # `pre_command` below is wired up as ExecStartPre on the
-              # transient moonshine-session.service, and moonshine gives the
-              # whole systemd start job only `launch_timeout_secs` to finish.
-              # At the default of 2 that budget is smaller than the shutdown
-              # wait the pre_command itself performs, so any launch that finds
-              # Steam running is killed mid-wait (SIGTERM to the control
-              # process) and the session fails. Must stay comfortably above
-              # the ~30s worst case below plus Steam's own exec time — an
-              # observed cold launch that did hit the shutdown wait took
-              # 45.03s end to end, so anything near 45 has no margin at all.
-              launch_timeout_secs = 90;
+              # NOT a launch deadline — it is a mandatory dwell. After the
+              # systemd start job returns, moonshine watches the transient
+              # unit for `launch_timeout_secs` and only reports failure if the
+              # unit goes inactive/failed in that window; if nothing happens it
+              # sleeps the whole duration and *then* reports success
+              # (moonshine-core/src/session/application.rs, the
+              # `Err(_) => Ok(path)` arm). Meanwhile the Moonlight client's
+              # /launch request is capped by the hardcoded
+              # APP_LAUNCH_HTTP_TIMEOUT_SECS = 60. So a value at or above 60
+              # makes *every* launch fail at exactly 60s, no matter what the
+              # app does — which is what 90 did here. Keep it well under 60;
+              # it only needs to be long enough to catch a Steam that bails
+              # out immediately. The pre_command does not need to fit in this
+              # budget: ExecStartPre is covered by the separate hardcoded
+              # START_JOB_TIMEOUT = 90s, explicitly decoupled upstream.
+              launch_timeout_secs = 10;
               # Steam is single-instance per user: with a desktop Steam
               # already running, the steam:// URL is handed to *that*
               # process, Big Picture opens on the physical desktop, and the
@@ -85,6 +90,14 @@
       users.users.${hostSpec.username}.extraGroups = [
         "moonshine"
         "input"
+        # `hardware.uinput.enable` ships 99-local.rules, which sorts after
+        # moonshine's own 60-moonshine.rules and resets /dev/uinput to
+        # root:uinput 0660 — so the GROUP="input" the moonshine rule asks for
+        # never survives. With a desktop session logged in the uaccess ACL
+        # hides this; streaming to a logged-out host (the case this module
+        # exists for) has no ACL and the input handler fails to open
+        # /dev/uinput. Being in the node's actual group is what covers it.
+        "uinput"
       ];
 
       home-manager.sharedModules = [
