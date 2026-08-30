@@ -11,12 +11,13 @@
 # Prometheus/Loki monoliths-in-microservice-clothing were paying
 # distributed-systems complexity without using any of the benefit):
 #   VictoriaMetrics — scrapes node/postgres/mysqld/redis/caddy/cadvisor/
-#                     itself; ephemeral on-disk, 15d retention.
+#                     vector/itself; ephemeral on-disk, 15d retention.
 #   vmalert         — evaluates the rule YAML against VM; emits to
 #                     alertmanager. PromQL-superset, so the existing
 #                     rule expressions move over unchanged.
 #   VictoriaLogs    — single-binary log store, 30d retention.
-#   Vector          — ships the systemd journal into VictoriaLogs via
+#   Vector          — ships the systemd journal and pfSense's remote
+#                     syslog into VictoriaLogs via
 #                     VL's native elasticsearch-bulk ingest endpoint
 #                     (`/insert/elasticsearch/_bulk`); replaced promtail
 #                     in #127 so every journal field stays queryable

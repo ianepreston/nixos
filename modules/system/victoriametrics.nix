@@ -11,7 +11,9 @@
 #
 # Components:
 #   victoriametrics — scrapes node/postgres/mysqld/redis/caddy/cadvisor/
-#                     itself; 15d retention, ephemeral on-disk.
+#                     vector/itself; 15d retention, ephemeral on-disk.
+#                     The vector job exists so a silent pfSense syslog
+#                     feed is alertable — see PfsenseLogsAbsent.
 #   vmalert         — evaluates the rule YAML and emits to alertmanager.
 #                     MetricsQL is a strict PromQL superset, so the
 #                     existing rule expressions move over unchanged.
@@ -45,6 +47,9 @@ _: {
       alertmanagerPort = 9093;
       caddyMetricsPort = 2019;
       cadvisorPort = 8081;
+      # Vector's prometheus_exporter sink; declared in vector.nix, repeated
+      # here the same way the other loopback exporter ports are.
+      vectorMetricsPort = 9598;
       gatusPort = 8084;
 
       # Same alert content as the prior prometheus.ruleFiles; vmalert
@@ -95,6 +100,40 @@ _: {
                 annotations = {
                   summary = "systemd unit {{ $labels.name }} failed on {{ $labels.instance }}";
                   description = "Unit {{ $labels.name }} has been in failed state for 5m on {{ $labels.instance }}.";
+                };
+              }
+              {
+                # pfSense's remote syslog feed going silent is a failure
+                # that is invisible in the log data itself — an empty feed
+                # looks exactly like a quiet network. It is also not
+                # self-healing: if this host's vector listener is ever
+                # down while pfSense is sending, the datagram reaches a
+                # closed port (the firewall rule accepts it), the kernel
+                # answers ICMP port-unreachable, and FreeBSD syslogd
+                # treats that ECONNREFUSED as fatal for the target and
+                # stops sending to it permanently. Recovery is a syslogd
+                # restart *on the router*, so nothing here will fix it.
+                # Hence alerting on absence. See modules/system/vector.nix.
+                #
+                # The `and on(instance) up{job="vector"} == 1` guard keeps
+                # this distinct from vector simply being down, which
+                # InstanceDown and SystemdUnitFailed already cover — this
+                # rule is specifically "vector is healthy but the router
+                # stopped talking to it", which is the case nothing else
+                # can see.
+                #
+                # 15m window with a 10m confirmation. Measured over a 30m
+                # sample of the live feed, the largest gap between
+                # consecutive events was 40s (a 6.7m gap in the same
+                # sample was an induced outage, not normal quiet), so this
+                # carries better than a 20x margin over observed silence.
+                alert = "PfsenseLogsAbsent";
+                expr = ''rate(vector_component_received_events_total{component_id="pfsense",component_kind="source"}[15m]) == 0 and on(instance) up{job="vector"} == 1'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "No pfSense syslog received on {{ $labels.instance }}";
+                  description = "vector is up but has received no events from the pfSense syslog source for 15m. The router has most likely detached this target after a `sendto: Connection refused` — check `grep syslogd /var/log/system.log` on behemoth, then restore it with `pfSsh.php playback svc restart syslogd`. Note a SIGHUP kills syslogd rather than reloading it.";
                 };
               }
               {
@@ -815,6 +854,13 @@ _: {
               {
                 job_name = "gatus";
                 static_configs = [ { targets = [ "127.0.0.1:${toString gatusPort}" ]; } ];
+              }
+              {
+                # Vector's internal telemetry. Scraped mainly so the
+                # pfSense syslog feed can be alerted on when it goes
+                # silent — see PfsenseLogsAbsent below.
+                job_name = "vector";
+                static_configs = [ { targets = [ "127.0.0.1:${toString vectorMetricsPort}" ]; } ];
               }
               # ========== External device SNMP ==========
               # Multi-target scrape: one snmp_exporter, many devices.

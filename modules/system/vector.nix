@@ -69,6 +69,12 @@ _: {
     let
       victorialogsPort = 9428;
 
+      # Vector's own telemetry, exported for VictoriaMetrics to scrape.
+      # Paired with the `vector` scrape job in victoriametrics.nix, which
+      # repeats this port number (same local-literal convention as
+      # caddyMetricsPort / cadvisorPort / gatusPort there).
+      metricsPort = 9598;
+
       # pfSense hardcodes 514 as the default remote-syslog port and the
       # GUI takes the target as `IP[:port]`, so the receiver meets it
       # there rather than the other way round.
@@ -85,25 +91,38 @@ _: {
         journaldAccess = true;
 
         settings = {
-          sources.journald = {
-            type = "journald";
-            # Default reads all units the systemd-journal group can see.
-            # No `current_boot_only` — we want history across reboots
-            # since vector persists the cursor.
-          };
+          sources = {
+            journald = {
+              type = "journald";
+              # Default reads all units the systemd-journal group can see.
+              # No `current_boot_only` — we want history across reboots
+              # since vector persists the cursor.
+            };
 
-          # pfSense remote syslog. Bound on all interfaces because the
-          # host's mgmt address differs per host (192.168.10.10 on
-          # hpp-1, .11 on amos1) and is not carried in hostSpec; the
-          # firewall rule below is the enforcement point, not the bind
-          # address. pfSense is set to RFC 5424 (`<format>rfc5424`) —
-          # vector's syslog source parses both that and RFC 3164, but
-          # only 5424 carries a year and a timezone in the timestamp,
-          # so the format setting is load-bearing for correct ordering.
-          sources.pfsense = {
-            type = "syslog";
-            mode = "udp";
-            address = "0.0.0.0:${toString syslogPort}";
+            # pfSense remote syslog. Bound on all interfaces because the
+            # host's mgmt address differs per host (192.168.10.10 on
+            # hpp-1, .11 on amos1) and is not carried in hostSpec; the
+            # firewall rule below is the enforcement point, not the bind
+            # address. pfSense is set to RFC 5424 (`<format>rfc5424`) —
+            # vector's syslog source parses both that and RFC 3164, but
+            # only 5424 carries a year and a timezone in the timestamp,
+            # so the format setting is load-bearing for correct ordering.
+            pfsense = {
+              type = "syslog";
+              mode = "udp";
+              address = "0.0.0.0:${toString syslogPort}";
+            };
+
+            # Vector's own event counters. These exist to make *absence*
+            # detectable: per the hazard noted above, a stalled pfSense feed
+            # is invisible from the log data itself — the feed simply goes
+            # quiet, which is indistinguishable from a calm network. Counting
+            # events per source turns that into a metric that can be alerted
+            # on when its rate hits zero. Also covers the plain case of
+            # vector being up but a source being broken.
+            internal_metrics = {
+              type = "internal_metrics";
+            };
           };
 
           transforms = {
@@ -244,37 +263,47 @@ _: {
             };
           };
 
-          sinks.victorialogs = {
-            type = "elasticsearch";
-            inputs = [
-              "journal_enrich"
-              "pfsense_filterlog"
-            ];
-            endpoints = [
-              "http://127.0.0.1:${toString victorialogsPort}/insert/elasticsearch/"
-            ];
-            mode = "bulk";
-            api_version = "v8";
-            compression = "gzip";
-            # VL's bulk endpoint doesn't implement the ES `/` healthcheck
-            # vector probes by default; disabling it avoids a noisy
-            # boot-time warning. Real liveness is the steady stream of
-            # accepted events in vector's own logs.
-            healthcheck.enabled = false;
-            # VL ingest query params — define which field carries the
-            # log body, which carries the timestamp, and which fields
-            # form the stream key (low-cardinality identifier per log
-            # stream). `host` + `unit` matches the prior promtail
-            # label set and keeps stream count bounded; per-PID or
-            # per-boot streams would explode cardinality and aren't
-            # what stream fields are for.
-            query = {
-              _msg_field = "message";
-              _time_field = "timestamp";
-              _stream_fields = "host,unit";
+          sinks = {
+            # Loopback-only, like every other exporter on these hosts.
+            vector_metrics = {
+              type = "prometheus_exporter";
+              inputs = [ "internal_metrics" ];
+              address = "127.0.0.1:${toString metricsPort}";
+            };
+
+            victorialogs = {
+              type = "elasticsearch";
+              inputs = [
+                "journal_enrich"
+                "pfsense_filterlog"
+              ];
+              endpoints = [
+                "http://127.0.0.1:${toString victorialogsPort}/insert/elasticsearch/"
+              ];
+              mode = "bulk";
+              api_version = "v8";
+              compression = "gzip";
+              # VL's bulk endpoint doesn't implement the ES `/` healthcheck
+              # vector probes by default; disabling it avoids a noisy
+              # boot-time warning. Real liveness is the steady stream of
+              # accepted events in vector's own logs.
+              healthcheck.enabled = false;
+              # VL ingest query params — define which field carries the
+              # log body, which carries the timestamp, and which fields
+              # form the stream key (low-cardinality identifier per log
+              # stream). `host` + `unit` matches the prior promtail
+              # label set and keeps stream count bounded; per-PID or
+              # per-boot streams would explode cardinality and aren't
+              # what stream fields are for.
+              query = {
+                _msg_field = "message";
+                _time_field = "timestamp";
+                _stream_fields = "host,unit";
+              };
             };
           };
         };
+
       };
 
       # Open 514/udp to the router only. Source-restricted rather than
