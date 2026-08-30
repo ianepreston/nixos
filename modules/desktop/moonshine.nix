@@ -1,15 +1,9 @@
 # Moonshine - Simple Aspect
 # Game streaming server for Moonlight clients.
 #
-# Replaces sunshine on terra (issue #119). Sunshine captures whatever the
-# session compositor is scanning out, which made every stream hostage to the
-# physical monitor: powered off, asleep, or unplugged and there is no CRTC to
-# capture. Moonshine instead runs each stream in its own headless compositor,
+# Moonshine runs each stream in its own headless compositor,
 # so nothing about the host's displays is load-bearing, and the streamed app
-# gets a session of its own rather than sharing the desktop's. That second
-# property is what fixes the Big Picture tile: under sunshine the steam://
-# URI was handed to the desktop's Steam, so the stream came up showing the
-# desktop and BPM never appeared on it (#119, requirement 3).
+# gets a session of its own rather than sharing the desktop's.
 { inputs, ... }:
 {
   flake.modules.nixos.moonshine =
