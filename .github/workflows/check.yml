@@ -1,5 +1,21 @@
 ---
 name: check
+# Third-party actions are pinned to full commit SHAs, with the tag kept in a
+# trailing comment for Renovate. A tag or branch is mutable: whoever owns the
+# action repo can repoint it at new code that then executes here — on the
+# self-hosted runner, with NIX_SECRETS_DEPLOY_KEY loaded into the agent — with
+# no merge on our side. A SHA can't move, so an upstream change only reaches
+# us through a Renovate PR, which renovate.json holds for `minimumReleaseAge`
+# (7 days) and, for same-tag digest moves, keeps off the auto-merge path.
+#
+# The self-hosted `nixos` runner already has Nix, so the jobs below don't
+# install it. nix-installer-action detected this and short-circuited
+# ("Nix was already installed, using existing install") without ever applying
+# its `extra-conf`, so dropping it changed nothing but removes a third-party
+# action from every job that touches the deploy key or the runner's
+# trusted-user nix daemon. Daemon settings come from the host config
+# (modules/profiles/base.nix sets experimental-features). Only the
+# ubuntu-latest `lint` job still installs Nix, where it is a real install.
 on:
   push:
     branches: [main]
@@ -22,23 +38,14 @@ jobs:
     runs-on: [self-hosted, nixos]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-      - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            lazy-trees = false
-            always-allow-substitutes = false
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # nix-secrets is a private flake input fetched via git+ssh from
       # github.com/ianepreston/nix-secrets. Inside CI we use a deploy
       # key (read-only) registered on that repo to authenticate; the
       # ssh-agent loaded here is what nix's git fetcher picks up when
       # cloning the input.
       - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.10.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
       # `nix flake check --all-systems` evaluates every config in
@@ -110,18 +117,9 @@ jobs:
         host: [hpp-1, terra, amos1, luna]
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-      - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            lazy-trees = false
-            always-allow-substitutes = false
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.10.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
       - name: Build ${{ matrix.host }}
@@ -156,18 +154,9 @@ jobs:
     needs: flake-check
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
-      - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
-        with:
-          determinate: false
-          extra-conf: |
-            experimental-features = nix-command flakes
-            accept-flake-config = true
-            lazy-trees = false
-            always-allow-substitutes = false
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Authorize nix-secrets clone
-        uses: webfactory/ssh-agent@v0.10.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
       - name: Build rollback-root-resilience VM test
@@ -193,9 +182,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
         with:
           determinate: false
           extra-conf: |
