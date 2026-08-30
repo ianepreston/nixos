@@ -72,7 +72,7 @@ and resources if you want to build your own.
 │   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
 │   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
 │   ├── hardware/          # Hardware-specific modules (intel-quicksync, nvidia, yubikey, keyboards, rgb, xreal-headset)
-│   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes, sunshine, quickemu)
+│   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes, moonshine, quickemu)
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
 │   ├── programs/          # Application modules (browser, ghostty, comms, media, obsidian, etc.)
 │   └── hosts/             # Per-host configurations and hardware/disk definitions
@@ -82,19 +82,19 @@ and resources if you want to build your own.
 
 ## Hosts
 
-| Host                  | Platform       | Config Type            | Description                                                              |
-| --------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------ |
-| **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060       |
-| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming |
-| **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding      |
-| **amos1**             | x86_64-linux   | `nixosConfigurations`  | Prod server — `server` + `server-apps` + NVIDIA transcoding              |
-| **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config     |
-| **penguin**           | x86_64-linux   | `homeConfigurations`   | Standalone home-manager (WSL / non-NixOS Linux)                          |
-| **toshibachromebook** | x86_64-linux   | `nixosConfigurations`  | Minimal ChromeBook config                                                |
+| Host                  | Platform       | Config Type            | Description                                                               |
+| --------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------- |
+| **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060        |
+| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming  |
+| **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding       |
+| **amos1**             | x86_64-linux   | `nixosConfigurations`  | Prod server — `server` + `server-apps` + NVIDIA transcoding               |
+| **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config      |
+| **penguin**           | x86_64-linux   | `homeConfigurations`   | Standalone home-manager (WSL / non-NixOS Linux)                           |
+| **toshibachromebook** | x86_64-linux   | `nixosConfigurations`  | Minimal ChromeBook config                                                 |
 | **xps13**             | x86_64-linux   | `nixosConfigurations`  | Dell XPS 13 laptop — headless workstation + GNOME (built-in display dead) |
-| **tests-server**      | x86_64-linux   | `nixosConfigurations`  | Server-shaped VM target — drives `task recovery:test:full` restore drill |
-| **tests-desktop**     | x86_64-linux   | `nixosConfigurations`  | Desktop-shaped VM target — workstation profile iteration                 |
-| **iso**               | x86_64-linux   | `nixosConfigurations`  | Custom NixOS installer/recovery ISO                                      |
+| **tests-server**      | x86_64-linux   | `nixosConfigurations`  | Server-shaped VM target — drives `task recovery:test:full` restore drill  |
+| **tests-desktop**     | x86_64-linux   | `nixosConfigurations`  | Desktop-shaped VM target — workstation profile iteration                  |
+| **iso**               | x86_64-linux   | `nixosConfigurations`  | Custom NixOS installer/recovery ISO                                       |
 
 ## Module System
 
@@ -125,88 +125,83 @@ profile level, so they automatically apply to all users on a host.
 ## Server App Pattern
 
 Server-side applications (web apps hosted behind Caddy) live in
-`modules/apps/<appname>.nix` and are composed into the `server-apps`
-profile (which is itself layered on top of `server` — the core
-infra profile that owns caddy, postgres, authentik, observability,
-backups, etc.). Each app module is self-contained: it declares the
-OCI container or native service, contributes a Caddy route, any
-database/user it needs, its sops secrets, an authentik blueprint
-(if SSO-protected), and a homepage tile — all in one place.
-`modules/apps/mealie.nix` is the canonical example for a
-containerized, postgres-backed, OIDC-integrated app.
+`modules/apps/<appname>.nix` and are composed into the `server-apps` profile
+(which is itself layered on top of `server` — the core infra profile that owns
+caddy, postgres, authentik, observability, backups, etc.). Each app module is
+self-contained: it declares the OCI container or native service, contributes a
+Caddy route, any database/user it needs, its sops secrets, an authentik
+blueprint (if SSO-protected), and a homepage tile — all in one place.
+`modules/apps/mealie.nix` is the canonical example for a containerized,
+postgres-backed, OIDC-integrated app.
 
-App modules contribute to a small set of aggregator options declared
-inline next to the services that consume them (in `modules/system/` or,
-for `myAuthentik.*`, `modules/apps/authentik.nix`):
+App modules contribute to a small set of aggregator options declared inline next
+to the services that consume them (in `modules/system/` or, for `myAuthentik.*`,
+`modules/apps/authentik.nix`):
 
 - `myCaddy.apps.<name>` — hands a route block to the wildcard
-  `*.${serverDomain}` virtualHost (one wildcard cert covers every
-  app, dodging Let's Encrypt rate limits).
-- `myPostgresApp.<name>` — provisions the database/role plus a
-  sops-managed password rotation oneshot, so containerized apps
-  connecting over TCP get a passworded role without per-app
-  boilerplate.
-- `myAuthentik.oidcApps.<name>` — for apps that speak OIDC: declares
-  the sops secret pair, contributes a blueprint dir, stacks the
-  necessary worker-side env vars onto authentik, and optionally
-  renders a per-app env file consumed by the upstream image.
-- `myAuthentik.forwardAuthApps.<name>` — for apps that don't speak
-  OIDC: generates the proxy provider/application/policy binding
-  blueprint and a Caddy `forward_auth` route in one go (the embedded
-  outpost's `providers` list is owned by a single merged blueprint
-  per host so apps don't clobber each other).
+  `*.${serverDomain}` virtualHost (one wildcard cert covers every app, dodging
+  Let's Encrypt rate limits).
+- `myPostgresApp.<name>` — provisions the database/role plus a sops-managed
+  password rotation oneshot, so containerized apps connecting over TCP get a
+  passworded role without per-app boilerplate.
+- `myAuthentik.oidcApps.<name>` — for apps that speak OIDC: declares the sops
+  secret pair, contributes a blueprint dir, stacks the necessary worker-side env
+  vars onto authentik, and optionally renders a per-app env file consumed by the
+  upstream image.
+- `myAuthentik.forwardAuthApps.<name>` — for apps that don't speak OIDC:
+  generates the proxy provider/application/policy binding blueprint and a Caddy
+  `forward_auth` route in one go (the embedded outpost's `providers` list is
+  owned by a single merged blueprint per host so apps don't clobber each other).
 - `myHomepage.tiles.<name>` — adds a tile to the homepage dashboard.
 
 ### Conventions
 
 - **Registration:** `flake.modules.nixos.<appname>`, then add the name to the
   `imports` list in `modules/profiles/server-apps.nix`.
-- **Container runtime:** `virtualisation.oci-containers` with the podman
-  backend (rootful — see `modules/system/oci-containers.nix`). Containers
-  drop privileges via `user = "${serverUid}:${serverGid}"` so files on
-  NFS-mounted volumes line up with the Synology UID/GID (1029/1030 + 65536).
-- **NFS UID alignment (containers AND native services):** anything that
-  reads or writes the NFS-mounted Synology share (under `/mnt/content`,
-  `/mnt/backups`, etc.) must run as `server-${env}:servers`
-  (1029/1030 + 65536). The NAS enforces UID-based access — a service
-  running as its own per-package system user (e.g. the upstream
-  jellyfin module's default `jellyfin:jellyfin`) will silently see an
-  empty directory listing on the NFS mount. For native modules that
-  expose `user`/`group` options (jellyfin, etc.), pin them to
+- **Container runtime:** `virtualisation.oci-containers` with the podman backend
+  (rootful — see `modules/system/oci-containers.nix`). Containers drop
+  privileges via `user = "${serverUid}:${serverGid}"` so files on NFS-mounted
+  volumes line up with the Synology UID/GID (1029/1030 + 65536).
+- **NFS UID alignment (containers AND native services):** anything that reads or
+  writes the NFS-mounted Synology share (under `/mnt/content`, `/mnt/backups`,
+  etc.) must run as `server-${env}:servers` (1029/1030 + 65536). The NAS
+  enforces UID-based access — a service running as its own per-package system
+  user (e.g. the upstream jellyfin module's default `jellyfin:jellyfin`) will
+  silently see an empty directory listing on the NFS mount. For native modules
+  that expose `user`/`group` options (jellyfin, etc.), pin them to
   `server-${hostSpec.serverEnvironment}` and `servers`. Existing
   `/var/lib/<app>` state created with the wrong owner needs a one-time
-  `sudo chown -R server-<env>:servers` on first deploy — `tmpfiles`
-  rules with type `d` won't re-chown an existing directory.
+  `sudo chown -R server-<env>:servers` on first deploy — `tmpfiles` rules with
+  type `d` won't re-chown an existing directory.
 - **Networking:** bind container ports to `127.0.0.1` only — Caddy fronts
   everything externally. Containers reach host services (e.g. postgres) via
-  `host.containers.internal`, which resolves to the podman bridge gateway;
-  the bridge is in `networking.firewall.trustedInterfaces`.
-- **Reverse proxy:** add a `myCaddy.apps.<name>` entry inside the same
-  module — `host` defaults to `<name>.${hostSpec.serverDomain}` and
-  `routeConfig` is the body of the `handle` block (typically a
-  `reverse_proxy localhost:<port>` directive). The wildcard vhost in
-  `modules/system/caddy.nix` folds these into one matcher per app, so
-  one wildcard cert (DNS-01 via Cloudflare) covers them all.
+  `host.containers.internal`, which resolves to the podman bridge gateway; the
+  bridge is in `networking.firewall.trustedInterfaces`.
+- **Reverse proxy:** add a `myCaddy.apps.<name>` entry inside the same module —
+  `host` defaults to `<name>.${hostSpec.serverDomain}` and `routeConfig` is the
+  body of the `handle` block (typically a `reverse_proxy localhost:<port>`
+  directive). The wildcard vhost in `modules/system/caddy.nix` folds these into
+  one matcher per app, so one wildcard cert (DNS-01 via Cloudflare) covers them
+  all.
 - **Image versions:** pin the tag in the module and put a renovate annotation
   above it so updates are automated:
   ```nix
   # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
   image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
   ```
-- **Volumes:** state lives under `/var/lib/containers/<appname>` (single
-  prefix lets the backup module cover every app automatically). Create the
-  directory via `systemd.tmpfiles.rules` owned by the server UID/GID and
-  bind-mount it into the container.
-- **Postgres:** declare `myPostgresApp.<name>.consumerService =
-  "podman-<app>.service"` (or whatever unit consumes the role). The
-  helper in `modules/system/postgresql.nix` handles the
-  database/role via `ensureDatabases`/`ensureUsers`, the sops secret,
-  and the rotate-on-secret-change oneshot wired `before` the consumer
-  unit. The app is responsible for plumbing
-  `${config.sops.placeholder."<app>/db_password"}` into its own env
-  file (e.g. as `POSTGRES_PASSWORD`) and pointing the upstream
+- **Volumes:** state lives under `/var/lib/containers/<appname>` (single prefix
+  lets the backup module cover every app automatically). Create the directory
+  via `systemd.tmpfiles.rules` owned by the server UID/GID and bind-mount it
+  into the container.
+- **Postgres:** declare
+  `myPostgresApp.<name>.consumerService = "podman-<app>.service"` (or whatever
+  unit consumes the role). The helper in `modules/system/postgresql.nix` handles
+  the database/role via `ensureDatabases`/`ensureUsers`, the sops secret, and
+  the rotate-on-secret-change oneshot wired `before` the consumer unit. The app
+  is responsible for plumbing `${config.sops.placeholder."<app>/db_password"}`
+  into its own env file (e.g. as `POSTGRES_PASSWORD`) and pointing the upstream
   service at `host.containers.internal:5432` with the matching role
-  + db name.
+  - db name.
 - **Secrets:** declare per-app entries under `sops.secrets."<app>/..."` with
   `sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml"`. For env vars the
   container needs, render a `sops.templates."<app>.env"` and pass it via
@@ -217,65 +212,61 @@ for `myAuthentik.*`, `modules/apps/authentik.nix`):
 
 The systemd services that run containers (e.g. `podman-mealie.service`) are
 root-owned, so use `sudo podman ps`, `sudo podman logs <name>`, etc. for
-inspection. Rootless podman as your user works for ad-hoc containers you
-start yourself, but it can't see the system-managed ones.
+inspection. Rootless podman as your user works for ad-hoc containers you start
+yourself, but it can't see the system-managed ones.
 
 ### Backups and restore
 
 Server hosts run `modules/system/server-backups.nix`, which composes:
 
-- `services.postgresqlBackup` — daily `pg_dumpall` to
-  `/var/backup/postgresql` (gzip, runs at 02:00).
-- `services.mysqlBackup` — daily mariadb dump to `/var/backup/mysql`
-  (also at 02:00). Same restic snapshot picks both engines up.
+- `services.postgresqlBackup` — daily `pg_dumpall` to `/var/backup/postgresql`
+  (gzip, runs at 02:00).
+- `services.mysqlBackup` — daily mariadb dump to `/var/backup/mysql` (also at
+  02:00). Same restic snapshot picks both engines up.
 - `services.restic.backups.server` — daily restic snapshot of
-  `/var/backup/postgresql`, `/var/backup/mysql`, and
-  `/var/lib/containers` to `/mnt/backups/restic/${hostName}` on the
-  NFS-mounted Synology share (runs at 03:00 with a 30-minute
-  randomized delay). Retention:
+  `/var/backup/postgresql`, `/var/backup/mysql`, and `/var/lib/containers` to
+  `/mnt/backups/restic/${hostName}` on the NFS-mounted Synology share (runs at
+  03:00 with a 30-minute randomized delay). Retention:
   `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
 
-Apps that keep state outside `/var/lib/containers` (e.g. the native
-*arr stack, jellyfin, kavita, komga, audiobookshelf, readeck) extend
+Apps that keep state outside `/var/lib/containers` (e.g. the native \*arr stack,
+jellyfin, kavita, komga, audiobookshelf, readeck) extend
 `services.restic.backups.server.paths` themselves with their own
-`/var/lib/<app>` tree; the listOf merges via concat so the base paths
-stay intact.
+`/var/lib/<app>` tree; the listOf merges via concat so the base paths stay
+intact.
 
-SQLite-backed native apps additionally opt into the `mySqliteQuiesce`
-helper (`modules/system/sqlite-quiesce.nix`), which runs `sqlite3
-.backup` for each declared database into `/var/backup/sqlite/<app>/`
-immediately before each restic run. The staging root is added to the
-restic paths automatically, so each snapshot contains both the (hot,
-possibly torn) live file under `/var/lib/<app>/...` and a
-guaranteed-consistent copy under `/var/backup/sqlite/<app>/`. Apps
-currently using it: jellyfin, sonarr, radarr, lidarr, prowlarr,
-bazarr, kavita, komga, readeck, audiobookshelf.
+SQLite-backed native apps additionally opt into the `mySqliteQuiesce` helper
+(`modules/system/sqlite-quiesce.nix`), which runs `sqlite3 .backup` for each
+declared database into `/var/backup/sqlite/<app>/` immediately before each
+restic run. The staging root is added to the restic paths automatically, so each
+snapshot contains both the (hot, possibly torn) live file under
+`/var/lib/<app>/...` and a guaranteed-consistent copy under
+`/var/backup/sqlite/<app>/`. Apps currently using it: jellyfin, sonarr, radarr,
+lidarr, prowlarr, bazarr, kavita, komga, readeck, audiobookshelf.
 
-Only server-local app state is in scope. NAS-resident media under
-`/mnt/content` is protected NAS-side via Synology snapshots / Hyper Backup,
-not by restic.
+Only server-local app state is in scope. NAS-resident media under `/mnt/content`
+is protected NAS-side via Synology snapshots / Hyper Backup, not by restic.
 
-The restic password lives in `shared.yaml` (one value, all servers), so
-any host can decrypt any other host's repo for cross-host recovery
-testing. Each host still mounts the *other* environment's backup share
-read-only at `/mnt/<otherEnv>-backups` (see `nfsclient.nix`), so e.g.
-restoring prod state onto a dev host is a one-liner pointing restic at
+The restic password lives in `shared.yaml` (one value, all servers), so any host
+can decrypt any other host's repo for cross-host recovery testing. Each host
+still mounts the _other_ environment's backup share read-only at
+`/mnt/<otherEnv>-backups` (see `nfsclient.nix`), so e.g. restoring prod state
+onto a dev host is a one-liner pointing restic at
 `/mnt/prod-backups/restic/<prod-host>` — no extra credentials needed.
 
-The restic repo path is read-write from the host that owns it, so a
-compromised server or fat-fingered `rm` could in principle delete its
-own backups. Mitigate by enabling **Synology snapshots** on the
-`server-{dev,prod}-backups` shares — that's an out-of-band,
-client-immutable copy.
+The restic repo path is read-write from the host that owns it, so a compromised
+server or fat-fingered `rm` could in principle delete its own backups. Mitigate
+by enabling **Synology snapshots** on the `server-{dev,prod}-backups` shares —
+that's an out-of-band, client-immutable copy.
 
 #### Restore runbook (catastrophic rebuild)
 
-Recovery is an explicit operator action — there's intentionally no
-automatic restore on container start, since "first boot" and "restore
-after data loss" are different decisions.
+Recovery is an explicit operator action — there's intentionally no automatic
+restore on container start, since "first boot" and "restore after data loss" are
+different decisions.
 
-The `recovery:*` tasks in `taskfiles/recovery.yaml` automate every
-step below. Use them for the fast path:
+The `recovery:*` tasks in `taskfiles/recovery.yaml` automate every step below.
+Use them for the fast path:
 
 ```bash
 task bootstrap:reinstall HOST=<host> DEST=<ip>      # reinstall NixOS
@@ -284,44 +275,47 @@ task recovery:all HOST=<host> [SOURCE_HOST=<other>] # restore everything
 task recovery:mealie HOST=<host>
 ```
 
-`SOURCE_HOST` defaults to `HOST` (in-place restore); set it to a
-different host to seed from that host's restic repo (e.g.
-prod → dev). The longhand below documents what each per-app
-dispatcher actually does so the runbook keeps working if a task is
-unavailable or you need to deviate.
+`SOURCE_HOST` defaults to `HOST` (in-place restore); set it to a different host
+to seed from that host's restic repo (e.g. prod → dev). The longhand below
+documents what each per-app dispatcher actually does so the runbook keeps
+working if a task is unavailable or you need to deviate.
 
 1. **Reinstall the host:**
+
    ```bash
    task bootstrap:reinstall HOST=<host> DEST=<ip>
    ```
-   NixOS comes back up with the same module set; container services will
-   fail because their state directories are empty.
+
+   NixOS comes back up with the same module set; container services will fail
+   because their state directories are empty.
 
 2. **Pull state back from restic:**
+
    ```bash
    sudo restic -r /mnt/backups/restic/<host> \
      --password-file /run/secrets/restic/password \
      restore latest --target /
    ```
+
    This repopulates `/var/lib/containers/*` and `/var/backup/postgresql`.
 
-3. **Restore PostgreSQL.** With the default `services.postgresqlBackup`
-   config, the dump is a single `pg_dumpall` output at
-   `/var/backup/postgresql/all.sql.gz` (roles + every database). Replay
-   it into the running cluster:
+3. **Restore PostgreSQL.** With the default `services.postgresqlBackup` config,
+   the dump is a single `pg_dumpall` output at
+   `/var/backup/postgresql/all.sql.gz` (roles + every database). Replay it into
+   the running cluster:
 
    ```bash
    sudo -u postgres bash -c 'zcat /var/backup/postgresql/all.sql.gz | psql -v ON_ERROR_STOP=0 postgres'
    ```
 
    Expect benign errors for roles/databases that NixOS's `ensureUsers` /
-   `ensureDatabases` has already created (`role "mealie" already exists`,
-   etc.) — they don't stop the data-loading `\connect` blocks that follow.
+   `ensureDatabases` has already created (`role "mealie" already exists`, etc.)
+   — they don't stop the data-loading `\connect` blocks that follow.
    `ON_ERROR_STOP=0` keeps psql going past those.
 
-   If you'd rather start clean (and you're sure no other apps' data is in
-   the cluster), stop postgres, wipe its data dir, and let NixOS reinit
-   before replaying:
+   If you'd rather start clean (and you're sure no other apps' data is in the
+   cluster), stop postgres, wipe its data dir, and let NixOS reinit before
+   replaying:
 
    ```bash
    sudo systemctl stop postgresql
@@ -330,10 +324,10 @@ unavailable or you need to deviate.
    sudo -u postgres bash -c 'zcat /var/backup/postgresql/all.sql.gz | psql postgres'
    ```
 
-   App-specific role passwords (the sops-managed `ALTER USER ... WITH
-   PASSWORD ...` flow used by mealie) re-apply on the next service start
-   via the per-app `<app>-db-password.service` units, so you don't need
-   to set them by hand.
+   App-specific role passwords (the sops-managed
+   `ALTER USER ... WITH PASSWORD ...` flow used by mealie) re-apply on the next
+   service start via the per-app `<app>-db-password.service` units, so you don't
+   need to set them by hand.
 
 4. **Restart the app containers:**
    ```bash
@@ -342,15 +336,14 @@ unavailable or you need to deviate.
 
 #### Per-app restore
 
-The catastrophic rebuild restores everything. To recover just one app
-without touching the rest of the host, scope both the restic include
-and the postgres replay. The three apps in this repo each illustrate a
-different shape — pick the one that matches what you're restoring.
+The catastrophic rebuild restores everything. To recover just one app without
+touching the rest of the host, scope both the restic include and the postgres
+replay. The three apps in this repo each illustrate a different shape — pick the
+one that matches what you're restoring.
 
-The postgres examples below replay the *current* on-disk dump at
-`/var/backup/postgresql/all.sql.gz` (refreshed nightly at 02:00). To
-restore from an *older* snapshot, pull that snapshot's dump to a temp
-path first:
+The postgres examples below replay the _current_ on-disk dump at
+`/var/backup/postgresql/all.sql.gz` (refreshed nightly at 02:00). To restore
+from an _older_ snapshot, pull that snapshot's dump to a temp path first:
 
 ```bash
 sudo restic -r /mnt/backups/restic/<host> \
@@ -360,18 +353,17 @@ sudo restic -r /mnt/backups/restic/<host> \
 # then point zcat at /tmp/restore/var/backup/postgresql/all.sql.gz
 ```
 
-`pg_dumpall` writes one combined file with every database and role.
-The awk filter below extracts a single database's section by tracking
-`\connect <name>` markers. Roles are managed by NixOS `ensureUsers`
-and don't need to be replayed.
+`pg_dumpall` writes one combined file with every database and role. The awk
+filter below extracts a single database's section by tracking `\connect <name>`
+markers. Roles are managed by NixOS `ensureUsers` and don't need to be replayed.
 
 ##### Containerized app with volume + postgres database (mealie)
 
-Mealie has both on-disk state (`/var/lib/containers/mealie` — uploaded
-recipe images, user assets) and database state (the `mealie` postgres
-db — recipes, users, OIDC mappings). The two reference each other, so
-**restore both from the same restic snapshot** — mixing eras leaves
-broken image references in recipe rows.
+Mealie has both on-disk state (`/var/lib/containers/mealie` — uploaded recipe
+images, user assets) and database state (the `mealie` postgres db — recipes,
+users, OIDC mappings). The two reference each other, so **restore both from the
+same restic snapshot** — mixing eras leaves broken image references in recipe
+rows.
 
 ```bash
 # 1. Stop the container so nothing writes during restore.
@@ -398,15 +390,15 @@ zcat /var/backup/postgresql/all.sql.gz | awk '
 sudo systemctl start podman-mealie.service
 ```
 
-Same pattern for any future containerized app with a postgres
-database: substitute the unit name, volume path, and database name.
+Same pattern for any future containerized app with a postgres database:
+substitute the unit name, volume path, and database name.
 
 ##### 12-factor app with all state in postgres (miniflux)
 
-Miniflux is a single Go binary running under `DynamicUser=true` with
-no persistent on-disk state — feeds, entries, read/unread flags, and
-OIDC user mappings all live in the `miniflux` postgres database.
-Restore is just the database half of the mealie flow:
+Miniflux is a single Go binary running under `DynamicUser=true` with no
+persistent on-disk state — feeds, entries, read/unread flags, and OIDC user
+mappings all live in the `miniflux` postgres database. Restore is just the
+database half of the mealie flow:
 
 ```bash
 sudo systemctl stop miniflux.service
@@ -419,20 +411,18 @@ zcat /var/backup/postgresql/all.sql.gz | awk '
 sudo systemctl start miniflux.service
 ```
 
-Authentik fits the same shape (everything in the `authentik` postgres
-db, no host state worth restoring) — same recipe with the names
-swapped.
+Authentik fits the same shape (everything in the `authentik` postgres db, no
+host state worth restoring) — same recipe with the names swapped.
 
-##### Native service with on-disk state + SQLite (jellyfin, *arr, kavita, …)
+##### Native service with on-disk state + SQLite (jellyfin, \*arr, kavita, …)
 
-Jellyfin keeps everything under `/var/lib/jellyfin` — XML config,
-plugins, metadata cache, and the library SQLite database at
-`/var/lib/jellyfin/data/jellyfin.db`. There's no postgres to restore.
-The wrinkle is that the live SQLite file can be torn mid-write inside
-a restic snapshot; `jellyfin-sqlite-backup.service` (from the
-`mySqliteQuiesce` helper) runs `sqlite3 .backup` into
-`/var/backup/sqlite/jellyfin/` immediately before each restic run,
-and **those staged copies — not the live ones — are the
+Jellyfin keeps everything under `/var/lib/jellyfin` — XML config, plugins,
+metadata cache, and the library SQLite database at
+`/var/lib/jellyfin/data/jellyfin.db`. There's no postgres to restore. The
+wrinkle is that the live SQLite file can be torn mid-write inside a restic
+snapshot; `jellyfin-sqlite-backup.service` (from the `mySqliteQuiesce` helper)
+runs `sqlite3 .backup` into `/var/backup/sqlite/jellyfin/` immediately before
+each restic run, and **those staged copies — not the live ones — are the
 authoritative recovery source.**
 
 ```bash
@@ -458,20 +448,19 @@ sudo install -o server-prod -g servers -m 0640 \
 sudo systemctl start jellyfin.service
 ```
 
-Media files themselves live on the NAS under `/mnt/content` and are
-out of scope for restic — Synology snapshots cover them.
+Media files themselves live on the NAS under `/mnt/content` and are out of scope
+for restic — Synology snapshots cover them.
 
-The same pattern applies to every app that opts into `mySqliteQuiesce`
-(sonarr, radarr, lidarr, prowlarr, bazarr, kavita, komga, readeck,
-audiobookshelf): stop the unit, `restic restore` both `/var/lib/<app>`
-(or `/var/lib/private/<app>` for DynamicUser apps like prowlarr and
-readeck) and `/var/backup/sqlite/<app>`, then `install` each staged
-`.db` over the live path declared in the app's module. Check
-`mySqliteQuiesce.apps.<app>.databases` in the module for the exact
-source paths to overwrite (e.g. sonarr → `/var/lib/sonarr/.config/
-NzbDrone/{sonarr,logs}.db`, bazarr → `/var/lib/bazarr/db/bazarr.db`).
-Match the file owner to the service's user/group (`server-${env}:
-servers` for the NFS-aligned apps).
+The same pattern applies to every app that opts into `mySqliteQuiesce` (sonarr,
+radarr, lidarr, prowlarr, bazarr, kavita, komga, readeck, audiobookshelf): stop
+the unit, `restic restore` both `/var/lib/<app>` (or `/var/lib/private/<app>`
+for DynamicUser apps like prowlarr and readeck) and `/var/backup/sqlite/<app>`,
+then `install` each staged `.db` over the live path declared in the app's
+module. Check `mySqliteQuiesce.apps.<app>.databases` in the module for the exact
+source paths to overwrite (e.g. sonarr →
+`/var/lib/sonarr/.config/ NzbDrone/{sonarr,logs}.db`, bazarr →
+`/var/lib/bazarr/db/bazarr.db`). Match the file owner to the service's
+user/group (`server-${env}: servers` for the NFS-aligned apps).
 
 #### Cross-host recovery testing (prod → dev)
 
@@ -489,10 +478,10 @@ files, replay the postgres dump into a scratch database, etc.
 
 ### PostgreSQL major-version upgrades
 
-`services.postgresql.package` is pinned to a specific major
-(`postgresql_18` at time of writing) in `modules/system/postgresql.nix`
-so that rebuilds never silently dump-and-restore the cluster. Major
-upgrades are a manual operation. The canonical reference is the
+`services.postgresql.package` is pinned to a specific major (`postgresql_18` at
+time of writing) in `modules/system/postgresql.nix` so that rebuilds never
+silently dump-and-restore the cluster. Major upgrades are a manual operation.
+The canonical reference is the
 [NixOS manual section](https://nixos.org/manual/nixos/stable/#module-services-postgres-upgrading);
 the concrete recipe that worked here for 17 → 18 was:
 
@@ -548,56 +537,53 @@ ssh <host> sudo rm -rf /var/lib/postgresql/17
 ```
 
 Rollback (any step before 5): revert the package pin in
-`modules/system/postgresql.nix` and `task deploy:<host>`. The old
-datadir under `/var/lib/postgresql/<old>` is untouched by copy-mode
-`pg_upgrade`, so postgres just resumes there.
+`modules/system/postgresql.nix` and `task deploy:<host>`. The old datadir under
+`/var/lib/postgresql/<old>` is untouched by copy-mode `pg_upgrade`, so postgres
+just resumes there.
 
 ## Jellyfin
 
-`modules/apps/jellyfin.nix` deploys jellyfin as a native systemd unit
-(no container) pinned to the `server-${env}:servers` UID/GID so it
-can read media off the NFS-mounted Synology share. Restic snapshots
-`/var/lib/jellyfin` plus the `mySqliteQuiesce` staging dir at
-`/var/backup/sqlite/jellyfin/`, which holds a `sqlite3 .backup` dump
-of `jellyfin.db` written by a pre-hook before each restic run.
+`modules/apps/jellyfin.nix` deploys jellyfin as a native systemd unit (no
+container) pinned to the `server-${env}:servers` UID/GID so it can read media
+off the NFS-mounted Synology share. Restic snapshots `/var/lib/jellyfin` plus
+the `mySqliteQuiesce` staging dir at `/var/backup/sqlite/jellyfin/`, which holds
+a `sqlite3 .backup` dump of `jellyfin.db` written by a pre-hook before each
+restic run.
 
 ### LDAP authentication via authentik
 
-Jellyfin doesn't share a credentials store with the rest of the
-authentik OIDC apps. The OIDC plugin
-([`9p4/jellyfin-plugin-sso`](https://github.com/9p4/jellyfin-plugin-sso))
-was archived 2026-05-12 with no successor, and TV / native clients
-can't do OIDC redirects anyway — so we use
+Jellyfin doesn't share a credentials store with the rest of the authentik OIDC
+apps. The OIDC plugin
+([`9p4/jellyfin-plugin-sso`](https://github.com/9p4/jellyfin-plugin-sso)) was
+archived 2026-05-12 with no successor, and TV / native clients can't do OIDC
+redirects anyway — so we use
 [`jellyfin/jellyfin-plugin-ldapauth`](https://github.com/jellyfin/jellyfin-plugin-ldapauth)
-(officially maintained under the jellyfin org) against authentik's
-LDAP outpost. Users type the same password they use everywhere else;
-no MFA at jellyfin login (LDAP binds bypass authentik's MFA flow —
-acceptable for a media server).
+(officially maintained under the jellyfin org) against authentik's LDAP outpost.
+Users type the same password they use everywhere else; no MFA at jellyfin login
+(LDAP binds bypass authentik's MFA flow — acceptable for a media server).
 
-**Declarative side** (already in this repo): `modules/apps/jellyfin.nix`
-sets `myAuthentik.ldap.enable = true`, which:
+**Declarative side** (already in this repo): `modules/apps/jellyfin.nix` sets
+`myAuthentik.ldap.enable = true`, which:
 
-- Renders `modules/apps/authentik-blueprints-ldap/ldap.yaml`: LDAP
-  provider + application + policy binding gating to the Users group,
-  `ldapservice` service-account user (bind user for jellyfin) with
-  the `search_full_directory` object permission on the LDAP provider,
-  and the outpost record itself.
+- Renders `modules/apps/authentik-blueprints-ldap/ldap.yaml`: LDAP provider +
+  application + policy binding gating to the Users group, `ldapservice`
+  service-account user (bind user for jellyfin) with the `search_full_directory`
+  object permission on the LDAP provider, and the outpost record itself.
 - Wires `services.authentik-ldap` (from authentik-nix) listening on
-  `127.0.0.1:3389`. The outpost's API token is auto-generated by
-  authentik when the outpost record is saved — there's no clean way
-  to pre-set it via blueprint in current authentik (the
-  `token_identifier` field on the outpost model is a computed
-  property, not a writable column; the workaround from
+  `127.0.0.1:3389`. The outpost's API token is auto-generated by authentik when
+  the outpost record is saved — there's no clean way to pre-set it via blueprint
+  in current authentik (the `token_identifier` field on the outpost model is a
+  computed property, not a writable column; the workaround from
   [goauthentik/authentik#9711](https://github.com/goauthentik/authentik/issues/9711#issuecomment-2845076876)
   doesn't take effect). Instead, a one-shot
-  `authentik-ldap-token-fetcher.service` polls the admin API at boot
-  (auth'd with the existing `authentik/bootstrap_token`), fetches the
-  auto-generated token via `/api/v3/core/tokens/<id>/view_key/`, and
-  writes it into `/run/authentik-ldap-token/env` which the outpost
-  consumes as its `environmentFile`.
-- Declares one sops secret: `authentik/ldap_service_password` (the
-  bind password jellyfin uses). The outpost-side API token never
-  hits sops — it's fetched at runtime from authentik itself.
+  `authentik-ldap-token-fetcher.service` polls the admin API at boot (auth'd
+  with the existing `authentik/bootstrap_token`), fetches the auto-generated
+  token via `/api/v3/core/tokens/<id>/view_key/`, and writes it into
+  `/run/authentik-ldap-token/env` which the outpost consumes as its
+  `environmentFile`.
+- Declares one sops secret: `authentik/ldap_service_password` (the bind password
+  jellyfin uses). The outpost-side API token never hits sops — it's fetched at
+  runtime from authentik itself.
 
 **One-time setup** (per host that enables `myAuthentik.ldap`):
 
@@ -608,12 +594,11 @@ sets `myAuthentik.ldap.enable = true`, which:
    task secrets:publish MSG="add ldapservice bind password for hpp-1"
    ```
 
-2. `task deploy:hpp-1`. The worker applies the blueprint (creates
-   provider + application + outpost record + service account +
-   search permission). authentik mints the outpost's API token; the
-   token-fetcher oneshot grabs it and writes the outpost's env file;
-   `services.authentik-ldap` reads that file and connects back. No
-   UI steps required. Verify:
+2. `task deploy:hpp-1`. The worker applies the blueprint (creates provider +
+   application + outpost record + service account + search permission).
+   authentik mints the outpost's API token; the token-fetcher oneshot grabs it
+   and writes the outpost's env file; `services.authentik-ldap` reads that file
+   and connects back. No UI steps required. Verify:
 
    ```bash
    ssh hpp-1 'systemctl is-active authentik-ldap-token-fetcher authentik-ldap'
@@ -626,69 +611,66 @@ sets `myAuthentik.ldap.enable = true`, which:
    # should return ian's entry with memberOf lines
    ```
 
-3. Install the jellyfin plugin (manual — the plugin DLL itself can't
-   be wired declaratively, but lives under `/var/lib/jellyfin/` which
-   restic snapshots; only a from-scratch rebuild needs this re-run):
-
-   - Jellyfin UI → **Dashboard → Plugins → Repositories**. The
-     official Jellyfin repo is already present; no extra repo needed.
+3. Install the jellyfin plugin (manual — the plugin DLL itself can't be wired
+   declaratively, but lives under `/var/lib/jellyfin/` which restic snapshots;
+   only a from-scratch rebuild needs this re-run):
+   - Jellyfin UI → **Dashboard → Plugins → Repositories**. The official Jellyfin
+     repo is already present; no extra repo needed.
    - **Catalog → LDAP Authentication → Install**.
    - Restart jellyfin: `ssh hpp-1 'sudo systemctl restart jellyfin'`.
 
 4. Configure the plugin: **Dashboard → Plugins → LDAP-Auth**.
 
-   | Field | Value |
-   | --- | --- |
-   | LDAP Server | `127.0.0.1` |
-   | LDAP Port | `3389` |
-   | Secure LDAP / StartTLS | both off (loopback) |
-   | LDAP Bind User | `cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io` |
-   | LDAP Bind Password | value of `authentik/ldap_service_password` from sops |
-   | LDAP Base DN for searches | `dc=ldap,dc=goauthentik,dc=io` |
-   | LDAP User Filter | `(&(objectClass=user)(memberOf=cn=Users,ou=groups,dc=ldap,dc=goauthentik,dc=io))` |
-   | LDAP Admin Base DN | `dc=ldap,dc=goauthentik,dc=io` |
-   | LDAP Admin Filter | `(memberOf=cn=Infrastructure,ou=groups,dc=ldap,dc=goauthentik,dc=io)` (reuses the existing authentik group used to gate forward-auth admin tools; anyone in `Infrastructure` becomes a jellyfin admin. Leave blank if you'd rather manage admin status inside jellyfin.) |
-   | LDAP Search Attributes | `uid,cn,mail,displayName` |
-   | LDAP Username Attribute | `cn` (authentik puts the human-readable username here; `uid` is a hashed opaque identifier and produces UUID-shaped jellyfin accounts) |
-   | LDAP Password Attribute | `userPassword` |
-   | Enable User Creation | on (auto-provisions jellyfin accounts on first LDAP login) |
-   | Library Access | pick the libraries new LDAP users get; can also be tuned per-user after first login |
+   | Field                     | Value                                                                                                                                                                                                                                                                    |
+   | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+   | LDAP Server               | `127.0.0.1`                                                                                                                                                                                                                                                              |
+   | LDAP Port                 | `3389`                                                                                                                                                                                                                                                                   |
+   | Secure LDAP / StartTLS    | both off (loopback)                                                                                                                                                                                                                                                      |
+   | LDAP Bind User            | `cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io`                                                                                                                                                                                                                   |
+   | LDAP Bind Password        | value of `authentik/ldap_service_password` from sops                                                                                                                                                                                                                     |
+   | LDAP Base DN for searches | `dc=ldap,dc=goauthentik,dc=io`                                                                                                                                                                                                                                           |
+   | LDAP User Filter          | `(&(objectClass=user)(memberOf=cn=Users,ou=groups,dc=ldap,dc=goauthentik,dc=io))`                                                                                                                                                                                        |
+   | LDAP Admin Base DN        | `dc=ldap,dc=goauthentik,dc=io`                                                                                                                                                                                                                                           |
+   | LDAP Admin Filter         | `(memberOf=cn=Infrastructure,ou=groups,dc=ldap,dc=goauthentik,dc=io)` (reuses the existing authentik group used to gate forward-auth admin tools; anyone in `Infrastructure` becomes a jellyfin admin. Leave blank if you'd rather manage admin status inside jellyfin.) |
+   | LDAP Search Attributes    | `uid,cn,mail,displayName`                                                                                                                                                                                                                                                |
+   | LDAP Username Attribute   | `cn` (authentik puts the human-readable username here; `uid` is a hashed opaque identifier and produces UUID-shaped jellyfin accounts)                                                                                                                                   |
+   | LDAP Password Attribute   | `userPassword`                                                                                                                                                                                                                                                           |
+   | Enable User Creation      | on (auto-provisions jellyfin accounts on first LDAP login)                                                                                                                                                                                                               |
+   | Library Access            | pick the libraries new LDAP users get; can also be tuned per-user after first login                                                                                                                                                                                      |
 
-   Use the **Test Server Settings** / **Test LDAP Search Filter**
-   buttons before saving. The search filter test should return your
-   own authentik account.
+   Use the **Test Server Settings** / **Test LDAP Search Filter** buttons before
+   saving. The search filter test should return your own authentik account.
 
-5. (Optional) Create an `jellyfin-admins` group in authentik UI and
-   add members; LDAP-Auth will treat them as administrators inside
-   jellyfin. Existing jellyfin users created before the plugin was
-   installed stay local — convert them via **Dashboard → Users →
-   `<user>` → Set the LDAP user UID** so subsequent logins go through
-   LDAP.
+5. (Optional) Create an `jellyfin-admins` group in authentik UI and add members;
+   LDAP-Auth will treat them as administrators inside jellyfin. Existing
+   jellyfin users created before the plugin was installed stay local — convert
+   them via **Dashboard → Users → `<user>` → Set the LDAP user UID** so
+   subsequent logins go through LDAP.
 
-The plugin DLL and its config live under `/var/lib/jellyfin/`, which
-restic snapshots — a restore restores the plugin too. Only a fresh
-install (catastrophic rebuild on a new disk) needs steps 5–7 re-run.
+The plugin DLL and its config live under `/var/lib/jellyfin/`, which restic
+snapshots — a restore restores the plugin too. Only a fresh install
+(catastrophic rebuild on a new disk) needs steps 5–7 re-run.
 
 ### Hardware-accelerated transcoding
 
-The host needs `modules/hardware/intel-quicksync.nix` (Intel iGPU)
-included in its host module — see `modules/hosts/hpp-1.nix`.
-`server-${env}` already has `video` and `render` supplementary groups
-from `modules/system/server-users.nix`, so once the QSV module is
-loaded `/dev/dri/renderD128` is reachable by jellyfin.
+The host needs `modules/hardware/intel-quicksync.nix` (Intel iGPU) included in
+its host module — see `modules/hosts/hpp-1.nix`. `server-${env}` already has
+`video` and `render` supplementary groups from
+`modules/system/server-users.nix`, so once the QSV module is loaded
+`/dev/dri/renderD128` is reachable by jellyfin.
 
-The remaining setup is **manual in the jellyfin web UI** (the
-resulting config lives in `/var/lib/jellyfin/config/encoding.xml` and
-is captured by restic, so this is a one-time-per-host step):
+The remaining setup is **manual in the jellyfin web UI** (the resulting config
+lives in `/var/lib/jellyfin/config/encoding.xml` and is captured by restic, so
+this is a one-time-per-host step):
 
 1. Dashboard → Playback → Transcoding.
 2. **Hardware acceleration:** Intel QuickSync (QSV).
 3. **VA-API device:** `/dev/dri/renderD128`.
-4. Enable hardware decoding for the codecs you care about (H.264,
-   HEVC, VP9 are safe on HD 630 and newer).
+4. Enable hardware decoding for the codecs you care about (H.264, HEVC, VP9 are
+   safe on HD 630 and newer).
 5. Enable hardware encoding.
-6. Enable Tone mapping (works because `intel-compute-runtime` ships
-   the OpenCL runtime via `intel-quicksync.nix`).
+6. Enable Tone mapping (works because `intel-compute-runtime` ships the OpenCL
+   runtime via `intel-quicksync.nix`).
 
 To verify the host stack before configuring the UI:
 
@@ -696,10 +678,9 @@ To verify the host stack before configuring the UI:
 ssh <host> 'nix-shell -p libva-utils --run "vainfo --display drm --device /dev/dri/renderD128"'
 ```
 
-Should report `Driver version: Intel iHD driver` and a list of
-`VAProfile*` entries. To confirm the GPU is actually doing work
-during a transcode, watch `intel_gpu_top` while jellyfin transcodes
-a stream:
+Should report `Driver version: Intel iHD driver` and a list of `VAProfile*`
+entries. To confirm the GPU is actually doing work during a transcode, watch
+`intel_gpu_top` while jellyfin transcodes a stream:
 
 ```bash
 ssh <host> 'nix-shell -p intel-gpu-tools --run "sudo intel_gpu_top"'
@@ -709,54 +690,53 @@ The Render/3D and Video engines should show activity.
 
 ## Authentik (SSO)
 
-`modules/apps/authentik.nix` deploys Authentik as native systemd units via
-the [`nix-community/authentik-nix`](https://github.com/nix-community/authentik-nix)
-flake input — *not* containers. The module's `services.authentik` runs three
+`modules/apps/authentik.nix` deploys Authentik as native systemd units via the
+[`nix-community/authentik-nix`](https://github.com/nix-community/authentik-nix)
+flake input — _not_ containers. The module's `services.authentik` runs three
 units (`authentik`, `authentik-worker`, `authentik-migrate`) under
-`DynamicUser=true`, talks to the shared postgres over the unix socket via
-peer auth (so no role password is needed), and uses the unnamed NixOS
-`services.redis.servers.""` instance on `localhost:6379`. Caddy fronts it
-at `authentik.${hostSpec.serverDomain}`.
+`DynamicUser=true`, talks to the shared postgres over the unix socket via peer
+auth (so no role password is needed), and uses the unnamed NixOS
+`services.redis.servers.""` instance on `localhost:6379`. Caddy fronts it at
+`authentik.${hostSpec.serverDomain}`.
 
 ### Declarative configuration via blueprints
 
-Groups, users, applications, OAuth/proxy providers, and group bindings are
-all managed as Authentik **blueprints** (YAML, applied idempotently by the
-worker on a periodic Celery task and on startup). No terraform, no UI
-clicks. Two starter blueprints live under `modules/apps/authentik-blueprints/`:
+Groups, users, applications, OAuth/proxy providers, and group bindings are all
+managed as Authentik **blueprints** (YAML, applied idempotently by the worker on
+a periodic Celery task and on startup). No terraform, no UI clicks. Two starter
+blueprints live under `modules/apps/authentik-blueprints/`:
 
 - `groups.yaml` — homelab groups (Home, Infrastructure, Users).
 - `users.yaml` — the `ian` admin user (in `authentik Admins`, Home,
-  Infrastructure, Users) plus a few "Pattern A" onboarding users that
-  have no `password` attr yet and authenticate after running through
-  the recovery flow. `ian`'s password reads from `!Env IAN_PASSWORD`,
-  which is rendered into the systemd `EnvironmentFile` from sops.
-- `hardening.yaml` / `recovery.yaml` — bundled hardening and recovery
-  flow tweaks.
+  Infrastructure, Users) plus a few "Pattern A" onboarding users that have no
+  `password` attr yet and authenticate after running through the recovery flow.
+  `ian`'s password reads from `!Env IAN_PASSWORD`, which is rendered into the
+  systemd `EnvironmentFile` from sops.
+- `hardening.yaml` / `recovery.yaml` — bundled hardening and recovery flow
+  tweaks.
 
-The module merges its blueprints with the upstream-bundled set into a
-single `blueprints_dir` via `pkgs.runCommandLocal` + `cp -rL`. **Do not
-use `pkgs.symlinkJoin`** here: authentik's `retrieve_file` calls
+The module merges its blueprints with the upstream-bundled set into a single
+`blueprints_dir` via `pkgs.runCommandLocal` + `cp -rL`. **Do not use
+`pkgs.symlinkJoin`** here: authentik's `retrieve_file` calls
 `Path(...).resolve()` and rejects anything that resolves outside
-`blueprints_dir`, so symlink-joined entries (which dereference back to
-their original store paths) all fail with "Invalid blueprint path".
-Real files via `cp -L` are required.
+`blueprints_dir`, so symlink-joined entries (which dereference back to their
+original store paths) all fail with "Invalid blueprint path". Real files via
+`cp -L` are required.
 
 ### Adding an OIDC app to Authentik
 
-Apps that speak OIDC natively register via the `myAuthentik.oidcApps`
-aggregator from `modules/apps/authentik.nix`. The aggregator
-generates the sops secret pair, contributes the per-app blueprint
-dir, and stacks one merged worker-side env file onto authentik so
-blueprint `!Env` placeholders resolve. Apps that read OIDC creds
-from env vars (mealie, miniflux, paperless-ngx, tandoor, komga,
-actualbudget) get their own per-app env file too; apps that store
-creds in their own DB/UI (audiobookshelf, kavita, seerr) opt out via
+Apps that speak OIDC natively register via the `myAuthentik.oidcApps` aggregator
+from `modules/apps/authentik.nix`. The aggregator generates the sops secret
+pair, contributes the per-app blueprint dir, and stacks one merged worker-side
+env file onto authentik so blueprint `!Env` placeholders resolve. Apps that read
+OIDC creds from env vars (mealie, miniflux, paperless-ngx, tandoor, komga,
+actualbudget) get their own per-app env file too; apps that store creds in their
+own DB/UI (audiobookshelf, kavita, seerr) opt out via
 `clientCredsInAppEnv = false`.
 
 Blueprint secrets must reference `!Env <APP>_OIDC_CLIENT_ID` /
-`<APP>_OIDC_CLIENT_SECRET` (uppercased app name with hyphens →
-underscores) so they never land in `/nix/store`.
+`<APP>_OIDC_CLIENT_SECRET` (uppercased app name with hyphens → underscores) so
+they never land in `/nix/store`.
 
 Sketch (Mealie — see `modules/apps/mealie.nix` for the real thing):
 
@@ -802,10 +782,16 @@ entries:
       client_type: confidential
       client_id: !Env MEALIE_OIDC_CLIENT_ID
       client_secret: !Env MEALIE_OIDC_CLIENT_SECRET
-      grant_types: [authorization_code, refresh_token]  # see note below — required on 2026.x
-      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
-      authorization_flow:  !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
-      invalidation_flow:   !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      grant_types: [authorization_code, refresh_token] # see note below — required on 2026.x
+      authentication_flow:
+        !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow:
+        !Find [
+          authentik_flows.flow,
+          [slug, default-provider-authorization-implicit-consent],
+        ]
+      invalidation_flow:
+        !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       # ... property_mappings, redirect_uris, etc.
   - model: authentik_core.application
     id: app-mealie
@@ -819,32 +805,31 @@ entries:
 ```
 
 **Always set `grant_types` explicitly.** authentik 2026.x added
-`OAuth2Provider.grant_types` (defaults to an empty list) and the
-authorize view now rejects any flow whose grant isn't listed
-(`Invalid grant_type for provider` → the app sees a malformed-request
-error and bounces back to its login page). Providers created under an
-older authentik were back-filled by the migration, so the omission is
-invisible until a provider is created **fresh** on 2026.x — a new app,
-a new host, or a `recovery:all` / `bootstrap:reinstall` rebuild (which
+`OAuth2Provider.grant_types` (defaults to an empty list) and the authorize view
+now rejects any flow whose grant isn't listed (`Invalid grant_type for provider`
+→ the app sees a malformed-request error and bounces back to its login page).
+Providers created under an older authentik were back-filled by the migration, so
+the omission is invisible until a provider is created **fresh** on 2026.x — a
+new app, a new host, or a `recovery:all` / `bootstrap:reinstall` rebuild (which
 recreates every provider at once and would otherwise break all SSO
-simultaneously). `[authorization_code, refresh_token]` is authentik's
-own UI default and the right value for every app here, including
-`public`/PKCE clients (grimmory). This bit komga on amos1 — see the
-blueprint comments for the full trace.
+simultaneously). `[authorization_code, refresh_token]` is authentik's own UI
+default and the right value for every app here, including `public`/PKCE clients
+(grimmory). This bit komga on amos1 — see the blueprint comments for the full
+trace.
 
-Reference: [model fields](https://docs.goauthentik.io/customize/blueprints/v1/models),
+Reference:
+[model fields](https://docs.goauthentik.io/customize/blueprints/v1/models),
 [YAML tags](https://docs.goauthentik.io/customize/blueprints/v1/tags).
 
 ### Forward-auth via Caddy
 
 For apps that don't speak OIDC themselves (AlertManager, Prometheus,
-Longhorn-style admin UIs), gate them via Authentik's embedded outpost +
-Caddy's `forward_auth`. Register the app via
-`myAuthentik.forwardAuthApps.<name>` — the aggregator emits the
-proxy provider + application + policy binding into a single merged
-blueprint per host (so two forward-auth apps don't clobber the
-embedded outpost's global `providers` list) **and** wires a Caddy
-route that imports the reusable `(authentik_forward_auth)` snippet:
+Longhorn-style admin UIs), gate them via Authentik's embedded outpost + Caddy's
+`forward_auth`. Register the app via `myAuthentik.forwardAuthApps.<name>` — the
+aggregator emits the proxy provider + application + policy binding into a single
+merged blueprint per host (so two forward-auth apps don't clobber the embedded
+outpost's global `providers` list) **and** wires a Caddy route that imports the
+reusable `(authentik_forward_auth)` snippet:
 
 ```nix
 myAuthentik.forwardAuthApps.alertmanager = {
@@ -859,24 +844,23 @@ myAuthentik.forwardAuthApps.alertmanager = {
 };
 ```
 
-The snippet (defined in `modules/apps/authentik.nix`) handles both
-the `forward_auth` directive (auth check on every request) and the
+The snippet (defined in `modules/apps/authentik.nix`) handles both the
+`forward_auth` directive (auth check on every request) and the
 `handle /outpost.goauthentik.io/*` block (callback routes).
 
 ### YAML lint exclusion
 
-Authentik's custom YAML tags (`!Env`, `!Find`, `!KeyOf`) aren't accepted
-by pyyaml's safe loader, so `modules/apps/authentik-blueprints/` is
-excluded from the `check-yaml` pre-commit hook in
-`modules/flake/git-hooks.nix`. Add new blueprint paths under that prefix
-or extend the excludes list.
+Authentik's custom YAML tags (`!Env`, `!Find`, `!KeyOf`) aren't accepted by
+pyyaml's safe loader, so `modules/apps/authentik-blueprints/` is excluded from
+the `check-yaml` pre-commit hook in `modules/flake/git-hooks.nix`. Add new
+blueprint paths under that prefix or extend the excludes list.
 
 ## Home Assistant
 
 Home Assistant runs as the **native** `services.home-assistant`
-(`modules/apps/homeassistant.nix`), not a container. That reverses the
-usual "big, churny apps stay containerized" instinct, so the reasoning is
-worth recording.
+(`modules/apps/homeassistant.nix`), not a container. That reverses the usual
+"big, churny apps stay containerized" instinct, so the reasoning is worth
+recording.
 
 ### Why native, and the real tradeoff
 
@@ -884,34 +868,33 @@ The original objection was that HA's python dependencies wouldn't fit the
 nixpkgs cadence. That turned out to be wrong — Nix isolates HA's closure
 cleanly. The genuine tradeoff is different:
 
-- **Version currency.** HA ships ~monthly and its integrations track
-  fast-moving cloud APIs; the stable channel freezes HA at a yearly
-  snapshot. So the HA package (and its custom components) are pinned to
-  `nixpkgs-unstable` via a per-package overlay (the `rgb.nix` pattern),
-  while the rest of the system stays on stable. HA updates are therefore
-  `nixos-rebuild`s, not Renovate image-tag bumps.
-- **Integration declaration.** The container image bundles every
-  integration's python deps, so "discover device → click Add" always
-  worked. Native ships deps only for **declared** components. This is the
-  one real recurring cost, and it lands on _experimentation_, not steady
-  state — which suits a stable device set and buys a git-tracked,
-  reproducible, reviewable integration inventory in exchange.
+- **Version currency.** HA ships ~monthly and its integrations track fast-moving
+  cloud APIs; the stable channel freezes HA at a yearly snapshot. So the HA
+  package (and its custom components) are pinned to `nixpkgs-unstable` via a
+  per-package overlay (the `rgb.nix` pattern), while the rest of the system
+  stays on stable. HA updates are therefore `nixos-rebuild`s, not Renovate
+  image-tag bumps.
+- **Integration declaration.** The container image bundles every integration's
+  python deps, so "discover device → click Add" always worked. Native ships deps
+  only for **declared** components. This is the one real recurring cost, and it
+  lands on _experimentation_, not steady state — which suits a stable device set
+  and buys a git-tracked, reproducible, reviewable integration inventory in
+  exchange.
 
-What native gives back: declarative OIDC (no HACS), the recorder on the
-shared native postgres over a peer-auth socket, the DHCP/discovery
-integrations working without container capability hacks, and custom
-integrations captured in git instead of installed imperatively through
-HACS into a stateful volume.
+What native gives back: declarative OIDC (no HACS), the recorder on the shared
+native postgres over a peer-auth socket, the DHCP/discovery integrations working
+without container capability hacks, and custom integrations captured in git
+instead of installed imperatively through HACS into a stateful volume.
 
 ### Adding a device — the recurring workflow
 
-Auto-discovery still finds devices, but if the integration's python dep
-isn't shipped the UI config flow fails **`Config flow could not be loaded:
-Invalid handler specified`**. Two cases:
+Auto-discovery still finds devices, but if the integration's python dep isn't
+shipped the UI config flow fails
+**`Config flow could not be loaded: Invalid handler specified`**. Two cases:
 
 1. **Core integration** (in nixpkgs) — add its domain to
-   `services.home-assistant.extraComponents` and deploy. Confirm the name
-   is real first:
+   `services.home-assistant.extraComponents` and deploy. Confirm the name is
+   real first:
 
    ```sh
    nix eval --json "github:NixOS/nixpkgs/nixos-unstable#home-assistant.availableComponents" \
@@ -919,37 +902,36 @@ Invalid handler specified`**. Two cases:
    ```
 
 2. **HACS-only integration** (no core module) — package it as a
-   `customComponents` entry with `buildHomeAssistantComponent` (the
-   `auth_oidc` / `bambu_lab` / `hoymiles_wifi` / `ha_blueair` pattern in the
-   module). Any python lib nixpkgs lacks gets its own `buildPythonPackage`,
-   pinned to the version the component's `manifest.json` `requirements`
-   demands — the `manifestRequirementsCheckHook` fails the build otherwise.
+   `customComponents` entry with `buildHomeAssistantComponent` (the `auth_oidc`
+   / `bambu_lab` / `hoymiles_wifi` / `ha_blueair` pattern in the module). Any
+   python lib nixpkgs lacks gets its own `buildPythonPackage`, pinned to the
+   version the component's `manifest.json` `requirements` demands — the
+   `manifestRequirementsCheckHook` fails the build otherwise.
 
-Custom-component versions are Renovate-tracked via the `github-releases`
-`tag` custom manager in `renovate.json`, kept **manual** (grouped as
-"home-assistant custom components"): Renovate bumps the `tag`, then the
-`fetchFromGitHub` hash is regenerated from the failing build, and if the
-new manifest pins a different lib version the paired `buildPythonPackage`
-is bumped in the same PR. The libs themselves are deliberately _not_
-Renovate-tracked — they must move in lockstep with the component.
+Custom-component versions are Renovate-tracked via the `github-releases` `tag`
+custom manager in `renovate.json`, kept **manual** (grouped as "home-assistant
+custom components"): Renovate bumps the `tag`, then the `fetchFromGitHub` hash
+is regenerated from the failing build, and if the new manifest pins a different
+lib version the paired `buildPythonPackage` is bumped in the same PR. The libs
+themselves are deliberately _not_ Renovate-tracked — they must move in lockstep
+with the component.
 
 ### Config: declarative vs. stateful
 
 `configuration.yaml` is Nix-managed and immutable (`default_config`,
-`http.trusted_proxies`, `recorder.db_url`, `auth_oidc`). OIDC creds reach
-it through HA's `!secret` tag from a sops-rendered `secrets.yaml` symlinked
-into the config dir. UI-authored automations/scripts/scenes are file-based
-`!include` targets, seeded empty by the service `preStart` (race-free,
-never clobbered) so UI edits persist.
+`http.trusted_proxies`, `recorder.db_url`, `auth_oidc`). OIDC creds reach it
+through HA's `!secret` tag from a sops-rendered `secrets.yaml` symlinked into
+the config dir. UI-authored automations/scripts/scenes are file-based `!include`
+targets, seeded empty by the service `preStart` (race-free, never clobbered) so
+UI edits persist.
 
-Everything with an **"Add" button** in the UI — paired devices,
-integrations — is stateful and lives in `/var/lib/hass/.storage`, keyed by
-internal UUIDs. That state does **not** merge between instances: do device
-pairing directly on the target host rather than trying to sync a dev
-instance into prod. The only cleanly portable Tier-2 artifacts are the
-`automations.yaml` / `scripts.yaml` / `scenes.yaml` files (plain YAML;
-each automation needs a unique `id` and entity_ids that exist on the
-target).
+Everything with an **"Add" button** in the UI — paired devices, integrations —
+is stateful and lives in `/var/lib/hass/.storage`, keyed by internal UUIDs. That
+state does **not** merge between instances: do device pairing directly on the
+target host rather than trying to sync a dev instance into prod. The only
+cleanly portable Tier-2 artifacts are the `automations.yaml` / `scripts.yaml` /
+`scenes.yaml` files (plain YAML; each automation needs a unique `id` and
+entity_ids that exist on the target).
 
 ## Secrets Management
 
@@ -963,21 +945,20 @@ input and managed with [sops-nix](https://github.com/Mic92/sops-nix).
 - Home-manager secrets use `~/.config/sops/age/keys.txt`
 - Configured in `modules/system/sops.nix` with both NixOS and home-manager
   integration
-- `sops.useSystemdActivation = true` runs decryption as a real systemd
-  unit (`sops-install-secrets.service`) instead of a nixos-activation
-  script, so consumer units can order against it explicitly
+- `sops.useSystemdActivation = true` runs decryption as a real systemd unit
+  (`sops-install-secrets.service`) instead of a nixos-activation script, so
+  consumer units can order against it explicitly
 
 ### Recovering from a sops decryption failure
 
-If `sops-install-secrets.service` fails on boot (most commonly: the
-host's age key isn't present yet, the secret was re-encrypted against
-a different key, or a YAML file is malformed), any service that reads
-the missing secret via a script will hit a no-op guard or auth-fail.
-The current safety net for postgres roles is the
-`unitConfig.ConditionPathExists` on `<app>-db-password.service` (see
-`modules/system/postgresql.nix`): the unit refuses to run if the
-secret file is missing, so it can't silently `ALTER USER … WITH
-PASSWORD ''` and lock the app out of its DB.
+If `sops-install-secrets.service` fails on boot (most commonly: the host's age
+key isn't present yet, the secret was re-encrypted against a different key, or a
+YAML file is malformed), any service that reads the missing secret via a script
+will hit a no-op guard or auth-fail. The current safety net for postgres roles
+is the `unitConfig.ConditionPathExists` on `<app>-db-password.service` (see
+`modules/system/postgresql.nix`): the unit refuses to run if the secret file is
+missing, so it can't silently `ALTER USER … WITH PASSWORD ''` and lock the app
+out of its DB.
 
 To recover after the underlying sops issue is fixed:
 
@@ -991,52 +972,51 @@ sudo systemctl restart <app>.service   # or podman-<app>.service
 ```
 
 `systemctl status sops-install-secrets` shows which secret failed;
-`journalctl -u sops-install-secrets` has the underlying decryption
-error. The `*-db-password` units are oneshots, so re-running them is
-always safe — they just ALTER USER with whatever password is currently
-in the decrypted file.
+`journalctl -u sops-install-secrets` has the underlying decryption error. The
+`*-db-password` units are oneshots, so re-running them is always safe — they
+just ALTER USER with whatever password is currently in the decrypted file.
 
 ## Task Automation
 
-Common operations are automated via `Taskfile.yaml`. The bootstrap,
-recovery, and secrets-management workflows live in `taskfiles/*.yaml`
-and are pulled in via Task's `includes:`, so `task --list` shows the
-full prefixed surface (`bootstrap:*`, `recovery:*`, `secrets:*`).
+Common operations are automated via `Taskfile.yaml`. The bootstrap, recovery,
+and secrets-management workflows live in `taskfiles/*.yaml` and are pulled in
+via Task's `includes:`, so `task --list` shows the full prefixed surface
+(`bootstrap:*`, `recovery:*`, `secrets:*`).
 
-| Command                                   | Description                                                                      |
-| ----------------------------------------- | -------------------------------------------------------------------------------- |
-| `task rebuild`                            | Rebuild current NixOS host                                                       |
-| `task rebuild:<host>`                     | Rebuild a specific NixOS host                                                    |
-| `task deploy:<host>`                      | Build locally and push the closure to a live remote host (`switch` over SSH)     |
-| `task build_darwin:<host>`                | Rebuild a nix-darwin host                                                        |
-| `task build_home:<target>`                | Rebuild standalone home-manager                                                  |
-| `task build`                              | Build a host without switching (default: luna)                                   |
-| `task build-all`                          | Build all NixOS host configurations                                              |
-| `task update`                             | Update flake inputs                                                              |
-| `task update_dconf`                       | Capture host dconf config into the repo via `scripts/dconf.sh`                   |
-| `task lint`                               | Run statix and deadnix                                                           |
-| `task fmt`                                | Format all Nix files with nixfmt                                                 |
-| `task fmt-check`                          | Check formatting without modifying files                                         |
-| `task check`                              | Full pre-push check (fmt-check + lint + flake check)                             |
-| `task iso`                                | Build the installer/recovery ISO                                                 |
-| `task garbage_collect`                    | Remove store objects older than 7 days                                           |
-| `task bootstrap:new HOST=x DEST=ip`       | New host pipeline: install, hwconfig, secrets setup, sync + rebuild              |
-| `task bootstrap:reinstall HOST=x DEST=ip` | Reinstall existing host: install + sync + rebuild (no secrets pause)             |
-| `task bootstrap:install HOST=x DEST=ip`   | Run nixos-anywhere to install NixOS; prints age key at end                       |
-| `task bootstrap:hwconfig HOST=x DEST=ip`  | Extract hardware-configuration.nix from target                                   |
-| `task bootstrap:hostkey HOST=x DEST=ip`   | Re-derive age key from live host SSH key (fallback if install output was missed) |
-| `task bootstrap:secrets HOST=x DEST=ip`   | Add host age key to nix-secrets, create host secrets, commit                     |
-| `task bootstrap:sync HOST=x DEST=ip`      | Rsync nixos and nix-secrets to target                                            |
-| `task bootstrap:rebuild HOST=x DEST=ip`   | Run nixos-rebuild switch on target                                               |
-| `task recovery:<app> HOST=x [SOURCE_HOST=other]` | Restore a single app from restic; see `task --list` for the full app menu |
-| `task recovery:all HOST=x`                | Catastrophic restore: every per-app dispatcher in sequence                       |
-| `task recovery:test:full SOURCE_HOST=x`   | Quarterly drill — install tests-server VM, restore three shapes, teardown        |
-| `task secrets:oidc APP=x [HOST=y]`        | Generate OIDC `client_id` + `client_secret` for an app on a host                 |
-| `task secrets:dbpw APP=x [HOST=y]`        | Generate a postgres `db_password` for an app on a host                           |
-| `task secrets:secret APP=x KEY=k`         | Generic high-entropy hex secret at `<app>.<key>`                                 |
-| `task secrets:edit:<host>`                | Open a host's sops yaml in `$EDITOR`                                             |
-| `task secrets:view:<host>`                | Decrypt and print a host's sops yaml                                             |
-| `task secrets:rekey`                      | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
+| Command                                          | Description                                                                      |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `task rebuild`                                   | Rebuild current NixOS host                                                       |
+| `task rebuild:<host>`                            | Rebuild a specific NixOS host                                                    |
+| `task deploy:<host>`                             | Build locally and push the closure to a live remote host (`switch` over SSH)     |
+| `task build_darwin:<host>`                       | Rebuild a nix-darwin host                                                        |
+| `task build_home:<target>`                       | Rebuild standalone home-manager                                                  |
+| `task build`                                     | Build a host without switching (default: luna)                                   |
+| `task build-all`                                 | Build all NixOS host configurations                                              |
+| `task update`                                    | Update flake inputs                                                              |
+| `task update_dconf`                              | Capture host dconf config into the repo via `scripts/dconf.sh`                   |
+| `task lint`                                      | Run statix and deadnix                                                           |
+| `task fmt`                                       | Format all Nix files with nixfmt                                                 |
+| `task fmt-check`                                 | Check formatting without modifying files                                         |
+| `task check`                                     | Full pre-push check (fmt-check + lint + flake check)                             |
+| `task iso`                                       | Build the installer/recovery ISO                                                 |
+| `task garbage_collect`                           | Remove store objects older than 7 days                                           |
+| `task bootstrap:new HOST=x DEST=ip`              | New host pipeline: install, hwconfig, secrets setup, sync + rebuild              |
+| `task bootstrap:reinstall HOST=x DEST=ip`        | Reinstall existing host: install + sync + rebuild (no secrets pause)             |
+| `task bootstrap:install HOST=x DEST=ip`          | Run nixos-anywhere to install NixOS; prints age key at end                       |
+| `task bootstrap:hwconfig HOST=x DEST=ip`         | Extract hardware-configuration.nix from target                                   |
+| `task bootstrap:hostkey HOST=x DEST=ip`          | Re-derive age key from live host SSH key (fallback if install output was missed) |
+| `task bootstrap:secrets HOST=x DEST=ip`          | Add host age key to nix-secrets, create host secrets, commit                     |
+| `task bootstrap:sync HOST=x DEST=ip`             | Rsync nixos and nix-secrets to target                                            |
+| `task bootstrap:rebuild HOST=x DEST=ip`          | Run nixos-rebuild switch on target                                               |
+| `task recovery:<app> HOST=x [SOURCE_HOST=other]` | Restore a single app from restic; see `task --list` for the full app menu        |
+| `task recovery:all HOST=x`                       | Catastrophic restore: every per-app dispatcher in sequence                       |
+| `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore three shapes, teardown        |
+| `task secrets:oidc APP=x [HOST=y]`               | Generate OIDC `client_id` + `client_secret` for an app on a host                 |
+| `task secrets:dbpw APP=x [HOST=y]`               | Generate a postgres `db_password` for an app on a host                           |
+| `task secrets:secret APP=x KEY=k`                | Generic high-entropy hex secret at `<app>.<key>`                                 |
+| `task secrets:edit:<host>`                       | Open a host's sops yaml in `$EDITOR`                                             |
+| `task secrets:view:<host>`                       | Decrypt and print a host's sops yaml                                             |
+| `task secrets:rekey`                             | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
 
 ## Bootstrapping a New Host
 
@@ -1050,9 +1030,8 @@ full prefixed surface (`bootstrap:*`, `recovery:*`, `secrets:*`).
 
 ### Connecting the target to wifi (minimal ISO)
 
-If the target has no ethernet, get it on wifi before running any bootstrap
-tasks — they all SSH into `DEST`. The minimal ISO ships `nmtui`. On the
-target's TTY:
+If the target has no ethernet, get it on wifi before running any bootstrap tasks
+— they all SSH into `DEST`. The minimal ISO ships `nmtui`. On the target's TTY:
 
 ```bash
 sudo nmtui
@@ -1068,13 +1047,13 @@ Before bootstrapping, the target host needs configuration in this repo:
 - `modules/hosts/_newhostname-disks.nix` — disko disk layout
 - `modules/hosts/newhostname.nix` — host module (which modules to compose)
 
-`git add` all new files — the flake uses `git+file://` and won't see
-untracked files. (Host files under `hostSpecs/` are auto-discovered — no
-need to edit `hostSpecs/default.nix`.)
+`git add` all new files — the flake uses `git+file://` and won't see untracked
+files. (Host files under `hostSpecs/` are auto-discovered — no need to edit
+`hostSpecs/default.nix`.)
 
 The hardware config is automatically fetched from the target during
-`bootstrap:install` if the file doesn't exist yet. It gets refreshed from
-the installed OS by `bootstrap:hwconfig` after reboot.
+`bootstrap:install` if the file doesn't exist yet. It gets refreshed from the
+installed OS by `bootstrap:hwconfig` after reboot.
 
 ### 2. Run the bootstrap
 
@@ -1134,18 +1113,17 @@ task bootstrap:reinstall HOST=existinghost DEST=192.168.1.50
 
 Two VM-compatible flake hosts exist for local testing:
 
-- `tests-server` — server-shaped (imports `server` + `server-apps`,
-  same as hpp-1). Used by `task recovery:test:full` for the quarterly
-  restore drill.
-- `tests-desktop` — desktop-shaped (imports the workstation profile).
-  Useful for iterating on desktop modules without a real machine.
+- `tests-server` — server-shaped (imports `server` + `server-apps`, same as
+  hpp-1). Used by `task recovery:test:full` for the quarterly restore drill.
+- `tests-desktop` — desktop-shaped (imports the workstation profile). Useful for
+  iterating on desktop modules without a real machine.
 
 The `task vm:*` namespace drives a single quickemu VM at a time under
-`~/vms/nixos-vm/`, with a persistent SSH host key (and matching age
-identity) preserved across teardowns. Authorize the VM key onto the
-secrets it needs once via `task vm:sops-authorize TARGET=<host>`
-(uncommitted edit in `../nix-secrets`; commit + push via
-`task secrets:publish` to make sticky, or `git restore` to revoke).
+`~/vms/nixos-vm/`, with a persistent SSH host key (and matching age identity)
+preserved across teardowns. Authorize the VM key onto the secrets it needs once
+via `task vm:sops-authorize TARGET=<host>` (uncommitted edit in
+`../nix-secrets`; commit + push via `task secrets:publish` to make sticky, or
+`git restore` to revoke).
 
 ```bash
 # Bring up the VM (builds latest.iso if absent; FORCE_ISO=true to rebuild)
