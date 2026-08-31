@@ -115,12 +115,34 @@ _: {
                 # restart *on the router*, so nothing here will fix it.
                 # Hence alerting on absence. See modules/system/vector.nix.
                 #
-                # The `and on(instance) up{job="vector"} == 1` guard keeps
+                # The `and on() sum(up{job="vector"}) == 1` guard keeps
                 # this distinct from vector simply being down, which
                 # InstanceDown and SystemdUnitFailed already cover — this
                 # rule is specifically "vector is healthy but the router
                 # stopped talking to it", which is the case nothing else
                 # can see.
+                #
+                # The `absent(...)` branch is load-bearing and was
+                # missing: vector only publishes a component's
+                # `received_events_total` after that component has
+                # handled its first event, so a vector restart while the
+                # router is detached leaves the series *absent*, not
+                # zero — and `rate(...) == 0` over a series that does not
+                # exist matches nothing and never fires. That is exactly
+                # the shape this rule is meant to catch, and exactly how
+                # it was missed: on 2026-08-31 an auto-upgrade bounced
+                # vector on both servers, syslogd detached both targets
+                # with `sendto: Connection refused`, and the feed stayed
+                # dead with no alert until someone looked. `absent()`
+                # covers the restarted-and-never-fed case; the rate
+                # branch still covers the went-quiet-while-running one.
+                #
+                # `on()` rather than `on(instance)`: the `absent()`
+                # branch synthesises a series carrying only the matcher's
+                # own labels, with no `instance` to join on. Each host
+                # scrapes exactly one vector (127.0.0.1:9598, see the
+                # scrape config below), so the instance join was never
+                # doing anything anyway.
                 #
                 # 15m window with a 10m confirmation. Measured over a 30m
                 # sample of the live feed, the largest gap between
@@ -128,11 +150,11 @@ _: {
                 # sample was an induced outage, not normal quiet), so this
                 # carries better than a 20x margin over observed silence.
                 alert = "PfsenseLogsAbsent";
-                expr = ''rate(vector_component_received_events_total{component_id="pfsense",component_kind="source"}[15m]) == 0 and on(instance) up{job="vector"} == 1'';
+                expr = ''(absent(vector_component_received_events_total{component_id="pfsense",component_kind="source"}) or sum(rate(vector_component_received_events_total{component_id="pfsense",component_kind="source"}[15m])) == 0) and on() sum(up{job="vector"}) == 1'';
                 for = "10m";
                 labels.severity = "warning";
                 annotations = {
-                  summary = "No pfSense syslog received on {{ $labels.instance }}";
+                  summary = "No pfSense syslog received on this host";
                   description = "vector is up but has received no events from the pfSense syslog source for 15m. The router has most likely detached this target after a `sendto: Connection refused` — check `grep syslogd /var/log/system.log` on behemoth, then restore it with `pfSsh.php playback svc restart syslogd`. Note a SIGHUP kills syslogd rather than reloading it.";
                 };
               }
@@ -615,6 +637,55 @@ _: {
                 annotations = {
                   summary = "UPS {{ $labels.ups_source }} load high ({{ $value | humanize }}%)";
                   description = "{{ $labels.ups_source }}-side UPS ({{ $labels.ups }}) load above 80% for 15m. Runtime on battery will be shorter than rated; consider re-balancing loads across PDUs.";
+                };
+              }
+            ];
+          }
+          {
+            # The metrics half of the security rule set. The other
+            # half is log-derived (authentik / sudo / pfSense) and
+            # lives in ./security-alerts.nix, on its own vmalert
+            # instance pointed at VictoriaLogs — vmalert's
+            # `-datasource.url` is process-wide, so the two cannot
+            # share an evaluator. Both emit into the same
+            # alertmanager and the same Discord receiver.
+            name = "security";
+            rules = [
+              {
+                # Certificate expiry (audit checklist §5). gatus is
+                # the only cert-expiry source on the host: it probes
+                # each app's external URL and exports the remaining
+                # lifetime it saw on the wire, which measures what
+                # clients actually get rather than what is on disk.
+                #
+                # Aggregated with `min by (group)` rather than
+                # alerted per endpoint. Caddy serves one wildcard
+                # cert for every app host, so a per-endpoint rule
+                # would fire ~37 identical alerts for one
+                # certificate; the `group` label (apps /
+                # infrastructure / external) is the coarsest split
+                # that still separates our own certs from an
+                # external dependency's. Gatus itself shows the
+                # per-endpoint view.
+                #
+                # 21d threshold, sitting in a deliberate gap: Caddy
+                # renews a 90d Let's Encrypt cert at ~30d
+                # remaining, and gatus's own
+                # `[CERTIFICATE_EXPIRATION] > 336h` condition (see
+                # ../apps/gatus.nix) trips at 14d and turns this
+                # into a GatusEndpointDown cascade across every
+                # app. So 21d means renewal has been failing for
+                # about nine days and there is still a week of lead
+                # time — which is the warning the checklist asks
+                # for, rather than a notification that it is
+                # already too late.
+                alert = "CertificateExpiringSoon";
+                expr = "min by (group) (gatus_results_certificate_expiration_seconds) < 21 * 24 * 3600";
+                for = "1h";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "TLS certificate expiring in {{ $value | humanizeDuration }} ({{ $labels.group }})";
+                  description = "The shortest-lived certificate gatus sees in the {{ $labels.group }} group expires in {{ $value | humanizeDuration }}, below the 21d warning threshold. Caddy should have auto-renewed at ~30d remaining, so check `journalctl -u caddy | grep -i certificate` for ACME failures. At 14d gatus starts failing every affected endpoint outright.";
                 };
               }
             ];

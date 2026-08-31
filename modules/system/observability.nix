@@ -27,6 +27,12 @@
 #                     The Prometheus datasource (uid="prometheus")
 #                     just points at VM's :8428; logs use the
 #                     `victoriametrics-logs-datasource` plugin.
+#   vmalert-logs    — a second vmalert instance, pointed at
+#                     VictoriaLogs instead of VictoriaMetrics, that
+#                     evaluates the log-derived security rules
+#                     (auth failures, pfSense config changes). Split
+#                     out because `-datasource.url` is process-wide;
+#                     see security-alerts.nix.
 #   Alertmanager    — Discord receiver + a Watchdog → healthchecks.io
 #                     heartbeat receiver. Config rendered through
 #                     envsubst so webhook URLs never hit /nix/store.
@@ -50,6 +56,7 @@
     imports = with inputs.self.modules.nixos; [
       alertmanager
       grafana
+      security-alerts
       snmp-exporter
       vector
       victorialogs
