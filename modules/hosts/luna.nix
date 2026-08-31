@@ -50,7 +50,16 @@
               systemd-boot.enable = true;
               efi.canTouchEfiVariables = true;
             };
-            kernelPackages = pkgs.linuxPackages_latest;
+            # TEMPORARY: pinned off linuxPackages_latest (7.2.x). The
+            # NVIDIA 595.71.05 kernel module fails to build against 7.2 —
+            # nvidia/os-interface.c calls strncpy() without including
+            # <linux/string.h>, which 7.2 no longer pulls in transitively:
+            #   error: implicit declaration of function 'strncpy'
+            # Only luna is affected: it is the sole nvidia host on
+            # linuxPackages_latest (terra/amos1 are on the 6.18 default).
+            # Revert to `pkgs.linuxPackages_latest` once nvidia ships a
+            # 7.2-compatible driver (or nixpkgs patches it).
+            kernelPackages = pkgs.linuxPackages_7_1;
           };
 
           networking = {
