@@ -358,7 +358,6 @@ tasks:
         # sops-install-secrets fails to decrypt <host>.yaml on the
         # next rebuild even though .sops.yaml was updated above.
         host_secrets="$secrets_dir/sops/${host}.yaml"
-        host_pubkey="$git_root/modules/profiles/_ssh-keys/id_${host}.pub"
         if [ -f "$host_secrets" ]; then
           echo -e "\x1B[33m[~] $host_secrets already exists — rekeying envelope to current .sops.yaml\x1B[0m"
           rekey_files=( "sops/${host}.yaml" )
@@ -373,9 +372,20 @@ tasks:
           sed 's/^/        /' "$temp/id_ed25519" >> "$host_secrets"
           sops --config "$sops_yaml" --encrypt --in-place "$host_secrets"
 
-          echo -e "\x1B[32m[+] Saving public key to $host_pubkey\x1B[0m"
-          install -m644 "$temp/id_ed25519.pub" "$host_pubkey"
-          git -C "$git_root" add "$host_pubkey"
+          # The public half deliberately does NOT land in
+          # modules/profiles/_ssh-keys/. base.nix authorizes every key
+          # in that directory for the primary user on every host, and
+          # wheel is passwordless — so writing a *machine* key there
+          # made it a fleet-wide login credential, which is how a
+          # server's key ended up trusted by every workstation. This
+          # key's only consumer is GitHub, as a deploy key for the
+          # nix-secrets input, and it stays recoverable from sops, so
+          # nothing is lost by not committing it. See #498.
+          echo -e "\x1B[32m[+] Host machine key — add to GitHub as a nix-secrets deploy key:\x1B[0m"
+          cat "$temp/id_ed25519.pub"
+          echo -e "\x1B[33m[~] To recover this public key later, either:\x1B[0m"
+          echo "      cd ../nix-secrets && sops -d --extract '[\"ssh\"][\"ed25519\"]' sops/${host}.yaml | ssh-keygen -y -f /dev/stdin"
+          echo "      ssh ipreston@${host} 'sudo ssh-keygen -y -f /run/secrets/ssh/ed25519'"
         fi
 
         # Re-encrypt shared secrets for the new host

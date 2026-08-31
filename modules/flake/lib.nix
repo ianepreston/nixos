@@ -3,4 +3,5 @@
 # `config.flake.lib.mkNixosHost` to build their nixosConfiguration.
 {
   flake.lib.mkNixosHost = import ../../lib/mkNixosHost.nix;
+  flake.lib.fleetSshKeys = import ../../lib/fleetSshKeys.nix;
 }
