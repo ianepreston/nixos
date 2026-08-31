@@ -51,9 +51,22 @@
           ServerAliveCountMax = 3;
           HashKnownHosts = false;
           UserKnownHostsFile = "~/.ssh/known_hosts";
-          ControlMaster = "no";
+          # Multiplex connections. Hardware-backed keys require a touch
+          # per *signature* — the agent can't absorb that — so every
+          # unmultiplexed connection costs another touch. The recipes in
+          # taskfiles/{recovery,bootstrap}.yaml fire many discrete ssh
+          # calls per run; one master collapses them into a single touch.
+          # (`nixos-rebuild` already multiplexes internally over its own
+          # ControlPath, so `task deploy:*` was never the worst offender.)
+          #
+          # ControlPath deliberately sits directly in ~/.ssh rather than
+          # the ~/.ssh/sockets dir base.nix creates: penguin loads this
+          # module as a standalone home-manager config with no NixOS
+          # tmpfiles rule behind it, and a missing socket dir degrades to
+          # an unmultiplexed connection with only a warning.
+          ControlMaster = "auto";
           ControlPath = "~/.ssh/master-%r@%n:%p";
-          ControlPersist = "no";
+          ControlPersist = "10m";
         };
       };
     };

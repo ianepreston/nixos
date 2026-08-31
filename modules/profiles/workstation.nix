@@ -15,6 +15,7 @@
       audio
       nix-maintenance
       themes
+      yubikey
     ];
 
     # Workstations track main on the same nightly timer as servers, but
