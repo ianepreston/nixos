@@ -9,11 +9,7 @@
 }:
 let
   hostSpec = hostSpecs.iso;
-  pubKeys = builtins.attrValues (
-    builtins.mapAttrs (name: _: builtins.readFile ../profiles/_ssh-keys/${name}) (
-      builtins.readDir ../profiles/_ssh-keys
-    )
-  );
+  pubKeys = config.flake.lib.fleetSshKeys ../profiles/_ssh-keys;
 in
 {
   # networking.hostName is single-sourced from hostSpec by mkNixosHost.

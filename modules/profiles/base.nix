@@ -3,14 +3,14 @@
 #
 # This is a flake-parts module that registers flake.modules.nixos.base
 # Hosts import this module to get essential NixOS configuration
-{ inputs, ... }:
+{ config, inputs, ... }:
 let
   sshKeysDir = ./_ssh-keys;
-  pubKeys = builtins.attrValues (
-    builtins.mapAttrs (name: _: builtins.readFile (sshKeysDir + "/${name}")) (
-      builtins.readDir sshKeysDir
-    )
-  );
+  # Every key here becomes an authorized key for the primary user on
+  # every host, and wheel is passwordless — so anything in this
+  # directory is passwordless root across the fleet. Human login keys
+  # only; see modules/profiles/_ssh-keys/README.md.
+  pubKeys = config.flake.lib.fleetSshKeys sshKeysDir;
 in
 {
   flake.modules.nixos.base =
@@ -155,6 +155,13 @@ in
         sharedModules = [
           (
             let
+              # Cosmetic convenience: seed ~/.ssh/id_ed25519.pub when this
+              # host happens to have a key in _ssh-keys/. Guarded by
+              # pathExists because most hosts don't — hpp-1 has never had
+              # one and is unaffected, since ssh derives the public half
+              # from the sops-provisioned private key when it needs it.
+              # As #500 prunes that directory this will stop firing
+              # everywhere, which is fine.
               hostPubKey = sshKeysDir + "/id_${hostSpec.hostName}.pub";
             in
             {

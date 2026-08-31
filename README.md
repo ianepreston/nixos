@@ -67,7 +67,7 @@ and resources if you want to build your own.
 ├── modules/               # All configuration modules, auto-imported by import-tree
 │   ├── flake/             # Flake infrastructure (host-specs, module namespaces, dev shell, git hooks)
 │   ├── profiles/          # Composable profiles (base, darwin-base, server, server-apps, workstation)
-│   │   └── _ssh-keys/    # Public SSH keys
+│   │   └── _ssh-keys/    # Human login pubkeys — authorized fleet-wide (see its README)
 │   ├── system/            # System-level modules (sops, ssh, caddy, postgresql, mariadb, oci-containers, server-backups, observability, tailscale, …). Cross-cutting option surfaces (myCaddy.apps, myPostgresApp, myHomepage.tiles, mySqliteQuiesce.apps) are declared inline next to the service that consumes them.
 │   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
 │   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
@@ -1088,6 +1088,14 @@ task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebui
 3. Creates `nix-secrets/sops/newhostname.yaml` with a generated SSH key
 4. Re-encrypts shared secrets for the new host
 5. Commits nix-secrets (locally — not pushed)
+6. Prints the host's machine pubkey — **add it to GitHub as a deploy key** for
+   the private `nix-secrets` input, or `nixos-upgrade` can't fetch it
+
+That machine key is deliberately not committed to
+`modules/profiles/_ssh-keys/`: everything in that directory is an authorized
+key on every host, so storing a machine identity there would let a compromised
+server SSH into your workstations. It stays recoverable from sops — the task
+prints both recovery commands. See `modules/profiles/_ssh-keys/README.md`.
 
 To run this step manually (e.g. after a partial re-run):
 
