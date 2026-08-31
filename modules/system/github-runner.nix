@@ -94,6 +94,30 @@ _: {
         # Re-register an existing runner of the same name on restart
         # (e.g. after `replace`-style PAT rotation or a state wipe).
         replace = true;
+        # One job per runner registration: the agent de-registers and exits
+        # after each job, systemd restarts it (Restart=on-success), and it
+        # comes back as a fresh registration with a wiped state directory.
+        #
+        # This is what stops a compromised workflow from leaving anything
+        # behind. Previously the state dir persisted between jobs *and*
+        # across the impermanence wipe (see the preservation entry this
+        # replaced), so a foothold planted by a malicious action survived
+        # reboots indefinitely.
+        #
+        # It does NOT cost us the warm /nix/store that this runner exists
+        # for (#180). Ephemeral wipes the runner's own StateDirectory
+        # (/var/lib/github-runner/<name>) and RuntimeDirectory
+        # (/run/github-runner/<name>, which upstream already cleans on
+        # every service start regardless — `# Always clean workDir` in the
+        # module's service.nix). /nix/store is daemon-owned and system-wide,
+        # outside both, and is never touched. The per-job cost is a fresh
+        # `actions/checkout` clone plus a re-registration handshake —
+        # seconds, not a rebuild.
+        #
+        # Requires `tokenFile` to be a PAT rather than a registration
+        # token, since the agent mints a new registration on every start.
+        # That is what `github_runner/pat` above is.
+        ephemeral = true;
         extraLabels = [
           "nixos"
           runnerName
@@ -108,13 +132,5 @@ _: {
           pkgs.jq
         ];
       };
-
-      # Preserve the runner's registration credentials across the
-      # impermanence wipe. Without this, the agent re-registers with
-      # GitHub on every reboot — works (PAT-based auto-registration)
-      # but churns the runner list on GitHub's side.
-      preservation.preserveAt."/persist".directories = [
-        "/var/lib/github-runner"
-      ];
     };
 }
