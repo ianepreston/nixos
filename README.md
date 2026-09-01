@@ -11,6 +11,7 @@
 - [Jellyfin](#jellyfin)
 - [Authentik (SSO)](#authentik-sso)
 - [Home Assistant](#home-assistant)
+- [Local LLM Inference](#local-llm-inference)
 - [Secrets Management](#secrets-management)
 - [Task Automation](#task-automation)
 - [Bootstrapping a New Host](#bootstrapping-a-new-host)
@@ -37,6 +38,8 @@
   [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) and Taskfile
   tasks
 - Custom NixOS recovery/installer ISO
+- Local LLM inference (llama.cpp on CUDA) served from the workstation GPU and
+  fronted with TLS + SSO by the prod server
 - Theming via stylix
 - Task automation via [go-task](https://taskfile.dev/) (`Taskfile.yaml`)
 
@@ -85,7 +88,7 @@ and resources if you want to build your own.
 | Host                  | Platform       | Config Type            | Description                                                               |
 | --------------------- | -------------- | ---------------------- | ------------------------------------------------------------------------- |
 | **luna**              | x86_64-linux   | `nixosConfigurations`  | MSI GS43VR laptop — workstation + GNOME + gaming + NVIDIA GTX 1060        |
-| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + NVIDIA RTX 5080 + streaming  |
+| **terra**             | x86_64-linux   | `nixosConfigurations`  | AMD desktop — workstation + GNOME + gaming + RTX 5080 + llama.cpp serving |
 | **hpp-1**             | x86_64-linux   | `nixosConfigurations`  | Dev server — `server` + `server-apps` + Intel QuickSync transcoding       |
 | **amos1**             | x86_64-linux   | `nixosConfigurations`  | Prod server — `server` + `server-apps` + NVIDIA transcoding               |
 | **work**              | aarch64-darwin | `darwinConfigurations` | macOS work machine — Homebrew, Hammerspoon, work-specific git config      |
@@ -932,6 +935,107 @@ target host rather than trying to sync a dev instance into prod. The only
 cleanly portable Tier-2 artifacts are the `automations.yaml` / `scripts.yaml` /
 `scenes.yaml` files (plain YAML; each automation needs a unique `id` and
 entity_ids that exist on the target).
+
+## Local LLM Inference
+
+`llama-server` (llama.cpp's OpenAI-compatible HTTP API) runs on the host with
+the GPU, wired up by `modules/system/llama-cpp.nix` — a thin wrapper over
+nixpkgs' `services.llama-cpp` that adds a CUDA build, a sops-fed API key, and a
+source-scoped firewall hole. A host enables inference with one attr set:
+
+```nix
+# modules/hosts/terra.nix
+myLlamaCpp = {
+  enable = true;
+  hfModel = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
+  ctxSize = 16384;
+  cudaCapabilities = [ "12.0" ];      # RTX 5080 / Blackwell / sm_120
+  listenAddress = "0.0.0.0";
+  allowedClients = [ "192.168.10.11" ]; # amos1 only
+  sleepIdleSeconds = 600;
+};
+```
+
+### The CUDA build is local and unavoidable
+
+`pkgs.llama-cpp` in this flake is a CPU build — nothing sets
+`config.cudaSupport`. The module imports a second nixpkgs instance with CUDA on,
+which no binary cache serves (CUDA is unfree), so the first rebuild on a host
+compiles llama.cpp from scratch. Budget for it.
+
+`cudaCapabilities` is what keeps that survivable. Left at the nixpkgs default it
+builds kernels for nine architectures (7.5 → 12.1); pinned to the one the host
+actually has, the compile drops to roughly a ninth of that (~10 min on terra's
+16-core Ryzen). Getting the value *wrong* doesn't fail the build — it fails at
+runtime with no usable kernels. RTX 5080 is `12.0`, RTX 3070 is `8.6`.
+
+### Model files are not Nix's problem
+
+GGUFs are gigabytes and don't belong in the store. `hfModel` is passed straight
+through as `-hf <repo>:<quant>` and llama-server downloads the weights itself on
+first start, into `LLAMA_CACHE`. The module points that at the *state* directory
+rather than upstream's `/var/cache/llama-cpp`, so nothing that treats
+`/var/cache` as disposable can trigger a multi-GB re-download.
+
+So the first start after enabling a new model takes as long as the download
+takes (~9 GB for a 14B at Q4_K_M) and needs working egress to huggingface.co.
+Later starts are cache hits. `systemctl status llama-cpp` shows nothing useful
+while this happens; watch the blob instead:
+
+```sh
+sudo du -sh /var/lib/private/llama-cpp
+```
+
+### Sizing against VRAM
+
+Weights plus KV cache plus compute buffers have to fit. KV cache is the part
+that surprises: Qwen3-14B is ~160 KB/token, so 16k of context is ~2.6 GB and 32k
+is ~5.2 GB on top of ~9 GB of weights. On a 16 GB card that also has a desktop
+session on it, context size is the knob that runs you out of memory, not the
+model.
+
+`sleepIdleSeconds` exists because terra is a gaming machine first — after the
+idle window llama-server sleeps and hands the VRAM back, and the next request
+pays a reload.
+
+### Fronting a workstation from a server
+
+terra imports the `workstation` profile: no caddy, no authentik, no tailscale.
+Rather than replicate that stack onto a desktop, amos1 proxies to it —
+`modules/apps/llm-terra.nix` is a route-only module (no service, no state, hence
+no `recovery:` dispatcher) that registers a `myAuthentik.forwardAuthApps` entry
+pointing at `terra.ipreston.net`. TLS terminates on amos1's existing wildcard
+cert.
+
+Two things that follow from that shape:
+
+- **`upstreamHost`.** `myAuthentik.forwardAuthApps` gained an `upstreamHost`
+  option (default `localhost`) for exactly this. Only point it at a backend that
+  has its own auth on whatever paths you bypass — the hop is plaintext HTTP over
+  the LAN.
+- **The address has to be pinned.** `terra.ipreston.net` is registered by the
+  router from terra's DHCP lease, so terra needs a DHCP reservation or the route
+  drifts. terra is also a desktop that gets powered off; the route 502s while
+  it's down, which is expected rather than a fault.
+
+### Why `/v1/*` skips forward-auth
+
+OpenAI-compatible clients send a bearer token and can't follow an authentik
+login redirect, so the API paths bypass forward-auth and are gated by
+llama-server's own `--api-key` instead — the same "app has its own key auth on
+this sub-path" pattern as radarr's `/api/*`. The browser UI at `/` stays gated.
+
+The key itself comes from sops via `LLAMA_API_KEY` in an `EnvironmentFile`,
+never `--api-key` on the command line: `/proc/*/cmdline` and `/nix/store` are
+both world-readable.
+
+Worth knowing: llama-server treats `/v1/models` and `/v1/health` as *public*
+endpoints and serves them with no key even when `--api-key` is set. Bypassing
+`/v1/*` therefore leaves the model list readable without credentials on that
+hostname. `*.amos.ipreston.net` has no public DNS record and no inbound
+port-forward — it resolves only on the LAN and over tailscale — so that's
+acceptable today. It stops being acceptable the moment anything about that
+changes.
 
 ## Secrets Management
 

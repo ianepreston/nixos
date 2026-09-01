@@ -321,7 +321,22 @@
                   };
                   port = lib.mkOption {
                     type = lib.types.port;
-                    description = "Loopback port the upstream container exposes on the host.";
+                    description = "Port the upstream exposes on `upstreamHost`.";
+                  };
+                  upstreamHost = lib.mkOption {
+                    type = lib.types.str;
+                    default = "localhost";
+                    example = "terra.ipreston.net";
+                    description = ''
+                      Host Caddy proxies to. Defaults to localhost — nearly
+                      every app runs on the same box as caddy. Set it to
+                      front a service on *another* machine that has no
+                      caddy/authentik of its own (terra's llama-server),
+                      so that machine gets TLS + SSO without replicating
+                      the whole server stack. The hop is plaintext HTTP
+                      over the LAN, so only point this at a backend with
+                      its own auth on the paths you bypass.
+                    '';
                   };
                   displayName = lib.mkOption {
                     type = lib.types.str;
@@ -717,7 +732,7 @@
           myCaddy.apps = lib.mapAttrs (
             _name: app:
             let
-              upstream = "localhost:${toString app.port}";
+              upstream = "${app.upstreamHost}:${toString app.port}";
               gatedBlock =
                 if app.proxyConfig == "" then
                   ''
