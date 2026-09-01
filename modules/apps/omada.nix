@@ -60,13 +60,48 @@
 #
 # ## Auth
 #
-# Omada has no OIDC, so the web UI is gated by Authentik forward-auth
-# (Infrastructure group) exactly like UniFi. No `bypassAuthPaths`:
-# Omada's API is session-cookie based rather than API-key based, so
-# there is no route that carries its own auth to safely open up. The
-# cost is that the Omada *mobile app* can't be used on the LAN — it
-# connects straight to https://<host>:8043, which stays firewalled.
-# Browser only, through omada.<serverDomain>.
+# Forward-auth (Infrastructure group), the same treatment as UniFi.
+# That gates the door: Authentik decides who reaches the controller at
+# all, but Omada's own local admin login still sits behind it, so it is
+# two logins rather than true SSO.
+#
+# That is a deliberate stopping point, NOT a limitation of the app.
+# Unlike UniFi, Omada does support real SSO — over SAML, not OIDC, and
+# authentik documents the integration
+# (https://integrations.goauthentik.io/networking/omada-controller/).
+# The endpoint is present on this build: `POST /sso/saml/login` on the
+# management port answers 405-not-POST rather than 404 on 6.3.0.44.
+# TP-Link lists the Software Controller as supported.
+#
+# What it would take, and why it isn't done here yet:
+#
+#   * A third shape alongside `myAuthentik.{oidcApps,forwardAuthApps}`
+#     — a SAML provider plus four custom property mappings (givenname,
+#     surname, username, usergroup_name) and one application
+#     entitlement per Omada SAML user group.
+#   * A bidirectional bootstrap that can't be fully declared. The
+#     provider's Audience is the controller's Entity ID and the relay
+#     state is base64 of `<resourceId>_<omadacId>`, all of which the
+#     controller *generates at first run* — omadacId here is
+#     b17086d5de94da4b6c847b58e9cc3923, and a rebuilt controller gets a
+#     new one. Same class of problem as the manyfold OIDC bootstrap.
+#   * Omada binds one SAML user group per user, so authentik
+#     entitlement names have to match Omada group names exactly,
+#     case-sensitively.
+#   * Forward-auth would need a `/sso/saml/*` bypass to let authentik's
+#     ACS POST reach the controller, or be dropped entirely — the two
+#     layers are redundant once SAML is live.
+#
+# Doing that against a controller that hasn't run its setup wizard, on
+# a site with no adopted devices, would be building against IDs that
+# don't exist yet. Revisit once the controller is configured.
+#
+# No `bypassAuthPaths` today: Omada's API is session-cookie based
+# rather than API-key based, so there is no route carrying its own auth
+# that would be safe to open up. The cost is that the Omada *mobile
+# app* can't be used on the LAN — it connects straight to
+# https://<host>:8043, which stays firewalled. Browser only, through
+# omada.<serverDomain>.
 #
 # Adoption traffic never goes near Caddy, so forward-auth doesn't
 # interfere with it — the device-facing ports are opened directly.
