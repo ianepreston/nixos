@@ -508,6 +508,28 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+  omada:
+    desc: Restore omada controller (container volume — data + logs)
+    requires: {vars: [HOST]}
+    cmds:
+      - task: _restore-volume
+        vars:
+          HOST: '{{.HOST}}'
+          APP: omada
+          UNITS: 'podman-omada.service'
+          PATHS: '/var/lib/containers/omada'
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      # 8043 is the controller's own HTTPS listener with a self-signed
+      # cert, which `_health`'s curl has no -k for. 8088 is the plain-HTTP
+      # port Omada serves purely to bounce clients to 8043, so a 302 there
+      # is a real "Spring Boot is up and serving" signal. Long retry: the
+      # embedded MongoDB plus the JVM take ~60s to reach a listening
+      # socket from a cold container.
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: omada, URL: 'http://127.0.0.1:8088/', EXPECT: '302', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   paperless-ngx:
     desc: Restore paperless-ngx (native + postgres, four units)
     requires: {vars: [HOST]}
@@ -730,6 +752,7 @@ tasks:
       - task: miniflux
       - task: mosquitto
       - task: mylar3
+      - task: omada
       - task: paperless-ngx
       - task: pinchflat
       - task: profilarr

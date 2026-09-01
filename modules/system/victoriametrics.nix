@@ -804,10 +804,10 @@ _: {
                 # virtualisation.oci-containers): each registers a
                 # podman-<name>.service unit. Includes unifi-os-server —
                 # it runs as an OCI container (podman-unifi-os-server),
-                # not a native service. bookorbit is dev-only, so the
-                # token simply never matches on prod hosts.
+                # not a native service. bookorbit and omada are dev-only,
+                # so those tokens simply never match on prod hosts.
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
-                + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
+                + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
                 + "|seerr|shelfmark|tandoor|unifi-os-server"
                 + "|valheim))\\.service$"
               )

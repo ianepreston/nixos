@@ -62,6 +62,10 @@
       # Apps that ship only on dev-environment servers.
       devOnlyApps = with inputs.self.modules.nixos; [
         kapowarr
+        # Staging for the UniFi -> TP-Link swap: adopt and configure the
+        # new gear on hpp-1 while amos1's UniFi controller still runs the
+        # live network. Promote to commonApps at cutover.
+        omada
         readeck
         ytdlp-web-player
       ];
