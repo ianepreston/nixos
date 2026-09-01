@@ -986,6 +986,30 @@ while this happens; watch the blob instead:
 sudo du -sh /var/lib/private/llama-cpp
 ```
 
+Nothing outside nix's view gets garbage-collected, so old weights pile up as
+`hfModel` changes. Two tasks handle that:
+
+```sh
+task llm:models                    # what's cached, and which one is live
+task llm:models:prune              # dry run: what would go
+task llm:models:prune APPLY=true   # actually delete
+```
+
+The prune asks the *running* llama-server which file it has loaded
+(`GET /props` → `model_path`) rather than re-deriving llama.cpp's `-hf` tag
+matching — that matching involves a case-insensitive regex plus multi-shard
+split groups and mmproj sidecars, and a subtle mismatch here deletes a 9 GB
+blob that is live. `/props` answers while the server is asleep, so the idle
+window doesn't get in the way. If the server isn't answering at all the task
+aborts instead of guessing, which means a half-applied switch can't turn into
+a deletion.
+
+What it removes: whole repos other than the live one, superseded revisions of
+the live repo, other quants sitting in the live snapshot, and blobs no
+surviving symlink points at. What it keeps: every shard of a split model, any
+`mmproj*` sidecar, non-`.gguf` files, and any `.downloadInProgress` touched in
+the last hour.
+
 ### Sizing against VRAM
 
 Weights plus KV cache plus compute buffers have to fit. KV cache is the part

@@ -1,0 +1,84 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Local LLM serving (see modules/system/llama-cpp.nix). Operator tasks for
+# the one bit of llama-server state Nix deliberately doesn't manage: the
+# GGUF cache.
+#
+# Model weights are downloaded by llama-server itself (`-hf`), not by nix,
+# so they accumulate as `myLlamaCpp.hfModel` changes — a 14B at Q4_K_M is
+# ~9 GB a go. Nothing reclaims them automatically: an auto-prune on a
+# timer would delete a model the moment a switch is half-applied, and the
+# store's own GC has no visibility into /var/lib. So it's a task, and it
+# defaults to a dry run.
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+vars:
+  CACHE_DIR: /var/lib/llama-cpp/models
+tasks:
+  models:
+    desc: 'List cached GGUFs on HOST and flag which one is live. Vars: HOST (default terra)'
+    # The remote body is a heredoc; echoing it back drowns the listing.
+    silent: true
+    vars:
+      HOST: '{{.HOST | default "terra"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        configured=$(nix eval --raw \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.hfModel" 2>/dev/null || true)
+        port=$(nix eval --raw --apply toString \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port" 2>/dev/null || echo 8080)
+        echo -e "\x1B[32m[+] {{.HOST}} — configured hfModel: ${configured:-<none>}\x1B[0m"
+        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} "sudo bash -se -- $port" <<'EOF'
+        set -euo pipefail
+        PORT=$1
+        CACHE={{.CACHE_DIR}}
+        [ -d "$CACHE" ] || { echo "no model cache at $CACHE"; exit 0; }
+
+        key=$(grep -oP 'LLAMA_API_KEY=\K.*' /run/secrets/rendered/llama-cpp.env 2>/dev/null || true)
+        live=$(curl -sf --max-time 15 "http://127.0.0.1:${PORT}/props" \
+          ${key:+-H "Authorization: Bearer ${key}"} 2>/dev/null \
+          | grep -oP '"model_path"\s*:\s*"\K[^"]+' || true)
+        [ -n "$live" ] && live=$(readlink -f "$live")
+        [ -n "$live" ] || echo "(llama-server not answering — 'live' column unavailable)"
+
+        for repo in "$CACHE"/models--*; do
+          [ -d "$repo" ] || continue
+          echo "$(basename "$repo")  [$(du -sh "$repo" | cut -f1)]"
+          find "$repo/snapshots" -name '*.gguf' 2>/dev/null | sort | while read -r f; do
+            mark="   "
+            [ "$(readlink -f "$f")" = "$(readlink -f "$live")" ] && mark=" * "
+            printf '%s%-52s %s\n' "$mark" "$(basename "$f")" \
+              "$(du -sh --dereference "$f" 2>/dev/null | cut -f1)"
+          done
+        done
+        echo
+        echo "* = the model llama-server currently has loaded"
+        EOF
+      - echo -e "\x1B[32m[+] prune the rest with 'task llm:models:prune HOST={{.HOST}}'\x1B[0m"
+
+  models:prune:
+    desc: 'Remove cached GGUFs the running llama-server is not using. Vars: HOST (default terra), APPLY=true to actually delete (default dry run)'
+    silent: true
+    vars:
+      HOST: '{{.HOST | default "terra"}}'
+      APPLY: '{{.APPLY | default "false"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        if [ "{{.APPLY}}" = "true" ]; then
+          echo -e "\x1B[31m[!] APPLY=true — deleting superseded models on {{.HOST}}\x1B[0m"
+        else
+          echo -e "\x1B[32m[+] dry run against {{.HOST}} (APPLY=true to delete)\x1B[0m"
+        fi
+        # The script asks llama-server which model is live rather than
+        # re-deriving llama.cpp's -hf tag matching. It aborts if the server
+        # isn't answering, so a failed switch can't turn into a deletion.
+        port=$(nix eval --raw --apply toString \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port" 2>/dev/null || echo 8080)
+        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} \
+          "sudo bash -s -- {{.CACHE_DIR}} $port /run/secrets/rendered/llama-cpp.env {{.APPLY}}" \
+          < scripts/llm-prune-models.sh
