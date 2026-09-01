@@ -43,6 +43,27 @@ Prefer hardware-backed keys (`sk-ssh-ed25519@openssh.com`). The fleet is
 migrating to hardware-only — see #499 for enrolment and #501 for the check that
 will eventually reject anything else.
 
+## The private half of a hardware key
+
+`id_ed25519_sk_1.pub` / `id_ed25519_sk_2.pub` are the two enrolled
+YubiKeys. Their private counterparts are *stub* files — a credential
+handle plus the public half, inert without the physical token — and both
+credentials are **resident**, so a token can always re-emit its own stub
+with `ssh-keygen -K` (which writes into `$PWD`, and names both
+`id_ed25519_sk_rk` because they share the default `ssh:` application
+string, so rename between downloads).
+
+To save doing that on every machine, the stubs are distributed like any
+other user secret: stored at `ssh/ed25519_sk_{1,2}` in `shared.yaml` and
+rendered to `~/.ssh/` by `modules/hardware/yubikey.nix`, which also names
+them in `IdentityFile`. They are not committed here — this directory is
+pubkeys-only.
+
+Never re-run `ssh-keygen -t ed25519-sk` against a token that is already
+enrolled. That mints a *new* credential with a *new* public key, which
+then has to be added here and rebuilt fleet-wide. Enrolment happens once
+per token.
+
 ## Removing a key
 
 Removal only takes effect on a host once that host has rebuilt. Deploy every

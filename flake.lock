@@ -465,10 +465,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1787448153,
-        "narHash": "sha256-/oaDVOVtr3N7cpDaHusesJqP09lFpDmyVjdCn/BeXr0=",
+        "lastModified": 1788223250,
+        "narHash": "sha256-p0O9kTwzVgNaO0mByzjqbI+1lWec8i7SV4UgRpajzD8=",
         "ref": "main",
-        "rev": "3e63c5b07479f89e9b787579d972ecf9528e3f2b",
+        "rev": "87ee44c9d3f9973f7de51976d50c4da2222b8c78",
         "shallow": true,
         "type": "git",
         "url": "ssh://git@github.com/ianepreston/nix-secrets.git"

@@ -1,0 +1,151 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# SSH key verification.
+#
+# The point of `verify-keys` is to prove a key works *before* the old key
+# it replaces is removed from any `authorized_keys`. It never edits
+# anything — it just forces ssh to authenticate with exactly one identity
+# and reports whether the server took it.
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+  verify-keys:
+    desc: 'Prove each SSH key authenticates to each host, without touching authorized_keys. Vars: HOSTS, KEYS, SIGN=false for a no-token pubkey-installed check'
+    # One PIN entry + one touch per (host, key) pair — sk keys enrolled
+    # with verify-required need both per *signature*, and no agent can
+    # absorb that. Budget accordingly, or narrow HOSTS.
+    vars:
+      HOSTS: '{{.HOSTS | default "hpp-1 amos1 terra luna xps13 toshibachromebook laconia behemoth github.com"}}'
+      KEYS: '{{.KEYS | default "~/.ssh/id_ed25519_sk_1 ~/.ssh/id_ed25519_sk_2"}}'
+      # SIGN=false stops at "did the server accept the offer", which is
+      # what proves the *pubkey* is installed in authorized_keys. That
+      # half needs no token, no PIN and no touch, so it runs anywhere —
+      # including non-interactively. Use it to check a hand-edited host
+      # before spending touches on the full run.
+      SIGN: '{{.SIGN | default "true"}}'
+    cmds:
+      - |
+        # Task's interpreter runs recipes with errexit on; a failing probe
+        # is data here, not a reason to abort the matrix.
+        set +e
+        set -uo pipefail
+        pass=0; fail=0; failed=""
+
+        # Isolating a single identity is harder than it looks: `-i` only
+        # *prepends* to the identity list, and IdentitiesOnly still honours
+        # ssh_config's own IdentityFile entries — so the fleet-wide list in
+        # ssh.nix gets offered alongside the key under test and whichever
+        # the server accepts first wins, silently passing a key that was
+        # never exercised. `-F none` is the only way to get a true
+        # single-identity probe, so resolve the host alias with `ssh -G`
+        # first and carry its connection parameters across by hand
+        # (laconia's port/user, switch's legacy crypto).
+        #
+        # IdentityAgent=none  - and don't let the agent supply one either
+        # PreferredAuthentications=publickey - a host with password auth
+        #   enabled must not give a false pass
+        #
+        # ControlMaster/ControlPath need no override under -F none: they
+        # default off, so ssh.nix's fleet-wide ControlPersist can't hand
+        # back a warm session that skips authentication entirely. Same for
+        # laconia's RemoteCommand/RequestTTY.
+        #
+        # Task runs recipes under mvdan/sh, not bash — keep this POSIX
+        # (no ${@:n} slicing, no ${var/#pat/rep}, no arrays).
+        probe() {
+          _hn=""; _port=""; _user=""; _kex=""; _ciph=""; _hka=""; _pka=""
+          eval "$(ssh -G "$1" 2>/dev/null | awk '
+            $1=="hostname"                 {printf "_hn=%s\n",   $2}
+            $1=="port"                     {printf "_port=%s\n", $2}
+            $1=="user"                     {printf "_user=%s\n", $2}
+            $1=="kexalgorithms"            {printf "_kex=%s\n",  $2}
+            $1=="ciphers"                  {printf "_ciph=%s\n", $2}
+            $1=="hostkeyalgorithms"        {printf "_hka=%s\n",  $2}
+            $1=="pubkeyacceptedalgorithms" {printf "_pka=%s\n",  $2}
+          ')"
+          _opts=""
+          [ -n "$_kex" ]  && _opts="$_opts -o KexAlgorithms=$_kex"
+          [ -n "$_ciph" ] && _opts="$_opts -o Ciphers=$_ciph"
+          [ -n "$_hka" ]  && _opts="$_opts -o HostKeyAlgorithms=$_hka"
+          [ -n "$_pka" ]  && _opts="$_opts -o PubkeyAcceptedAlgorithms=$_pka"
+          ssh -v -n -F none $_opts \
+            -o IdentitiesOnly=yes \
+            -o IdentityAgent=none \
+            -o PreferredAuthentications=publickey \
+            -o ConnectTimeout=10 \
+            -p "$_port" -i "$2" "$_user@$_hn" true 2>&1
+        }
+
+        for key in {{.KEYS}}; do
+          key=$(echo "$key" | sed "s|^~|$HOME|")
+          if [ ! -f "$key" ]; then
+            echo -e "\x1B[31m[!] $key not found — skipping\x1B[0m" >&2
+            fail=$((fail+1)); failed="$failed <missing:$key>"
+            continue
+          fi
+          fp=$(ssh-keygen -lf "$key" | awk '{print $2}')
+          echo ""
+          echo -e "\x1B[1m=== $key\x1B[0m  ($fp)"
+          # Each resident credential lives on exactly one token, so the
+          # matching YubiKey has to be the one plugged in for this batch.
+          # Only prompt when there's a terminal to prompt on.
+          if [ -t 1 ] && [ "{{.SIGN}}" = "true" ] && ssh-keygen -lf "$key" | grep -q 'SK)'; then
+            read -r -p "    Insert the YubiKey holding this credential, then press enter: " _ || true
+          fi
+
+          for host in {{.HOSTS}}; do
+            printf '    %-22s ' "$host"
+            # github is a git-only endpoint under a fixed user, and it
+            # refuses the probe command after authenticating.
+            case "$host" in
+              github.com) target="git@github.com" ;;
+              *)          target="$host" ;;
+            esac
+            out=$(probe "$target" "$key")
+
+            # The exit code is not the signal: github exits non-zero on a
+            # perfectly good login, and a host with a ForceCommand would
+            # too. What is being tested is whether the key authenticated,
+            # so read that off the trace. `Server accepts key:` names the
+            # identity the server actually took, which also catches a host
+            # silently letting some *other* key through.
+            accepted=$(echo "$out" | sed -n 's/.*Server accepts key:.*\(SHA256:[A-Za-z0-9+/]*\).*/\1/p' | head -1)
+            if [ "{{.SIGN}}" = "true" ]; then
+              echo "$out" | grep -q 'Authenticated to .* using "publickey"' && ok=1 || ok=0
+            else
+              [ -n "$accepted" ] && ok=1 || ok=0
+            fi
+            if [ "$ok" = "1" ]; then
+              if [ -n "$accepted" ] && [ "$accepted" != "$fp" ]; then
+                echo -e "\x1B[31mFAIL\x1B[0m  authenticated with a different key: $accepted"
+                fail=$((fail+1)); failed="$failed $host/$(basename "$key")"
+              else
+                echo -e "\x1B[32mPASS\x1B[0m  ${accepted:-$fp}"
+                pass=$((pass+1))
+              fi
+            else
+              # Skip debug1/debug2 chatter — under -F none it is full of
+              # harmless 'No such file' lines for known_hosts2 and friends.
+              reason=$(echo "$out" | grep -v '^debug' \
+                | grep -iE 'Permission denied|Connection (timed out|refused|closed)|Could not resolve|not accessible|sign_and_send_pubkey|Operation timed out|banner exchange|Too many authentication' \
+                | head -1)
+              # A resident credential only exists on its own token, so the
+              # commonest sk failure by far is simply the other YubiKey
+              # being in the slot. ssh reports that as an opaque
+              # "invalid format" from the signer.
+              case "$reason" in
+                *sign_and_send_pubkey*) reason="$reason  <- offer was accepted; signing failed. Wrong YubiKey inserted, or PIN/touch not given?" ;;
+              esac
+              echo -e "\x1B[31mFAIL\x1B[0m  ${reason:-see: ssh -v -i $key $target}"
+              fail=$((fail+1)); failed="$failed $host/$(basename "$key")"
+            fi
+          done
+        done
+
+        echo ""
+        echo -e "\x1B[1m=== $pass passed, $fail failed\x1B[0m"
+        if [ $fail -gt 0 ]; then
+          echo -e "\x1B[31m[!] do not prune any authorized_keys entry while these fail:\x1B[0m$failed" >&2
+          exit 1
+        fi
