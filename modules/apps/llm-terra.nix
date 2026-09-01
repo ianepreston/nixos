@@ -7,6 +7,10 @@
 # Nothing here to back up, hence no `recovery:` dispatcher — the restore
 # story for this module is "rebuild the host".
 #
+# Imported by both servers, so the same backend is reachable as
+# llm-terra.dnix.ipreston.net (hpp-1, dev) and llm-terra.amos.ipreston.net
+# (amos1, prod). terra's firewall allowlist names both.
+#
 # Address: `terra.ipreston.net` is registered by the router from terra's
 # DHCP lease, so terra needs a DHCP reservation for the route to stay
 # pointed at the right machine. terra is a desktop that gets powered off,
@@ -29,12 +33,13 @@
 #
 # Caveat worth knowing: llama-server treats `/v1/models` and `/v1/health`
 # as public endpoints and serves them with no key even when `--api-key`
-# is set. Bypassing `/v1/*` therefore exposes the model list on this
-# hostname unauthenticated. `*.amos.ipreston.net` has no public DNS
-# record and no inbound port-forward — it resolves only on the LAN and
-# over tailscale — so the exposure is "someone already inside can see
-# which model is loaded", which is acceptable. Do not add a public
-# ingress for this hostname without revisiting it.
+# is set. Bypassing `/v1/*` therefore exposes the model list on these
+# hostnames unauthenticated. Neither `*.dnix.ipreston.net` nor
+# `*.amos.ipreston.net` has a public DNS record or an inbound
+# port-forward — they resolve only on the LAN and over tailscale — so
+# the exposure is "someone already inside can see which model is
+# loaded", which is acceptable. Do not add a public ingress for either
+# without revisiting it.
 _: {
   flake.modules.nixos.llm-terra = _: {
     myAuthentik.forwardAuthApps.llm-terra = {

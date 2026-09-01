@@ -1003,10 +1003,12 @@ keeps answering while asleep and doesn't reset the timer.
 ### Fronting a workstation from a server
 
 terra imports the `workstation` profile: no caddy, no authentik, no tailscale.
-Rather than replicate that stack onto a desktop, amos1 proxies to it —
+Rather than replicate that stack onto a desktop, the servers proxy to it —
 `modules/apps/llm-terra.nix` is a route-only module (no service, no state, hence
 no `recovery:` dispatcher) that registers a `myAuthentik.forwardAuthApps` entry
-pointing at `terra.ipreston.net`. TLS terminates on amos1's existing wildcard
+pointing at `terra.ipreston.net`. Both hpp-1 and amos1 import it, so the same
+backend answers on `llm-terra.dnix.ipreston.net` and
+`llm-terra.amos.ipreston.net`; TLS terminates on each server's existing wildcard
 cert.
 
 Two things that follow from that shape:
@@ -1016,9 +1018,9 @@ Two things that follow from that shape:
   has its own auth on whatever paths you bypass — the hop is plaintext HTTP over
   the LAN.
 - **The address has to be pinned.** `terra.ipreston.net` is registered by the
-  router from terra's DHCP lease, so terra needs a DHCP reservation or the route
-  drifts. terra is also a desktop that gets powered off; the route 502s while
-  it's down, which is expected rather than a fault.
+  router from terra's DHCP lease, so terra needs a DHCP reservation (one is in
+  place) or the route drifts. terra is also a desktop that gets powered off; the
+  route 502s while it's down, which is expected rather than a fault.
 
 ### Why `/v1/*` skips forward-auth
 
