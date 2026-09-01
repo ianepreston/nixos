@@ -995,8 +995,10 @@ session on it, context size is the knob that runs you out of memory, not the
 model.
 
 `sleepIdleSeconds` exists because terra is a gaming machine first — after the
-idle window llama-server sleeps and hands the VRAM back, and the next request
-pays a reload.
+idle window llama-server sleeps and hands the VRAM back. Measured on terra:
+12.7 GB down to 1.7 GB at the 600 s mark, and ~3 s to wake on the next request
+(the GGUF is still in page cache, so nothing is re-read from disk). `/health`
+keeps answering while asleep and doesn't reset the timer.
 
 ### Fronting a workstation from a server
 
