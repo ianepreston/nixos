@@ -23,38 +23,75 @@
 # `reverse_proxy https://` with a trust override) buys little against a
 # threat model where an attacker already has the LAN.
 #
-# ## Why /v1/* bypasses forward-auth
+# ## Why /v1/* bypasses forward-auth, and why the bypass is conditional
 #
 # OpenAI-compatible clients send a bearer token; they cannot follow an
 # authentik login redirect. So the API paths skip forward_auth and are
-# gated instead by llama-server's own `--api-key` (fed from sops on
-# terra) — the same "the app has its own key auth on this sub-path"
-# pattern as radarr's /api/*. The browser UI at `/` stays gated.
+# gated instead by llama-server's own `--api-key`.
 #
-# Caveat worth knowing: llama-server treats `/v1/models` and `/v1/health`
-# as public endpoints and serves them with no key even when `--api-key`
-# is set. Bypassing `/v1/*` therefore exposes the model list on these
-# hostnames unauthenticated. Neither `*.dnix.ipreston.net` nor
-# `*.amos.ipreston.net` has a public DNS record or an inbound
-# port-forward — they resolve only on the LAN and over tailscale — so
-# the exposure is "someone already inside can see which model is
-# loaded", which is acceptable. Do not add a public ingress for either
-# without revisiting it.
-_: {
-  flake.modules.nixos.llm-terra = _: {
-    myAuthentik.forwardAuthApps.llm-terra = {
-      upstreamHost = "terra.ipreston.net";
-      port = 8080;
-      displayName = "LLM (terra)";
-      # dashboard-icons has no llama.cpp entry; ollama is the closest
-      # local-inference icon in the set.
-      iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
-      bypassAuthPaths = [ "/v1/*" ];
-      homepage = {
-        group = "Infrastructure";
-        icon = "ollama";
-        description = "Local inference on terra";
+# Path alone isn't the right condition, though. llama-server enforces its
+# key on nearly everything it serves — `/props` and `/slots` as well as
+# `/v1/chat/completions` — and only `/`, `/index.html` and the bundles are
+# public. So the web UI loads, then its own XHRs 401, and it prompts the
+# human for a shared API key they have just earned by logging into
+# authentik. Gating on SSO and then demanding the shared secret anyway
+# defeats the point of the SSO.
+#
+# Hence `upstreamBearerEnvVar`: the bypass additionally requires an
+# `Authorization` header, so it catches API clients and not browsers, and
+# the authentik-gated branch injects the key upstream itself. A browser
+# logs into authentik and simply works; an API client presents its own
+# token as before.
+#
+# That also closes a leak this route used to accept. llama-server treats
+# `/v1/models` and `/v1/health` as public — served with no key even when
+# `--api-key` is set — so a plain path bypass exposed the model list
+# unauthenticated on these hostnames. With the header condition, an
+# unauthenticated request to `/v1/*` lands on authentik instead of
+# reaching llama-server at all.
+{ inputs, ... }:
+{
+  flake.modules.nixos.llm-terra =
+    { config, ... }:
+    {
+      myAuthentik.forwardAuthApps.llm-terra = {
+        upstreamHost = "terra.ipreston.net";
+        port = 8080;
+        displayName = "LLM (terra)";
+        # dashboard-icons has no llama.cpp entry; ollama is the closest
+        # local-inference icon in the set.
+        iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
+        bypassAuthPaths = [ "/v1/*" ];
+        upstreamBearerEnvVar = "LLAMA_API_KEY";
+        homepage = {
+          group = "Infrastructure";
+          icon = "ollama";
+          description = "Local inference on terra";
+        };
       };
+
+      # Same key terra's llama-server enforces, so it lives in shared.yaml
+      # rather than either host's file — see modules/system/llama-cpp.nix.
+      sops.secrets."llama-cpp/api_key" = {
+        sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+      };
+
+      # Stacked as a second EnvironmentFile rather than merged into
+      # caddy.nix's own template: this key belongs to one app, and
+      # `EnvironmentFile` is a list, so an app module can contribute one
+      # without caddy.nix growing an option surface for it.
+      # restartUnits goes on the template only (see CLAUDE.md) — sops-nix
+      # re-renders it whenever the underlying secret rotates.
+      sops.templates."llm-terra-caddy.env" = {
+        content = ''
+          LLAMA_API_KEY=${config.sops.placeholder."llama-cpp/api_key"}
+        '';
+        owner = "caddy";
+        restartUnits = [ "caddy.service" ];
+      };
+
+      systemd.services.caddy.serviceConfig.EnvironmentFile = [
+        config.sops.templates."llm-terra-caddy.env".path
+      ];
     };
-  };
 }

@@ -1046,24 +1046,38 @@ Two things that follow from that shape:
   place) or the route drifts. terra is also a desktop that gets powered off; the
   route 502s while it's down, which is expected rather than a fault.
 
-### Why `/v1/*` skips forward-auth
+### Why the `/v1/*` bypass is conditional
 
 OpenAI-compatible clients send a bearer token and can't follow an authentik
 login redirect, so the API paths bypass forward-auth and are gated by
 llama-server's own `--api-key` instead — the same "app has its own key auth on
-this sub-path" pattern as radarr's `/api/*`. The browser UI at `/` stays gated.
+this sub-path" pattern as radarr's `/api/*`.
 
-The key itself comes from sops via `LLAMA_API_KEY` in an `EnvironmentFile`,
-never `--api-key` on the command line: `/proc/*/cmdline` and `/nix/store` are
-both world-readable.
+Path alone turned out to be the wrong condition. llama-server enforces its key
+on nearly everything it serves — `/props` and `/slots` as well as
+`/v1/chat/completions`, with only `/`, `/index.html` and the bundles public — so
+the web UI would load and then prompt the human for a shared API key they had
+just earned by logging into authentik. Gating on SSO and then demanding the
+shared secret anyway defeats the SSO.
 
-Worth knowing: llama-server treats `/v1/models` and `/v1/health` as *public*
-endpoints and serves them with no key even when `--api-key` is set. Bypassing
-`/v1/*` therefore leaves the model list readable without credentials on that
-hostname. `*.amos.ipreston.net` has no public DNS record and no inbound
-port-forward — it resolves only on the LAN and over tailscale — so that's
-acceptable today. It stops being acceptable the moment anything about that
-changes.
+So `myAuthentik.forwardAuthApps.<app>.upstreamBearerEnvVar` names an env var in
+caddy's `EnvironmentFile`, and when it's set the route changes shape: the
+bypass additionally requires an `Authorization` header (catching API clients,
+not browsers), and the authentik-gated branch injects the token upstream
+itself. A browser logs into authentik and just works; an API client presents
+its own token, which passes through untouched.
+
+That also closed a leak this route previously accepted. llama-server treats
+`/v1/models` and `/v1/health` as *public* — served with no key even when
+`--api-key` is set — so a plain path bypass left the model list readable
+without credentials. With the header condition, an unauthenticated request to
+`/v1/*` lands on authentik instead of reaching llama-server at all.
+
+The key comes from sops via `LLAMA_API_KEY` in an `EnvironmentFile`, never
+`--api-key` on the command line: `/proc/*/cmdline` and `/nix/store` are both
+world-readable. It lives in `shared.yaml` rather than a per-host file because
+terra and both servers need it — wider than the three hosts that do, which is
+the thing to fix when the sops files get split more finely.
 
 ## Secrets Management
 

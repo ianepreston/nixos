@@ -386,6 +386,33 @@
                       anything without a trailing `*` is an exact match.
                     '';
                   };
+                  upstreamBearerEnvVar = lib.mkOption {
+                    type = lib.types.nullOr lib.types.str;
+                    default = null;
+                    example = "LLAMA_API_KEY";
+                    description = ''
+                      Name of an environment variable in caddy's
+                      EnvironmentFile holding a bearer token for the
+                      upstream. When set, two things change:
+
+                      * `bypassAuthPaths` additionally require an
+                        `Authorization` header to be present, so the
+                        bypass only applies to genuine API clients; and
+                      * the authentik-gated branch injects
+                        `Authorization: Bearer $${env.<VAR>}` upstream.
+
+                      Use it for an upstream that enforces its own bearer
+                      auth on every route, where the browser would
+                      otherwise be prompted for a shared key it has
+                      already earned by logging into authentik. It also
+                      tightens the bypass: an unauthenticated request to
+                      a bypassed path lands on authentik instead of
+                      reaching the upstream at all.
+
+                      The app module is responsible for stacking the
+                      env file onto caddy — see modules/apps/llm-terra.nix.
+                    '';
+                  };
                   homepage = lib.mkOption {
                     type = lib.types.nullOr homepageSubmodule;
                     default = null;
@@ -733,8 +760,20 @@
             _name: app:
             let
               upstream = "${app.upstreamHost}:${toString app.port}";
+              # When the upstream wants a bearer token, caddy supplies it on
+              # behalf of the browser session authentik just vouched for.
+              # Stacks with proxyConfig rather than replacing it.
+              bearerHeader = lib.optionalString (
+                app.upstreamBearerEnvVar != null
+              ) "header_up Authorization \"Bearer {env.${app.upstreamBearerEnvVar}}\"";
+              gatedProxyBody = lib.concatStringsSep "\n" (
+                lib.filter (l: l != "") [
+                  bearerHeader
+                  app.proxyConfig
+                ]
+              );
               gatedBlock =
-                if app.proxyConfig == "" then
+                if gatedProxyBody == "" then
                   ''
                     import authentik_forward_auth
                     reverse_proxy ${upstream}
@@ -743,9 +782,23 @@
                   ''
                     import authentik_forward_auth
                     reverse_proxy ${upstream} {
-                      ${app.proxyConfig}
+                      ${gatedProxyBody}
                     }
                   '';
+              # A bare path list bypasses on path alone. With a bearer var set,
+              # the bypass also requires the client to actually present an
+              # Authorization header — otherwise a browser hitting /v1/* (the
+              # web UI's own XHRs do) would skip authentik and then get a 401
+              # from the upstream it had no token for.
+              bypassMatcher =
+                if app.upstreamBearerEnvVar == null then
+                  "@bypass_auth path ${lib.concatStringsSep " " app.bypassAuthPaths}"
+                else
+                  ''
+                    @bypass_auth {
+                      path ${lib.concatStringsSep " " app.bypassAuthPaths}
+                      header Authorization *
+                    }'';
             in
             {
               inherit (app) host;
@@ -761,7 +814,7 @@
                   # X-authentik-* headers, which don't exist on bypassed
                   # requests.
                   ''
-                    @bypass_auth path ${lib.concatStringsSep " " app.bypassAuthPaths}
+                    ${bypassMatcher}
                     handle @bypass_auth {
                       reverse_proxy ${upstream}
                     }

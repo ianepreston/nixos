@@ -42,7 +42,6 @@
   flake.modules.nixos.llama-cpp =
     {
       config,
-      hostSpec,
       lib,
       pkgs,
       ...
@@ -165,8 +164,16 @@
         # The key never reaches `settings`/argv — /nix/store and /proc/*/cmdline
         # are both world-readable. llama-server reads `--api-key` from
         # LLAMA_API_KEY, so an EnvironmentFile keeps it off both.
+        #
+        # shared.yaml rather than the per-host file because the servers
+        # fronting this need the same key: caddy injects it upstream on
+        # behalf of an authentik-authenticated browser (see
+        # modules/apps/llm-terra.nix). shared.yaml is decryptable by every
+        # host in the fleet, which is wider than the three that need it —
+        # acceptable for now, and the thing to fix when the sops files get
+        # split more finely.
         sops.secrets."llama-cpp/api_key" = {
-          inherit (hostSpec) sopsFile;
+          sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
         };
 
         sops.templates."llama-cpp.env" = {
