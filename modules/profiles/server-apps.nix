@@ -94,7 +94,20 @@
         "/var/lib/private/authentik"
         "/var/lib/sabnzbd-incomplete"
         "/var/lib/unifi-os-server"
-      ];
+      ]
+      # Conditional, unlike the rest: the GGUF model cache only exists on a
+      # server actually running llama-server, which needs a GPU — hpp-1
+      # doesn't have one and doesn't import modules/apps/llm.nix, so
+      # asserting it unconditionally would demand a directory that host
+      # never creates. Keyed off the forward-auth app rather than
+      # `myLlamaCpp` because that option only exists where
+      # modules/system/llama-cpp.nix is imported, and referencing it here
+      # would fail to evaluate on every other server.
+      #
+      # Preserve-only (not `myAppState`): a GGUF is re-downloadable bytes,
+      # not authored state, so it must stay out of restic. See
+      # modules/apps/llm.nix.
+      ++ lib.optional (config.myAuthentik.forwardAuthApps ? llm) "/var/lib/private/llama-cpp";
 
       expectedPreservedDirs =
         map (a: a.stateDir) (lib.attrValues config.myAppState) ++ residualPreservedDirs;

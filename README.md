@@ -956,6 +956,20 @@ myLlamaCpp = {
 };
 ```
 
+Two instances run today, and they are not redundant copies of each other:
+
+| | terra | amos1 |
+| --- | --- | --- |
+| GPU | RTX 5080, 16 GB | RTX 3070, 8 GB, shared with Jellyfin |
+| model | Qwen3-14B Q4_K_M | Qwen3-8B Q4_K_M |
+| context | 16k | 8k |
+| idle window | 600 s | 300 s |
+| availability | only when the desktop is on | always |
+| URL | `llm-terra.<serverDomain>` | `llm.<serverDomain>` |
+
+So `llm.*` is the one to point a client at by default, and `llm-terra.*` is
+the better model when that machine happens to be up.
+
 ### The CUDA build is local and unavoidable
 
 `pkgs.llama-cpp` in this flake is a CPU build — nothing sets
@@ -1018,11 +1032,38 @@ is ~5.2 GB on top of ~9 GB of weights. On a 16 GB card that also has a desktop
 session on it, context size is the knob that runs you out of memory, not the
 model.
 
+amos1 is the tighter case, because the 3070's 8 GB is also Jellyfin's NVENC
+scratch space. Qwen3-8B at Q4_K_M with 8k context comes to ~6.7 GB, leaving
+~1.3 GB for a transcode that starts while the model happens to be resident.
+Raising `ctxSize` there spends Jellyfin's headroom, not spare capacity — which
+is why the idle window is 300 s rather than terra's 600 s. Handing the GPU back
+promptly matters more on a box with a second job for it.
+
 `sleepIdleSeconds` exists because terra is a gaming machine first — after the
 idle window llama-server sleeps and hands the VRAM back. Measured on terra:
 12.7 GB down to 1.7 GB at the 600 s mark, and ~3 s to wake on the next request
 (the GGUF is still in page cache, so nothing is re-read from disk). `/health`
 keeps answering while asleep and doesn't reset the timer.
+
+### The model cache under impermanence
+
+Servers run impermanence, so llama-server's downloaded GGUFs would be wiped on
+every reboot without a preservation entry — several GB of re-download per boot.
+`modules/apps/llm.nix` preserves `/var/lib/private/llama-cpp`, but deliberately
+**not** via `myAppState`: that derives a restic path from the same declaration,
+and a GGUF has no business in a nightly snapshot. It is re-downloadable bytes,
+not state anyone authored. Same reasoning as sabnzbd's incomplete dir —
+preserve-only, listed conditionally in `residualPreservedDirs` so the structural
+guard still asserts it stays preserved on hosts that run the daemon.
+
+That also means there is no `recovery:` dispatcher for it: nothing of it is in
+restic to restore. After a catastrophic rebuild the model re-downloads on first
+start.
+
+A preservation bindmount hands the unit a `root:root 0700` directory on a fresh
+boot, which looks wrong for a DynamicUser service. It isn't — systemd chowns an
+existing `StateDirectory` to the on-disk sentinel (`nobody:nogroup 0755`) before
+`ExecStart`, and the unit writes through the idmapped mount normally.
 
 ### Fronting a workstation from a server
 
@@ -1162,6 +1203,8 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task secrets:secret APP=x KEY=k`                | Generic high-entropy hex secret at `<app>.<key>`                                 |
 | `task secrets:edit:<host>`                       | Open a host's sops yaml in `$EDITOR`                                             |
 | `task secrets:view:<host>`                       | Decrypt and print a host's sops yaml                                             |
+| `task llm:models [HOST=x]`                       | List cached GGUFs on a llama-server host, flagging the live one                  |
+| `task llm:models:prune [HOST=x] [APPLY=true]`    | Remove superseded GGUFs; dry run unless `APPLY=true`                             |
 | `task secrets:rekey`                             | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
 
 ## Bootstrapping a New Host

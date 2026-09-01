@@ -51,47 +51,23 @@
 # reaching llama-server at all.
 { inputs, ... }:
 {
-  flake.modules.nixos.llm-terra =
-    { config, ... }:
-    {
-      myAuthentik.forwardAuthApps.llm-terra = {
-        upstreamHost = "terra.ipreston.net";
-        port = 8080;
-        displayName = "LLM (terra)";
-        # dashboard-icons has no llama.cpp entry; ollama is the closest
-        # local-inference icon in the set.
-        iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
-        bypassAuthPaths = [ "/v1/*" ];
-        upstreamBearerEnvVar = "LLAMA_API_KEY";
-        homepage = {
-          group = "Infrastructure";
-          icon = "ollama";
-          description = "Local inference on terra";
-        };
-      };
+  flake.modules.nixos.llm-terra = _: {
+    imports = [ inputs.self.modules.nixos.llm-caddy-auth ];
 
-      # Same key terra's llama-server enforces, so it lives in shared.yaml
-      # rather than either host's file — see modules/system/llama-cpp.nix.
-      sops.secrets."llama-cpp/api_key" = {
-        sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+    myAuthentik.forwardAuthApps.llm-terra = {
+      upstreamHost = "terra.ipreston.net";
+      port = 8080;
+      displayName = "LLM (terra)";
+      # dashboard-icons has no llama.cpp entry; ollama is the closest
+      # local-inference icon in the set.
+      iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
+      bypassAuthPaths = [ "/v1/*" ];
+      upstreamBearerEnvVar = "LLAMA_API_KEY";
+      homepage = {
+        group = "Infrastructure";
+        icon = "ollama";
+        description = "Local inference on terra";
       };
-
-      # Stacked as a second EnvironmentFile rather than merged into
-      # caddy.nix's own template: this key belongs to one app, and
-      # `EnvironmentFile` is a list, so an app module can contribute one
-      # without caddy.nix growing an option surface for it.
-      # restartUnits goes on the template only (see CLAUDE.md) — sops-nix
-      # re-renders it whenever the underlying secret rotates.
-      sops.templates."llm-terra-caddy.env" = {
-        content = ''
-          LLAMA_API_KEY=${config.sops.placeholder."llama-cpp/api_key"}
-        '';
-        owner = "caddy";
-        restartUnits = [ "caddy.service" ];
-      };
-
-      systemd.services.caddy.serviceConfig.EnvironmentFile = [
-        config.sops.templates."llm-terra-caddy.env".path
-      ];
     };
+  };
 }
