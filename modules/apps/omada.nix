@@ -4,8 +4,16 @@
 # for the UniFi -> Omada hardware swap: both controllers run in
 # parallel so TP-Link gear can be adopted and configured before the
 # cutover, and UniFi keeps managing the live network until it's done.
-# Dev-only for now (modules/profiles/server-apps.nix `devOnlyApps`) —
-# promote to `commonApps` when amos1 is ready to hold the real site.
+# Retire this module's UniFi counterpart, not this one, when the swap
+# lands.
+#
+# In `commonApps`, so hpp-1 and amos1 each run an instance — the same
+# arrangement UniFi has had all along. Worth knowing before adopting:
+# two controllers on one broadcast domain both answer device discovery,
+# so a factory-default switch or AP shows up as pending adoption in
+# *both* UIs. Adopt from the one that is meant to own the site (amos1
+# for the real network); a device can only be adopted once, and taking
+# it in the wrong controller means a factory reset to get it back.
 #
 # ## Container, not a nixpkgs module
 #

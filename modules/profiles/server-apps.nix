@@ -45,6 +45,10 @@
         manyfold
         miniflux
         mylar3
+        # Runs alongside unifi for the UniFi -> TP-Link swap; both
+        # controllers stay up until the cutover is done. See
+        # modules/apps/omada.nix.
+        omada
         paperless-ngx
         pinchflat
         profilarr
@@ -62,10 +66,6 @@
       # Apps that ship only on dev-environment servers.
       devOnlyApps = with inputs.self.modules.nixos; [
         kapowarr
-        # Staging for the UniFi -> TP-Link swap: adopt and configure the
-        # new gear on hpp-1 while amos1's UniFi controller still runs the
-        # live network. Promote to commonApps at cutover.
-        omada
         readeck
         ytdlp-web-player
       ];
