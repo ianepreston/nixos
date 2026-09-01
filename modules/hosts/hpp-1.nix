@@ -19,6 +19,9 @@
       intel-quicksync
       server
       server-apps
+      # Route-only: fronts terra's llama-server with TLS + authentik.
+      # No inference runs here (see modules/apps/llm-terra.nix).
+      llm-terra
       # Imported here rather than via a profile so a future move to a
       # dedicated runner box is a one-line change. See #180.
       github-runner

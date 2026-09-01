@@ -20,6 +20,9 @@
       nvidia-exporter
       server
       server-apps
+      # Route-only: fronts terra's llama-server with TLS + authentik.
+      # No inference runs on amos1 (see modules/apps/llm-terra.nix).
+      llm-terra
     ])
     ++ [
       {

@@ -6,6 +6,7 @@ shopt: [globstar]
 
 includes:
   bootstrap: ./taskfiles/bootstrap.yaml
+  llm: ./taskfiles/llm.yaml
   maintenance: ./taskfiles/maintenance.yaml
   recovery: ./taskfiles/recovery.yaml
   secrets: ./taskfiles/secrets.yaml
