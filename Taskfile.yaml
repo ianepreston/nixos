@@ -9,6 +9,7 @@ includes:
   maintenance: ./taskfiles/maintenance.yaml
   recovery: ./taskfiles/recovery.yaml
   secrets: ./taskfiles/secrets.yaml
+  ssh: ./taskfiles/ssh.yaml
   vm: ./taskfiles/vm.yaml
 
 tasks:
