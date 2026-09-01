@@ -94,7 +94,8 @@
 #
 # Doing that against a controller that hasn't run its setup wizard, on
 # a site with no adopted devices, would be building against IDs that
-# don't exist yet. Revisit once the controller is configured.
+# don't exist yet. Tracked in #520, gated on the controller being
+# stable on amos1 with devices adopted.
 #
 # No `bypassAuthPaths` today: Omada's API is session-cookie based
 # rather than API-key based, so there is no route carrying its own auth
