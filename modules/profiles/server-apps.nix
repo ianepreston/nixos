@@ -45,6 +45,10 @@
         manyfold
         miniflux
         mylar3
+        # Runs alongside unifi for the UniFi -> TP-Link swap; both
+        # controllers stay up until the cutover is done. See
+        # modules/apps/omada.nix.
+        omada
         paperless-ngx
         pinchflat
         profilarr

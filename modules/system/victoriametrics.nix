@@ -807,7 +807,7 @@ _: {
                 # not a native service. bookorbit is dev-only, so the
                 # token simply never matches on prod hosts.
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
-                + "|homeassistant|kapowarr|manyfold|mylar3|profilarr"
+                + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
                 + "|seerr|shelfmark|tandoor|unifi-os-server"
                 + "|valheim))\\.service$"
               )
