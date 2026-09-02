@@ -796,10 +796,11 @@ _: {
                 # jellyfin, komga, lidarr, matter-server, miniflux,
                 # paperless (multi-unit: web/scheduler/task-queue/consumer),
                 # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
-                # spierscraper.
+                # spierscraper, tandoor-recipes.
                 + "|audiobookshelf|bazarr|flaresolverr|jellyfin|komga"
                 + "|lidarr|matter-server|miniflux|paperless(-.+)?|pinchflat"
                 + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
+                + "|tandoor-recipes"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
                 # podman-<name>.service unit. Includes unifi-os-server —
@@ -808,7 +809,7 @@ _: {
                 # token simply never matches on prod hosts.
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
-                + "|seerr|shelfmark|tandoor|unifi-os-server"
+                + "|seerr|shelfmark|unifi-os-server"
                 + "|valheim))\\.service$"
               )
             ];

@@ -680,15 +680,15 @@ tasks:
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
   tandoor:
-    desc: Restore tandoor (containerized + postgres)
+    desc: Restore tandoor (native + postgres)
     requires: {vars: [HOST]}
     cmds:
       - task: _restore-pg
         vars:
           HOST: '{{.HOST}}'
           APP: tandoor
-          UNITS: 'podman-tandoor.service'
-          PATHS: '/var/lib/containers/tandoor'
+          UNITS: 'tandoor-recipes.service'
+          PATHS: '/var/lib/tandoor-recipes'
           DB: tandoor
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'
