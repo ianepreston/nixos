@@ -49,6 +49,19 @@
     let
       cfg = config.myLlamaCpp;
 
+      # The KV-cache quantizations llama.cpp actually accepts for -ctk/-ctv.
+      cacheType = lib.types.enum [
+        "f32"
+        "f16"
+        "bf16"
+        "q8_0"
+        "q5_0"
+        "q5_1"
+        "q4_0"
+        "q4_1"
+        "iq4_nl"
+      ];
+
       pkgsCuda = import inputs.nixpkgs {
         inherit (pkgs.stdenv.hostPlatform) system;
         config = pkgs.config // {
@@ -114,6 +127,26 @@
             for this context has to fit in whatever VRAM the model weights
             leave behind.
           '';
+        };
+
+        cacheTypeK = lib.mkOption {
+          type = cacheType;
+          default = "f16";
+          description = ''
+            KV cache data type for keys (`-ctk`). Quantizing the cache is
+            what buys context on a card the model has already mostly
+            filled: `q8_0` halves the per-token KV cost for a few percent
+            of generation throughput and a quality hit far smaller than
+            quantizing weights further. Set both this and `cacheTypeV` —
+            llama.cpp takes them separately and there is no reason to
+            split them here.
+          '';
+        };
+
+        cacheTypeV = lib.mkOption {
+          type = cacheType;
+          default = "f16";
+          description = "KV cache data type for values (`-ctv`). See `cacheTypeK`.";
         };
 
         nGpuLayers = lib.mkOption {
@@ -195,6 +228,10 @@
             (toString cfg.ctxSize)
             "-ngl"
             (toString cfg.nGpuLayers)
+            "-ctk"
+            cfg.cacheTypeK
+            "-ctv"
+            cfg.cacheTypeV
             "--sleep-idle-seconds"
             (toString cfg.sleepIdleSeconds)
           ]
