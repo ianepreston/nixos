@@ -947,11 +947,21 @@ source-scoped firewall hole. A host enables inference with one attr set:
 # modules/hosts/terra.nix
 myLlamaCpp = {
   enable = true;
-  hfModel = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
-  ctxSize = 40960;
-  cacheTypeK = "q8_0";                # KV cache quantization; f16 is the default
-  cacheTypeV = "q8_0";
   cudaCapabilities = [ "12.0" ];      # RTX 5080 / Blackwell / sm_120
+  models = {
+    "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M" = {
+      aliases = [ "vision" ];
+      ctxSize = 98304;
+      cacheTypeK = "q8_0";            # KV cache quantization; f16 is the default
+      cacheTypeV = "q8_0";
+    };
+    "Qwen/Qwen3-14B-GGUF:Q4_K_M" = {
+      aliases = [ "text" ];
+      ctxSize = 40960;
+      cacheTypeK = "q8_0";
+      cacheTypeV = "q8_0";
+    };
+  };
   listenAddress = "0.0.0.0";
   allowedClients = [ "192.168.10.11" ]; # amos1 only
   sleepIdleSeconds = 600;
@@ -963,14 +973,62 @@ Two instances run today, and they are not redundant copies of each other:
 | | terra | amos1 |
 | --- | --- | --- |
 | GPU | RTX 5080, 16 GB | RTX 3070, 8 GB, shared with Jellyfin |
-| model | Qwen3-14B Q4_K_M | Qwen3-8B Q4_K_M |
-| context | 40960 (q8_0 KV) | 16k (q8_0 KV) |
+| `vision` | Qwen3-VL-8B Q4_K_M @ 98304 | Qwen3-VL-4B Q4_K_M @ 32768 |
+| `text` | Qwen3-14B Q4_K_M @ 40960 | Qwen3-8B Q4_K_M @ 16384 |
+| resident VRAM | 13576 / 12226 MiB | 6080 / 6190 MiB |
 | idle window | 600 s | 300 s |
 | availability | only when the desktop is on | always |
 | URL | `llm-terra.<serverDomain>` | `llm.<serverDomain>` |
 
 So `llm.*` is the one to point a client at by default, and `llm-terra.*` is
-the better model when that machine happens to be up.
+the larger model of either kind when that machine happens to be up.
+
+### Router mode: two models, one at a time
+
+Each host serves a *set* of models rather than one. `llama-server` runs as a
+**router**: the process that owns the port holds no model itself and spawns a
+child `llama-server` per model on a loopback ephemeral port, picking the child
+by the `"model"` field in the request body (or `?model=` on GET endpoints).
+
+That exists because neither host has a single model that does everything.
+Vision is the prerequisite for Tandoor photo import and paperless document AI,
+and on both cards the best vision model that fits is materially weaker at text
+than the generalist it displaced — terra's is 8B-class against a 14B, amos1's
+4B-class against an 8B. Routing gets both back.
+
+`--models-max` is pinned to **1**. This is swap-on-demand, not concurrent
+serving: terra's pair is 27.5 GB of models against a 16.3 GB card, amos1's is
+12.4 GB against 8.0 GB, and nothing fits two at once. Asking for a model that
+isn't resident evicts the one that is. That costs 3–4 s on terra's NVMe with the
+page cache cold, and 2–5 s on amos1 — cheap enough that the swap is not worth
+designing around.
+
+Three consequences worth knowing:
+
+- **The `model` field is now mandatory and exact.** Single-model mode ignored
+  it; the router answers `400 model name is missing from the request` without
+  one and `400 model 'x' not found` for a name it doesn't have. A client that
+  used to send a placeholder stops working.
+- **`aliases` is the stable name to point clients at.** Both hosts register
+  `vision` and `text` alongside the full `<repo>:<quant>` names, so swapping the
+  GGUF underneath a role is a change to `modules/hosts/<host>.nix` and not to
+  every client.
+- **The cache is a model *source*, not just storage.** The router enumerates
+  `LLAMA_CACHE` as well as its preset, so a leftover GGUF from an earlier config
+  is still routable — with llama.cpp defaults, since nothing sizes it. Pruning
+  is therefore how the served set is kept equal to the declared one, not only
+  how disk is reclaimed.
+
+Multimodal capability is per-model and does not leak: `-hf` resolves and
+downloads each repo's `mmproj` projector on its own, and in a mixed set the
+text-only model reports `input_modalities: ["text"]` and rejects an image with
+`image input is not supported`, while the vision model reports
+`["text","image"]` and answers.
+
+Nothing loads at service start. The first request that names a model pays its
+load, which for a model not yet on disk is a multi-GB download inside that
+request — `task llm:models:fetch HOST=<host>` does that warm-up deliberately,
+with a timeout that expects it.
 
 ### The CUDA build is local and unavoidable
 
@@ -987,54 +1045,65 @@ runtime with no usable kernels. RTX 5080 is `12.0`, RTX 3070 is `8.6`.
 
 ### Model files are not Nix's problem
 
-GGUFs are gigabytes and don't belong in the store. `hfModel` is passed straight
-through as `-hf <repo>:<quant>` and llama-server downloads the weights itself on
-first start, into `LLAMA_CACHE`. The module points that at the *state* directory
-rather than upstream's `/var/cache/llama-cpp`, so nothing that treats
+GGUFs are gigabytes and don't belong in the store. Each `models.<name>` key is
+passed straight through as `-hf <repo>:<quant>` and llama-server downloads the
+weights itself, into `LLAMA_CACHE`. The module points that at the *state*
+directory rather than upstream's `/var/cache/llama-cpp`, so nothing that treats
 `/var/cache` as disposable can trigger a multi-GB re-download.
 
-So the first start after enabling a new model takes as long as the download
-takes (~9 GB for a 14B at Q4_K_M) and needs working egress to huggingface.co.
-Later starts are cache hits. `systemctl status llama-cpp` shows nothing useful
-while this happens; watch the blob instead:
+That download happens on first *use*, not first start, and takes as long as it
+takes (~9 GB for a 14B at Q4_K_M) with working egress to huggingface.co. Do it
+on purpose rather than inside somebody's request:
+
+```sh
+task llm:models:fetch HOST=terra   # one throwaway request per configured model
+```
+
+`systemctl status llama-cpp` shows nothing useful while this happens; watch the
+blob instead:
 
 ```sh
 sudo du -sh /var/lib/private/llama-cpp
 ```
 
 Nothing outside nix's view gets garbage-collected, so old weights pile up as
-`hfModel` changes. Two tasks handle that:
+`models` changes — and in router mode they stay *routable* while they do. Two
+tasks handle that:
 
 ```sh
-task llm:models                    # what's cached, and which one is live
+task llm:models                    # what's cached, what's routable, what's resident
 task llm:models:prune              # dry run: what would go
 task llm:models:prune APPLY=true   # actually delete
 ```
 
-The prune asks the *running* llama-server which file it has loaded
-(`GET /props` → `model_path`) rather than re-deriving llama.cpp's `-hf` tag
-matching — that matching involves a case-insensitive regex plus multi-shard
-split groups and mmproj sidecars, and a subtle mismatch here deletes a 9 GB
-blob that is live. `/props` answers while the server is asleep, so the idle
-window doesn't get in the way. If the server isn't answering at all the task
-aborts instead of guessing, which means a half-applied switch can't turn into
-a deletion.
+The keep-set is the declared `myLlamaCpp.models`, not what happens to be
+loaded: at most one of several configured models is resident, so "keep the live
+one" would delete whichever was idle. The running router is still consulted, to
+prove it is on *this* generation of the config — the prune aborts unless it
+answers `/v1/models` and every configured name is in the answer, so a
+half-applied switch can't turn into a deletion. As a second check, any model
+that *is* loaded has its `model_path` fetched and the prune aborts if that path
+is in the doomed set.
 
-What it removes: whole repos other than the live one, superseded revisions of
-the live repo, other quants sitting in the live snapshot, and blobs no
-surviving symlink points at. What it keeps: every shard of a split model, any
-`mmproj*` sidecar, non-`.gguf` files, and any `.downloadInProgress` touched in
-the last hour.
+What it removes: whole repos nothing configured maps to, revisions of a kept
+repo other than the one `refs/main` names, superseded quants inside the current
+revision, and blobs no surviving symlink points at. What it keeps: every shard
+of a split model, any `mmproj*`/`mtp-*` sidecar, non-`.gguf` files, any filename
+whose quant tag doesn't parse, and any `.downloadInProgress` touched in the last
+hour.
 
 ### Sizing against VRAM
 
-Weights plus KV cache plus compute buffers have to fit. KV cache is the part
-that surprises: at f16 Qwen3-14B is ~160 KB/token and Qwen3-8B is ~144 KB/token,
-so context — not the model — is what runs a card out of memory.
+Every model is sized against the *whole* card, not a share of it, because only
+one is resident at a time. Weights plus KV cache plus compute buffers have to
+fit. KV cache is the part that surprises: at f16 Qwen3-14B is ~160 KB/token and
+Qwen3-8B is ~144 KB/token, so context — not the model — is what runs a card out
+of memory.
 
 `cacheTypeK` / `cacheTypeV` are the lever. Quantizing the KV cache to `q8_0`
 halves its per-token cost, and both hosts measurably buy context with it rather
-than with VRAM (`f16` stays the module default, so a host opts in):
+than with VRAM (`f16` stays the module default, so a model opts in). Measured on
+each host's `text` model:
 
 | host | before | after | resident VRAM | generation |
 | --- | --- | --- | --- | --- |
@@ -1046,7 +1115,9 @@ few percent. It is not free on quality either — `q8_0` KV is a far smaller hit
 than quantizing weights another step, but it is a hit, so it is worth a
 subjective check on a real task before reaching for anything below `q8_0`.
 
-The two hosts hit *different* ceilings, which is why their numbers differ:
+The two hosts hit *different* ceilings on those models, which is why their
+numbers differ (the vision models' budgets are worked through in the comments in
+`modules/hosts/terra.nix` and `modules/hosts/amos1.nix`):
 
 - **terra runs out of model, not card.** 40960 is Qwen3-14B's `n_ctx_train`;
   past it quality degrades without RoPE scaling. f16 KV at 40960 does not fit
@@ -1068,6 +1139,12 @@ idle window llama-server sleeps and hands the VRAM back. Measured on terra:
 12.2 GB down to 1.7 GB at the 600 s mark, and ~3 s to wake on the next request
 (the GGUF is still in page cache, so nothing is re-read from disk). `/health`
 keeps answering while asleep and doesn't reset the timer.
+
+Router mode does not change this — the flag is passed to the router and
+inherited by every child, so it is uniform across a host's models by
+construction. It is a separate mechanism from `--models-max` eviction and both
+apply: a sleeping model still counts as loaded, so asking for a different model
+unloads the sleeper outright rather than waiting for it to wake.
 
 ### The model cache under impermanence
 
@@ -1137,6 +1214,14 @@ That also closed a leak this route previously accepted. llama-server treats
 `--api-key` is set — so a plain path bypass left the model list readable
 without credentials. With the header condition, an unauthenticated request to
 `/v1/*` lands on authentik instead of reaching llama-server at all.
+
+Router mode made that closure worth more, because `/v1/models` now enumerates
+every model the router knows *and* each one's full child argv and rendered
+preset — store path, context size, cache types. The API key is not among them:
+llama.cpp strips `LLAMA_API_KEY` from the preset before rendering a child's
+argv, and the child picks it up from the inherited environment instead. So it is
+a fingerprinting leak rather than a credential one, and the header condition is
+what keeps it off the public hostname.
 
 The key comes from sops via `LLAMA_API_KEY` in an `EnvironmentFile`, never
 `--api-key` on the command line: `/proc/*/cmdline` and `/nix/store` are both
