@@ -1,8 +1,9 @@
 # Vibes - HM Simple Aspect
-# Terminal coding agents: Claude Code and pi.
+# Terminal coding agents: Claude Code, pi, and opencode.
 #
 # gemini-cli used to be here and is gone: Google deprecated it, so it was
-# dead weight on every workstation. pi (earendil-works/pi) replaces it.
+# dead weight on every workstation. pi (earendil-works/pi) and opencode
+# (sst/opencode) replace it.
 #
 # ## Why nixpkgs' `pi-coding-agent` and not lukasl-dev/pi.nix
 #
@@ -22,16 +23,23 @@
 # jail.nix) and a second update cadence. Revisit if the sandbox becomes
 # the point.
 #
+# opencode comes from `pkgsUnstable` for the same lag reason (1.18.25
+# against stable's 1.15.10). It needs no equivalent decision — there is no
+# competing community flake, and nixpkgs' wrapper already sets
+# `OPENCODE_DISABLE_AUTOUPDATE=true`, which is the one thing that would
+# otherwise fight a store-managed install.
+#
 # ## Local inference
 #
-# `~/.pi/agent/models.json` registers the fleet's own llama-server
-# endpoints as OpenAI-compatible providers, so `pi` on a workstation can
-# drive the models on amos1 and terra instead of a paid API. See
+# Both agents are pointed at the fleet's own llama-servers, so an agent
+# loop runs on amos1/terra instead of a paid API: `~/.pi/agent/models.json`
+# for pi, `~/.config/opencode/opencode.json` for opencode. `llamaHosts`
+# below is the single description both are rendered from. See
 # modules/system/llama-cpp.nix for the servers and modules/apps/llm.nix /
 # modules/apps/llm-terra.nix for the routes.
 #
-# Notes on the shape of that file, all verified against b9190 rather than
-# assumed:
+# Notes on the shape of those files, all verified against b9190 and a real
+# agent loop on each host rather than assumed:
 #
 # **The model ids are the routers' aliases, not GGUF names.** Router mode
 # requires an exact `model` field and rejects anything it doesn't know
@@ -42,22 +50,30 @@
 # **Tool calling needs no server-side change.** llama.cpp refuses a
 # `tools` param without `--jinja` ("tools param requires --jinja flag"),
 # but `--jinja` defaults to *enabled* in b9190, so `myLlamaCpp` gets it
-# for free and a full pi agent loop (bash tool -> answer) works against
-# terra as-is.
+# for free and both agents complete a bash-tool -> answer loop against
+# either host as deployed.
 #
-# **No `compat` overrides are needed.** pi's docs flag `developer`-role
-# and `reasoning_effort` support as the usual breakage on OpenAI-compatible
-# servers; llama-server accepts both (it ignores `reasoning_effort` for
-# Qwen3 rather than 400ing), so the defaults are correct here.
+# **No OpenAI-compat shims are needed.** pi's docs flag `developer`-role
+# and `reasoning_effort` support as the usual breakage on
+# OpenAI-compatible servers; llama-server accepts both (it ignores
+# `reasoning_effort` for Qwen3 rather than 400ing), so pi's `compat`
+# escape hatches stay unset and opencode's stock
+# `@ai-sdk/openai-compatible` needs no options beyond a URL and a key.
+#
+# **opencode's ai-sdk provider is bundled, not fetched.** Naming an `npm`
+# package in a provider block normally implies a runtime install; this one
+# ships inside the binary, verified by the absence of any `node_modules`
+# under the data dir after a completed run. So the config works on a host
+# that has never had network access to the npm registry.
 #
 # **Thinking is always on.** These are hybrid-thinking Qwen3 models and
 # `reasoning_effort` does not gate them, so pi's `--thinking off` cannot
 # suppress the `<think>` pass. The lever that does work is
 # `chat_template_kwargs.enable_thinking = false`, which pi can send via a
-# model's `samplingParams` (merged verbatim into the request body). Left
-# unset deliberately — reasoning is worth its tokens for agentic work —
-# but that's where to reach if a small-context model is burning its
-# window on preamble.
+# model's `samplingParams` (merged verbatim into the request body) and
+# opencode via a model's `options`. Left unset deliberately — reasoning is
+# worth its tokens for agentic work — but that's where to reach if a
+# small-context model is burning its window on preamble.
 #
 # **Both endpoints go through caddy, including on terra itself.** terra
 # runs the llama-server this points at, so its own requests loop out to
@@ -69,7 +85,7 @@
 # without a browser session — see the header of modules/apps/llm-terra.nix.
 #
 # The `llm-terra` route 502s whenever terra is powered off. That is
-# expected, not a fault; pick the `amos1` provider in `/model` instead.
+# expected, not a fault; pick an `amos1` model instead.
 #
 # **Local inference is skipped where sops isn't.** penguin is a standalone
 # home-manager config (WSL) that imports neither half of
@@ -79,14 +95,27 @@
 # behind `imports`, gated on specialArgs: those are settled before the
 # module fixpoint, whereas a condition read off `options` makes the
 # module's own shape depend on the option tree and recurses. penguin
-# gets a working `pi` for hosted providers and no dead provider entries.
+# gets working agents for hosted providers and no dead provider entries.
 #
-# **settings.json is deliberately not managed.** pi writes it itself
+# ## What is and isn't managed
+#
+# pi's `settings.json` is deliberately *not* managed: pi writes it itself
 # (`/model` Ctrl+S, `/settings`, `pi install`), so a read-only store
-# symlink would break those. It doesn't need seeding: with no
+# symlink would break those. It needs no seeding either — with no
 # `defaultProvider`, pi picks the first model it has credentials for,
-# which is one of ours. models.json *is* safe to symlink — pi only ever
-# reads it.
+# which is one of ours. `models.json` is safe to symlink because pi only
+# ever reads it.
+#
+# opencode has no such split: providers and every other setting share one
+# `opencode.json`, so managing the providers means managing the file. The
+# cost is that `opencode plugin --global` (which rewrites it) fails
+# against a store symlink — declare plugins here instead. Project-local
+# `opencode.json` still layers on top, and `opencode providers` writes
+# credentials to a separate `auth.json`, so neither is affected.
+#
+# Neither agent gets a default model pinned. Both would then start on a
+# local model even when a hosted provider is authenticated, which is the
+# wrong default for the machines this lands on.
 _: {
   flake.modules.homeManager.vibes =
     {
@@ -160,64 +189,129 @@ _: {
       hasSops = (args ? osConfig) && !hostSpec.isDarwin;
 
       # Fixed rather than read back off `config.sops.secrets`: it is the
-      # single source of truth for both the secret's `path` and the `!cat`
-      # baked into the store-resident models.json below, and holding it in
-      # a plain string keeps the models.json derivation independent of an
-      # option that doesn't exist on every host this module lands on.
+      # single source of truth for both the secret's `path` and the
+      # credential references baked into the store-resident configs below,
+      # and holding it in a plain string keeps those derivations
+      # independent of an option that doesn't exist on every host this
+      # module lands on.
       llamaKeyPath = "${config.xdg.configHome}/sops-nix/secrets/llama-cpp-api-key";
 
-      # `!cmd` is pi's shell-command form for a credential; it runs per
-      # request, so the key is never written into /nix/store (models.json
-      # is world-readable there) and rotation is picked up without a
-      # rebuild.
-      llamaProvider = hostSuffix: models: {
-        baseUrl = "https://llm${hostSuffix}.amos.ipreston.net/v1";
-        api = "openai-completions";
-        apiKey = "!cat ${llamaKeyPath}";
-        inherit models;
-      };
-
-      textModel = name: ctxSize: maxTokens: {
-        id = "text";
-        inherit name;
-        reasoning = true;
-        contextWindow = ctxSize;
-        inherit maxTokens;
-      };
-
-      visionModel = name: ctxSize: maxTokens: {
-        id = "vision";
-        inherit name;
-        reasoning = true;
-        input = [
-          "text"
-          "image"
-        ];
-        contextWindow = ctxSize;
-        inherit maxTokens;
-      };
-
-      # Context windows mirror `myLlamaCpp.models.<name>.ctxSize` on each
-      # host and have to be edited in lockstep with them; they are sized
+      # One description of what the fleet serves, rendered below into each
+      # agent's own config dialect. The two disagree about nearly every
+      # field name and nest them differently, but not about the facts, so
+      # the facts are stated once here.
+      #
+      # `ctxSize` mirrors `myLlamaCpp.models.<name>.ctxSize` on each host
+      # and has to be edited in lockstep with it: the numbers are sized
       # against the card's VRAM, not the model's training limit, and the
-      # reasoning for each number lives in modules/hosts/{amos1,terra}.nix.
-      # maxTokens is a per-request output cap, kept well under the window so
-      # a long generation can't crowd out the prompt on the 16k model.
-      piModels = (pkgs.formats.json { }).generate "pi-models.json" {
-        providers = {
-          # Always-on, but the small pair: sized around leaving Jellyfin
-          # enough VRAM to transcode on the same RTX 3070 (#517).
-          amos1 = llamaProvider "" [
-            (textModel "Qwen3-8B (amos1)" 16384 4096)
-            (visionModel "Qwen3-VL-4B (amos1)" 32768 4096)
-          ];
-          # The RTX 5080 desktop: the one worth pointing an agent at, and
-          # only up when terra is.
-          terra = llamaProvider "-terra" [
-            (textModel "Qwen3-14B (terra)" 40960 8192)
-            (visionModel "Qwen3-VL-8B (terra)" 98304 8192)
-          ];
+      # reasoning for each lives in modules/hosts/{amos1,terra}.nix.
+      # `maxTokens` is a per-request output cap, kept well under the window
+      # so a long generation can't crowd out the prompt on the 16k model.
+      #
+      # The attribute names under `models` are the routers' aliases — see
+      # the header for why that matters.
+      llamaHosts = {
+        # Always-on, but the small pair: sized around leaving Jellyfin
+        # enough VRAM to transcode on the same RTX 3070 (#517).
+        amos1 = {
+          routeSuffix = "";
+          models = {
+            text = {
+              label = "Qwen3-8B";
+              ctxSize = 16384;
+              maxTokens = 4096;
+              vision = false;
+            };
+            vision = {
+              label = "Qwen3-VL-4B";
+              ctxSize = 32768;
+              maxTokens = 4096;
+              vision = true;
+            };
+          };
         };
+        # The RTX 5080 desktop: the one worth pointing an agent at, and
+        # only up when terra is.
+        terra = {
+          routeSuffix = "-terra";
+          models = {
+            text = {
+              label = "Qwen3-14B";
+              ctxSize = 40960;
+              maxTokens = 8192;
+              vision = false;
+            };
+            vision = {
+              label = "Qwen3-VL-8B";
+              ctxSize = 98304;
+              maxTokens = 8192;
+              vision = true;
+            };
+          };
+        };
+      };
+
+      llamaBaseUrl = host: "https://llm${host.routeSuffix}.amos.ipreston.net/v1";
+
+      # `!cmd` is pi's shell-command form for a credential; it runs per
+      # request, so the key is never written into /nix/store (this file is
+      # world-readable there) and rotation is picked up without a rebuild.
+      piModels = (pkgs.formats.json { }).generate "pi-models.json" {
+        providers = lib.mapAttrs (_hostName: host: {
+          baseUrl = llamaBaseUrl host;
+          api = "openai-completions";
+          apiKey = "!cat ${llamaKeyPath}";
+          models = lib.mapAttrsToList (
+            role: model:
+            {
+              id = role;
+              name = model.label;
+              reasoning = true;
+              contextWindow = model.ctxSize;
+              inherit (model) maxTokens;
+            }
+            # pi defaults `input` to ["text"], so this is only ever an
+            # addition.
+            // lib.optionalAttrs model.vision {
+              input = [
+                "text"
+                "image"
+              ];
+            }
+          ) host.models;
+        }) llamaHosts;
+      };
+
+      # `{file:...}` is opencode's equivalent of pi's `!cat`, resolved when
+      # the config is read, and keeps the key out of the store for the same
+      # reason.
+      opencodeConfig = (pkgs.formats.json { }).generate "opencode.json" {
+        "$schema" = "https://opencode.ai/config.json";
+        provider = lib.mapAttrs (hostName: host: {
+          npm = "@ai-sdk/openai-compatible";
+          name = "llama.cpp (${hostName})";
+          options = {
+            baseURL = llamaBaseUrl host;
+            apiKey = "{file:${llamaKeyPath}}";
+          };
+          models = lib.mapAttrs (_role: model: {
+            name = model.label;
+            tool_call = true;
+            reasoning = true;
+            attachment = model.vision;
+            modalities.input = [ "text" ] ++ lib.optional model.vision "image";
+            limit = {
+              context = model.ctxSize;
+              output = model.maxTokens;
+            };
+            # Stated rather than omitted: opencode reports per-session
+            # spend, and these cost nothing to run.
+            cost = {
+              input = 0;
+              output = 0;
+            };
+          }) host.models;
+        }) llamaHosts;
       };
 
       # shared.yaml because that is where `myLlamaCpp` reads the same key
@@ -232,6 +326,7 @@ _: {
         };
 
         home.file.".pi/agent/models.json".source = piModels;
+        xdg.configFile."opencode/opencode.json".source = opencodeConfig;
       };
     in
     {
@@ -240,6 +335,7 @@ _: {
       home.packages = builtins.attrValues {
         inherit (pkgsUnstable)
           claude-code
+          opencode
           pi-coding-agent
           worktrunk
           ;
