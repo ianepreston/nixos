@@ -49,6 +49,14 @@
 # unauthenticated on these hostnames. With the header condition, an
 # unauthenticated request to `/v1/*` lands on authentik instead of
 # reaching llama-server at all.
+#
+# Router mode (#519) made that closure worth more. `/v1/models` is still
+# public upstream, but it now enumerates every model the router knows
+# *and* each one's full child argv and rendered preset — store path,
+# context size, cache types. The API key is not among them (llama.cpp
+# strips it before rendering), so this is a fingerprinting leak rather
+# than a credential one, but the header condition is what keeps it off
+# the public hostname.
 { inputs, ... }:
 {
   flake.modules.nixos.llm-terra = _: {

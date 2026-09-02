@@ -11,19 +11,70 @@
 # caddy/authentik/tailscale) is fronted by a route on amos1 instead. See
 # `modules/hosts/amos1.nix` for that side.
 #
+# ## Router mode (#519)
+#
+# llama-server runs as a **router**: the main process holds no model and
+# instead spawns one child llama-server per model on a loopback ephemeral
+# port, routing each request by the `"model"` field in the body (or the
+# `?model=` query param on GET). That is what lets a host serve more than
+# one model without a config edit and a rebuild — which matters because
+# there is no single best model per host (see #517/#518/#524: vision and
+# generalist capability do not fit in one GGUF that fits these cards).
+#
+# Three things follow from the mechanism and are worth knowing before
+# editing this file:
+#
+# **The `model` field is mandatory and exact.** A request with no `model`
+# gets `400 model name is missing from the request`; an unrecognised name
+# gets `400 model 'x' not found`. Single-model mode ignored the field
+# entirely, so any client that sent a placeholder ("gpt-3.5-turbo") stops
+# working. `aliases` exists for this: it registers extra router-level
+# names for a model, so a client can be pointed at a stable role name
+# ("vision") that survives swapping the GGUF underneath it.
+#
+# **The cache is a model source, not just storage.** The router always
+# enumerates `LLAMA_CACHE` in addition to the preset, deriving a name of
+# `<repo>:<TAG>` per cached GGUF. So a leftover model from a previous
+# config still shows up in `/v1/models` and is still routable — with only
+# llama.cpp defaults applied, since no preset section names it. Keeping
+# the cache pruned (`task llm:models:prune`) is therefore a correctness
+# concern here, not just a disk one.
+#
+# **Router CLI flags outrank the preset.** llama.cpp merges the router's
+# own argv into every child's preset at *highest* precedence, so a `-c` on
+# the router would silently override every model's `ctxSize`. Anything
+# model-shaped must live in `models.<name>`; only genuinely service-wide
+# flags belong in `extraFlags`.
+#
+# `--models-max` is pinned to 1 below rather than exposed as an option:
+# on both hosts that run this, no two configured models fit in VRAM at
+# once (terra 27.5 GB of models against a 16.3 GB card, amos1 12.4 GB
+# against 8.0 GB — see #524). This is deliberately swap-on-demand, not
+# concurrent serving. Measured swap cost on terra's NVMe is 3-4 s, cold
+# page cache included, so the trade is cheap.
+#
 # ## Model files
 #
 # GGUFs are gigabytes and are not nix-store material, so they are *not*
-# fetched by nix. `myLlamaCpp.hfModel` is passed to llama-server as
-# `-hf <repo>:<quant>`, and llama-server downloads the weights itself into
-# `LLAMA_CACHE` on first start. That directory is overridden below from
-# the upstream module's `/var/cache/llama-cpp` to the state directory, so
+# fetched by nix. Each `models.<name>` attribute name is the `<repo>:<tag>`
+# llama-server resolves as `-hf`, and it downloads the weights itself into
+# `LLAMA_CACHE`. That directory is overridden below from the upstream
+# module's `/var/cache/llama-cpp` to the state directory, so
 # `systemctl clean --what=cache llama-cpp` (or anything else that treats
 # /var/cache as disposable) doesn't silently trigger a multi-GB re-download.
 #
-# The first start therefore takes as long as the download takes and needs
-# working egress to huggingface.co; subsequent starts are cache hits.
-# Switching models is a `hfModel` change plus one re-download.
+# Nothing loads at service start: a model is downloaded and loaded by the
+# first request that names it. So the first request for an uncached model
+# blocks for the whole download and will almost certainly time out at the
+# client, though the download itself continues and a later retry is a
+# cache hit. `task llm:models:fetch HOST=<host>` does that warm-up
+# deliberately, with a timeout that expects it.
+#
+# A vision model's mmproj (the projector) needs no declaration: `-hf`
+# resolves and downloads it per model, and it does not leak across models
+# in the same router — verified at b9190, where a text-only model in the
+# same preset reports `input_modalities: ["text"]` while the vision model
+# reports `["text","image"]`.
 #
 # ## CUDA build
 #
@@ -69,6 +120,8 @@
           inherit (cfg) cudaCapabilities;
         };
       };
+
+      allAliases = lib.concatMap (m: m.aliases) (lib.attrValues cfg.models);
     in
     {
       options.myLlamaCpp = {
@@ -80,6 +133,12 @@
           description = ''
             TCP port llama-server listens on. Also the port a Caddy route
             (local or cross-host) reverse-proxies to.
+
+            Only the router binds this. Each loaded model gets its own
+            child process on an ephemeral loopback port, which the router
+            proxies to — those are not reachable from off-host, and they
+            inherit `LLAMA_API_KEY` from the router's environment, so they
+            are not an unauthenticated side door either.
           '';
         };
 
@@ -109,65 +168,109 @@
           '';
         };
 
-        hfModel = lib.mkOption {
-          type = lib.types.str;
-          example = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
+        models = lib.mkOption {
           description = ''
-            Hugging Face repo and quant tag passed as `-hf`. llama-server
-            resolves and downloads the GGUF on first start; see the module
-            header for where it lands.
-          '';
-        };
+            The models this host's router serves, keyed by the
+            `<hf-repo>:<quant-tag>` string llama-server uses as both the
+            `-hf` argument and the model's routing name.
 
-        ctxSize = lib.mkOption {
-          type = lib.types.ints.positive;
-          example = 32768;
-          description = ''
-            Context window in tokens (`-c`). Sized per host: the KV cache
-            for this context has to fit in whatever VRAM the model weights
-            leave behind.
+            The key has to be exactly that string. The router derives the
+            same name independently when it scans `LLAMA_CACHE`, and the
+            two are merged by name — a key in any other shape produces a
+            *second*, unconfigured entry alongside the cached one, and a
+            client can reach it with llama.cpp's defaults instead of the
+            sizing below.
           '';
-        };
-
-        cacheTypeK = lib.mkOption {
-          type = cacheType;
-          default = "f16";
-          description = ''
-            KV cache data type for keys (`-ctk`). Quantizing the cache is
-            what buys context on a card the model has already mostly
-            filled: `q8_0` halves the per-token KV cost for a few percent
-            of generation throughput and a quality hit far smaller than
-            quantizing weights further. Set both this and `cacheTypeV` —
-            llama.cpp takes them separately and there is no reason to
-            split them here.
+          example = lib.literalExpression ''
+            {
+              "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M" = {
+                aliases = [ "vision" ];
+                ctxSize = 98304;
+              };
+            }
           '';
-        };
+          type = lib.types.attrsOf (
+            lib.types.submodule {
+              options = {
+                aliases = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  default = [ ];
+                  example = [ "vision" ];
+                  description = ''
+                    Extra names this model answers to, in addition to its
+                    `<repo>:<tag>` key. Point clients at a role name here
+                    rather than the GGUF's name, so swapping the model
+                    underneath is a change to this file and not to every
+                    client. Must not collide with another model's key or
+                    aliases; llama-server refuses to start if they do.
+                  '';
+                };
 
-        cacheTypeV = lib.mkOption {
-          type = cacheType;
-          default = "f16";
-          description = "KV cache data type for values (`-ctv`). See `cacheTypeK`.";
-        };
+                ctxSize = lib.mkOption {
+                  type = lib.types.ints.positive;
+                  example = 32768;
+                  description = ''
+                    Context window in tokens (`-c`). Sized per model *and*
+                    per host: the KV cache for this context has to fit in
+                    whatever VRAM the model weights leave behind. Only one
+                    model is resident at a time (`--models-max 1`), so
+                    each is budgeted against the whole card, not a share.
+                  '';
+                };
 
-        nGpuLayers = lib.mkOption {
-          type = lib.types.ints.unsigned;
-          default = 99;
-          description = ''
-            Layers offloaded to the GPU (`-ngl`). The default is the
-            "everything" idiom — any value at or above the model's layer
-            count offloads the whole model. Lower it only to deliberately
-            keep layers on the CPU because the model doesn't fit.
-          '';
+                cacheTypeK = lib.mkOption {
+                  type = cacheType;
+                  default = "f16";
+                  description = ''
+                    KV cache data type for keys (`-ctk`). Quantizing the
+                    cache is what buys context on a card the model has
+                    already mostly filled: `q8_0` halves the per-token KV
+                    cost for a few percent of generation throughput and a
+                    quality hit far smaller than quantizing weights
+                    further. Set both this and `cacheTypeV` — llama.cpp
+                    takes them separately and there is no reason to split
+                    them here.
+                  '';
+                };
+
+                cacheTypeV = lib.mkOption {
+                  type = cacheType;
+                  default = "f16";
+                  description = "KV cache data type for values (`-ctv`). See `cacheTypeK`.";
+                };
+
+                nGpuLayers = lib.mkOption {
+                  type = lib.types.ints.unsigned;
+                  default = 99;
+                  description = ''
+                    Layers offloaded to the GPU (`-ngl`). The default is
+                    the "everything" idiom — any value at or above the
+                    model's layer count offloads the whole model. Lower it
+                    only to deliberately keep layers on the CPU because
+                    the model doesn't fit.
+                  '';
+                };
+              };
+            }
+          );
         };
 
         sleepIdleSeconds = lib.mkOption {
           type = lib.types.ints.positive;
           example = 600;
           description = ''
-            Idle seconds after which llama-server sleeps and hands its
+            Idle seconds after which a loaded model sleeps and hands its
             VRAM back (`--sleep-idle-seconds`). The point on a machine
             that is also used for something else (a workstation that
-            games); the next request pays a reload.
+            games, a server that transcodes); the next request pays a
+            reload.
+
+            Passed to the router, which is inherited by every child, so it
+            is uniform across a host's models by construction. It is a
+            separate mechanism from `--models-max` eviction and both
+            apply: a sleeping model still counts as loaded, so asking for
+            a different model unloads the sleeper outright rather than
+            waiting for it to wake.
           '';
         };
 
@@ -189,14 +292,70 @@
             "--flash-attn"
             "on"
           ];
-          description = "Additional llama-server flags appended after the ones this module builds.";
+          description = ''
+            Additional llama-server flags appended after the ones this
+            module builds.
+
+            Service-wide only. llama.cpp merges the router's argv into
+            every child at the *highest* precedence, above both the
+            per-model preset section and the preset's global section — so
+            a model-shaped flag here (`-c`, `-ngl`, `-ctk`) silently wins
+            over every `models.<name>` entry. Put those in `models`.
+          '';
         };
       };
 
       config = lib.mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = cfg.models != { };
+            message = ''
+              myLlamaCpp.models is empty. The router would still serve
+              whatever GGUFs happen to be in LLAMA_CACHE, with llama.cpp's
+              default context and no GPU offload, so an empty set is a
+              silently-degraded service rather than a disabled one.
+            '';
+          }
+          {
+            # `-hf repo` without a tag is legal and resolves to a default
+            # quant, but then the router's cache scan names the model
+            # `repo:<that quant>` while the preset section is still named
+            # `repo` — two entries, only one of them sized. Requiring the
+            # tag up front is the cheap way to keep the two in lockstep.
+            assertion = lib.all (n: lib.match "[^/:]+/[^/:]+:[^/:]+" n != null) (lib.attrNames cfg.models);
+            message = ''
+              myLlamaCpp.models: every name must be `<owner>/<repo>:<QUANT>`,
+              exactly the string llama-server takes as `-hf` and derives
+              again when it scans the cache. Offending:
+              ${
+                lib.concatStringsSep ", " (
+                  lib.filter (n: lib.match "[^/:]+/[^/:]+:[^/:]+" n == null) (lib.attrNames cfg.models)
+                )
+              }.
+            '';
+          }
+          {
+            assertion = lib.length (lib.unique allAliases) == lib.length allAliases;
+            message = "myLlamaCpp.models: duplicate alias in ${lib.concatStringsSep ", " allAliases}.";
+          }
+          {
+            assertion = lib.intersectLists allAliases (lib.attrNames cfg.models) == [ ];
+            message = ''
+              myLlamaCpp.models: an alias collides with a model's own
+              name (${lib.concatStringsSep ", " (lib.intersectLists allAliases (lib.attrNames cfg.models))}).
+            '';
+          }
+        ];
+
         # The key never reaches `settings`/argv — /nix/store and /proc/*/cmdline
         # are both world-readable. llama-server reads `--api-key` from
         # LLAMA_API_KEY, so an EnvironmentFile keeps it off both.
+        #
+        # Router mode does not weaken this. llama.cpp strips LLAMA_API_KEY
+        # from the preset it renders into each child's argv (so it is
+        # absent from the argv that the *public* `/v1/models` endpoint
+        # echoes back), and the children pick the key up from the
+        # inherited environment instead.
         #
         # shared.yaml rather than the per-host file because the servers
         # fronting this need the same key: caddy injects it upstream on
@@ -221,17 +380,39 @@
           package = pkgsCuda.llama-cpp;
           host = cfg.listenAddress;
           inherit (cfg) port;
+
+          # Rendered by the upstream module through `lib.generators.toINI`
+          # into a store file passed as `--models-preset`. Section names
+          # are the model names, and the keys are llama-server arguments
+          # with their leading dashes stripped — `c` and `ctk` are the
+          # short forms of `--ctx-size` and `--cache-type-k`.
+          #
+          # `hf-repo` repeats the section name on purpose. When the model
+          # is already cached the two entries merge and it is a no-op; when
+          # it is not, it is the only thing that tells the router where to
+          # fetch the weights from, and without it a freshly-provisioned
+          # host serves an empty model list.
+          modelsPreset = lib.mapAttrs (
+            name: model:
+            {
+              hf-repo = name;
+              c = model.ctxSize;
+              n-gpu-layers = model.nGpuLayers;
+              ctk = model.cacheTypeK;
+              ctv = model.cacheTypeV;
+            }
+            // lib.optionalAttrs (model.aliases != [ ]) {
+              alias = lib.concatStringsSep "," model.aliases;
+            }
+          ) cfg.models;
+
           extraFlags = [
-            "-hf"
-            cfg.hfModel
-            "-c"
-            (toString cfg.ctxSize)
-            "-ngl"
-            (toString cfg.nGpuLayers)
-            "-ctk"
-            cfg.cacheTypeK
-            "-ctv"
-            cfg.cacheTypeV
+            # One resident model. See the header: nothing fits two at once
+            # on either host, so this is the mode rather than a limit, and
+            # leaving it at the default of 4 would let a second request
+            # OOM the card instead of evicting.
+            "--models-max"
+            "1"
             "--sleep-idle-seconds"
             (toString cfg.sleepIdleSeconds)
           ]

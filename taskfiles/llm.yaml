@@ -5,11 +5,17 @@
 # GGUF cache.
 #
 # Model weights are downloaded by llama-server itself (`-hf`), not by nix,
-# so they accumulate as `myLlamaCpp.hfModel` changes — a 14B at Q4_K_M is
+# so they accumulate as `myLlamaCpp.models` changes — a 14B at Q4_K_M is
 # ~9 GB a go. Nothing reclaims them automatically: an auto-prune on a
 # timer would delete a model the moment a switch is half-applied, and the
 # store's own GC has no visibility into /var/lib. So it's a task, and it
 # defaults to a dry run.
+#
+# In router mode (#519) the cache is not just storage: llama-server
+# enumerates it as a model *source*, so anything left in it is routable
+# whether or not it is configured. Pruning is therefore how the served
+# model list is kept equal to the declared one, not only how disk is
+# reclaimed.
 version: '3'
 set: [pipefail]
 shopt: [globstar]
@@ -17,7 +23,7 @@ vars:
   CACHE_DIR: /var/lib/llama-cpp/models
 tasks:
   models:
-    desc: 'List cached GGUFs on HOST and flag which one is live. Vars: HOST (default terra)'
+    desc: 'List cached GGUFs on HOST against the configured set. Vars: HOST (default terra)'
     # The remote body is a heredoc; echoing it back drowns the listing.
     silent: true
     vars:
@@ -27,10 +33,12 @@ tasks:
       - |
         set -euo pipefail
         configured=$(nix eval --raw \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.hfModel" 2>/dev/null || true)
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
+          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)' 2>/dev/null || true)
         port=$(nix eval --raw --apply toString \
           ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port" 2>/dev/null || echo 8080)
-        echo -e "\x1B[32m[+] {{.HOST}} — configured hfModel: ${configured:-<none>}\x1B[0m"
+        echo -e "\x1B[32m[+] {{.HOST}} — configured models:\x1B[0m"
+        for m in ${configured:-<none>}; do echo "      $m"; done
         ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} "sudo bash -se -- $port" <<'EOF'
         set -euo pipefail
         PORT=$1
@@ -38,29 +46,97 @@ tasks:
         [ -d "$CACHE" ] || { echo "no model cache at $CACHE"; exit 0; }
 
         key=$(grep -oP 'LLAMA_API_KEY=\K.*' /run/secrets/rendered/llama-cpp.env 2>/dev/null || true)
-        live=$(curl -sf --max-time 15 "http://127.0.0.1:${PORT}/props" \
+        # The router answers /v1/models without loading anything, and it
+        # reports every model it would route to — the configured preset
+        # *plus* whatever else is sitting in the cache. A name here that
+        # is not in the configured list above is exactly what prune
+        # removes.
+        # Compact JSON on one line, one "id" per model entry — verified
+        # against b9190 both with and without a model resident.
+        routable=$(curl -sf --max-time 15 "http://127.0.0.1:${PORT}/v1/models" \
           ${key:+-H "Authorization: Bearer ${key}"} 2>/dev/null \
-          | grep -oP '"model_path"\s*:\s*"\K[^"]+' || true)
-        [ -n "$live" ] && live=$(readlink -f "$live")
-        [ -n "$live" ] || echo "(llama-server not answering — 'live' column unavailable)"
+          | grep -oP '"id":\s*"\K[^"]+' || true)
+        # Only one model has a child process at a time; /props answers for
+        # it (including while it is asleep and has given its VRAM back —
+        # replying does not wake it).
+        live=""
+        for m in $routable; do
+          enc=$(printf '%s' "$m" | sed -e 's|/|%2F|g' -e 's|:|%3A|g')
+          p=$(curl -sf --max-time 15 "http://127.0.0.1:${PORT}/props?model=${enc}&autoload=false" \
+            ${key:+-H "Authorization: Bearer ${key}"} 2>/dev/null \
+            | grep -oP '"model_path"\s*:\s*"\K[^"]+' || true)
+          [ -n "$p" ] && live="$live $(readlink -f "$p")"
+        done
+        if [ -n "$routable" ]; then
+          echo "routable via the router:"
+          for m in $routable; do echo "      $m"; done
+        else
+          echo "(llama-server not answering — 'routable' and 'live' unavailable)"
+        fi
+        echo
 
         for repo in "$CACHE"/models--*; do
           [ -d "$repo" ] || continue
           echo "$(basename "$repo")  [$(du -sh "$repo" | cut -f1)]"
           find "$repo/snapshots" -name '*.gguf' 2>/dev/null | sort | while read -r f; do
             mark="   "
-            [ "$(readlink -f "$f")" = "$(readlink -f "$live")" ] && mark=" * "
+            case " $live " in *" $(readlink -f "$f") "*) mark=" * " ;; esac
             printf '%s%-52s %s\n' "$mark" "$(basename "$f")" \
               "$(du -sh --dereference "$f" 2>/dev/null | cut -f1)"
           done
         done
         echo
-        echo "* = the model llama-server currently has loaded"
+        echo "* = has a child process (loaded, or asleep with its VRAM handed back)"
         EOF
-      - echo -e "\x1B[32m[+] prune the rest with 'task llm:models:prune HOST={{.HOST}}'\x1B[0m"
+      - echo -e "\x1B[32m[+] prune what isn't configured with 'task llm:models:prune HOST={{.HOST}}'\x1B[0m"
+
+  models:fetch:
+    desc: 'Pre-download every configured model on HOST by asking for one token each. Vars: HOST (default terra)'
+    silent: true
+    vars:
+      HOST: '{{.HOST | default "terra"}}'
+      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
+    cmds:
+      # Nothing loads at service start (see modules/system/llama-cpp.nix),
+      # so a model that isn't in the cache yet downloads inside whichever
+      # request first names it — several GB, under a client timeout that
+      # was not written for it. This does that first request deliberately,
+      # one model at a time, with a timeout that expects a download.
+      #
+      # Cheapest possible request rather than a dedicated endpoint:
+      # llama-server has no download-only mode, and asking for one token
+      # is what forces the child to resolve, fetch and load the weights.
+      - |
+        set -euo pipefail
+        configured=$(nix eval --raw \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
+          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)')
+        port=$(nix eval --raw --apply toString \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port")
+        echo -e "\x1B[32m[+] warming {{.HOST}} — this is slow only for models not yet cached\x1B[0m"
+        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} \
+          "sudo bash -se -- $port $configured" <<'EOF'
+        set -euo pipefail
+        PORT=$1; shift
+        key=$(grep -oP 'LLAMA_API_KEY=\K.*' /run/secrets/rendered/llama-cpp.env 2>/dev/null || true)
+        rc=0
+        for m in "$@"; do
+          printf '    %-52s ' "$m"
+          # --models-max 1 means each of these evicts the previous one, so
+          # this is sequential by construction, not by politeness.
+          t=$(curl -s -o /dev/null -w '%{http_code} %{time_total}s' --max-time 3600 \
+            -X POST "http://127.0.0.1:${PORT}/v1/chat/completions" \
+            ${key:+-H "Authorization: Bearer ${key}"} \
+            -H 'Content-Type: application/json' \
+            -d "{\"model\":\"$m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":1}") || rc=1
+          echo "$t"
+          case "$t" in 200*) ;; *) rc=1 ;; esac
+        done
+        exit $rc
+        EOF
 
   models:prune:
-    desc: 'Remove cached GGUFs the running llama-server is not using. Vars: HOST (default terra), APPLY=true to actually delete (default dry run)'
+    desc: 'Remove cached GGUFs HOST is no longer configured to serve. Vars: HOST (default terra), APPLY=true to actually delete (default dry run)'
     silent: true
     vars:
       HOST: '{{.HOST | default "terra"}}'
@@ -70,15 +146,21 @@ tasks:
       - |
         set -euo pipefail
         if [ "{{.APPLY}}" = "true" ]; then
-          echo -e "\x1B[31m[!] APPLY=true — deleting superseded models on {{.HOST}}\x1B[0m"
+          echo -e "\x1B[31m[!] APPLY=true — deleting unconfigured models on {{.HOST}}\x1B[0m"
         else
           echo -e "\x1B[32m[+] dry run against {{.HOST}} (APPLY=true to delete)\x1B[0m"
         fi
-        # The script asks llama-server which model is live rather than
-        # re-deriving llama.cpp's -hf tag matching. It aborts if the server
-        # isn't answering, so a failed switch can't turn into a deletion.
+        # The keep-set is the declared `myLlamaCpp.models`, not whatever
+        # happens to be loaded: in router mode at most one of several
+        # configured models is resident, so "loaded" would delete the
+        # idle ones. The script cross-checks the list against the running
+        # router's /v1/models and aborts if they disagree, so a
+        # half-applied switch can't turn into a deletion.
+        configured=$(nix eval --raw \
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
+          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)')
         port=$(nix eval --raw --apply toString \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port" 2>/dev/null || echo 8080)
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port")
         ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} \
-          "sudo bash -s -- {{.CACHE_DIR}} $port /run/secrets/rendered/llama-cpp.env {{.APPLY}}" \
+          "sudo bash -s -- {{.CACHE_DIR}} $port /run/secrets/rendered/llama-cpp.env {{.APPLY}} $configured" \
           < scripts/llm-prune-models.sh

@@ -68,51 +68,84 @@
         # terra needs a DHCP reservation on the router or the address (and
         # the route with it) drifts on lease renewal.
         #
-        # The model is **vision-capable** (#524). `-hf` resolves and
-        # downloads the repo's mmproj (the vision projector) alongside the
-        # weights with no extra option, and llama-server reports
-        # `capabilities: ["completion","multimodal"]` once it loads. That
-        # is what makes Tandoor's photo recipe import and paperless-ngx's
-        # document AI usable against a local endpoint.
+        # Two models, one at a time (#519). llama-server runs as a
+        # router and swaps on demand, because neither capability below is
+        # reachable from a single GGUF that fits this card: #524 traded
+        # 14B-class text quality away to get vision, and there is no
+        # vision model above 8B that fits 16.3 GB without offloading
+        # experts to system RAM. Router mode buys both back at the cost of
+        # a measured 3-4 s swap (cold page cache included, NVMe).
         #
-        # Note the mtmd path takes **images only** — a `data:application/pdf`
-        # URL is rejected with "Invalid url format", and there is no `file`
-        # content part. A caller wanting PDF understanding has to rasterize
-        # the pages itself.
+        # 27.5 GB of models against a 16.3 GB card, so `--models-max 1` in
+        # modules/system/llama-cpp.nix is load-bearing, not a tuning knob.
+        # Even the cheapest pairing (VL-8B dropped to 40960) is 23.2 GB.
         #
-        # VRAM budget (16.3 GB total, minus ~1 GB the GNOME session holds):
-        #   Qwen3-VL-8B Q4_K_M weights ~5.0 GB
-        #   mmproj (Q8_0, auto-picked) ~0.75 GB
-        #   KV cache @ 98304 ctx       ~6.8 GB  (36 layers x 8 KV heads
-        #                                        x 128 dim x 2 x q8_0
-        #                                        = ~72 KB/token; f16 would
-        #                                        be ~144 KB/token, which
-        #                                        does not fit)
-        #   compute buffers            ~1.0 GB
-        # Measured resident: 13734 MiB on the bench, 13574 MiB on the
-        # deployed service (card total 14270 of 16303) — within 40 MiB of
-        # what Qwen3-14B held at 40960, so this is 2.4x the context and
-        # vision for the same VRAM. It is also *faster* on both axes:
-        # 6058 tok/s prefill vs 3282, 96.5 tok/s generation vs 62.8, on
-        # #518's fixed 16,701-token prompt. The trade is text quality,
-        # 14B-class down
-        # to 8B-class — accepted deliberately, since no vision model above
-        # 8B fits this card without offloading experts to system RAM.
-        #
-        # 131072 does not fit: the KV cache alone wants 9792 MiB and
-        # cudaMalloc fails before the model finishes loading. The model
-        # trains to 262144, so the ceiling here is the card's, not the
-        # model's — the inverse of the Qwen3-14B situation #517 described.
-        # See #524 for the full table, including why Gemma 3 lost: it
-        # encodes every image to a fixed 256 tokens (Qwen3-VL spent 1979
-        # on the same invoice) and misreads dense tables as a result.
+        # Nothing is loaded at boot. The first request for a model pays
+        # its load; `task llm:models:fetch HOST=terra` pre-warms the cache
+        # after a rebuild, which is the only case where that wait is a
+        # multi-GB download rather than three seconds.
         myLlamaCpp = {
           enable = true;
-          hfModel = "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M";
-          ctxSize = 98304;
-          cacheTypeK = "q8_0";
-          cacheTypeV = "q8_0";
           cudaCapabilities = [ "12.0" ]; # RTX 5080, Blackwell / sm_120
+
+          models = {
+            # Vision. `-hf` resolves and downloads the repo's mmproj (the
+            # vision projector) alongside the weights with no extra
+            # option, and the router reports `input_modalities:
+            # ["text","image"]` for this model and `["text"]` for the
+            # other — projectors do not leak between models in one preset.
+            # This is what makes Tandoor's photo recipe import and
+            # paperless-ngx's document AI usable against a local endpoint.
+            #
+            # The mtmd path takes **images only** — a `data:application/pdf`
+            # URL is rejected with "Invalid url format", and there is no
+            # `file` content part. A caller wanting PDF understanding has
+            # to rasterize the pages itself.
+            #
+            # VRAM budget (16.3 GB total, minus ~1 GB the GNOME session holds):
+            #   Qwen3-VL-8B Q4_K_M weights ~5.0 GB
+            #   mmproj (Q8_0, auto-picked) ~0.75 GB
+            #   KV cache @ 98304 ctx       ~6.8 GB  (36 layers x 8 KV heads
+            #                                        x 128 dim x 2 x q8_0
+            #                                        = ~72 KB/token; f16 would
+            #                                        be ~144 KB/token, which
+            #                                        does not fit)
+            #   compute buffers            ~1.0 GB
+            # Measured resident: 13734 MiB on the bench, 13574 MiB on
+            # the pre-router service and 13576 MiB under the router (card
+            # total 14270 of 16303) — routing costs no VRAM of its own.
+            #
+            # 131072 does not fit: the KV cache alone wants 9792 MiB and
+            # cudaMalloc fails before the model finishes loading. The
+            # model trains to 262144, so the ceiling here is the card's,
+            # not the model's. See #524 for the full table, including why
+            # Gemma 3 lost: it encodes every image to a fixed 256 tokens
+            # (Qwen3-VL spent 1979 on the same invoice) and misreads dense
+            # tables as a result.
+            "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M" = {
+              aliases = [ "vision" ];
+              ctxSize = 98304;
+              cacheTypeK = "q8_0";
+              cacheTypeV = "q8_0";
+            };
+
+            # Generalist. The model #524 displaced, back as a peer rather
+            # than a replacement: 14B-class text quality, no vision, and
+            # a hard 40960 ceiling that is the *model's* (n_ctx_train),
+            # not the card's — the inverse of the VL-8B situation above.
+            # Slower on both axes (3282 tok/s prefill, 62.8 tok/s
+            # generation vs 6058 / 96.5 on #518's fixed 16,701-token
+            # prompt); the reason to route here is quality, not speed.
+            #
+            # Measured resident: 12226 MiB under the router.
+            "Qwen/Qwen3-14B-GGUF:Q4_K_M" = {
+              aliases = [ "text" ];
+              ctxSize = 40960;
+              cacheTypeK = "q8_0";
+              cacheTypeV = "q8_0";
+            };
+          };
+
           # Bound on the LAN so the servers can reach it, but only they
           # get through the firewall; every other client goes via one of
           # their HTTPS routes. Addresses come from the hostSpecs rather
