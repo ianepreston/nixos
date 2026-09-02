@@ -68,25 +68,48 @@
         # terra needs a DHCP reservation on the router or the address (and
         # the route with it) drifts on lease renewal.
         #
+        # The model is **vision-capable** (#524). `-hf` resolves and
+        # downloads the repo's mmproj (the vision projector) alongside the
+        # weights with no extra option, and llama-server reports
+        # `capabilities: ["completion","multimodal"]` once it loads. That
+        # is what makes Tandoor's photo recipe import and paperless-ngx's
+        # document AI usable against a local endpoint.
+        #
+        # Note the mtmd path takes **images only** — a `data:application/pdf`
+        # URL is rejected with "Invalid url format", and there is no `file`
+        # content part. A caller wanting PDF understanding has to rasterize
+        # the pages itself.
+        #
         # VRAM budget (16.3 GB total, minus ~1 GB the GNOME session holds):
-        #   Qwen3-14B Q4_K_M weights   ~9.0 GB
-        #   KV cache @ 40960 ctx       ~3.4 GB  (40 layers x 8 KV heads
+        #   Qwen3-VL-8B Q4_K_M weights ~5.0 GB
+        #   mmproj (Q8_0, auto-picked) ~0.75 GB
+        #   KV cache @ 98304 ctx       ~6.8 GB  (36 layers x 8 KV heads
         #                                        x 128 dim x 2 x q8_0
-        #                                        = ~85 KB/token; f16 would
-        #                                        be ~160 KB/token, i.e. 6.4
-        #                                        GB, which does not fit)
+        #                                        = ~72 KB/token; f16 would
+        #                                        be ~144 KB/token, which
+        #                                        does not fit)
         #   compute buffers            ~1.0 GB
-        # Quantizing the KV cache to q8_0 is what makes 40960 reachable
-        # at all — it costs ~4% generation throughput (89.9 -> 86.1 tok/s)
-        # and buys 2.5x the context. The deployed service measures 40960
-        # at 86.8 tok/s holding 12226 MiB, card total 12937 of 16303 MiB.
-        # 40960 is Qwen3-14B's n_ctx_train, so this is the model's ceiling
-        # rather than the card's; going past it needs RoPE scaling and
-        # degrades quality. See #517 for the full measurement table.
+        # Measured resident: 13734 MiB on the bench, 13574 MiB on the
+        # deployed service (card total 14270 of 16303) — within 40 MiB of
+        # what Qwen3-14B held at 40960, so this is 2.4x the context and
+        # vision for the same VRAM. It is also *faster* on both axes:
+        # 6058 tok/s prefill vs 3282, 96.5 tok/s generation vs 62.8, on
+        # #518's fixed 16,701-token prompt. The trade is text quality,
+        # 14B-class down
+        # to 8B-class — accepted deliberately, since no vision model above
+        # 8B fits this card without offloading experts to system RAM.
+        #
+        # 131072 does not fit: the KV cache alone wants 9792 MiB and
+        # cudaMalloc fails before the model finishes loading. The model
+        # trains to 262144, so the ceiling here is the card's, not the
+        # model's — the inverse of the Qwen3-14B situation #517 described.
+        # See #524 for the full table, including why Gemma 3 lost: it
+        # encodes every image to a fixed 256 tokens (Qwen3-VL spent 1979
+        # on the same invoice) and misreads dense tables as a result.
         myLlamaCpp = {
           enable = true;
-          hfModel = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
-          ctxSize = 40960;
+          hfModel = "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M";
+          ctxSize = 98304;
           cacheTypeK = "q8_0";
           cacheTypeV = "q8_0";
           cudaCapabilities = [ "12.0" ]; # RTX 5080, Blackwell / sm_120

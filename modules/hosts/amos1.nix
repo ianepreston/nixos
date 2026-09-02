@@ -44,31 +44,50 @@
         # Always-on local inference on the RTX 3070. Complements terra's
         # larger model, which is only reachable when that desktop is on.
         #
-        # VRAM budget (8.0 GB, shared with Jellyfin's NVENC transcoding):
-        #   Qwen3-8B Q4_K_M weights  ~5.0 GB
-        #   KV cache @ 16384 ctx     ~1.25 GB (36 layers x 8 KV heads
-        #                                      x 128 dim x 2 x q8_0
-        #                                      = ~76 KB/token; f16 is
-        #                                      ~144 KB/token)
-        #   compute buffers          ~0.5 GB
-        # Measured resident: 6199 MiB, leaving 1993 MiB — the headroom a
-        # transcode has to fit into if one starts while the model is
-        # resident. That is the binding constraint here, not model
-        # quality, which is why the context doubled by halving the KV
-        # cache rather than by spending VRAM: 8k/f16 was 6105 MiB, so
-        # 16k/q8_0 costs Jellyfin ~94 MiB and nothing else.
+        # Vision-capable (#524), same as terra's — see modules/hosts/terra.nix
+        # for how `-hf` picks up the mmproj and why PDFs don't work.
         #
-        # Verified under contention with the model resident and a
-        # generation in flight (#517): 1080p h264_nvenc peaks the card at
-        # 6586 MiB, 4K hevc_nvenc at 7730 MiB — both succeed, the 4K one
-        # with ~460 MiB to spare. 24576 does not clear that bar: it puts
-        # the model at 6811 MiB and leaves 1381 MiB, under the ~1.5 GB a
-        # 4K transcode wants. So 16384 is the ceiling here, set by
-        # Jellyfin rather than by the model (Qwen3-8B trains to 40960).
+        # VRAM budget (8.0 GB, shared with Jellyfin's NVENC transcoding):
+        #   Qwen3-VL-4B Q4_K_M weights ~2.5 GB
+        #   mmproj (Q8_0, auto-picked) ~0.45 GB
+        #   KV cache @ 32768 ctx       ~2.3 GB  (36 layers x 8 KV heads
+        #                                        x 128 dim x 2 x q8_0
+        #                                        = ~72 KB/token; f16 is
+        #                                        ~144 KB/token)
+        #   compute buffers            ~0.9 GB
+        # Measured resident: 6188 MiB on the bench, 6132 MiB on the
+        # deployed service after a real image request (card total 6141 of
+        # 8192) — either way *below* what Qwen3-8B held at 16384, so the
+        # Jellyfin headroom #517 validated carries over unchanged and the
+        # context doubles on top. That equivalence is the argument: this
+        # is vision plus 2x context for no VRAM at all.
+        #
+        # Contention numbers therefore stand as measured in #517 with the
+        # model resident: 1080p h264_nvenc peaks the card at 6586 MiB, 4K
+        # hevc_nvenc at 7730 MiB, both succeeding. Re-checked here with a
+        # synthetic 4K cuda-decode -> scale_cuda -> hevc_nvenc pipeline
+        # against the new model, which peaked at 7179 MiB — lower than
+        # Jellyfin's real figure because it skips tone-mapping and
+        # subtitle burn-in, so treat #517's 7730 as the number that binds.
+        #
+        # 40960 does not clear that bar: it puts the model at 6800 MiB,
+        # 612 MiB worse than today, which eats into the ~1.5 GB a 4K
+        # transcode wants. Qwen3-VL-8B is out of the question here at all
+        # — 7374 MiB at only 16384 ctx. So 32768 is the ceiling, set by
+        # Jellyfin rather than by the model (Qwen3-VL trains to 262144).
+        #
+        # Known weakness of the 4B specifically: given a three-field
+        # ingredient schema it duplicates the food name into `unit` on
+        # 10 of 11 ingredients. Schema `description` fields do not fix it
+        # — llama.cpp compiles a JSON schema to a GBNF grammar and drops
+        # descriptions — but an instruction in the prompt body does. That
+        # lever belongs to the calling app, so Tandoor may or may not have
+        # it. Qwen3-VL-8B has no such defect; this is the cost of the
+        # 8 GB budget. Document OCR itself was flawless on both.
         myLlamaCpp = {
           enable = true;
-          hfModel = "Qwen/Qwen3-8B-GGUF:Q4_K_M";
-          ctxSize = 16384;
+          hfModel = "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M";
+          ctxSize = 32768;
           cacheTypeK = "q8_0";
           cacheTypeV = "q8_0";
           cudaCapabilities = [ "8.6" ]; # RTX 3070, Ampere / sm_86
