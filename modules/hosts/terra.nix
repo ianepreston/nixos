@@ -70,16 +70,25 @@
         #
         # VRAM budget (16.3 GB total, minus ~1 GB the GNOME session holds):
         #   Qwen3-14B Q4_K_M weights   ~9.0 GB
-        #   KV cache @ 16k ctx         ~2.6 GB  (40 layers x 8 KV heads
-        #                                        x 128 dim x 2 x f16
-        #                                        = ~160 KB/token)
+        #   KV cache @ 40960 ctx       ~3.4 GB  (40 layers x 8 KV heads
+        #                                        x 128 dim x 2 x q8_0
+        #                                        = ~85 KB/token; f16 would
+        #                                        be ~160 KB/token, i.e. 6.4
+        #                                        GB, which does not fit)
         #   compute buffers            ~1.0 GB
-        # ...which leaves a couple of GB spare. Raising ctxSize eats that
-        # headroom fast at 160 KB/token — 32k alone is ~5.2 GB of KV.
+        # Quantizing the KV cache to q8_0 is what makes 40960 reachable
+        # at all — it costs ~4% generation throughput (89.9 -> 86.1 tok/s)
+        # and buys 2.5x the context. The deployed service measures 40960
+        # at 86.8 tok/s holding 12226 MiB, card total 12937 of 16303 MiB.
+        # 40960 is Qwen3-14B's n_ctx_train, so this is the model's ceiling
+        # rather than the card's; going past it needs RoPE scaling and
+        # degrades quality. See #517 for the full measurement table.
         myLlamaCpp = {
           enable = true;
           hfModel = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
-          ctxSize = 16384;
+          ctxSize = 40960;
+          cacheTypeK = "q8_0";
+          cacheTypeV = "q8_0";
           cudaCapabilities = [ "12.0" ]; # RTX 5080, Blackwell / sm_120
           # Bound on the LAN so the servers can reach it, but only they
           # get through the firewall; every other client goes via one of

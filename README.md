@@ -948,7 +948,9 @@ source-scoped firewall hole. A host enables inference with one attr set:
 myLlamaCpp = {
   enable = true;
   hfModel = "Qwen/Qwen3-14B-GGUF:Q4_K_M";
-  ctxSize = 16384;
+  ctxSize = 40960;
+  cacheTypeK = "q8_0";                # KV cache quantization; f16 is the default
+  cacheTypeV = "q8_0";
   cudaCapabilities = [ "12.0" ];      # RTX 5080 / Blackwell / sm_120
   listenAddress = "0.0.0.0";
   allowedClients = [ "192.168.10.11" ]; # amos1 only
@@ -962,7 +964,7 @@ Two instances run today, and they are not redundant copies of each other:
 | --- | --- | --- |
 | GPU | RTX 5080, 16 GB | RTX 3070, 8 GB, shared with Jellyfin |
 | model | Qwen3-14B Q4_K_M | Qwen3-8B Q4_K_M |
-| context | 16k | 8k |
+| context | 40960 (q8_0 KV) | 16k (q8_0 KV) |
 | idle window | 600 s | 300 s |
 | availability | only when the desktop is on | always |
 | URL | `llm-terra.<serverDomain>` | `llm.<serverDomain>` |
@@ -1027,21 +1029,43 @@ the last hour.
 ### Sizing against VRAM
 
 Weights plus KV cache plus compute buffers have to fit. KV cache is the part
-that surprises: Qwen3-14B is ~160 KB/token, so 16k of context is ~2.6 GB and 32k
-is ~5.2 GB on top of ~9 GB of weights. On a 16 GB card that also has a desktop
-session on it, context size is the knob that runs you out of memory, not the
-model.
+that surprises: at f16 Qwen3-14B is ~160 KB/token and Qwen3-8B is ~144 KB/token,
+so context — not the model — is what runs a card out of memory.
 
-amos1 is the tighter case, because the 3070's 8 GB is also Jellyfin's NVENC
-scratch space. Qwen3-8B at Q4_K_M with 8k context comes to ~6.7 GB, leaving
-~1.3 GB for a transcode that starts while the model happens to be resident.
-Raising `ctxSize` there spends Jellyfin's headroom, not spare capacity — which
-is why the idle window is 300 s rather than terra's 600 s. Handing the GPU back
-promptly matters more on a box with a second job for it.
+`cacheTypeK` / `cacheTypeV` are the lever. Quantizing the KV cache to `q8_0`
+halves its per-token cost, and both hosts measurably buy context with it rather
+than with VRAM (`f16` stays the module default, so a host opts in):
+
+| host | before | after | resident VRAM | generation |
+| --- | --- | --- | --- | --- |
+| terra (16 GB) | 16k, f16 | **40960, q8_0** | 12878 → 13768 MiB | 89.9 → 86.1 tok/s |
+| amos1 (8 GB) | 8k, f16 | **16384, q8_0** | 6105 → 6199 MiB | 77.8 → 74.1 tok/s |
+
+Both pay about 4% of generation throughput. Prompt processing pays a similar
+few percent. It is not free on quality either — `q8_0` KV is a far smaller hit
+than quantizing weights another step, but it is a hit, so it is worth a
+subjective check on a real task before reaching for anything below `q8_0`.
+
+The two hosts hit *different* ceilings, which is why their numbers differ:
+
+- **terra runs out of model, not card.** 40960 is Qwen3-14B's `n_ctx_train`;
+  past it quality degrades without RoPE scaling. f16 KV at 40960 does not fit
+  at all (it would be ~6.4 GB of cache on top of ~9 GB of weights); q8_0 fits
+  with a couple of GB spare — the deployed service reports 40960 context at
+  86.8 tok/s holding 12226 MiB, with the card at 12937 of 16303 MiB. `--no-kv-offload` would allow more still, but costs ~30%
+  generation and ~40% prefill, so it is not worth reaching for here.
+- **amos1 runs out of Jellyfin headroom.** The 3070's 8 GB is also NVENC
+  scratch space. At 16384/q8_0 the model sits at 6199 MiB, leaving 1993 MiB —
+  and with the model resident *and* generating, a 1080p `h264_nvenc` transcode
+  peaks the card at 6586 MiB and a 4K `hevc_nvenc` one at 7730 MiB. Both
+  succeed. 24576 does not clear that bar: 6811 MiB resident leaves 1381 MiB,
+  under the ~1.5 GB a 4K transcode wants. Raising `ctxSize` there spends
+  Jellyfin's margin, not spare capacity — which is also why the idle window is
+  300 s rather than terra's 600 s.
 
 `sleepIdleSeconds` exists because terra is a gaming machine first — after the
 idle window llama-server sleeps and hands the VRAM back. Measured on terra:
-12.7 GB down to 1.7 GB at the 600 s mark, and ~3 s to wake on the next request
+12.2 GB down to 1.7 GB at the 600 s mark, and ~3 s to wake on the next request
 (the GGUF is still in page cache, so nothing is re-read from disk). `/health`
 keeps answering while asleep and doesn't reset the timer.
 
