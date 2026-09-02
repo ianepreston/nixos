@@ -114,7 +114,7 @@
           owner = "greghesp";
           repo = "ha-bambulab";
           # renovate: datasource=github-releases depName=greghesp/ha-bambulab
-          tag = "v2.2.24";
+          tag = "v2.2.25";
           hash = "sha256-JRJ+tfllDuMrtz+5VQL2l5nkhJQXRoNvsvFnrReSZHE=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
