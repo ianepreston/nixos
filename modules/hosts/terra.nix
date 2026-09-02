@@ -89,11 +89,13 @@
         #                                        be ~144 KB/token, which
         #                                        does not fit)
         #   compute buffers            ~1.0 GB
-        # Measured resident: 13734 MiB — within 40 MiB of what Qwen3-14B
-        # held at 40960, so this is 2.4x the context and vision for the
-        # same VRAM. It is also *faster* on both axes: 6058 tok/s prefill
-        # vs 3282, 96.5 tok/s generation vs 62.8, on #518's fixed
-        # 16,701-token prompt. The trade is text quality, 14B-class down
+        # Measured resident: 13734 MiB on the bench, 13574 MiB on the
+        # deployed service (card total 14270 of 16303) — within 40 MiB of
+        # what Qwen3-14B held at 40960, so this is 2.4x the context and
+        # vision for the same VRAM. It is also *faster* on both axes:
+        # 6058 tok/s prefill vs 3282, 96.5 tok/s generation vs 62.8, on
+        # #518's fixed 16,701-token prompt. The trade is text quality,
+        # 14B-class down
         # to 8B-class — accepted deliberately, since no vision model above
         # 8B fits this card without offloading experts to system RAM.
         #
