@@ -1229,6 +1229,61 @@ world-readable. It lives in `shared.yaml` rather than a per-host file because
 terra and both servers need it — wider than the three hosts that do, which is
 the thing to fix when the sops files get split more finely.
 
+### Driving it from a coding agent
+
+The workstation side of the same endpoints. `modules/programs/vibes.nix` (the
+home-manager aspect that carries Claude Code) also installs
+[pi](https://github.com/earendil-works/pi) and writes
+`~/.pi/agent/models.json`, registering both routes as OpenAI-compatible
+providers so an agent loop runs against the fleet's own GPUs instead of a paid
+API:
+
+```
+provider  model   context  max-out  thinking  images
+amos1     text    16.4K    4.1K     yes       no
+amos1     vision  32.8K    4.1K     yes       yes
+terra     text    41.0K    8.2K     yes       no
+terra     vision  98.3K    8.2K     yes       yes
+```
+
+`pi` comes from `nixpkgs-unstable` rather than upstream's community flake
+([lukasl-dev/pi.nix](https://github.com/lukasl-dev/pi.nix)): the two track the
+same rev, but nixpkgs' build is served by `cache.nixos.org` while pi.nix would
+add three transitive inputs and a cachix substituter for one feature we don't
+need (its bubblewrap jail). Stable lags too hard to use here.
+
+Four things make this work, none of which needed a server-side change:
+
+- **The model ids are the routers' `aliases`, not GGUF names.** `text` and
+  `vision` survive swapping the weights underneath; the `<repo>:<quant>` names
+  would not.
+- **Tool calling is already on.** llama.cpp rejects a `tools` param without
+  `--jinja` — but `--jinja` defaults to *enabled* in b9190, so `myLlamaCpp`
+  inherits it and a full agent loop (bash tool → answer) works against both
+  hosts as deployed.
+- **No OpenAI-compat shims.** llama-server accepts the `developer` role and
+  tolerates `reasoning_effort` (ignoring it for Qwen3 rather than 400ing), so
+  pi's `compat` escape hatches stay unset.
+- **The key is read at request time, not baked in.** models.json lands in
+  `/nix/store` and is world-readable, so the credential is pi's `!cat <path>`
+  form pointed at a home-manager sops secret — the same `shared.yaml` key
+  llama-server enforces. Rotation needs no rebuild.
+
+Thinking is always on: these are hybrid-thinking Qwen3 models and
+`reasoning_effort` doesn't gate them, so pi's `--thinking off` can't suppress
+the `<think>` pass. `chat_template_kwargs.enable_thinking = false` does, via a
+model's `samplingParams` — worth reaching for only if a small-context model is
+burning its window on preamble.
+
+Both providers point at caddy, including on terra itself, so terra's own
+requests loop out to amos1 and back rather than hitting its loopback port. That
+buys one identical file on every host in exchange for a hop on a wired segment.
+`terra` 502s whenever that desktop is off; pick `amos1` in `/model`.
+
+penguin is the exception. It is a standalone home-manager config with no sops,
+so it gets `pi` with no local-inference providers rather than entries whose
+`!cat` points at a file that will never exist.
+
 ## Secrets Management
 
 Secrets are stored in a private `nix-secrets` repository pulled in as a flake
