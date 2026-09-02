@@ -955,11 +955,18 @@ myLlamaCpp = {
       cacheTypeK = "q8_0";            # KV cache quantization; f16 is the default
       cacheTypeV = "q8_0";
     };
-    "Qwen/Qwen3-14B-GGUF:Q4_K_M" = {
+    "ggml-org/gpt-oss-20b-GGUF:MXFP4" = {
       aliases = [ "text" ];
-      ctxSize = 40960;
+      ctxSize = 131072;
       cacheTypeK = "q8_0";
       cacheTypeV = "q8_0";
+    };
+    "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL" = {
+      aliases = [ "code" ];
+      ctxSize = 131072;
+      cacheTypeK = "q8_0";
+      cacheTypeV = "q8_0";
+      nCpuMoeLayers = 40;             # MoE experts to host RAM; weights exceed the card
     };
   };
   listenAddress = "0.0.0.0";
@@ -974,8 +981,10 @@ Two instances run today, and they are not redundant copies of each other:
 | --- | --- | --- |
 | GPU | RTX 5080, 16 GB | RTX 3070, 8 GB, shared with Jellyfin |
 | `vision` | Qwen3-VL-8B Q4_K_M @ 98304 | Qwen3-VL-4B Q4_K_M @ 32768 |
-| `text` | Qwen3-14B Q4_K_M @ 40960 | Qwen3-8B Q4_K_M @ 16384 |
-| resident VRAM | 13576 / 12226 MiB | 6080 / 6190 MiB |
+| `text` | gpt-oss-20b MXFP4 @ 131072 | Qwen3-8B Q4_K_M @ 16384 |
+| `code` | Qwen3-Coder-30B-A3B UD-Q4_K_XL @ 131072 | — |
+| `text-qwen` | Qwen3-14B Q4_K_M @ 40960 | — |
+| resident VRAM | 13576 / 13352 / 10846 / 12226 MiB | 6080 / 6190 MiB |
 | idle window | 600 s | 300 s |
 | availability | only when the desktop is on | always |
 | URL | `llm-terra.<serverDomain>` | `llm.<serverDomain>` |
@@ -983,7 +992,7 @@ Two instances run today, and they are not redundant copies of each other:
 So `llm.*` is the one to point a client at by default, and `llm-terra.*` is
 the larger model of either kind when that machine happens to be up.
 
-### Router mode: two models, one at a time
+### Router mode: one model at a time
 
 Each host serves a *set* of models rather than one. `llama-server` runs as a
 **router**: the process that owns the port holds no model itself and spawns a
@@ -996,9 +1005,18 @@ and on both cards the best vision model that fits is materially weaker at text
 than the generalist it displaced — terra's is 8B-class against a 14B, amos1's
 4B-class against an 8B. Routing gets both back.
 
+terra carries two more for a different reason. #518 set out to pick one model
+for agentic coding and could not: gpt-oss-20b beats Qwen3-Coder-30B on every
+*measured* axis (8.4x prefill, 5.1x generation, 9.5 GB less host RAM at the
+same 128k context), but throughput is not code quality, and a coding specialist
+against a general reasoner is a question only real sessions answer. Both are
+routable by name — `text` and `code` — so the comparison is a model field
+rather than a rebuild. `text-qwen` keeps the dense 14B that `text` displaced
+available on the same terms.
+
 `--models-max` is pinned to **1**. This is swap-on-demand, not concurrent
-serving: terra's pair is 27.5 GB of models against a 16.3 GB card, amos1's is
-12.4 GB against 8.0 GB, and nothing fits two at once. Asking for a model that
+serving: terra's four are ~56 GB of models against a 16.3 GB card, amos1's pair
+is 12.4 GB against 8.0 GB, and nothing fits two at once. Asking for a model that
 isn't resident evicts the one that is. That costs 3–4 s on terra's NVMe with the
 page cache cold, and 2–5 s on amos1 — cheap enough that the swap is not worth
 designing around.
@@ -1010,9 +1028,11 @@ Three consequences worth knowing:
   one and `400 model 'x' not found` for a name it doesn't have. A client that
   used to send a placeholder stops working.
 - **`aliases` is the stable name to point clients at.** Both hosts register
-  `vision` and `text` alongside the full `<repo>:<quant>` names, so swapping the
-  GGUF underneath a role is a change to `modules/hosts/<host>.nix` and not to
-  every client.
+  `text` and `vision` alongside the full `<repo>:<quant>` names, and terra adds
+  `code` and `text-qwen`, so swapping the GGUF underneath a role is a change to
+  `modules/hosts/<host>.nix` and not to every client. The role set is per-host:
+  a client asking amos1 for `code` gets `400 model not found`, which is the
+  correct answer rather than a silent downgrade.
 - **The cache is a model *source*, not just storage.** The router enumerates
   `LLAMA_CACHE` as well as its preset, so a leftover GGUF from an earlier config
   is still routable — with llama.cpp defaults, since nothing sizes it. Pruning
@@ -1119,11 +1139,12 @@ The two hosts hit *different* ceilings on those models, which is why their
 numbers differ (the vision models' budgets are worked through in the comments in
 `modules/hosts/terra.nix` and `modules/hosts/amos1.nix`):
 
-- **terra runs out of model, not card.** 40960 is Qwen3-14B's `n_ctx_train`;
-  past it quality degrades without RoPE scaling. f16 KV at 40960 does not fit
-  at all (it would be ~6.4 GB of cache on top of ~9 GB of weights); q8_0 fits
-  with a couple of GB spare — the deployed service reports 40960 context at
-  86.8 tok/s holding 12226 MiB, with the card at 12937 of 16303 MiB. `--no-kv-offload` would allow more still, but costs ~30%
+- **terra's `text-qwen` runs out of model, not card.** 40960 is Qwen3-14B's
+  `n_ctx_train`; past it quality degrades without RoPE scaling. f16 KV at 40960
+  does not fit at all (it would be ~6.4 GB of cache on top of ~9 GB of
+  weights); q8_0 fits with a couple of GB spare — the deployed service reports
+  40960 context at 86.8 tok/s holding 12226 MiB, with the card at 12937 of
+  16303 MiB. `--no-kv-offload` would allow more still, but costs ~30%
   generation and ~40% prefill, so it is not worth reaching for here.
 - **amos1 runs out of Jellyfin headroom.** The 3070's 8 GB is also NVENC
   scratch space. At 16384/q8_0 the model sits at 6199 MiB, leaving 1993 MiB —
@@ -1133,6 +1154,53 @@ numbers differ (the vision models' budgets are worked through in the comments in
   under the ~1.5 GB a 4K transcode wants. Raising `ctxSize` there spends
   Jellyfin's margin, not spare capacity — which is also why the idle window is
   300 s rather than terra's 600 s.
+
+### Two ways past "it doesn't fit"
+
+The arithmetic above sizes a *dense* model with global attention. terra's two
+128k models both break it, in opposite directions, and each needs a different
+lever.
+
+**Sliding-window attention makes long context nearly free — gpt-oss-20b.**
+Alternating layers cap their cache at a 128-token window rather than growing it
+with the prompt. Naive bytes-per-token arithmetic predicts ~3.1 GB of KV at
+131072; measured, KV *and* compute buffers together come to ~1254 MiB on top of
+12.1 GB of weights — 13352 MiB resident in all, for 1.5 GB of host RAM. That is the whole reason a 20B model holds 3.2x the context
+of the 14B it displaced while also being faster than it (10817 vs 3282 tok/s
+prefill, 189.5 vs 62.8 generation on a fixed 16,701-token prompt) — MXFP4
+weights and ~3.6B active parameters of 20B do the rest. f16 KV at that context
+still OOMs, so `q8_0` is a prerequisite here and not a tuning choice.
+
+**`nCpuMoeLayers` puts a model bigger than the card on the card — Qwen3-Coder-30B.**
+17.7 GB of weights against 16.3 GB of VRAM is not a context problem, and `-ngl`
+is the wrong tool: dropping whole layers to the CPU drags their KV cache off the
+card with them. `-ncmoe N` splits it the other way — attention and the entire KV
+cache stay on the GPU while the first N layers' *expert* FFN weights live in host
+RAM. An MoE activates a small fraction of its parameters per token, so the PCIe
+traffic is far smaller than the resident size implies.
+
+Fewer offloaded layers is monotonically faster, so the setting is bounded below
+by VRAM and picked as the largest that leaves headroom:
+
+| terra, Coder30B @ 131072 | VRAM | host RAM | prefill | generation |
+| --- | --- | --- | --- | --- |
+| `nCpuMoeLayers = 30` | 15655 MiB | 11.0 GB | 1282.8 tok/s | 37.0 tok/s |
+| **`nCpuMoeLayers = 40`** | **12391 MiB** | **14.3 GB** | **1033.5 tok/s** | **30.0 tok/s** |
+
+30 is faster and was rejected: ~650 MiB of headroom on a card also running a
+GNOME session is not a margin. Deployed, 40 measures better than the bench
+above — 10846 MiB resident under the router rather than 12391.
+
+The host-RAM column needs reading carefully. Of that 14.3 GB of RSS, 13.6 GB is
+`RssFile`: the offloaded experts are an mmap of the GGUF, so the kernel accounts
+them as reclaimable page cache and `free` still reports ~26 GB available on a
+30 GB machine. Only ~0.5 GB is anonymous. So it is much kinder to a desktop than
+"14 GB gone" implies — but not free, because reclaiming those pages means
+re-reading experts from NVMe per token, and the throughput above assumes they
+stay resident. `sleepIdleSeconds` hands back VRAM, not this.
+
+262144, the model's native limit, does not fit at any offload level: compute
+buffers fail to allocate before the KV cache is even the constraint.
 
 `sleepIdleSeconds` exists because terra is a gaming machine first — after the
 idle window llama-server sleeps and hands the VRAM back. Measured on terra:
@@ -1242,9 +1310,10 @@ both can drive the fleet's own GPUs instead of a paid API:
 | pi | `~/.pi/agent/models.json` | `!cat <path>` |
 | opencode | `~/.config/opencode/opencode.json` | `{file:<path>}` |
 
-Both get the same four entries — `text` and `vision` on each of `amos1` and
-`terra` — rendered from one `llamaHosts` attrset in that module rather than
-written twice. The two agents disagree about nearly every field name
+Both get the same six entries — `text` and `vision` on `amos1`, plus `code` and
+`text-qwen` alongside those two on `terra` — rendered from one `llamaHosts`
+attrset in that module rather than written twice. It mirrors each host's
+`myLlamaCpp.models` and has to be edited in lockstep with it. The two agents disagree about nearly every field name
 (`contextWindow` vs `limit.context`, `input` vs `modalities.input`) but not
 about the facts.
 
@@ -1257,17 +1326,20 @@ feature we don't need (its bubblewrap jail).
 
 Five things make this work, none of which needed a server-side change:
 
-- **The model ids are the routers' `aliases`, not GGUF names.** `text` and
-  `vision` survive swapping the weights underneath; the `<repo>:<quant>` names
-  would not.
+- **The model ids are the routers' `aliases`, not GGUF names.** `text`,
+  `code`, `text-qwen` and `vision` survive swapping the weights underneath; the
+  `<repo>:<quant>` names would not. That is what makes #518's open question —
+  which model actually writes better patches — a picker entry rather than a
+  rebuild.
 - **Tool calling is already on.** llama.cpp rejects a `tools` param without
   `--jinja` — but `--jinja` defaults to *enabled* in b9190, so `myLlamaCpp`
   inherits it and a full agent loop (bash tool → answer) works from both agents
   against both hosts as deployed.
 - **No OpenAI-compat shims.** llama-server accepts the `developer` role and
-  tolerates `reasoning_effort` (ignoring it for Qwen3 rather than 400ing), so
-  pi's `compat` escape hatches stay unset and opencode's stock
-  `@ai-sdk/openai-compatible` needs nothing beyond a URL and a key.
+  takes `reasoning_effort` — ignoring it for Qwen3 rather than 400ing, and
+  honouring it for gpt-oss — so pi's `compat` escape hatches stay unset and
+  opencode's stock `@ai-sdk/openai-compatible` needs nothing beyond a URL and a
+  key.
 - **opencode's ai-sdk provider is bundled, not fetched.** Naming an `npm`
   package in a provider block normally implies a runtime install; this one ships
   inside the binary, so the config works on a host that has never reached the
@@ -1277,11 +1349,15 @@ Five things make this work, none of which needed a server-side change:
   secret by path — the same `shared.yaml` key llama-server enforces. Rotation
   needs no rebuild.
 
-Thinking is always on: these are hybrid-thinking Qwen3 models and
-`reasoning_effort` doesn't gate them, so pi's `--thinking off` can't suppress
-the `<think>` pass. `chat_template_kwargs.enable_thinking = false` does, via a
-model's `samplingParams` (pi) or `options` (opencode) — worth reaching for only
-if a small-context model is burning its window on preamble.
+Thinking is always on, and the lever differs per model. The Qwen3 models are
+hybrid-thinking and `reasoning_effort` doesn't gate them, so pi's
+`--thinking off` can't suppress the `<think>` pass;
+`chat_template_kwargs.enable_thinking = false` does, via a model's
+`samplingParams` (pi) or `options` (opencode). gpt-oss reasons through the
+harmony format instead, where `reasoning_effort` *is* a real knob
+(low/medium/high, default medium). Both are left unset — reasoning earns its
+tokens for agentic work — and are worth reaching for only if a small-context
+model is burning its window on preamble.
 
 Both providers point at caddy, including on terra itself, so terra's own
 requests loop out to amos1 and back rather than hitting its loopback port. That

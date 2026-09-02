@@ -9,8 +9,9 @@
 # Sibling of modules/apps/llm-terra.nix, which is the same idea pointed at
 # terra instead of localhost. A server can carry both; amos1 does, so
 # `llm.<serverDomain>` is the always-on instance and
-# `llm-terra.<serverDomain>` is terra's larger model when that desktop
-# happens to be powered on.
+# `llm-terra.<serverDomain>` is terra's larger set of models when that
+# desktop happens to be powered on — including the two coding models
+# (#518) that have no equivalent on an 8 GB card.
 #
 # The upstream port is read from `myLlamaCpp.port` rather than repeated,
 # because it genuinely varies per host — 8080 is taken by unifi-os-server

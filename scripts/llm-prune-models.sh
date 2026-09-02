@@ -41,12 +41,21 @@
 # whole. No parsing of directory names back into repo ids, which is
 # ambiguous for a repo whose own name contains `--`.
 #
-# File level needs the quant tag, and that is derived here the same way
-# llama.cpp derives it in `get_gguf_split_info` (common/download.cpp):
-# strip `.gguf`, strip a trailing `-NNNNN-of-NNNNN` shard suffix, then take
-# the last `[-.]([A-Za-z0-9_]+)` run and upper-case it. Deletion is
-# allowlisted rather than denylisted — a file is removed only if its
-# derived tag is one we know is superseded, so an unparseable or untagged
+# File level asks the question llama.cpp asks: would any configured
+# `repo:TAG` *select* this file? That is `find_best_model`
+# (common/download.cpp), which searches the filename case-insensitively
+# for `TAG[.-]`. It is deliberately not a round-trip through a derived
+# tag, because the two do not agree: `get_gguf_split_info` derives the
+# tag from a filename by taking the last `[-.]([A-Za-z0-9_]+)` run, which
+# turns `...-UD-Q4_K_XL.gguf` into `Q4_K_XL` and so fails to match a
+# configured `UD-Q4_K_XL` — unsloth's dynamic quants all have that shape,
+# and the dry run duly offered to delete a 17 GB model the host was
+# configured to serve.
+#
+# `get_gguf_split_info`'s derivation is still used, but only to answer
+# "is this filename tagged at all?". Deletion stays allowlisted rather
+# than denylisted: a file is removed only if it carries a parseable tag
+# *and* no configured name selects it, so an untagged or unparseable
 # filename survives.
 #
 # ## Cache layout
@@ -133,11 +142,23 @@ done
 # --- collect what to remove ------------------------------------------------
 declare -a doomed=()
 
-# The same derivation llama.cpp uses; see the header.
+# The same derivation llama.cpp uses in `get_gguf_split_info`. Used only
+# as a "is this tagged at all?" test — see the header for why it is not
+# the thing compared against the configured tags.
 derive_tag() {
   local n=${1%.gguf}
   n=$(printf '%s' "$n" | sed -E 's/-[0-9]{5}-of-[0-9]{5}$//')
   printf '%s' "$n" | sed -nE 's/.*[-.]([A-Za-z0-9_]+)$/\1/p' | tr '[:lower:]' '[:upper:]'
+}
+
+# llama.cpp's own file-selection test (`find_best_model`): a configured
+# tag selects a file when the filename contains `TAG` followed by `.` or
+# `-`, case-insensitively. Metacharacters in the tag are escaped so a tag
+# is matched literally.
+tag_selects_file() {
+  local tag=$1 filename=$2 escaped
+  escaped=$(printf '%s' "$tag" | sed -E 's/[][\.^$*+?(){}|\/]/\\&/g')
+  printf '%s' "$filename" | grep -qiE "${escaped}[.-]"
 }
 
 for d in "$CACHE_DIR"/models--*; do
@@ -163,21 +184,27 @@ for d in "$CACHE_DIR"/models--*; do
     doomed+=("$s")
   done
 
-  # 3. Superseded quants inside the current revision. mmproj/mtp sidecars
-  #    are never models in their own right (llama.cpp skips them when it
-  #    enumerates the cache) and their own filenames carry an unrelated
-  #    tag, so they are never matched here — they go only with their repo.
+  # 3. Superseded quants inside the current revision. mmproj/imatrix/mtp
+  #    sidecars are never models in their own right — llama.cpp excludes
+  #    them by the same substring test in `gguf_filename_is_model` when it
+  #    enumerates the cache — and their filenames carry an unrelated tag,
+  #    so they are never matched here and go only with their repo.
   for f in "$d/snapshots/$current_rev"/*.gguf; do
     [ -e "$f" ] || continue
     n=$(basename "$f")
     case "$n" in
-      mmproj* | mtp-*) continue ;;
+      *mmproj* | *imatrix* | *mtp-*) continue ;;
     esac
-    t=$(derive_tag "$n")
-    [ -n "$t" ] || continue
-    case "${keep_tags[$base]}" in
-      *" $t "*) continue ;;
-    esac
+    # Untagged or unparseable filenames survive; see the header.
+    [ -n "$(derive_tag "$n")" ] || continue
+    keep=false
+    for t in ${keep_tags[$base]}; do
+      if tag_selects_file "$t" "$n"; then
+        keep=true
+        break
+      fi
+    done
+    [ "$keep" = true ] && continue
     doomed+=("$f")
   done
 done
