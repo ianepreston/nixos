@@ -48,10 +48,14 @@
 #
 # `--models-max` is pinned to 1 below rather than exposed as an option:
 # on both hosts that run this, no two configured models fit in VRAM at
-# once (terra 27.5 GB of models against a 16.3 GB card, amos1 12.4 GB
+# once (terra ~56 GB of models against a 16.3 GB card, amos1 12.4 GB
 # against 8.0 GB — see #524). This is deliberately swap-on-demand, not
 # concurrent serving. Measured swap cost on terra's NVMe is 3-4 s, cold
 # page cache included, so the trade is cheap.
+#
+# Swapping is not uniformly cheap across the set, though: a model with
+# `nCpuMoeLayers` set also has to stream its offloaded expert weights
+# back into host RAM, so terra's `code` is the slow one to bring up.
 #
 # ## Model files
 #
@@ -250,6 +254,41 @@
                     the model doesn't fit.
                   '';
                 };
+
+                nCpuMoeLayers = lib.mkOption {
+                  type = lib.types.ints.unsigned;
+                  default = 0;
+                  example = 40;
+                  description = ''
+                    For a mixture-of-experts model, how many of its layers
+                    keep their *expert* weights in system RAM (`-ncmoe`).
+                    Zero (the default) is "none", which is the only
+                    correct value for a dense model — it has no experts to
+                    move.
+
+                    This is a different lever from `nGpuLayers` and they
+                    compose: `-ngl 99 -ncmoe N` keeps attention and the KV
+                    cache for every layer on the GPU while the first N
+                    layers' expert FFN weights live in host RAM. That
+                    split is what makes a model whose weights exceed the
+                    card usable at all — an MoE activates a small
+                    fraction of its parameters per token, so the traffic
+                    over PCIe is far smaller than the resident size
+                    suggests, whereas moving whole layers with `-ngl`
+                    would drag the KV cache off the card with them.
+
+                    Cost is paid twice: throughput drops monotonically as
+                    N rises, and the offloaded weights occupy host RAM for
+                    as long as the model is loaded (~14 GB for
+                    Qwen3-Coder-30B at N=40 — see modules/hosts/terra.nix).
+                    That second cost is gentler than it looks — the
+                    experts are an mmap of the GGUF, so almost all of it
+                    is reclaimable page cache rather than committed
+                    memory — but the throughput above assumes it stays
+                    resident, and `sleepIdleSeconds` hands back VRAM, not
+                    this.
+                  '';
+                };
               };
             }
           );
@@ -400,6 +439,13 @@
               n-gpu-layers = model.nGpuLayers;
               ctk = model.cacheTypeK;
               ctv = model.cacheTypeV;
+            }
+            # Omitted rather than written as 0 for a dense model: the
+            # flag is meaningless without experts and leaving it out
+            # keeps the rendered preset readable as a description of
+            # what each model actually needs.
+            // lib.optionalAttrs (model.nCpuMoeLayers > 0) {
+              n-cpu-moe = model.nCpuMoeLayers;
             }
             // lib.optionalAttrs (model.aliases != [ ]) {
               alias = lib.concatStringsSep "," model.aliases;

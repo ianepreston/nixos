@@ -68,17 +68,23 @@
         # terra needs a DHCP reservation on the router or the address (and
         # the route with it) drifts on lease renewal.
         #
-        # Two models, one at a time (#519). llama-server runs as a
-        # router and swaps on demand, because neither capability below is
-        # reachable from a single GGUF that fits this card: #524 traded
-        # 14B-class text quality away to get vision, and there is no
-        # vision model above 8B that fits 16.3 GB without offloading
-        # experts to system RAM. Router mode buys both back at the cost of
-        # a measured 3-4 s swap (cold page cache included, NVMe).
+        # Four models, one at a time (#519). llama-server runs as a
+        # router and swaps on demand, because no single GGUF that fits
+        # this card covers all four jobs: #524 traded 14B-class text
+        # quality away to get vision, and there is no vision model above
+        # 8B that fits 16.3 GB without offloading experts to system RAM.
+        # Router mode buys them all back at the cost of a measured 3-4 s
+        # swap (cold page cache included, NVMe).
         #
-        # 27.5 GB of models against a 16.3 GB card, so `--models-max 1` in
+        # ~56 GB of models against a 16.3 GB card, so `--models-max 1` in
         # modules/system/llama-cpp.nix is load-bearing, not a tuning knob.
         # Even the cheapest pairing (VL-8B dropped to 40960) is 23.2 GB.
+        #
+        # The two coding-oriented models below are here to be *compared*
+        # (#518): throughput is measured and settled, code quality is not,
+        # and nothing but real agentic sessions will settle it. Both are
+        # therefore reachable by name from pi and opencode rather than one
+        # being picked on paper — see modules/programs/vibes.nix.
         #
         # Nothing is loaded at boot. The first request for a model pays
         # its load; `task llm:models:fetch HOST=terra` pre-warms the cache
@@ -129,17 +135,98 @@
               cacheTypeV = "q8_0";
             };
 
-            # Generalist. The model #524 displaced, back as a peer rather
-            # than a replacement: 14B-class text quality, no vision, and
-            # a hard 40960 ceiling that is the *model's* (n_ctx_train),
-            # not the card's — the inverse of the VL-8B situation above.
-            # Slower on both axes (3282 tok/s prefill, 62.8 tok/s
-            # generation vs 6058 / 96.5 on #518's fixed 16,701-token
-            # prompt); the reason to route here is quality, not speed.
+            # Default generalist, and the model an agent should reach
+            # for unless it has a reason not to (#518). MXFP4 weights and
+            # ~3.6B active parameters of 20B (4 of 32 experts) make it
+            # both smaller and faster than the dense 14B below while
+            # holding 3.2x the context — it beats every other candidate
+            # measured on *every* axis, which is why it takes `text`.
+            #
+            # Sliding-window attention is what makes 131072 affordable:
+            # alternating layers cap their cache at a 128-token window, so
+            # KV + compute buffers together come to only ~1254 MiB at full
+            # context on top of 12.1 GB of weights. The naive
+            # bytes-per-token arithmetic that sizes every other model on
+            # this host predicts ~3.1 GB and is simply wrong here.
+            #
+            # Measured resident: 13352 MiB at 131072 with q8_0 KV under
+            # the router (card total 13909 of 16303 with the GNOME
+            # session) — the largest footprint here, and better than the
+            # 14892 MiB #518 measured on the bench. f16 KV at the same
+            # context OOMs, so the quantized cache is a prerequisite
+            # rather than a tuning choice. Host RAM is 1.5 GB. Throughput
+            # on #518's fixed 16,701-token prompt: 10817 tok/s prefill,
+            # 189.5 tok/s generation.
+            #
+            # Text-only, like both models below it — `vision` is the
+            # only entry here that takes an image, and nothing about
+            # gpt-oss changes that.
+            "ggml-org/gpt-oss-20b-GGUF:MXFP4" = {
+              aliases = [ "text" ];
+              ctxSize = 131072;
+              cacheTypeK = "q8_0";
+              cacheTypeV = "q8_0";
+            };
+
+            # Coding specialist, and the other half of #518's open
+            # question: it is a *coding* model against gpt-oss's general
+            # reasoning, and no throughput number decides between them.
+            # Routed by name so both are selectable from an agent.
+            #
+            # 17.7 GB of weights do not fit a 16.3 GB card, but this is an
+            # MoE (~3.3B active of 30B), so `nCpuMoeLayers` keeps
+            # attention and the whole KV cache on the GPU while 40 of the
+            # 48 layers' expert FFN weights sit in system RAM. That is the
+            # only reason 131072 is reachable at all here.
+            #
+            # Its cache is also unusually cheap for its size — 48 layers
+            # but only 4 KV heads, so ~48 KB/token at q8_0, 40% less than
+            # the 14B below despite being twice the model.
+            #
+            # Measured at ncmoe=40 under the router: 10846 MiB VRAM
+            # (card total 11403 of 16303), against #518's bench figure of
+            # 12391. Throughput 1034 tok/s prefill, 30.0 tok/s generation.
+            #
+            # The 14.3 GB of host RAM this costs is *not* committed
+            # memory, which the bench's phrasing obscures: of 14.3 GB
+            # RSS, 13.6 GB is `RssFile` — the offloaded expert weights are
+            # an mmap of the GGUF, so the kernel accounts them as
+            # reclaimable page cache and `free` still reports ~26 GB
+            # available. Only ~0.5 GB is anonymous. That makes it far
+            # kinder to a 30 GB desktop than "14 GB gone" suggests, but
+            # it is not free either: reclaiming those pages under memory
+            # pressure means re-reading experts from NVMe per token, so
+            # the throughput above assumes they stay resident.
+            #
+            # ncmoe=30 is the faster config at the same context
+            # (1283/37.0) and was rejected: 15655 MiB leaves ~650 MiB on a
+            # card that is also running a GNOME session. Fewer offloaded
+            # layers is monotonically faster, so the bound is VRAM, not
+            # tuning.
+            "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL" = {
+              aliases = [ "code" ];
+              ctxSize = 131072;
+              cacheTypeK = "q8_0";
+              cacheTypeV = "q8_0";
+              nCpuMoeLayers = 40;
+            };
+
+            # Fallback generalist. The model #524 displaced, kept as a
+            # named peer rather than the default: 14B-class *dense* text
+            # quality, no vision, and a hard 40960 ceiling that is the
+            # model's (n_ctx_train), not the card's — the inverse of the
+            # VL-8B situation above.
+            #
+            # It lost `text` to gpt-oss on measurements, not taste (3282
+            # vs 10817 tok/s prefill, 62.8 vs 189.5 generation, 40k vs
+            # 128k context on #518's fixed prompt), and a dense model can
+            # still behave differently from a sparse one on the same
+            # request. `text-qwen` is what makes that comparison a request
+            # header rather than a rebuild.
             #
             # Measured resident: 12226 MiB under the router.
             "Qwen/Qwen3-14B-GGUF:Q4_K_M" = {
-              aliases = [ "text" ];
+              aliases = [ "text-qwen" ];
               ctxSize = 40960;
               cacheTypeK = "q8_0";
               cacheTypeV = "q8_0";

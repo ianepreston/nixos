@@ -44,8 +44,12 @@
 # **The model ids are the routers' aliases, not GGUF names.** Router mode
 # requires an exact `model` field and rejects anything it doesn't know
 # (#519), and `myLlamaCpp.models.<name>.aliases` exists precisely so
-# clients can name a *role*. So `text`/`vision` here survive swapping the
-# GGUF underneath on either host; the `<repo>:<tag>` names would not.
+# clients can name a *role*. So `text`/`code`/`text-qwen`/`vision` here
+# survive swapping the GGUF underneath on either host; the `<repo>:<tag>`
+# names would not. The role set is per-host and is whatever that host's
+# `myLlamaCpp.models` aliases add up to — amos1's 8 GB card carries only
+# `text` and `vision`, terra all four — so these two attrsets have to be
+# edited in lockstep with modules/hosts/{amos1,terra}.nix.
 #
 # **Tool calling needs no server-side change.** llama.cpp refuses a
 # `tools` param without `--jinja` ("tools param requires --jinja flag"),
@@ -66,14 +70,17 @@
 # under the data dir after a completed run. So the config works on a host
 # that has never had network access to the npm registry.
 #
-# **Thinking is always on.** These are hybrid-thinking Qwen3 models and
-# `reasoning_effort` does not gate them, so pi's `--thinking off` cannot
-# suppress the `<think>` pass. The lever that does work is
-# `chat_template_kwargs.enable_thinking = false`, which pi can send via a
-# model's `samplingParams` (merged verbatim into the request body) and
-# opencode via a model's `options`. Left unset deliberately — reasoning is
-# worth its tokens for agentic work — but that's where to reach if a
-# small-context model is burning its window on preamble.
+# **Thinking is always on, and the lever differs per model.** The Qwen3
+# models are hybrid-thinking and `reasoning_effort` does not gate them, so
+# pi's `--thinking off` cannot suppress the `<think>` pass; what does work
+# is `chat_template_kwargs.enable_thinking = false`, which pi can send via
+# a model's `samplingParams` (merged verbatim into the request body) and
+# opencode via a model's `options`. gpt-oss is the exception — it reasons
+# through the harmony format, where `reasoning_effort` is a real knob
+# (low/medium/high, default medium) rather than an ignored field. Both are
+# left unset deliberately: reasoning is worth its tokens for agentic work.
+# Reach for the matching one if a small-context model is burning its
+# window on preamble.
 #
 # **Both endpoints go through caddy, including on terra itself.** terra
 # runs the llama-server this points at, so its own requests loop out to
@@ -232,10 +239,29 @@ _: {
         };
         # The RTX 5080 desktop: the one worth pointing an agent at, and
         # only up when terra is.
+        #
+        # Four roles rather than amos1's two. `text` and `code` are both
+        # here on purpose and are the point of #518: gpt-oss-20b wins
+        # every measured axis, but throughput is not code quality, and
+        # only real sessions against both settle which writes better
+        # patches. `text-qwen` is the dense 14B that `text` displaced,
+        # kept selectable for the same reason.
         terra = {
           routeSuffix = "-terra";
           models = {
             text = {
+              label = "gpt-oss-20b";
+              ctxSize = 131072;
+              maxTokens = 16384;
+              vision = false;
+            };
+            code = {
+              label = "Qwen3-Coder-30B";
+              ctxSize = 131072;
+              maxTokens = 16384;
+              vision = false;
+            };
+            text-qwen = {
               label = "Qwen3-14B";
               ctxSize = 40960;
               maxTokens = 8192;
