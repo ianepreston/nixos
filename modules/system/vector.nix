@@ -39,19 +39,31 @@
 # on action / interface / addresses / ports instead of substring-matching
 # a blob. See the pfsense_filterlog transform for the format notes.
 #
-# Operational hazard, learned the hard way: if this listener is down
-# while pfSense is sending, the kernel answers each datagram with an
-# ICMP port-unreachable (the firewall rule below accepts the packet, so
-# it reaches a closed port rather than being dropped). FreeBSD syslogd
-# takes the resulting ECONNREFUSED as fatal for that target, logs
-# `sendto: Connection refused`, and then stops sending to it *for good* —
-# it never retries and never logs again. Recovery requires restarting
-# syslogd on the router (`pfSsh.php playback svc restart syslogd`;
-# a SIGHUP kills it rather than reloading it). So a vector outage here
-# does not merely pause ingest, it silently detaches the router until
-# someone intervenes on the router. Any alerting built on this data
-# should therefore alert on *absence* of pfSense events, not only on
-# their content — a quiet feed is the failure mode, not a calm network.
+# Operational hazard, learned the hard way, and since mitigated: if this
+# listener was down while pfSense was sending, the kernel answered each
+# datagram with an ICMP port-unreachable — the firewall rule below
+# accepts the packet, so it reached a closed port rather than being
+# dropped. FreeBSD syslogd takes the resulting ECONNREFUSED as fatal for
+# that target, logs `sendto: Connection refused`, and then stops sending
+# to it *for good* — it never retries and never logs again. Recovery
+# meant restarting syslogd on the router (`pfSsh.php playback svc restart
+# syslogd`; a SIGHUP kills it rather than reloading it), so a vector
+# bounce did not merely pause ingest, it silently detached the router
+# until someone intervened on the box. Every `nixos-rebuild switch` that
+# restarted vector opened that window, not just reboots.
+#
+# The ICMP was self-inflicted: without our accept rule the datagram would
+# fall through to `nixos-fw-refuse`, which DROPs, and the router would
+# never learn a thing. The firewall block below therefore also drops
+# outbound ICMP port-unreachable toward the router, which restores that
+# drop-on-the-floor behaviour and makes a vector outage cost nothing more
+# than the datagrams sent during it. See the comment there.
+#
+# The absence alerting stays regardless: a stalled feed is still
+# invisible in the log data itself, since an empty feed looks exactly
+# like a quiet network. Any alerting built on this data should alert on
+# *absence* of pfSense events, not only on their content — a quiet feed
+# is the failure mode, not a calm network.
 #
 # The journal side is loopback-only. The syslog listener is the one
 # externally-reachable surface in this module, and it is opened only to
@@ -322,11 +334,38 @@ _: {
       #
       # IPv4-only (iptables, not ip46tables): the mgmt VLAN is v4 and
       # pfSense's `<ipproto>` is set to ipv4.
+      #
+      # The second rule is what keeps a vector restart from detaching the
+      # router. The accept rule above outlives the vector process — it is
+      # installed by firewall.service, not by vector — so any datagram
+      # arriving while vector is down is explicitly ACCEPTed into a closed
+      # UDP port and the kernel answers ICMP port-unreachable, which is the
+      # `sendto: Connection refused` that FreeBSD syslogd treats as fatal
+      # for the target (see the hazard note at the top of this file).
+      # Without the accept rule the packet would fall through to
+      # `nixos-fw-refuse`, which DROPs (`networking.firewall.rejectPackets`
+      # is false), and the router would never learn anything — so the ICMP
+      # is manufactured by our own rule, not by anything pfSense does.
+      # Suppressing just that reply toward the router restores the
+      # drop-on-the-floor behaviour, degrading a vector outage to ordinary
+      # UDP packet loss instead of a permanent detach needing a hands-on
+      # syslogd restart.
+      #
+      # Code 3 (port unreachable) only, so frag-needed (code 4) still gets
+      # through and PMTUD toward the router is unaffected. Nothing else on
+      # this network wants port-unreachable from these hosts.
+      #
+      # This covers the frequent case as well as reboots: every
+      # `nixos-rebuild switch` that bounces vector opens the same window,
+      # which is how the 2026-08-31 auto-upgrade silently detached both
+      # servers at once.
       networking.firewall.extraCommands = ''
         iptables -A nixos-fw -p udp -s ${pfsenseAddress} --dport ${toString syslogPort} -j nixos-fw-accept
+        iptables -A OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP
       '';
       networking.firewall.extraStopCommands = ''
         iptables -D nixos-fw -p udp -s ${pfsenseAddress} --dport ${toString syslogPort} -j nixos-fw-accept || true
+        iptables -D OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP || true
       '';
 
       # Best-effort assertion that VL is in the same module set —

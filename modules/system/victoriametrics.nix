@@ -105,15 +105,21 @@ _: {
               {
                 # pfSense's remote syslog feed going silent is a failure
                 # that is invisible in the log data itself — an empty feed
-                # looks exactly like a quiet network. It is also not
-                # self-healing: if this host's vector listener is ever
-                # down while pfSense is sending, the datagram reaches a
-                # closed port (the firewall rule accepts it), the kernel
-                # answers ICMP port-unreachable, and FreeBSD syslogd
-                # treats that ECONNREFUSED as fatal for the target and
-                # stops sending to it permanently. Recovery is a syslogd
-                # restart *on the router*, so nothing here will fix it.
-                # Hence alerting on absence. See modules/system/vector.nix.
+                # looks exactly like a quiet network, so nothing short of
+                # an absence rule can see it.
+                #
+                # It used to also be non-self-healing: a datagram arriving
+                # while vector was down hit a closed port (the firewall
+                # rule accepts it), the kernel answered ICMP
+                # port-unreachable, and FreeBSD syslogd treated that
+                # ECONNREFUSED as fatal and detached the target for good.
+                # vector.nix now drops outbound port-unreachable toward
+                # the router, so a vector bounce loses only the datagrams
+                # sent during it and the feed resumes on its own. This
+                # rule stays because the feed can still go quiet for
+                # reasons that fix does not cover — the router's syslog
+                # config being changed or disabled, syslogd dying on the
+                # box, or the mgmt path between the two breaking.
                 #
                 # The `and on() sum(up{job="vector"}) == 1` guard keeps
                 # this distinct from vector simply being down, which
@@ -155,7 +161,7 @@ _: {
                 labels.severity = "warning";
                 annotations = {
                   summary = "No pfSense syslog received on this host";
-                  description = "vector is up but has received no events from the pfSense syslog source for 15m. The router has most likely detached this target after a `sendto: Connection refused` — check `grep syslogd /var/log/system.log` on behemoth, then restore it with `pfSsh.php playback svc restart syslogd`. Note a SIGHUP kills syslogd rather than reloading it.";
+                  description = "vector is up but has received no events from the pfSense syslog source for 15m. This should now self-heal across vector restarts, so suspect the router side: check `grep syslogd /var/log/system.log` on behemoth and confirm the target is still listed under Status → System Logs → Settings. If syslogd has detached the target anyway, restore it with `pfSsh.php playback svc restart syslogd` — note a SIGHUP kills syslogd rather than reloading it.";
                 };
               }
               {
