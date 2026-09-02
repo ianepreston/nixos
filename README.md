@@ -1229,6 +1229,78 @@ world-readable. It lives in `shared.yaml` rather than a per-host file because
 terra and both servers need it — wider than the three hosts that do, which is
 the thing to fix when the sops files get split more finely.
 
+### Driving it from a coding agent
+
+The workstation side of the same endpoints. `modules/programs/vibes.nix` (the
+home-manager aspect that carries Claude Code) also installs
+[pi](https://github.com/earendil-works/pi) and
+[opencode](https://github.com/sst/opencode), and writes each one's config so
+both can drive the fleet's own GPUs instead of a paid API:
+
+| agent | config file | credential form |
+| --- | --- | --- |
+| pi | `~/.pi/agent/models.json` | `!cat <path>` |
+| opencode | `~/.config/opencode/opencode.json` | `{file:<path>}` |
+
+Both get the same four entries — `text` and `vision` on each of `amos1` and
+`terra` — rendered from one `llamaHosts` attrset in that module rather than
+written twice. The two agents disagree about nearly every field name
+(`contextWindow` vs `limit.context`, `input` vs `modalities.input`) but not
+about the facts.
+
+Both come from `nixpkgs-unstable`, whose lag is small where stable's isn't
+(pi 0.84.4 vs 0.75.4, opencode 1.18.25 vs 1.15.10). pi is *not* taken from
+upstream's community flake ([lukasl-dev/pi.nix](https://github.com/lukasl-dev/pi.nix)):
+the two track the same rev, but nixpkgs' build is served by `cache.nixos.org`
+while pi.nix would add three transitive inputs and a cachix substituter for one
+feature we don't need (its bubblewrap jail).
+
+Five things make this work, none of which needed a server-side change:
+
+- **The model ids are the routers' `aliases`, not GGUF names.** `text` and
+  `vision` survive swapping the weights underneath; the `<repo>:<quant>` names
+  would not.
+- **Tool calling is already on.** llama.cpp rejects a `tools` param without
+  `--jinja` — but `--jinja` defaults to *enabled* in b9190, so `myLlamaCpp`
+  inherits it and a full agent loop (bash tool → answer) works from both agents
+  against both hosts as deployed.
+- **No OpenAI-compat shims.** llama-server accepts the `developer` role and
+  tolerates `reasoning_effort` (ignoring it for Qwen3 rather than 400ing), so
+  pi's `compat` escape hatches stay unset and opencode's stock
+  `@ai-sdk/openai-compatible` needs nothing beyond a URL and a key.
+- **opencode's ai-sdk provider is bundled, not fetched.** Naming an `npm`
+  package in a provider block normally implies a runtime install; this one ships
+  inside the binary, so the config works on a host that has never reached the
+  npm registry.
+- **The key is read at request time, not baked in.** Both configs land in
+  `/nix/store` and are world-readable, so each references a home-manager sops
+  secret by path — the same `shared.yaml` key llama-server enforces. Rotation
+  needs no rebuild.
+
+Thinking is always on: these are hybrid-thinking Qwen3 models and
+`reasoning_effort` doesn't gate them, so pi's `--thinking off` can't suppress
+the `<think>` pass. `chat_template_kwargs.enable_thinking = false` does, via a
+model's `samplingParams` (pi) or `options` (opencode) — worth reaching for only
+if a small-context model is burning its window on preamble.
+
+Both providers point at caddy, including on terra itself, so terra's own
+requests loop out to amos1 and back rather than hitting its loopback port. That
+buys one identical file on every host in exchange for a hop on a wired segment.
+`terra` 502s whenever that desktop is off; pick an `amos1` model instead.
+
+Two things stay unmanaged on purpose. pi's `settings.json` is written by pi
+itself (`/model` Ctrl+S, `pi install`), so it is left alone — `models.json` is
+the read-only half and the only one symlinked. opencode has no such split:
+providers share `opencode.json` with everything else, so managing providers
+means managing the file, and the cost is that `opencode plugin --global` can't
+rewrite it (declare plugins in the module instead). Project-local
+`opencode.json` still layers on top, and `opencode providers` writes credentials
+to a separate `auth.json`.
+
+penguin is the exception to all of it. It is a standalone home-manager config
+with no sops, so it gets both agents with no local-inference providers rather
+than entries pointing at a key file that will never exist.
+
 ## Secrets Management
 
 Secrets are stored in a private `nix-secrets` repository pulled in as a flake
