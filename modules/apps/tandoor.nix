@@ -32,7 +32,10 @@
 #     and Django only routes /media/ when GUNICORN_MEDIA is set (see
 #     recipes/urls.py:43). Without it every recipe image 404s. Static
 #     assets need no equivalent: collectstatic runs at build time and
-#     whitenoise serves $out/lib/tandoor-recipes/staticfiles.
+#     whitenoise serves $out/lib/tandoor-recipes/staticfiles. Serving
+#     /media from caddy instead is not an option: the unit's UMask=0066
+#     means uploads land 0600 tandoor_recipes, which only the app itself
+#     can read.
 #   * GUNICORN_CMD_ARGS — the module sets only `--bind`, which leaves
 #     gunicorn on its default of one sync worker. The container ran 3
 #     workers x 2 threads (boot.sh), and with GUNICORN_MEDIA every
