@@ -1,24 +1,53 @@
 #!/usr/bin/env bash
-# Prune GGUFs from llama-server's model cache that the running server
-# isn't using. Runs *on* the llama-cpp host as root; driven by
+# Prune GGUFs from llama-server's model cache that this host is no longer
+# configured to serve. Runs *on* the llama-cpp host as root; driven by
 # `task llm:models:prune` (see taskfiles/llm.yaml), which pipes it to
 # `sudo bash -s --`.
 #
-# Usage: llm-prune-models.sh <cache-dir> <port> <env-file> <apply:true|false>
+# Usage: llm-prune-models.sh <cache-dir> <port> <env-file> <apply> <name>...
+#
+# where each <name> is a configured model, in llama-server's own
+# `<owner>/<repo>:<TAG>` form (i.e. an attribute name from
+# `myLlamaCpp.models`).
 #
 # ## What decides "in use"
 #
-# The running llama-server, via `GET /props` -> `model_path`. Not the
-# Nix config, and not a reimplementation of llama.cpp's `-hf` tag
-# matching — that matching involves a case-insensitive regex, multi-shard
-# split groups and mmproj sidecars (see find_best_model / get_split_files
-# in common/download.cpp), and getting it subtly wrong here deletes a
-# 9 GB blob that is actually live. Asking the server removes the guess.
+# The Nix config, cross-checked against the running router.
 #
-# `/props` answers while the server is asleep (it doesn't reload the
-# model to reply), so the idle-eviction window doesn't block a prune.
-# If it doesn't answer at all we abort rather than fall back to a guess:
-# an unreachable server is exactly the state where we know least.
+# That is a change from the pre-#519 script, which asked `/props` for the
+# single `model_path` and kept only that. In router mode the server holds
+# at most one model resident out of several configured, so "what is loaded
+# right now" is no longer the keep-set — running the old logic against a
+# two-model host would have deleted whichever model happened to be idle,
+# several GB, silently.
+#
+# The server is still consulted, for two things that config alone can't
+# tell us:
+#
+#   1. It has to answer at all, and every configured name has to appear in
+#      its `/v1/models`. That proves the router is running *this* config
+#      rather than an older generation — deleting weights on the strength
+#      of a config the running service hasn't picked up yet is exactly the
+#      failure this guards.
+#   2. Any model currently loaded has its `model_path` fetched from
+#      `/props?model=...`, and the prune aborts if that path is in the
+#      doomed set. A belt-and-braces check on the matching below.
+#
+# ## Matching cache files to configured models
+#
+# Directory level is exact: a configured `owner/repo:TAG` lives in
+# `models--owner--repo`, so the mapping is built forwards (name to
+# directory) and any directory no configured name maps to is deleted
+# whole. No parsing of directory names back into repo ids, which is
+# ambiguous for a repo whose own name contains `--`.
+#
+# File level needs the quant tag, and that is derived here the same way
+# llama.cpp derives it in `get_gguf_split_info` (common/download.cpp):
+# strip `.gguf`, strip a trailing `-NNNNN-of-NNNNN` shard suffix, then take
+# the last `[-.]([A-Za-z0-9_]+)` run and upper-case it. Deletion is
+# allowlisted rather than denylisted — a file is removed only if its
+# derived tag is one we know is superseded, so an unparseable or untagged
+# filename survives.
 #
 # ## Cache layout
 #
@@ -38,86 +67,138 @@ CACHE_DIR=${1:?cache dir}
 PORT=${2:?port}
 ENV_FILE=${3:?env file}
 APPLY=${4:-false}
+shift 4
+CONFIGURED=("$@")
 
 log() { printf '%s\n' "$*"; }
+
+if [ ${#CONFIGURED[@]} -eq 0 ]; then
+  log "[!] no configured models passed in. Refusing to prune — an empty"
+  log "    keep-set would delete the entire cache."
+  exit 1
+fi
 
 if [ ! -d "$CACHE_DIR" ]; then
   log "[!] no model cache at $CACHE_DIR — nothing to prune"
   exit 0
 fi
 
-# --- resolve the live model ------------------------------------------------
 api_key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
-props=$(curl -sf --max-time 15 "http://127.0.0.1:${PORT}/props" \
-  ${api_key:+-H "Authorization: Bearer ${api_key}"} 2>/dev/null || true)
-live_path=$(printf '%s' "$props" | grep -oP '"model_path"\s*:\s*"\K[^"]+' || true)
+api() {
+  curl -sf --max-time 15 "http://127.0.0.1:${PORT}$1" \
+    ${api_key:+-H "Authorization: Bearer ${api_key}"} 2>/dev/null || true
+}
 
-if [ -z "$live_path" ]; then
-  log "[!] could not read model_path from llama-server on 127.0.0.1:${PORT}."
-  log "    Refusing to prune — without knowing which model is live this"
-  log "    would be guesswork. Check: systemctl status llama-cpp"
+# --- confirm the router is running this config -----------------------------
+models_json=$(api /v1/models)
+if [ -z "$models_json" ]; then
+  log "[!] llama-server on 127.0.0.1:${PORT} did not answer /v1/models."
+  log "    Refusing to prune — an unreachable server is exactly the state"
+  log "    where we know least. Check: systemctl status llama-cpp"
   exit 1
 fi
 
-# /props reports the service's own view (/var/lib/llama-cpp/...), which is a
-# symlink to private/llama-cpp. Resolve that prefix so the paths line up with
-# what globbing $CACHE_DIR produces — but resolve the *directory* only. The
-# snapshot entry itself is a symlink into blobs/, and following it lands on
-# the blob, which would make live_snapshot look like blobs/ and the repo dir
-# look like the cache root. (It did: the first dry run of this script duly
-# offered to delete the live model.)
-live_snapshot=$(readlink -f "$(dirname "$live_path")")
-live_file=$(basename "$live_path")
-live_path="$live_snapshot/$live_file"
-live_repo_dir=$(readlink -f "$live_snapshot/../..")
-
-# Belt and braces on the above: if the live model didn't resolve to a file
-# inside a models--*/snapshots/<rev>/ directory then our idea of the cache
-# layout is wrong, and every comparison below is meaningless. Stop.
-case "$live_repo_dir" in
-  "$(readlink -f "$CACHE_DIR")"/models--*) ;;
-  *)
-    log "[!] live model resolved to $live_path"
-    log "    which is not under a models--*/snapshots/<rev>/ path in $CACHE_DIR."
-    log "    Refusing to prune against a cache layout this script doesn't understand."
+for name in "${CONFIGURED[@]}"; do
+  if ! printf '%s' "$models_json" | grep -qF "\"$name\""; then
+    log "[!] configured model '$name' is not in the router's /v1/models."
+    log "    The running service is on a different generation than the"
+    log "    config this prune was derived from. Deploy first, then prune."
     exit 1
-    ;;
-esac
-[ -e "$live_path" ] || { log "[!] live model $live_path does not exist — refusing to prune"; exit 1; }
+  fi
+done
 
-log "[+] live model: $live_file"
-log "    repo: $(basename "$live_repo_dir")"
+log "[+] router knows all ${#CONFIGURED[@]} configured model(s):"
+for name in "${CONFIGURED[@]}"; do log "      $name"; done
 
-# Split models are <base>-00001-of-000NN.gguf and every shard is needed;
-# multimodal projectors ride along as mmproj*.gguf. Keep the whole group.
-split_base=$(printf '%s' "$live_file" | sed -E 's/-[0-9]{5}-of-[0-9]{5}\.gguf$//')
+# --- expected cache locations for the configured set -----------------------
+# name -> repo dir basename, and the set of tags kept per repo dir.
+declare -A keep_dir=()      # dir basename -> 1
+declare -A keep_tags=()     # dir basename -> " TAG1 TAG2 "
+
+for name in "${CONFIGURED[@]}"; do
+  repo=${name%:*}
+  tag=${name##*:}
+  if [ "$repo" = "$name" ] || [ -z "$tag" ]; then
+    log "[!] configured model '$name' has no ':<quant>' tag. Refusing to"
+    log "    prune: llama.cpp derives its own tag for such a model and the"
+    log "    cache entry would not be the one this name describes."
+    exit 1
+  fi
+  dir="models--${repo//\//--}"
+  tag=${tag^^}
+  keep_dir[$dir]=1
+  keep_tags[$dir]="${keep_tags[$dir]:-} $tag "
+done
 
 # --- collect what to remove ------------------------------------------------
 declare -a doomed=()
 
-# 1. Whole repos that aren't the live one.
+# The same derivation llama.cpp uses; see the header.
+derive_tag() {
+  local n=${1%.gguf}
+  n=$(printf '%s' "$n" | sed -E 's/-[0-9]{5}-of-[0-9]{5}$//')
+  printf '%s' "$n" | sed -nE 's/.*[-.]([A-Za-z0-9_]+)$/\1/p' | tr '[:lower:]' '[:upper:]'
+}
+
 for d in "$CACHE_DIR"/models--*; do
   [ -d "$d" ] || continue
-  [ "$(readlink -f "$d")" = "$live_repo_dir" ] && continue
-  doomed+=("$d")
+  base=$(basename "$d")
+
+  # 1. Whole repos nothing configured maps to.
+  if [ -z "${keep_dir[$base]:-}" ]; then
+    doomed+=("$d")
+    continue
+  fi
+
+  # 2. Superseded revisions of a kept repo. `refs/main` is the cache's own
+  #    record of the current revision, so this needs no guessing.
+  current_rev=$(cat "$d/refs/main" 2>/dev/null || true)
+  if [ -z "$current_rev" ]; then
+    log "    skip  $base — no refs/main, cannot tell which revision is current"
+    continue
+  fi
+  for s in "$d"/snapshots/*; do
+    [ -d "$s" ] || continue
+    [ "$(basename "$s")" = "$current_rev" ] && continue
+    doomed+=("$s")
+  done
+
+  # 3. Superseded quants inside the current revision. mmproj/mtp sidecars
+  #    are never models in their own right (llama.cpp skips them when it
+  #    enumerates the cache) and their own filenames carry an unrelated
+  #    tag, so they are never matched here — they go only with their repo.
+  for f in "$d/snapshots/$current_rev"/*.gguf; do
+    [ -e "$f" ] || continue
+    n=$(basename "$f")
+    case "$n" in
+      mmproj* | mtp-*) continue ;;
+    esac
+    t=$(derive_tag "$n")
+    [ -n "$t" ] || continue
+    case "${keep_tags[$base]}" in
+      *" $t "*) continue ;;
+    esac
+    doomed+=("$f")
+  done
 done
 
-# 2. Superseded revisions of the live repo.
-for s in "$live_repo_dir"/snapshots/*; do
-  [ -d "$s" ] || continue
-  [ "$(readlink -f "$s")" = "$(readlink -f "$live_snapshot")" ] && continue
-  doomed+=("$s")
-done
-
-# 3. Other quants sitting in the live snapshot. Non-.gguf files (configs,
-#    tokenizer json) are kept — they're kilobytes and may be read at load.
-for f in "$live_snapshot"/*.gguf; do
-  [ -e "$f" ] || continue
-  n=$(basename "$f")
-  [ "$n" = "$live_file" ] && continue
-  [[ $n == "$split_base"-[0-9][0-9][0-9][0-9][0-9]-of-[0-9][0-9][0-9][0-9][0-9].gguf ]] && continue
-  [[ $n == mmproj* ]] && continue
-  doomed+=("$f")
+# --- belt and braces: nothing loaded may be in the doomed set --------------
+# Only a loaded model answers /props; an unloaded one 400s, which is fine —
+# there is nothing to protect for a model that isn't resident.
+for name in "${CONFIGURED[@]}"; do
+  encoded=$(printf '%s' "$name" | sed -e 's|/|%2F|g' -e 's|:|%3A|g')
+  live=$(api "/props?model=${encoded}&autoload=false" |
+    grep -oP '"model_path"\s*:\s*"\K[^"]+' || true)
+  [ -n "$live" ] || continue
+  live=$(readlink -f "$live")
+  for p in ${doomed[@]+"${doomed[@]}"}; do
+    if [ "$live" = "$(readlink -f "$p")" ] || [ -z "${live##"$(readlink -f "$p")"/*}" ]; then
+      log "[!] the prune would delete $p, which holds the currently loaded"
+      log "    model $name ($live). Refusing — this is a bug in the matching"
+      log "    above, not a stale cache."
+      exit 1
+    fi
+  done
 done
 
 # --- apply -----------------------------------------------------------------
@@ -125,7 +206,7 @@ freed=0
 size_of() { du -sb --dereference "$1" 2>/dev/null | cut -f1 || echo 0; }
 
 if [ ${#doomed[@]} -eq 0 ]; then
-  log "[+] nothing superseded — cache holds only the live model"
+  log "[+] nothing superseded — cache holds only the configured models"
 else
   for p in "${doomed[@]}"; do
     sz=$(size_of "$p")
@@ -147,8 +228,7 @@ if [ "$APPLY" = "true" ]; then
     for b in "$repo"/blobs/*; do
       [ -e "$b" ] || continue
       # A live download writes continuously; an hour of no writes means it
-      # was interrupted. (/props answering already implies no download for
-      # the live model is in flight, but this keeps the rule independent.)
+      # was interrupted.
       case "$b" in
         *.downloadInProgress)
           [ -n "$(find "$b" -mmin +60 2>/dev/null)" ] || continue
