@@ -504,7 +504,7 @@ ssh <host> sudo systemctl stop \
   authentik.service authentik-worker.service \
   mealie.service miniflux.service \
   paperless-{web,scheduler,task-queue,consumer}.service \
-  podman-tandoor.service \
+  tandoor-recipes.service \
   postgresql.service
 
 # 3. initdb the new cluster with **matching encoding, locale, and

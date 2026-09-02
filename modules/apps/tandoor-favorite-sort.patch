@@ -1,0 +1,32 @@
+Allow sorting recipes by `favorite`.
+
+`RecipeSearch.get_queryset` already annotates the `favorite` Count when the
+sort order includes it (cookbook/helper/recipe_search.py:245 ->
+RecipeQuerySet.with_favorite in cookbook/managers.py:68), but the SQL-injection
+allowlist added to `_finalize_ordering` in 322696f61 omits the key, so the
+annotation is dead code and `?sort_order=-favorite` always raises
+`ValueError: Invalid sort key` (HTTP 500). kitshn (iOS) sorts its recipe list
+by favorite and hits this on every load.
+
+`favorite` is a Count, so it is never NULL and needs no `_NULLS_LAST` handling.
+
+Reported upstream as https://github.com/TandoorRecipes/recipes/issues/4720;
+fix pending in https://github.com/TandoorRecipes/recipes/pull/4722. Drop this
+patch once that lands in a release we ship.
+
+Deliberately NOT fixed here: `times_cooked` is in ALLOWED_KEYS but no
+`times_cooked` annotation exists anywhere in 2.6.13 (`by_times_cooked` in
+managers.py:179 annotates `favorite`), so that sort 500s too — with a
+FieldError rather than a ValueError. Fixing it means adding a new annotation,
+which is upstream's call, not a one-line allowlist correction.
+--- a/cookbook/helper/recipe_search.py
++++ b/cookbook/helper/recipe_search.py
+@@ -26,7 +26,7 @@
+ def _finalize_ordering(orderby):
+     result = []
+     ALLOWED_KEYS = ['random', 'score', '-score', 'name', '-name', 'lastcooked', '-lastcooked', 'rating', '-rating', 'times_cooked', '-times_cooked', 'created_at', '-created_at',
+-                    'lastviewed', '-lastviewed', 'recent','-recent', 'new_recipe', '-new_recipe', '?']
++                    'lastviewed', '-lastviewed', 'recent','-recent', 'new_recipe', '-new_recipe', 'favorite', '-favorite', '?']
+     for key in orderby:
+         # expressions cant come from user input so add them
+         if not isinstance(key, str):

@@ -167,7 +167,8 @@ per-package overlay rather than flipping the whole flake to unstable.
 Stay on the container path when:
 
 - **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3, readmeabook,
-  shelfmark, bindery, tandoor, grimmory.)
+  shelfmark, bindery, grimmory.) Re-check before taking this branch — tandoor
+  sat on this list while `services.tandoor-recipes` existed all along (#441).
 - **The container is a fork or variant the nix module doesn't track.** Seerr is
   the seerr-team fork at v3.x; nixpkgs ships jellyseerr. They share lineage but
   aren't drop-in.
