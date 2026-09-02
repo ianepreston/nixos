@@ -55,10 +55,12 @@
         #                                        = ~72 KB/token; f16 is
         #                                        ~144 KB/token)
         #   compute buffers            ~0.9 GB
-        # Measured resident: 6188 MiB — 11 MiB *below* what Qwen3-8B held
-        # at 16384, so the Jellyfin headroom #517 validated carries over
-        # unchanged, and the context doubles on top. That equivalence is
-        # the argument: this is vision plus 2x context for no VRAM at all.
+        # Measured resident: 6188 MiB on the bench, 6132 MiB on the
+        # deployed service after a real image request (card total 6141 of
+        # 8192) — either way *below* what Qwen3-8B held at 16384, so the
+        # Jellyfin headroom #517 validated carries over unchanged and the
+        # context doubles on top. That equivalence is the argument: this
+        # is vision plus 2x context for no VRAM at all.
         #
         # Contention numbers therefore stand as measured in #517 with the
         # model resident: 1080p h264_nvenc peaks the card at 6586 MiB, 4K
