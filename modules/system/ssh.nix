@@ -47,7 +47,12 @@
           ForwardAgent = false;
           AddKeysToAgent = "no";
           Compression = false;
-          ServerAliveInterval = 0;
+          # Non-zero is load-bearing for the `ControlPersist yes` below.
+          # A master whose peer rebooted or dropped off the network leaves
+          # a stale socket behind, and with no keepalive every subsequent
+          # ssh to that host blocks on it indefinitely. At a 10m persist
+          # the socket aged out on its own; with no bound it doesn't.
+          ServerAliveInterval = 60;
           ServerAliveCountMax = 3;
           HashKnownHosts = false;
           UserKnownHostsFile = "~/.ssh/known_hosts";
@@ -66,7 +71,21 @@
           # an unmultiplexed connection with only a warning.
           ControlMaster = "auto";
           ControlPath = "~/.ssh/master-%r@%n:%p";
-          ControlPersist = "10m";
+          # ControlPersist is `yes` — persist until `ssh -O exit` —
+          # rather than a timeout: the goal is one PIN + touch per host
+          # per session, and any finite window just re-bills the touch on
+          # the far side of it.
+          #
+          # ssh-agent is not an alternative — it holds the sk credential
+          # handle, but ssh-sk-helper is forked per *signature* and goes
+          # back to the token every time, so `ssh-add -t` caches nothing
+          # for a hardware key.
+          #
+          # This does trade away part of what the sk keys buy: an
+          # attacker on this machine gets a free ride on masters that are
+          # already open. They still can't open a session to a host that
+          # has no live master without a touch.
+          ControlPersist = "yes";
         };
       };
     };
