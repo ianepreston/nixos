@@ -15,8 +15,19 @@ So the contract is narrow:
 
 Each host has its own `ssh/ed25519` in `nix-secrets`, rendered to
 `/run/secrets/ssh/ed25519`, used by `nixos-upgrade` to fetch the private
-`nix-secrets` flake input from GitHub. That is a *machine* identity. Its only
-consumer is GitHub, as a deploy key — it does not belong here.
+`nix-secrets` flake input from GitHub. That is a *machine* identity — it does
+not belong here.
+
+Its consumer is GitHub, but **not as a repo deploy key**: each host key is
+registered as an *account-level* SSH key on the `ianepreston` account (list them
+with `curl -s https://github.com/ianepreston.keys`). That is a broader grant
+than the name suggests — read-write on every repo the account can reach, not
+read-only on `nix-secrets`. The single deploy key actually on `nix-secrets`
+(`nixos ci/cd`, read-only, `SHA256:mGXCOwwi0VDEFHEuHfspJ82TZfSEmxJCuYximfpNbsE`)
+matches no host's sops key.
+
+So removing a `.pub` from this directory does **not** retire that key — it only
+ends fleet *login*. The key stays live on GitHub until deleted there as well.
 
 `task bootstrap:secrets` used to write each new host's machine key into this
 directory automatically, which is how `id_amos1.pub` — a **server's** key —
