@@ -109,10 +109,53 @@ in
       # and once #500 prunes the per-host software keys out of
       # `_ssh-keys/` the servers stop accepting id_ed25519 and these
       # entries take over on their own. At that point drop it from this
-      # list (#501).
+      # list (#501). GitHub is the one host that cannot be promoted that
+      # way — see the `github.com` block below.
       programs.ssh.settings."*".IdentityFile = [
         "${homeDirectory}/.ssh/id_ed25519"
       ]
       ++ (map stubPath tokens);
+
+      # GitHub is an exception to the promotion story above: it needs the
+      # sk keys pulled to the *front* for this host specifically.
+      #
+      # The per-host `ssh/ed25519` is registered on GitHub as a read-only
+      # *deploy key* on ianepreston/nix-secrets — that is how a server
+      # fetches the private flake input — and deliberately not as an
+      # account key. So when `Host *` offers it to github.com first,
+      # GitHub accepts it: authentication succeeds as the deploy-key
+      # identity, ssh stops trying keys, and the push is then refused at
+      # the authorization step with "the key you are authenticating with
+      # has been marked as read only". Unlike a server pruned out of
+      # `_ssh-keys/`, there is no auth *failure* for ssh to fall back
+      # from, so without this block the sk keys are never reached.
+      #
+      # Note this reorders rather than replaces. IdentityFile accumulates
+      # across every matching block, so the effective list here is
+      # sk_1, sk_2, then `Host *`'s id_ed25519 — confirm with
+      # `ssh -G github.com`. ssh_config has no way to clear an inherited
+      # IdentityFile, and hoisting the software key into a
+      # `Host * !github.com` block would drop github.com out of all the
+      # shared `Host *` settings (ControlPersist, keepalives) too, which
+      # costs more than it buys. IdentitiesOnly is belt-and-braces
+      # against agent identities; it does not exclude the config-listed
+      # software key.
+      #
+      # Practical effect: with a token plugged in, an sk key signs and
+      # push works. With no token, both sk attempts fail and ssh falls
+      # through to the deploy key — so fetches still work unattended and
+      # only pushes fail, which is the same fallback posture `Host *`
+      # keeps for the fleet.
+      #
+      # This costs a PIN + touch per session for interactive git, which
+      # ControlPersist (see modules/system/ssh.nix) collapses to one. It
+      # does not affect unattended upgrades: nixos-upgrade fetches
+      # nix-secrets as root under its own `GIT_SSH_COMMAND` with `-i
+      # <system ssh/ed25519> -o IdentitiesOnly=yes` (see
+      # modules/system/auto-rebuild.nix), which never reads this config.
+      programs.ssh.settings."github.com" = {
+        IdentitiesOnly = true;
+        IdentityFile = map stubPath tokens;
+      };
     };
 }
