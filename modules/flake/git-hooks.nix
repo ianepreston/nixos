@@ -21,6 +21,15 @@
         statix = {
           enable = true;
           settings.ignore = [ "modules/hosts/_*-hardware.nix" ];
+          # statix's insta snapshot tests are broken on the pinned nixos-26.05
+          # revision (the `empty_list_concat` fixtures fail in checkPhase on
+          # aarch64-darwin), so skip the check phase — we only consume the
+          # built binary, not its test suite. See #540. The same override is
+          # applied in modules/programs/neovim.nix (extraPackages); remove both
+          # together once a nixpkgs bump ships a statix whose snapshots pass.
+          package = pkgs.statix.overrideAttrs (_: {
+            doCheck = false;
+          });
         };
         deadnix = {
           enable = true;

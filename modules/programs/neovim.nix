@@ -84,7 +84,15 @@ _: {
           lua51Packages.luv
           lua51Packages.luarocks-nix
           lua51Packages.jsregexp
-          statix
+          # statix's insta snapshot tests fail in checkPhase on aarch64-darwin
+          # (the `work` host builds this from source), so skip the check phase —
+          # we only consume the built binary, not its test suite. See #540. The
+          # same override is applied in modules/flake/git-hooks.nix (the statix
+          # hook package); remove both together once a nixpkgs bump ships a
+          # statix whose snapshots pass.
+          (statix.overrideAttrs (_: {
+            doCheck = false;
+          }))
           nixpkgs-fmt
           dockerfile-language-server
           hadolint # docker linter
