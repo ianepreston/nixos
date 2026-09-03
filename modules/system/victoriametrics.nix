@@ -787,7 +787,16 @@ _: {
                 #   redis*     — unnamed instance + named per-app servers
                 #                (paperless, …) get redis-<name>.service.
                 #   restic-backups-server — nightly off-site backup.
+                #   nixos-upgrade — the nightly auto-rebuild
+                #                (modules/system/auto-rebuild.nix). A failed
+                #                fetch of the private nix-secrets input, an
+                #                eval error or a bad switch otherwise goes
+                #                unnoticed until someone looks: the unit is a
+                #                oneshot, so it stays `failed` (and the alert
+                #                stays firing) until the next night's run
+                #                succeeds.
                 + "sshd|caddy|postgresql|mysql|redis(-.+)?|restic-backups-server"
+                + "|nixos-upgrade"
                 # Authentik (SSO) — server + worker + migrate one-shot.
                 + "|authentik(-worker|-migrate)?"
                 # Observability stack itself — useful to know if our
