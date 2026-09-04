@@ -78,8 +78,36 @@ tasks:
           # Also wait for systemd to leave the `starting` state before
           # handing back to bootstrap:sync — otherwise sysinit-reactivation
           # can flap sshd mid-handshake.
+          #
+          # No `BatchMode=yes` here, deliberately. The enrolled sk keys are
+          # verify-required (they sign with SSH_SK_USER_VERIFICATION_REQD),
+          # so OpenSSH has to prompt for the FIDO2 PIN before it can sign —
+          # and BatchMode suppresses exactly that prompt. The failure is
+          # silent and the error blames the wrong thing:
+          #
+          #   sshsk_sign: sk_sign failed with code -3   (SSH_SK_ERR_PIN_REQUIRED)
+          #   ssh-sk-helper: Signing failed: incorrect passphrase supplied
+          #                  to decrypt private key
+          #
+          # This loop only survives today because the per-host software
+          # keys are still in `_ssh-keys/`; it breaks the moment #500
+          # prunes them and sk is the only identity left.
+          #
+          # `PreferredAuthentications=publickey` replaces what BatchMode
+          # was actually guarding against — a target that still offers
+          # password auth (the installer ISO does) stalling the loop on a
+          # password prompt. It does not suppress the PIN prompt, which is
+          # read from /dev/tty by the sk helper rather than being an
+          # authentication method ssh can be told to skip.
+          #
+          # Cost is one PIN + touch per bootstrap, not per iteration:
+          # ssh.nix's fleet-wide ControlMaster/ControlPersist is left
+          # unoverridden here on purpose, so the first successful connect
+          # opens a master and every later poll rides it without a second
+          # signature.
           for i in $(seq 1 120); do
-            state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+            state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 \
+                        -o PreferredAuthentications=publickey \
                         -o StrictHostKeyChecking=accept-new \
                         -o UpdateHostKeys=no \
                         {{.TARGET_USER}}@{{.DEST}} 'systemctl is-system-running' 2>/dev/null || echo connecting)
