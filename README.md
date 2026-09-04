@@ -205,6 +205,13 @@ to the services that consume them (in `modules/system/` or, for `myAuthentik.*`,
   into its own env file (e.g. as `POSTGRES_PASSWORD`) and pointing the upstream
   service at `host.containers.internal:5432` with the matching role
   - db name.
+- **UI-stored config can silently beat the module.** Several apps keep a
+  settings row in their own database and prefer it over the environment —
+  paperless-ngx's AI configuration page is `app_config.X or settings.X` for
+  every field, and Home Assistant's `.storage` behaves the same way. Where an
+  app has both surfaces, configure it from the module and leave the UI page
+  empty; a value saved there wins over the declarative one and does not show up
+  in a diff.
 - **Secrets:** declare per-app entries under `sops.secrets."<app>/..."` with
   `sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml"`. For env vars the
   container needs, render a `sops.templates."<app>.env"` and pass it via
