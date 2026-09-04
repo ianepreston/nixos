@@ -45,8 +45,12 @@
 # Closure cost: 3.x hard-wires the AI subsystem's deps (llama-index +
 # sentence-transformers + a CPU torch) into the package with no
 # nixpkgs opt-out, taking it from 2.8 GB to 5.1 GB even with
-# PAPERLESS_AI_ENABLED off. Accepted — #527 wants that subsystem
-# anyway.
+# PAPERLESS_AI_ENABLED off. Paid for: that subsystem is on, pointed at
+# terra's llama-server (#527) — see the AI block in `settings` below.
+# Only the LLM half is wired; embeddings and the RAG index are #557.
+# With no embedding backend set, the classifier takes its
+# `build_prompt_without_rag` path and never looks for a vector store,
+# so this tier stands on its own.
 { inputs, ... }:
 {
   flake.modules.nixos.paperless-ngx =
@@ -88,6 +92,14 @@
       # from extraEnvLines below), which already carries them.
       sops.secrets."paperless-ngx/secret_key".sopsFile = hostSpec.sopsFile;
 
+      # llama-server's bearer token, for PAPERLESS_AI_LLM_API_KEY below.
+      # shared.yaml rather than the host file because it is the fleet-wide
+      # key `myLlamaCpp` enforces wherever it runs (see
+      # modules/system/llama-cpp.nix). Both servers already declare this
+      # same secret through modules/apps/llm-caddy-auth.nix; the
+      # definitions are identical, so the module system merges them.
+      sops.secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+
       myAuthentik.oidcApps.paperless-ngx = {
         blueprintsDir = ./paperless-ngx-blueprints;
         appRestartUnit = paperlessUnits;
@@ -96,6 +108,7 @@
         extraEnvLines = ''
           PAPERLESS_DBPASS=${config.sops.placeholder."paperless-ngx/db_password"}
           PAPERLESS_SECRET_KEY=${config.sops.placeholder."paperless-ngx/secret_key"}
+          PAPERLESS_AI_LLM_API_KEY=${config.sops.placeholder."llama-cpp/api_key"}
           PAPERLESS_SOCIALACCOUNT_PROVIDERS='{"openid_connect":{"OAUTH_PKCE_ENABLED":true,"APPS":[{"provider_id":"authentik","name":"Authentik","client_id":"${
             config.sops.placeholder."paperless-ngx/oidc_client_id"
           }","secret":"${
@@ -140,6 +153,60 @@
           PAPERLESS_SOCIAL_AUTO_SIGNUP = true;
           PAPERLESS_SOCIALACCOUNT_ALLOW_SIGNUPS = true;
           PAPERLESS_LOGOUT_REDIRECT_URL = "https://${authentikHost}/application/o/paperless-ngx/end-session/";
+
+          # AI-assisted classification (#527): correspondent / type /
+          # tags / title suggestions from terra's llama-server. The
+          # subsystem is text-only — the classifier reads `doc.content`,
+          # which paperless has already produced with tesseract/ocrmypdf
+          # — so nothing here wants terra's `vision` alias.
+          #
+          # Suggestions are pull-only: the document detail page's
+          # suggestions call, or an AI workflow action (a DB object
+          # nobody has created). Consumption never touches the LLM, so
+          # terra being powered off degrades this to a 503 on that one
+          # endpoint rather than breaking intake.
+          #
+          # Careful: `AIConfig.__post_init__` is `app_config.X or
+          # settings.X` for every field below, so a non-empty value saved
+          # on the UI's AI configuration page silently wins over what is
+          # declared here — the same trap as Home Assistant's `.storage`.
+          # Configure this from the module, never from the web UI.
+          PAPERLESS_AI_ENABLED = true;
+
+          # OpenAILike: plain /v1/chat/completions with a bearer token.
+          # That token is PAPERLESS_AI_LLM_API_KEY, set in extraEnvLines
+          # above — `settings` renders into /nix/store, so it can't hold
+          # a secret. The classifier asks for a tool call
+          # (`chat_with_tools(tool_required=True)`), which llama-server
+          # serves because `--jinja` defaults on — see the tool-calling
+          # note in modules/programs/vibes.nix.
+          PAPERLESS_AI_LLM_BACKEND = "openai-like";
+
+          # terra's llama-server directly over the LAN, not the
+          # llm-terra HTTPS route: every call goes through
+          # `PinnedHostHTTPTransport`, which resolves the endpoint once
+          # and pins the address, so this has to be the name that
+          # resolves to terra's LAN IP from a server (a tailnet name
+          # would not). terra's firewall already allows both servers.
+          # amos1 serves a `text` alias of its own on :8091, but terra's
+          # 5080 carries the better model, so both servers point here.
+          # Paperless's SSRF guard
+          # (PAPERLESS_AI_LLM_ALLOW_INTERNAL_ENDPOINTS) already defaults
+          # to allowing private addresses, so a private endpoint needs no
+          # opt-in.
+          PAPERLESS_AI_LLM_ENDPOINT = "http://terra.ipreston.net:8080/v1";
+
+          # The router alias, verbatim — not the GGUF name. That is the
+          # whole point of the aliases in modules/system/llama-cpp.nix:
+          # swapping the model underneath stays a change to
+          # modules/hosts/terra.nix.
+          PAPERLESS_AI_LLM_MODEL = "text";
+
+          # Default is 8192; terra's `text` serves 131072. Safe to match
+          # the served context exactly: llama-index's PromptHelper
+          # reserves 512 tokens for the reply before it truncates
+          # document content to fit.
+          PAPERLESS_AI_LLM_CONTEXT_SIZE = 131072;
         };
       };
 
