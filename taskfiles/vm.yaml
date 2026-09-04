@@ -119,8 +119,14 @@ tasks:
 
         echo -e "\x1B[32m[+] Waiting for SSH on 127.0.0.1:{{.SSH_PORT}} (root, ISO live system)\x1B[0m"
         ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        # No `BatchMode=yes`: it suppresses the FIDO2 PIN prompt the
+        # verify-required sk keys need in order to sign, and the ISO
+        # authorizes the same `_ssh-keys/` set as the fleet. See
+        # bootstrap.yaml's reinstall AUTO_WAIT block for the full
+        # rationale and the misleading error it produces.
         for i in $(seq 1 120); do
-          if ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+          if ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 \
+                 -o PreferredAuthentications=publickey \
                  -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
                  root@127.0.0.1 true 2>/dev/null; then
             echo -e "\x1B[32m[+] VM SSH up\x1B[0m"
@@ -179,11 +185,13 @@ tasks:
         ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
         ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
         # See bootstrap.yaml's reinstall AUTO_WAIT block for the
-        # rationale on `UpdateHostKeys=no` and waiting on systemd state.
+        # rationale on `UpdateHostKeys=no`, on waiting for systemd state,
+        # and on why `BatchMode=yes` is absent.
         # 240 iterations * 3s = 12 min. tests-server's first boot
         # (server-apps stack) takes 4-8 min; 6 min isn't enough.
         for i in $(seq 1 240); do
-          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 \
+                      -o PreferredAuthentications=publickey \
                       -o StrictHostKeyChecking=accept-new \
                       -o UpdateHostKeys=no \
                       {{.TARGET_USER}}@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)

@@ -809,8 +809,13 @@ tasks:
         echo -e "\x1B[32m[+] Waiting for tests-server to reboot into installed system\x1B[0m"
         ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
         ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
+        # See bootstrap.yaml's reinstall AUTO_WAIT block for the
+        # rationale on `UpdateHostKeys=no` and on why `BatchMode=yes` is
+        # absent (it suppresses the FIDO2 PIN prompt the verify-required
+        # sk keys need in order to sign).
         for i in $(seq 1 120); do
-          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
+          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 \
+                      -o PreferredAuthentications=publickey \
                       -o StrictHostKeyChecking=accept-new \
                       -o UpdateHostKeys=no \
                       ipreston@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
