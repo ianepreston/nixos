@@ -210,6 +210,18 @@ the containerize-to-nixos-modules branch):
 - **Module-imposed `PrivateNetwork`.** Paperless's `database.createLocally`
   enables `PrivateNetwork=true` on scheduler/consumer. That's fine for workers
   (no OIDC traffic) but check what each unit actually does before relying on it.
+- **A per-package unstable pin may also need the unstable *module*.** Pinning
+  `services.<app>.package` to `nixpkgs-unstable` only works while the stable
+  module can still drive the newer package. Paperless 3.x moved both in lockstep
+  (Whoosh → Tantivy index with its own tmpfiles dir and a
+  `reindex --if-needed` migration, a `paperless-secret-key.service` shim,
+  `passthru.dependencies` in place of `propagatedBuildInputs`), so
+  `modules/apps/paperless-ngx.nix` carries
+  `disabledModules = [ "services/misc/paperless.nix" ]` plus an import of the
+  unstable module file alongside the package pin (#526). Diff the two module
+  files before assuming a `package =` override is enough. Pinning the module
+  also inherits upstream's in-flight bugs — check the newest `nixos-unstable`
+  and bump the input before writing a local workaround.
 - **Home Assistant: integration breadth is the real native cost, not python
   isolation.** HA runs native (`modules/apps/homeassistant.nix`) on an
   `nixpkgs-unstable` per-package overlay — stable freezes HA at a yearly
@@ -331,9 +343,10 @@ Exceptions:
   `restartUnits` to the secrets they own — leave those alone. The rule applies
   to per-app env templates declared inline in the app module.
 - When a secret is consumed directly (via `config.sops.secrets.<k>.path` in a
-  oneshot or `ExecStart`) rather than through a template, the restart trigger
-  has to go on the secret because there's no template to bind it to.
-  `paperless-ngx.nix`'s `paperless-secret-key-init` oneshot is the example.
+  oneshot, an `ExecStart`, or a config-file reference) rather than through a
+  template, the restart trigger has to go on the secret because there's no
+  template to bind it to. `grafana.nix`'s `grafana/bootstrap_password` (read
+  via `$__file{}` from grafana.ini) is the example.
 
 Existing modules that have it on both the secret and the template
 (`readeck.nix`, `manyfold.nix`, `pinchflat.nix`) are not broken — converge them
