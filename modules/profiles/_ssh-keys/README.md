@@ -109,3 +109,26 @@ Removal only takes effect on a host once that host has rebuilt. Deploy every
 host and verify you can still log in *before* assuming a key is retired, and
 remember that `laconia`, `behemoth`, and `blikvm` are outside NixOS management —
 their `authorized_keys` must be pruned by hand.
+
+## The three hosts outside NixOS management
+
+No deploy reaches these, so their key sets are maintained by hand. State as of
+2026-09-03, after the wave-2 prune:
+
+| Host | Authorized | Notes |
+|---|---|---|
+| `laconia` | both sk keys only | Synology DSM. Ahead of the fleet — no software key at all, so SSH is hardware-only here. DSM's own web UI and the physical console remain the fallback. |
+| `behemoth` | both sk keys, plus `ipreston@laconia` | FreeBSD. See below. |
+| `blikvm` | — | Accepts no pubkey from this fleet under any of `root` / `blikvm` / `admin` / `pi`; sshd offers password auth. Its break-glass is a password and its web UI, so this migration does not affect it and there is nothing here to prune. |
+
+### Why `behemoth` trusts a `laconia` key
+
+`ipreston@laconia` (`SHA256:EzfGYes0zXIe2MlSYSyH5GCoNqX1Le3hYFWle19qRVs`) is a
+**deliberate machine-to-machine credential**: laconia runs scheduled tasks that
+ssh into behemoth to retrieve ACME certificates.
+
+It looks exactly like the thing this migration removes — a machine identity
+trusted as a login credential — so it is called out here specifically to stop a
+future audit deleting it. The distinction that makes it fine: it authorizes one
+known automated job between two hosts, not a human login trusted fleet-wide, and
+neither host is in `_ssh-keys/`'s blast radius.
