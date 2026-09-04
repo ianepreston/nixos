@@ -18,16 +18,25 @@ Each host has its own `ssh/ed25519` in `nix-secrets`, rendered to
 `nix-secrets` flake input from GitHub. That is a *machine* identity — it does
 not belong here.
 
-Its consumer is GitHub, but **not as a repo deploy key**: each host key is
-registered as an *account-level* SSH key on the `ianepreston` account (list them
-with `curl -s https://github.com/ianepreston.keys`). That is a broader grant
-than the name suggests — read-write on every repo the account can reach, not
-read-only on `nix-secrets`. The single deploy key actually on `nix-secrets`
-(`nixos ci/cd`, read-only, `SHA256:mGXCOwwi0VDEFHEuHfspJ82TZfSEmxJCuYximfpNbsE`)
-matches no host's sops key.
+Its consumer is GitHub, as a **read-only deploy key on `ianepreston/nix-secrets`**,
+titled by hostname. That scoping is the point: a host needs read access to one
+repo, and a deploy key gives exactly that, with per-host revocation. List them
+with `gh repo deploy-key list --repo ianepreston/nix-secrets`.
 
-So removing a `.pub` from this directory does **not** retire that key — it only
-ends fleet *login*. The key stays live on GitHub until deleted there as well.
+This was not always so. Until #543 every host key was an *account-level* SSH key
+on the `ianepreston` account — read-write on every repo the account can reach —
+so popping any host yielded write access to all source. Account keys are now
+exactly the two YubiKeys plus one work laptop; no machine key is among them.
+
+Two consequences worth keeping straight:
+
+- Removing a `.pub` from this directory does **not** retire that key. It ends
+  fleet *login* only; the key stays live as a machine identity on GitHub until
+  its deploy key is deleted too.
+- Conversely, deleting a host's deploy key does not de-authorize it for login.
+  The two halves are now genuinely independent, which is the whole point of the
+  split: **sops `ssh/ed25519` is machine identity for GitHub; this directory is
+  human identity for login; the two never mix.**
 
 `task bootstrap:secrets` used to write each new host's machine key into this
 directory automatically, which is how `id_amos1.pub` — a **server's** key —
@@ -53,6 +62,25 @@ ignored by `lib/fleetSshKeys.nix`, which is what both call sites use.
 Prefer hardware-backed keys (`sk-ssh-ed25519@openssh.com`). The fleet is
 migrating to hardware-only — see #499 for enrolment and #501 for the check that
 will eventually reject anything else.
+
+## `id_penguin.pub` is a deliberate exception
+
+Everything else here is or will be hardware-backed. `id_penguin.pub` is not, and
+is **kept on purpose** as the break-glass path into the fleet when no YubiKey
+works. Because `modules/hosts/iso.nix` authorizes this same directory for both
+`ipreston` and root, keeping it also keeps a non-sk way into the recovery ISO.
+
+penguin cannot hold a hardware key: ChromeOS does not pass FIDO2 into Crostini.
+`vmc key-attach` is U2F/FIDO1 only, and `vmc usb-attach` hands over the PIV/CCID
+applet rather than the hidraw FIDO2 interface — while taking an exclusive lock
+that stops the browser using the key for WebAuthn. `fido2-token -L` returns
+nothing inside the container.
+
+Be clear about what the exception costs: `id_penguin.pub` is penguin's sops
+`ssh/ed25519`, a passphraseless machine key, and by the rules at the top of this
+file that makes it passwordless root fleet-wide — the exact property this
+migration removes everywhere else. It is an accepted trade for a recovery path,
+not drift, and #501's `sk-`-only check carries it as a named exception.
 
 ## The private half of a hardware key
 
