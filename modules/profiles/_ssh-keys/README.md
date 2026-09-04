@@ -65,7 +65,8 @@ will eventually reject anything else.
 
 ## `id_penguin.pub` is a deliberate exception
 
-Everything else here is or will be hardware-backed. `id_penguin.pub` is not, and
+Everything else here is now hardware-backed — the last software key,
+`id_terra.pub`, went with wave 3 of #500. `id_penguin.pub` is the exception, and
 is **kept on purpose** as the break-glass path into the fleet when no YubiKey
 works. Because `modules/hosts/iso.nix` authorizes this same directory for both
 `ipreston` and root, keeping it also keeps a non-sk way into the recovery ISO.
@@ -102,6 +103,36 @@ Never re-run `ssh-keygen -t ed25519-sk` against a token that is already
 enrolled. That mints a *new* credential with a *new* public key, which
 then has to be added here and rebuilt fleet-wide. Enrolment happens once
 per token.
+
+## If you lose both YubiKeys
+
+With the fleet on hardware-only keys, losing both tokens means no remote SSH to
+any NixOS host. That is not a total lockout — there are three ways back in,
+listed in the order you would reach for them:
+
+1. **`id_penguin.pub`.** Still authorized fleet-wide and on the recovery ISO,
+   for exactly this. See the section above.
+2. **Console password login.** `modules/profiles/base.nix` sets
+   `hashedPasswordFile` from sops for the primary user, so the account has a
+   real password. `modules/system/ssh.nix` sets
+   `services.openssh.settings.PasswordAuthentication = false` fleet-wide, so
+   that password works **at a physical console only** and is never accepted
+   over SSH — which is what makes it safe to keep as a last resort. Needs
+   physical (or blikvm) access to the machine.
+3. **blikvm**, for the hosts it is wired to — out-of-band keyboard/video, so it
+   reaches the console (and the bootloader) without SSH at all. It authenticates
+   with its own password and its web UI, not with any key in this directory, so
+   nothing in this migration can lock you out of it. See the non-NixOS hosts
+   section below.
+
+Route 2 has never been exercised end to end — it depends only on the sops
+password secret and console access, both independent of SSH, but treat it as
+documented rather than tested.
+
+Enrolling a replacement token is not a recovery path: `ssh-keygen -t ed25519-sk`
+mints a *new* credential with a new public key, which has to be added here and
+rebuilt fleet-wide before it authorizes anything. You need one of the three
+routes above to do that.
 
 ## Removing a key
 
