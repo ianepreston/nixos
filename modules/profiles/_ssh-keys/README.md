@@ -59,9 +59,15 @@ ssh ipreston@<host> 'sudo ssh-keygen -y -f /run/secrets/ssh/ed25519'
 Drop the `.pub` in and deploy. Non-`.pub` files (this README included) are
 ignored by `lib/fleetSshKeys.nix`, which is what both call sites use.
 
-Prefer hardware-backed keys (`sk-ssh-ed25519@openssh.com`). The fleet is
-migrating to hardware-only — see #499 for enrolment and #501 for the check that
-will eventually reject anything else.
+Hardware-backed keys (`sk-ssh-ed25519@openssh.com`) are not a preference —
+`lib/fleetSshKeys.nix` **rejects** anything else at evaluation time, so a
+software key here fails `nix flake check`, `nixos-rebuild`, and the nightly
+`nixos-upgrade` alike. See #499 for enrolment.
+
+The only way past it is `softwareKeyExceptions` in `lib/fleetSshKeys.nix`, a
+hardcoded list of file names. That is deliberate: it makes a second software key
+a diff someone can see rather than a one-file commit that looks like nothing.
+Add a section here explaining the cost whenever you add to it.
 
 ## `id_penguin.pub` is a deliberate exception
 
@@ -81,7 +87,13 @@ Be clear about what the exception costs: `id_penguin.pub` is penguin's sops
 `ssh/ed25519`, a passphraseless machine key, and by the rules at the top of this
 file that makes it passwordless root fleet-wide — the exact property this
 migration removes everywhere else. It is an accepted trade for a recovery path,
-not drift, and #501's `sk-`-only check carries it as a named exception.
+not drift, and `softwareKeyExceptions` in `lib/fleetSshKeys.nix` carries it as a
+named exception.
+
+So what the check actually asserts is not *"the fleet is hardware-only"* — it
+plainly is not, while this file is here — but *"there is exactly one software
+key and it is this one"*. That weaker claim is the useful one: it is an
+inventory of accepted exceptions, in code, that fails closed.
 
 ## The private half of a hardware key
 
