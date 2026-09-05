@@ -62,6 +62,7 @@
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
@@ -248,7 +249,37 @@
           # First use downloads ~90 MB into the dataDir's `hf_cache`,
           # so a cold rebuild needs the network before suggestions work.
           PAPERLESS_AI_LLM_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2";
+
+          # Not a paperless setting: `services.paperless.settings` is a
+          # freeform env-var set (the module puts NLTK_DATA and
+          # GRANIAN_* through the same attrset), and it is the only
+          # surface that reaches both the systemd units and the
+          # `paperless-manage` wrapper. huggingface_hub reads
+          # `$HF_HOME/token` before every hub request; unset, that is
+          # `$HOME/.cache/huggingface/token`, and `paperless-manage`
+          # re-sudos with `-E`, so a root invocation of
+          # `paperless-manage document_llmindex rebuild` keeps
+          # HOME=/root and dies with EACCES on /root/.cache before it
+          # indexes anything. Pointing HF_HOME at the dataDir fixes the
+          # operator path and keeps every huggingface artefact in the
+          # one re-downloadable directory.
+          HF_HOME = "${dataDir}/hf_cache";
         };
+      };
+
+      # The embedding model runs through oneDNN, which JITs its kernels
+      # at first use, so the upstream module's
+      # `MemoryDenyWriteExecute = true` turns every forward pass into
+      # `RuntimeError: could not create a primitive`. Only these two
+      # units embed: the worker owns `update_document_in_llm_index` and
+      # the nightly `llmindex_index`, and the web process embeds the
+      # query for suggestions and chat. The scheduler (beat, plus a
+      # Tantivy reindex in preStart) and the consumer (which hands the
+      # embedding off to the worker) never load torch, so they keep the
+      # protection. Nothing but MDWE is relaxed.
+      systemd.services = {
+        paperless-task-queue.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
+        paperless-web.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
       };
 
       # Preservation defaults the bind-mount root to root:root mode
