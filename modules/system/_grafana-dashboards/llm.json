@@ -1,0 +1,427 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "description": "Per-model llama-server usage, fed by llama-metrics.service (modules/apps/llm-metrics.nix) through the node_exporter textfile collector. Series are published once a minute by polling each router's /v1/models for state and each loaded model's /metrics for counters — the counters live in the model's child process, so they reset when a different model evicts it and `increase()` is the only honest way to read them.",
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "unreachable", "color": "red", "index": 0 },
+                "1": { "text": "up", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Routers",
+      "description": "Whether each llama-server router answered /v1/models on the last poll. terra is a desktop that gets powered off, so `unreachable` there is routine rather than a fault — which is exactly why it is polled from here instead of being a scrape target with an InstanceDown rule.",
+      "type": "stat",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "llama_server_up{llama_server=~\"$llama_server\"}",
+          "legendFormat": "{{llama_server}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "title": "Models resident now",
+      "description": "Models in the `loaded` state — holding VRAM and awake. `--models-max 1` means at most one per router.",
+      "type": "stat",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name",
+        "colorMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "sum by (llama_server) (llama_model_state{llama_server=~\"$llama_server\",state=\"loaded\"})",
+          "legendFormat": "{{llama_server}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "title": "Models sleeping",
+      "description": "Models whose child process is alive but has handed its VRAM back after `sleepIdleSeconds`. A sleeping model still counts against `--models-max`, so asking for a different one evicts it outright — which is also what resets its counters.",
+      "type": "stat",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name",
+        "colorMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "sum by (llama_server) (llama_model_state{llama_server=~\"$llama_server\",state=\"sleeping\"})",
+          "legendFormat": "{{llama_server}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "title": "/metrics read errors",
+      "description": "Loaded models whose /metrics read failed on the last poll. Non-zero means the token counters below have gone quiet while everything else still looks healthy — most likely `--metrics` stopped reaching the child through llama.cpp's argv merge (see modules/system/llama-cpp.nix), or the API key is unreadable.",
+      "type": "stat",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "sum(llama_model_metrics_error{llama_server=~\"$llama_server\"}) or vector(0)",
+          "legendFormat": "errors",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "fillOpacity": 80, "lineWidth": 0 },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "unloaded", "color": "#3d4551", "index": 0 },
+                "1": { "text": "loading", "color": "yellow", "index": 1 },
+                "2": { "text": "sleeping", "color": "blue", "index": 2 },
+                "3": { "text": "loaded", "color": "green", "index": 3 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
+      "id": 5,
+      "title": "Model residency",
+      "description": "Which model each router held over time, and in what state. `loaded` → resident and awake; `sleeping` → child alive, VRAM handed back after the idle timeout; `unloaded` → no child at all. A run of `loaded` is a run of real use: nothing loads at boot and only a client request can start one.",
+      "type": "state-timeline",
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "targets": [
+        {
+          "expr": "3 * sum by (llama_server, alias, model) (llama_model_state{llama_server=~\"$llama_server\",state=\"loaded\"}) + 2 * sum by (llama_server, alias, model) (llama_model_state{llama_server=~\"$llama_server\",state=\"sleeping\"}) + sum by (llama_server, alias, model) (llama_model_state{llama_server=~\"$llama_server\",state=\"loading\"})",
+          "legendFormat": "{{llama_server}} · {{alias}} ({{model}})",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "bytes",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "id": 6,
+      "title": "GPU VRAM used (whole card)",
+      "description": "Host-wide GPU memory from the nvidia exporter, not per-process — read it against the residency timeline above. On amos1 the same 8 GB card also serves Jellyfin's NVENC transcoding, which is why idle eviction exists at all. Empty on a host without the nvidia exporter, and terra has none, so this only ever shows the local card.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "nvidia_smi_memory_used_bytes",
+          "legendFormat": "used",
+          "refId": "A"
+        },
+        {
+          "expr": "nvidia_smi_memory_total_bytes",
+          "legendFormat": "total",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 7,
+      "title": "Prompt tokens ingested",
+      "description": "Tokens/s of prompt processed, per alias. Counter resets on eviction are handled by rate(); gaps are periods with no model loaded, which is the normal idle state rather than missing data.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (llama_server, alias) (rate(llama_prompt_tokens_total{llama_server=~\"$llama_server\"}[$__rate_interval]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 8,
+      "title": "Tokens generated",
+      "description": "Tokens/s produced, per alias — the closest thing llama.cpp exposes to a request rate, since it publishes no request counter of its own.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (llama_server, alias) (rate(llama_tokens_predicted_total{llama_server=~\"$llama_server\"}[$__rate_interval]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 9,
+      "title": "Prefill throughput",
+      "description": "Prompt tokens per second of time actually spent prefilling (tokens ÷ seconds, both counters). Unlike the panel above this is a speed, not a volume, so it is comparable against the bench figures in modules/hosts/terra.nix.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (llama_server, alias) (rate(llama_prompt_tokens_total{llama_server=~\"$llama_server\"}[$__rate_interval])) / sum by (llama_server, alias) (rate(llama_prompt_seconds_total{llama_server=~\"$llama_server\"}[$__rate_interval]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 10,
+      "title": "Generation throughput",
+      "description": "Generated tokens per second of time actually spent generating. The number that decides whether a model is usable interactively — terra's `code` pays for its offloaded experts here.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (llama_server, alias) (rate(llama_tokens_predicted_total{llama_server=~\"$llama_server\"}[$__rate_interval])) / sum by (llama_server, alias) (rate(llama_tokens_predicted_seconds_total{llama_server=~\"$llama_server\"}[$__rate_interval]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 36 },
+      "id": 11,
+      "title": "Share of window resident",
+      "description": "Fraction of the selected time range each model spent loaded. The headline answer to \"which alias earns its keep\": a model that is never resident is never asked for.",
+      "type": "bargauge",
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "avg by (llama_server, alias) (avg_over_time(llama_model_state{llama_server=~\"$llama_server\",state=\"loaded\"}[$__range]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 36 },
+      "id": 12,
+      "title": "Tokens generated in window",
+      "description": "increase() over the selected range, summed per alias. Approximate by construction: tokens served between the last poll and an eviction are never sampled, and the counter restarts at zero with the next child.",
+      "type": "bargauge",
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "sum by (llama_server, alias) (increase(llama_tokens_predicted_total{llama_server=~\"$llama_server\"}[$__range]))",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 36 },
+      "id": 13,
+      "title": "Largest context observed",
+      "description": "High-water mark of prompt+generation tokens in a single request, per model, since that model's current child started. Read it against the `ctxSize` each model is configured with in modules/hosts/{amos1,terra}.nix — a model that never approaches its window is paying VRAM for KV cache it doesn't use.",
+      "type": "bargauge",
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["max"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "max by (llama_server, alias) (llama_tokens_max{llama_server=~\"$llama_server\"})",
+          "legendFormat": "{{llama_server}} · {{alias}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 41,
+  "tags": ["homelab", "llm", "llama.cpp"],
+  "templating": {
+    "list": [
+      {
+        "name": "llama_server",
+        "label": "llama-server",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(llama_server_up, llama_server)",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "LLM (llama.cpp)",
+  "uid": "homelab-llm",
+  "version": 1,
+  "weekStart": ""
+}
