@@ -461,6 +461,18 @@
             "1"
             "--sleep-idle-seconds"
             (toString cfg.sleepIdleSeconds)
+            # Turns on each *child's* /metrics endpoint (#553). The router
+            # itself has no metrics of its own — its `/metrics` is a proxy
+            # that routes by `?model=` — so the flag is only useful for
+            # what it does on the way down: llama.cpp merges the router's
+            # argv into every child's preset, and `--metrics` is not one of
+            # the reserved options it strips, so each child comes up with
+            # `endpoint_metrics` on. Verified at b9190 by rendering the
+            # child argv out of `/v1/models`.
+            #
+            # Costs nothing when unscraped: the endpoint stays behind
+            # `--api-key` and the counters are already maintained.
+            "--metrics"
           ]
           ++ cfg.extraFlags;
         };
