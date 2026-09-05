@@ -44,7 +44,18 @@
   flake.modules.nixos.llm =
     { config, ... }:
     {
-      imports = [ inputs.self.modules.nixos.llm-caddy-auth ];
+      imports = [
+        inputs.self.modules.nixos.llm-caddy-auth
+        inputs.self.modules.nixos.llm-metrics
+      ];
+
+      # Per-model usage for this host's own router (#553). Loopback,
+      # because the daemon is on this machine; the port is read from
+      # `myLlamaCpp` for the same reason the caddy route below is.
+      myLlmMetrics.endpoints.local = {
+        host = "127.0.0.1";
+        inherit (config.myLlamaCpp) port;
+      };
 
       myAuthentik.forwardAuthApps.llm = {
         inherit (config.myLlamaCpp) port;

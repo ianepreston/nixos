@@ -59,23 +59,43 @@
 # the public hostname.
 { inputs, ... }:
 {
-  flake.modules.nixos.llm-terra = _: {
-    imports = [ inputs.self.modules.nixos.llm-caddy-auth ];
-
-    myAuthentik.forwardAuthApps.llm-terra = {
+  flake.modules.nixos.llm-terra =
+    _:
+    let
+      # Bound once and shared with the metrics endpoint below so the two
+      # can't drift: both are "where terra's router is", and terra's
+      # address is a DHCP-registered name (see the header).
       upstreamHost = "terra.ipreston.net";
       port = 8080;
-      displayName = "LLM (terra)";
-      # dashboard-icons has no llama.cpp entry; ollama is the closest
-      # local-inference icon in the set.
-      iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
-      bypassAuthPaths = [ "/v1/*" ];
-      upstreamBearerEnvVar = "LLAMA_API_KEY";
-      homepage = {
-        group = "Infrastructure";
-        icon = "ollama";
-        description = "Local inference on terra";
+    in
+    {
+      imports = [
+        inputs.self.modules.nixos.llm-caddy-auth
+        inputs.self.modules.nixos.llm-metrics
+      ];
+
+      # Per-model usage for terra's router (#553). Polled from here
+      # rather than scraped directly, which is also what keeps a
+      # powered-off terra out of `InstanceDown` — see
+      # modules/apps/llm-metrics.nix.
+      myLlmMetrics.endpoints.terra = {
+        host = upstreamHost;
+        inherit port;
+      };
+
+      myAuthentik.forwardAuthApps.llm-terra = {
+        inherit upstreamHost port;
+        displayName = "LLM (terra)";
+        # dashboard-icons has no llama.cpp entry; ollama is the closest
+        # local-inference icon in the set.
+        iconUrl = "https://raw.githubusercontent.com/homarr-labs/dashboard-icons/main/png/ollama.png";
+        bypassAuthPaths = [ "/v1/*" ];
+        upstreamBearerEnvVar = "LLAMA_API_KEY";
+        homepage = {
+          group = "Infrastructure";
+          icon = "ollama";
+          description = "Local inference on terra";
+        };
       };
     };
-  };
 }
