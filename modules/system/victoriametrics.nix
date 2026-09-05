@@ -446,6 +446,25 @@ _: {
                 };
               }
               {
+                # Same liveness-check-on-the-checker shape as
+                # ValheimMetricsStale above, and llama-metrics.service is
+                # left out of the unit-include regex for the same reason.
+                # No alert is worth firing on the llama metrics
+                # themselves — a model sitting unloaded is the normal
+                # state and terra is a desktop that gets powered off — so
+                # this rule is the only one guarding them, and it fires
+                # only when the exporter itself has stopped publishing.
+                # 15m is roughly fifteen missed runs of the 1m timer.
+                alert = "LlamaMetricsStale";
+                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/llama.prom"} > 900'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "llama-server metrics are stale on {{ $labels.instance }}";
+                  description = "llama.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so the LLM dashboard is showing frozen per-model usage. Check llama-metrics.service and its timer.";
+                };
+              }
+              {
                 alert = "HighCaddy5xx";
                 expr = ''sum by (instance, server) (rate(caddy_http_requests_total{code=~"5.."}[5m])) > 0.1'';
                 for = "5m";
@@ -813,6 +832,11 @@ _: {
                 # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
                 # spierscraper, tandoor-recipes.
                 + "|audiobookshelf|bazarr|flaresolverr|jellyfin|komga"
+                # llama-server (modules/system/llama-cpp.nix, amos1 only).
+                # Its own child model processes are not units and don't
+                # appear here; per-model state comes from
+                # modules/apps/llm-metrics.nix instead.
+                + "|llama-cpp"
                 + "|lidarr|matter-server|miniflux|paperless(-.+)?|pinchflat"
                 + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
                 + "|tandoor-recipes"
