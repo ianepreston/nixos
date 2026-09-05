@@ -45,12 +45,17 @@
 # Closure cost: 3.x hard-wires the AI subsystem's deps (llama-index +
 # sentence-transformers + a CPU torch) into the package with no
 # nixpkgs opt-out, taking it from 2.8 GB to 5.1 GB even with
-# PAPERLESS_AI_ENABLED off. Paid for: that subsystem is on, pointed at
-# terra's llama-server (#527) — see the AI block in `settings` below.
-# Only the LLM half is wired; embeddings and the RAG index are #557.
-# With no embedding backend set, the classifier takes its
-# `build_prompt_without_rag` path and never looks for a vector store,
-# so this tier stands on its own.
+# PAPERLESS_AI_ENABLED off. Both halves of that subsystem are now paid
+# for: chat and classification run against terra's llama-server
+# (#527), and embeddings run in-process on the bundled CPU torch
+# (#557) — see the AI block in `settings` below.
+#
+# The embedding half puts a vector store on disk at
+# `<dataDir>/llm_index/llmindex.db` (SQLite + sqlite-vec, WAL) and a
+# downloaded model cache at `<dataDir>/hf_cache`. Both land inside the
+# preserved stateDir, so impermanence is handled — but neither is
+# quiesced for restic and the nightly rebuild currently fires at 02:10,
+# inside the backup window. That is #558.
 { inputs, ... }:
 {
   flake.modules.nixos.paperless-ngx =
@@ -207,6 +212,42 @@
           # reserves 512 tokens for the reply before it truncates
           # document content to fit.
           PAPERLESS_AI_LLM_CONTEXT_SIZE = 131072;
+
+          # Embeddings, and with them the RAG index (#557). There is no
+          # separate index switch: `AIConfig.llm_index_enabled` is just
+          # `ai_enabled and llm_embedding_backend`, so naming a backend
+          # here is what creates the vector store, schedules the nightly
+          # `llmindex_index` rebuild, keeps the index in step with
+          # consume/edit/delete, and lets `ai_classifier.py` take its
+          # RAG path (`retrieve_similar_nodes` + taxonomy weighting)
+          # instead of `build_prompt_without_rag`. Chat has no non-RAG
+          # fallback at all.
+          #
+          # huggingface rather than pointing the `openai-like` embedding
+          # backend at terra: llama-server runs with `--models-max 1`, so
+          # one suggestion — retrieve with an embedding model, then
+          # classify with `text` — would evict and reload a model on
+          # every request. Serving embeddings from terra is llama-cpp
+          # module work (an `--embeddings` child, a re-budgeted
+          # `--models-max`), not paperless work.
+          PAPERLESS_AI_LLM_EMBEDDING_BACKEND = "huggingface";
+
+          # Upstream's own default, pinned explicitly. The store is a
+          # `vec0` virtual table whose vectors are fixed at the model's
+          # dimension, so a changed default on some future package bump
+          # would invalidate every embedding already written; naming the
+          # model makes that a diff rather than a surprise.
+          #
+          # It runs on the CPU: the torch in the paperless closure is
+          # nixpkgs' default `cudaSupport = false` build, and MiniLM at
+          # document-ingest rates does not need a GPU — making it one
+          # would mean overriding paperless's whole python set to
+          # torchWithCuda and then competing with Jellyfin transcodes for
+          # amos1's 3070. Measure before revisiting.
+          #
+          # First use downloads ~90 MB into the dataDir's `hf_cache`,
+          # so a cold rebuild needs the network before suggestions work.
+          PAPERLESS_AI_LLM_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2";
         };
       };
 
