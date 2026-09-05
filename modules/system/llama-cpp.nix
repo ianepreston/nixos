@@ -40,6 +40,22 @@
 # the cache pruned (`task llm:models:prune`) is therefore a correctness
 # concern here, not just a disk one.
 #
+# A pruned cache is not sufficient, though, because that `<TAG>` is
+# derived from the *filename* rather than from whatever `-hf` asked for:
+# `common_list_cached_models` takes `get_gguf_split_info(path).tag`, which
+# is the last `[-.]([A-Za-z0-9_]+)` run in the name. For a quant whose tag
+# carries a prefix the filename keeps but the derivation drops — unsloth's
+# `UD-` dynamic quants are the case in the fleet — the scan invents a
+# *second* name for a file the preset already names, and the two do not
+# merge because they are not spelled the same. terra therefore serves
+# `unsloth/…-GGUF:Q4_K_XL` alongside the configured `:UD-Q4_K_XL`, both
+# resolving to the same 17 GB of weights, one of them with no `ctxSize`
+# and no `nCpuMoeLayers`. Nothing configures this away: `load_from_cache`
+# is unconditional and there is no flag to skip it. Treat an unaliased
+# entry in `/v1/models` as suspect, check it against the cache listing
+# (`task llm:models`) before assuming it is prunable garbage, and don't
+# point a client at one.
+#
 # **Router CLI flags outrank the preset.** llama.cpp merges the router's
 # own argv into every child's preset at *highest* precedence, so a `-c` on
 # the router would silently override every model's `ctxSize`. Anything

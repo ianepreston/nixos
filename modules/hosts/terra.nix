@@ -203,6 +203,18 @@
             # card that is also running a GNOME session. Fewer offloaded
             # layers is monotonically faster, so the bound is VRAM, not
             # tuning.
+            #
+            # The `UD-` prefix costs a phantom: llama.cpp's cache scan
+            # derives a model name from the *filename*, drops the prefix,
+            # and so publishes an unconfigured
+            # `unsloth/…-GGUF:Q4_K_XL` next to this one, pointing at the
+            # same weights with no ctxSize and no nCpuMoeLayers. It is
+            # not a stale download and `task llm:models:prune` will not
+            # (and should not) remove it — the cache holds exactly one
+            # file here. See the cache section in
+            # modules/system/llama-cpp.nix; the practical consequence is
+            # that `code` is the name to use and the bare `Q4_K_XL` one
+            # would OOM the card.
             "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL" = {
               aliases = [ "code" ];
               ctxSize = 131072;

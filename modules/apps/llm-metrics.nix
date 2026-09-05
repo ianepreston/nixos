@@ -61,6 +61,14 @@
 # against models that stay loaded for `sleepIdleSeconds` (300-600 s)
 # after their last request, that is a small tail, and the question this
 # feeds ("is this alias worth its disk") is comparative, not exact.
+#
+# One row will always read as dead, and is meant to: terra publishes a
+# phantom `unsloth/…-GGUF:Q4_K_XL` with an empty `alias`, which is
+# llama.cpp's cache scan naming the configured `:UD-Q4_K_XL` file a
+# second time (see the cache section in modules/system/llama-cpp.nix).
+# Nothing routes to it, so it sits permanently `unloaded`. That is the
+# correct reading of a name nobody should use — not a gap in coverage,
+# and not something a prune can clear.
 { inputs, ... }:
 {
   # `key` dedupes this when both llm.nix and llm-terra.nix import it on
