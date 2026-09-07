@@ -56,6 +56,16 @@ _: {
         '';
       };
 
+      # The scraper is a nightly `podman run --rm` oneshot, so between
+      # runs no container object references its image and podman's own
+      # liveness view sees it as garbage. The age window is no help
+      # either: this image is nix-built with SOURCE_DATE_EPOCH=0, so its
+      # manifest timestamp is 1970 and every `until=` filter matches it.
+      # Declare it to the image prune
+      # (modules/system/oci-containers.nix) so it is not deleted and
+      # re-pulled on every run.
+      myPodmanPrune.keepImages = [ image ];
+
       systemd = {
         tmpfiles.rules = [
           "d /var/lib/containers/spierscraper 0755 root root -"

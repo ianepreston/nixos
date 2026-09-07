@@ -465,6 +465,46 @@ _: {
                 };
               }
               {
+                # Podman's image store grew unbounded until #570 (92 GB on
+                # hpp-1, 88% of it unreferenced) because nothing pruned
+                # it. FilesystemAlmostFull does eventually catch that, but
+                # only once / is 80% full and without saying which
+                # directory did it. This fires far earlier and names the
+                # cause.
+                #
+                # 40 GB sits comfortably above the steady state the
+                # daily podman-image-prune leaves behind: hpp-1 settled at
+                # 15 GB over 24 images (the running set plus two weeks of
+                # superseded tags) on the first pass, down from 81 GB over
+                # 125. A legitimate burst of renovate bumps will not trip
+                # it; a prune that has quietly stopped reclaiming will,
+                # within a few weeks and long before the disk rule would.
+                # Metric comes from modules/system/oci-containers.nix.
+                alert = "PodmanImageStoreLarge";
+                expr = "podman_image_store_bytes > 40e9";
+                for = "1h";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Podman image store is oversized on {{ $labels.instance }}";
+                  description = "The podman image store on {{ $labels.instance }} has been above 40 GB for an hour (currently {{ $value | humanize1024 }}B). Check podman-image-prune.service — see modules/system/oci-containers.nix.";
+                };
+              }
+              {
+                # Same liveness-check-on-the-checker shape as
+                # ValheimMetricsStale / LlamaMetricsStale above, and
+                # podman-image-metrics.service is left out of the
+                # unit-include regex for the same reason. 1h is roughly
+                # four missed runs of the 15m timer.
+                alert = "PodmanImageMetricsStale";
+                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/podman-images.prom"} > 3600'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Podman image store metrics are stale on {{ $labels.instance }}";
+                  description = "podman-images.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so PodmanImageStoreLarge is evaluating a frozen value. Check podman-image-metrics.service and its timer.";
+                };
+              }
+              {
                 alert = "HighCaddy5xx";
                 expr = ''sum by (instance, server) (rate(caddy_http_requests_total{code=~"5.."}[5m])) > 0.1'';
                 for = "5m";
@@ -849,7 +889,14 @@ _: {
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
                 + "|seerr|shelfmark|unifi-os-server"
-                + "|valheim))\\.service$"
+                + "|valheim)"
+                # The daily image-store GC (modules/system/oci-containers.nix).
+                # Not a container: if it fails the store silently resumes
+                # growing, and PodmanImageStoreLarge would not notice for
+                # weeks. podman-image-metrics is deliberately *not* here —
+                # PodmanImageMetricsStale is its liveness check, same
+                # convention as valheim-metrics / llama-metrics.
+                + "|podman-image-prune)\\.service$"
               )
             ];
           };
