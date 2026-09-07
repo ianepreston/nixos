@@ -109,13 +109,13 @@
       bambu_lab = pkgsUnstable.buildHomeAssistantComponent {
         owner = "greghesp";
         domain = "bambu_lab";
-        version = "2.2.22";
+        version = "2.2.25";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "greghesp";
           repo = "ha-bambulab";
           # renovate: datasource=github-releases depName=greghesp/ha-bambulab
           tag = "v2.2.25";
-          hash = "sha256-JRJ+tfllDuMrtz+5VQL2l5nkhJQXRoNvsvFnrReSZHE=";
+          hash = "sha256-tqa+pWsOWDtE4I61CvSYmMD74jwWkCsXwNUz7Hh/qyk=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
       };
