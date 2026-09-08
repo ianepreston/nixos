@@ -37,7 +37,8 @@
 # Firewall events arrive as pfSense's positional filterlog CSV, which is
 # split into `fw_*` fields at ingest so alerts and dashboards can filter
 # on action / interface / addresses / ports instead of substring-matching
-# a blob. See the pfsense_filterlog transform for the format notes.
+# a blob. See the pfsense_filterlog transform for the format notes, and
+# pfsense_route above it for why filterlog is routed out on its own.
 #
 # Operational hazard, learned the hard way, and since mitigated: if this
 # listener was down while pfSense was sending, the kernel answered each
@@ -96,6 +97,10 @@ _: {
       # message provably arrives from exactly this IP — which is what
       # makes the single-source firewall rule below sufficient.
       pfsenseAddress = "192.168.10.1";
+
+      # Shared between the `-C` existence check and the `-A` add below, so
+      # the guard cannot drift from the rule it is guarding.
+      icmpDropRule = "OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP";
     in
     {
       services.vector = {
@@ -202,6 +207,32 @@ _: {
               '';
             };
 
+            # Split filterlog off from everything else pfSense sends, so
+            # that `vector_component_received_events_total` for the
+            # transform below counts *only* firewall events. That counter
+            # is what PfsenseLogsAbsent alerts on (see
+            # modules/system/victoriametrics.nix), and keying it on the
+            # whole `pfsense` source was too coarse: pfSense forwards
+            # under three separate `syslog.conf` entries (`!dhcpd`,
+            # `!filterlog`, and a catch-all), and syslogd's fatal
+            # ECONNREFUSED detach is *per entry*, not per target. On
+            # 2026-09-08 the `!filterlog` entries died on both hosts while
+            # the `!dhcpd` ones survived — a WAN lease renewal every ~2h
+            # kept the source counter non-zero and the alert quiet while
+            # the feed this module exists for was dead (#581).
+            #
+            # Filterlog is also the only pfSense feed with a genuinely
+            # continuous rate, which is what makes rate-zero a usable
+            # absence signal for it and not for the others.
+            #
+            # `_unmatched` carries dhcpd/catch-all events on to the sink
+            # unchanged — the split is for the counter, not for filtering.
+            pfsense_route = {
+              type = "route";
+              inputs = [ "pfsense_enrich" ];
+              route.filterlog = ''.unit == "filterlog"'';
+            };
+
             # pfSense's filterlog ships one positional CSV row per
             # firewall event, which is queryable only by substring until
             # it is split into fields — `fw_action:block AND
@@ -236,38 +267,36 @@ _: {
             # are unbounded and stream keys must stay low-cardinality.
             pfsense_filterlog = {
               type = "remap";
-              inputs = [ "pfsense_enrich" ];
+              inputs = [ "pfsense_route.filterlog" ];
               source = ''
-                if .unit == "filterlog" {
-                  f = split(to_string(.message) ?? "", ",")
-                  if length(f) > 9 {
-                    .fw_rule = f[0]
-                    .fw_tracker = f[3]
-                    .fw_interface = f[4]
-                    .fw_action = f[6]
-                    .fw_direction = f[7]
-                    .fw_ipver = f[8]
+                f = split(to_string(.message) ?? "", ",")
+                if length(f) > 9 {
+                  .fw_rule = f[0]
+                  .fw_tracker = f[3]
+                  .fw_interface = f[4]
+                  .fw_action = f[6]
+                  .fw_direction = f[7]
+                  .fw_ipver = f[8]
 
-                    if f[8] == "4" && length(f) > 19 {
-                      proto = downcase(f[16]) ?? ""
-                      .fw_proto = proto
-                      .fw_src_ip = f[18]
-                      .fw_dst_ip = f[19]
-                      if (proto == "tcp" || proto == "udp") && length(f) > 21 {
-                        .fw_src_port = f[20]
-                        .fw_dst_port = f[21]
-                      }
+                  if f[8] == "4" && length(f) > 19 {
+                    proto = downcase(f[16]) ?? ""
+                    .fw_proto = proto
+                    .fw_src_ip = f[18]
+                    .fw_dst_ip = f[19]
+                    if (proto == "tcp" || proto == "udp") && length(f) > 21 {
+                      .fw_src_port = f[20]
+                      .fw_dst_port = f[21]
                     }
+                  }
 
-                    if f[8] == "6" && length(f) > 16 {
-                      proto = downcase(f[12]) ?? ""
-                      .fw_proto = proto
-                      .fw_src_ip = f[15]
-                      .fw_dst_ip = f[16]
-                      if (proto == "tcp" || proto == "udp") && length(f) > 18 {
-                        .fw_src_port = f[17]
-                        .fw_dst_port = f[18]
-                      }
+                  if f[8] == "6" && length(f) > 16 {
+                    proto = downcase(f[12]) ?? ""
+                    .fw_proto = proto
+                    .fw_src_ip = f[15]
+                    .fw_dst_ip = f[16]
+                    if (proto == "tcp" || proto == "udp") && length(f) > 18 {
+                      .fw_src_port = f[17]
+                      .fw_dst_port = f[18]
                     }
                   }
                 }
@@ -288,6 +317,7 @@ _: {
               inputs = [
                 "journal_enrich"
                 "pfsense_filterlog"
+                "pfsense_route._unmatched"
               ];
               endpoints = [
                 "http://127.0.0.1:${toString victorialogsPort}/insert/elasticsearch/"
@@ -359,13 +389,39 @@ _: {
       # `nixos-rebuild switch` that bounces vector opens the same window,
       # which is how the 2026-08-31 auto-upgrade silently detached both
       # servers at once.
+      #
+      # The DROP is deliberately NOT removed in extraStopCommands, which
+      # is what #581 was: the exposure *is* firewall.service going away,
+      # so a suppression rule whose lifetime is firewall.service's cannot
+      # cover it. Upstream's `firewall-stop` removes `INPUT -j nixos-fw`
+      # first and runs extraStopCommands after, so deleting the DROP there
+      # left the stack fully unfiltered (`-P INPUT ACCEPT`) with no
+      # suppression, while the NIC was still up and vector already stopped
+      # — a 6-8s hole on both hosts' 2026-09-08 auto-upgrade reboots, and
+      # one escaped port-unreachable is enough to kill the `!filterlog`
+      # forwarding entry on the router for good. Keeping the rule means it
+      # is installed on the first firewall start and lives in the builtin
+      # OUTPUT chain until the host powers off, by which point the NIC is
+      # going too. Nothing else touches OUTPUT: `firewall-start` only
+      # flushes the `nixos-fw*` chains, so the rule survives a restart
+      # rather than being re-created by it.
+      #
+      # Hence the `-C … ||` guard on the add — without a matching delete,
+      # every firewall start (and every reload, which runs stop-then-start)
+      # would otherwise stack another copy. The accept rule needs no guard:
+      # it lives in `nixos-fw`, which `firewall-start` recreates from
+      # scratch each time.
+      #
+      # Reload is not part of the hazard either way: `firewall-reload`
+      # brackets the stop/start pair with `INPUT -j nixos-drop`, so an
+      # inbound datagram during a `nixos-rebuild switch` is dropped before
+      # it can reach a closed port and no ICMP is generated at all.
       networking.firewall.extraCommands = ''
         iptables -A nixos-fw -p udp -s ${pfsenseAddress} --dport ${toString syslogPort} -j nixos-fw-accept
-        iptables -A OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP
+        iptables -C ${icmpDropRule} 2>/dev/null || iptables -A ${icmpDropRule}
       '';
       networking.firewall.extraStopCommands = ''
         iptables -D nixos-fw -p udp -s ${pfsenseAddress} --dport ${toString syslogPort} -j nixos-fw-accept || true
-        iptables -D OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP || true
       '';
 
       # Best-effort assertion that VL is in the same module set —
