@@ -20,9 +20,13 @@
 #   cAdvisor        — per-container cgroups metrics (podman containers).
 #   Prometheus exporters — node/postgres/mysqld/redis, all unchanged.
 #
-# Data is ephemeral by design (#65 / #126). If the host dies, rules,
-# exporters, dashboards recreate themselves declaratively; only the
-# historical timeseries is lost.
+# Data is ephemeral by design (#65 / #126) *for host-failure DR* —
+# there is no restic hook. If the host dies, rules, exporters,
+# dashboards recreate themselves declaratively; only the historical
+# timeseries is lost. Routine reboots are a different case: the
+# storage dir is preserved across the impermanence rollback (see
+# modules/system/preservation-server.nix) so `retentionPeriod` below
+# means what it says. Closes #578.
 _: {
   flake.modules.nixos.victoriametrics =
     {

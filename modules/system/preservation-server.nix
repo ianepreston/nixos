@@ -102,13 +102,38 @@
           "/var/log/journal"
 
           # ----- Observability -----
-          # Prometheus TSDB (15d) + Loki chunks/index (7d). The
-          # observability module's header comment treats these as
-          # ephemeral *for host-failure DR*, but routine reboots
-          # shouldn't wipe history — persist them so the configured
-          # retention windows actually mean what they say.
-          "/var/lib/prometheus2"
-          "/var/lib/loki"
+          # VictoriaMetrics TSDB (15d), VictoriaLogs storage (30d), and
+          # alertmanager's silences + notification log. The
+          # victoriametrics/victorialogs module header comments treat
+          # these as ephemeral *for host-failure DR*, but routine
+          # reboots shouldn't wipe them — persist them so the configured
+          # retention windows actually mean what they say, and so an
+          # active silence isn't cancelled by the nightly upgrade
+          # reboot (alertmanager re-reads silences.log/nflog from the
+          # storage path at start-up; without this a silence set to
+          # cover a maintenance window evaporates mid-window and the
+          # alert it was muting re-fires).
+          #
+          # Until #578 the metrics/logs entries still named the
+          # Prometheus/Loki dirs that #126 retired, so the live stores
+          # were on the rolled-back @root subvolume and every reboot
+          # reset history to zero (which also re-armed every long-`for:`
+          # alert). Alertmanager was never listed at all.
+          #
+          # All three units are DynamicUser + StateDirectory, so the
+          # real storage is the /var/lib/private path and /var/lib/<name>
+          # is only a symlink — same shape as the authentik and
+          # llama-cpp entries, and bare strings for the same reason:
+          # ownership is systemd's to manage, not ours. A preservation
+          # bindmount hands the unit a root:root 0700 dir on a fresh
+          # boot; systemd chowns an existing StateDirectory to the
+          # on-disk sentinel (nobody:nogroup) before ExecStart and the
+          # unit writes through the idmapped mount normally. No
+          # user/group/mode pin (unlike /var/lib/mysql above, where
+          # tmpfiles fights us).
+          "/var/lib/private/victoriametrics"
+          "/var/lib/private/victorialogs"
+          "/var/lib/private/alertmanager"
         ];
 
         files = [
