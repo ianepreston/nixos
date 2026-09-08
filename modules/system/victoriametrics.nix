@@ -159,13 +159,28 @@ _: {
                 # consecutive events was 40s (a 6.7m gap in the same
                 # sample was an induced outage, not normal quiet), so this
                 # carries better than a 20x margin over observed silence.
+                #
+                # Keyed on the `pfsense_filterlog` *transform*, not the
+                # `pfsense` source. pfSense forwards under three separate
+                # `syslog.conf` entries, and syslogd's fatal
+                # ECONNREFUSED detach is per entry — so on 2026-09-08 the
+                # `!filterlog` entries died on both hosts while the
+                # `!dhcpd` ones lived, and a WAN lease renewal every ~2h
+                # kept the source counter non-zero and this rule quiet
+                # while the feed the ingest exists for was dead (#581).
+                # The transform receives only filterlog events (see the
+                # `pfsense_route` split in vector.nix), so its counter is
+                # the specific thing worth watching. It strictly dominates
+                # the old source-wide expression — the whole source dying
+                # kills filterlog too — hence a retarget rather than a
+                # second alert.
                 alert = "PfsenseLogsAbsent";
-                expr = ''(absent(vector_component_received_events_total{component_id="pfsense",component_kind="source"}) or sum(rate(vector_component_received_events_total{component_id="pfsense",component_kind="source"}[15m])) == 0) and on() sum(up{job="vector"}) == 1'';
+                expr = ''(absent(vector_component_received_events_total{component_id="pfsense_filterlog",component_kind="transform"}) or sum(rate(vector_component_received_events_total{component_id="pfsense_filterlog",component_kind="transform"}[15m])) == 0) and on() sum(up{job="vector"}) == 1'';
                 for = "10m";
                 labels.severity = "warning";
                 annotations = {
-                  summary = "No pfSense syslog received on this host";
-                  description = "vector is up but has received no events from the pfSense syslog source for 15m. This should now self-heal across vector restarts, so suspect the router side: check `grep syslogd /var/log/system.log` on behemoth and confirm the target is still listed under Status → System Logs → Settings. If syslogd has detached the target anyway, restore it with `pfSsh.php playback svc restart syslogd` — note a SIGHUP kills syslogd rather than reloading it.";
+                  summary = "No pfSense firewall logs received on this host";
+                  description = "vector is up but has received no pfSense filterlog events for 15m. This should now self-heal across vector restarts and reboots, so suspect the router side: check `grep syslogd /var/log/system.log` on behemoth and confirm the target is still listed under Status → System Logs → Settings. Note the detach is per `syslog.conf` entry, so other pfSense events may still be arriving while the `!filterlog` entry is dead — do not take a non-empty pfsense stream in VictoriaLogs as proof the feed is healthy. Restore with `pfSsh.php playback svc restart syslogd` — a SIGHUP kills syslogd rather than reloading it.";
                 };
               }
               {
