@@ -142,6 +142,27 @@ _: {
         user = hostSpec.serverUser;
       };
 
+      # Keep provider-downloaded artwork out of restic — closes #569.
+      # /var/lib/jellyfin/metadata was 11 of the 12 GB of jellyfin state
+      # on amos1 (People 5.3 G of actor headshots, library 4.9 G, Studio
+      # 40 M) and is 100% jpg/png: not a single NFO file lives there.
+      # Movies, TV and Collections all run with SaveLocalMetadata=true,
+      # so their NFO *and* any manually-overridden artwork are written
+      # next to the media on /mnt/content rather than here; only the
+      # YouTube library caches images into metadata/library, and
+      # pinchflat leaves the source thumbnails beside the media anyway.
+      # The irreplaceable state — the library DB, users, watch state,
+      # playlists and collections (all under data/), plus config/,
+      # plugins/ and root/ — is under 2 GB and stays in scope.
+      #
+      # Restore-time cost: a rebuilt instance comes up with no posters
+      # or headshots and looks broken until a library scan re-fetches
+      # them from the providers. That is the deliberate trade.
+      #
+      # Declared here rather than in server-backups.nix so the exclude
+      # sits next to the myAppState entry that contributes the path.
+      services.restic.backups.server.exclude = [ "/var/lib/jellyfin/metadata" ];
+
       mySqliteQuiesce.apps.jellyfin.databases = [
         "/var/lib/jellyfin/data/jellyfin.db"
       ];

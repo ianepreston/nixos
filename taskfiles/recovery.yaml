@@ -375,6 +375,29 @@ tasks:
       - task: _health
         vars: {HOST: '{{.HOST}}', APP: homeassistant, URL: 'http://127.0.0.1:8123/manifest.json', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   jellyfin:
+    # PATHS enumerates jellyfin's state subdirs rather than the whole of
+    # /var/lib/jellyfin, because metadata/ is excluded from the backup
+    # (#569 — ~11 GB of provider artwork a library scan re-downloads).
+    # This is load-bearing, not cosmetic: `_restore-sqlite` restores
+    # with `--delete`, which removes anything under an included path
+    # that the snapshot lacks, so including the parent would wipe the
+    # live artwork on every partial restore.
+    #
+    # The tidier-looking fix — keep the parent include and add
+    # `--exclude /var/lib/jellyfin/metadata` — does not work: restic
+    # 0.18 rejects it with "exclude and include patterns are mutually
+    # exclusive". Enumerating is the only option that keeps --delete.
+    #
+    # Deliberately NOT restored, all non-critical and self-healing:
+    # log/ (logs), .jellyfin-data (zero-byte marker jellyfin rewrites
+    # on start), and `Subtitle Edit/` (plugin dictionaries the plugin
+    # re-fetches — its space would not survive the space-split PATHS
+    # loop anyway).
+    #
+    # On a from-scratch rebuild metadata/ is simply absent: jellyfin
+    # comes up with no posters or headshots and repopulates them from
+    # the providers on the first library scan. The health check below
+    # passes either way — it only asserts the server is serving.
     desc: Restore jellyfin (native + sqlite-quiesce)
     requires: {vars: [HOST]}
     cmds:
@@ -383,7 +406,7 @@ tasks:
           HOST: '{{.HOST}}'
           APP: jellyfin
           UNITS: 'jellyfin.service'
-          PATHS: '/var/lib/jellyfin /var/backup/sqlite/jellyfin'
+          PATHS: '/var/lib/jellyfin/data /var/lib/jellyfin/config /var/lib/jellyfin/plugins /var/lib/jellyfin/root /var/backup/sqlite/jellyfin'
           SWAPS: '/var/backup/sqlite/jellyfin/jellyfin.db:/var/lib/jellyfin/data/jellyfin.db:@env@'
           DEST: '{{.DEST}}'
           SOURCE_HOST: '{{.SOURCE_HOST}}'

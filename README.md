@@ -435,6 +435,24 @@ runs `sqlite3 .backup` into `/var/backup/sqlite/jellyfin/` immediately before
 each restic run, and **those staged copies — not the live ones — are the
 authoritative recovery source.**
 
+`/var/lib/jellyfin/metadata` is deliberately excluded from the snapshot (#569):
+it was 11 of the 12 GB of jellyfin state and holds nothing but provider-fetched
+artwork, which a library scan re-downloads. It is still *preserved* across
+reboots under impermanence — the exclude is restic-only, so a reboot does not
+rebuild the cache.
+
+The restore below therefore enumerates the state subdirs instead of the parent.
+That is load-bearing: `restic restore --delete` removes anything under an
+included path that the snapshot lacks, so restoring `/var/lib/jellyfin` as a
+whole would wipe the live artwork every time. Adding
+`--exclude /var/lib/jellyfin/metadata` alongside the parent `--include` is *not*
+an option — restic 0.18 rejects the combination with "exclude and include
+patterns are mutually exclusive".
+
+`log/`, `.jellyfin-data` and `Subtitle Edit/` fall outside the enumerated set.
+All three are self-healing: logs, a zero-byte marker jellyfin rewrites on start,
+and plugin dictionaries the plugin re-fetches.
+
 ```bash
 # 1. Stop the service so nothing writes during restore.
 sudo systemctl stop jellyfin.service
@@ -444,7 +462,10 @@ sudo systemctl stop jellyfin.service
 sudo restic -r /mnt/backups/restic/<host> \
   --password-file /run/secrets/restic/password \
   restore latest --target / \
-  --include /var/lib/jellyfin \
+  --include /var/lib/jellyfin/data \
+  --include /var/lib/jellyfin/config \
+  --include /var/lib/jellyfin/plugins \
+  --include /var/lib/jellyfin/root \
   --include /var/backup/sqlite/jellyfin
 
 # 3. Swap the live SQLite file for the consistent staged copy.
@@ -453,8 +474,10 @@ sudo restic -r /mnt/backups/restic/<host> \
 sudo install -o server-prod -g servers -m 0640 \
   /var/backup/sqlite/jellyfin/jellyfin.db /var/lib/jellyfin/data/jellyfin.db
 
-# 4. Restart. Jellyfin will reopen the database and reuse the
-#    cached metadata; no library rescan is needed.
+# 4. Restart. Jellyfin reopens the database and reuses whatever is
+#    left in /var/lib/jellyfin/metadata; no library rescan is needed.
+#    On a from-scratch rebuild that directory is empty, so the UI comes
+#    up without posters or headshots until a scan re-fetches them.
 sudo systemctl start jellyfin.service
 ```
 
@@ -555,10 +578,10 @@ just resumes there.
 
 `modules/apps/jellyfin.nix` deploys jellyfin as a native systemd unit (no
 container) pinned to the `server-${env}:servers` UID/GID so it can read media
-off the NFS-mounted Synology share. Restic snapshots `/var/lib/jellyfin` plus
-the `mySqliteQuiesce` staging dir at `/var/backup/sqlite/jellyfin/`, which holds
-a `sqlite3 .backup` dump of `jellyfin.db` written by a pre-hook before each
-restic run.
+off the NFS-mounted Synology share. Restic snapshots `/var/lib/jellyfin` —
+minus `metadata/`, see the restore recipe above — plus the `mySqliteQuiesce`
+staging dir at `/var/backup/sqlite/jellyfin/`, which holds a `sqlite3 .backup`
+dump of `jellyfin.db` written by a pre-hook before each restic run.
 
 ### LDAP authentication via authentik
 

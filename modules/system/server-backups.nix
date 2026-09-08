@@ -335,6 +335,14 @@
           # Caches inside an app's own state dir. Still needed with the
           # narrowed paths above: these live under the per-app dirs that
           # `myContainerApp` contributes, not under the image store.
+          #
+          # Cross-app glob patterns only. An exclude that carves a
+          # single app's state dir belongs in that app's module next to
+          # its `myAppState` entry, where the rationale for dropping the
+          # data can sit beside the declaration that contributes the
+          # path — `services.restic.backups.server.exclude` is a list
+          # option, so contributions merge. See the jellyfin module's
+          # `metadata` exclude (#569) for the pattern.
           exclude = [
             "/var/lib/containers/*/cache"
             "/var/lib/containers/*/Cache"
