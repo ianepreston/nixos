@@ -3,9 +3,10 @@
 #   1. services.postgresqlBackup dumps every postgres database to
 #      /var/backup/postgresql; services.mysqlBackup dumps every mariadb
 #      database to /var/backup/mysql.
-#   2. services.restic.backups.server snapshots /var/backup/postgresql,
-#      /var/backup/mysql, and /var/lib/containers (all containerized app
-#      state) to the NFS-mounted Synology share at
+#   2. services.restic.backups.server snapshots those dump dirs, plus
+#      every app state dir contributed by the module that owns it
+#      (`myAppState` for native apps, `myContainerApp.<app>.stateDirs`
+#      for containerized ones), to the NFS-mounted Synology share at
 #      /mnt/backups/restic/<hostname>.
 #
 # Restore is a manual operator action; see README "Server App Pattern".
@@ -128,6 +129,14 @@
                 parts = path.split("/")
                 # parts[0] is "" because path starts with "/"; first real
                 # segment is parts[1].
+                #
+                # No explicit denylist is needed for podman's own dirs
+                # under /var/lib/containers (`storage`, `cache`) — before
+                # #567 they were swept in by a blanket backup path and
+                # showed up here as bogus app="storage" / app="cache"
+                # series. The paths are now enumerated per app from
+                # `myContainerApp.<app>.stateDirs`, so nothing that isn't
+                # an app can reach this branch.
                 if path.startswith("/var/lib/containers/") and len(parts) >= 5:
                     return (parts[4], "container_state")
                 if path.startswith("/var/lib/private/") and len(parts) >= 5:
@@ -302,12 +311,23 @@
           passwordFile = config.sops.secrets."restic/password".path;
           initialize = true;
 
+          # Database dumps only. Every app state dir is contributed by the
+          # module that owns it: native apps via `myAppState`
+          # (modules/system/app-state.nix), containerized apps via
+          # `myContainerApp.<app>.stateDirs`
+          # (modules/system/oci-containers.nix).
+          #
+          # `/var/lib/containers` used to be listed here wholesale, which
+          # also swept in podman's image store — 75 GB of amos1's 102 GB
+          # snapshot, all of it re-pullable from registries (#567).
           paths = [
             "/var/backup/postgresql"
             "/var/backup/mysql"
-            "/var/lib/containers"
           ];
 
+          # Caches inside an app's own state dir. Still needed with the
+          # narrowed paths above: these live under the per-app dirs that
+          # `myContainerApp` contributes, not under the image store.
           exclude = [
             "/var/lib/containers/*/cache"
             "/var/lib/containers/*/Cache"
