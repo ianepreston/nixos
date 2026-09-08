@@ -164,6 +164,10 @@ _: {
         volumes = [
           "/var/lib/containers/omada/data:/opt/tplink/EAPController/data"
           "/var/lib/containers/omada/logs:/opt/tplink/EAPController/logs"
+          # Rendered by the preStart below; see the "Log volume" section
+          # in the header. Must be writable — the entrypoint chowns the
+          # whole properties dir on every start.
+          "/run/omada/log4j2.properties:/opt/tplink/EAPController/properties/log4j2.properties"
         ];
         environment = {
           MANAGE_HTTPS_PORT = toString manageHttpsPort;
@@ -185,6 +189,83 @@ _: {
           # TimeoutStopSec is already 120, so this fits under it.
           "--stop-timeout=60"
         ];
+      };
+
+      # Quiet the idle firmware-upgrade poller (closes #588).
+      #
+      # `LocalFirmwareUpgradeMonitor` runs on a 5-second tick and logs
+      # four lines every tick whether or not an upgrade is in flight.
+      # That was 85,230 lines/day on amos1 — 90.7% of everything this
+      # container writes and, by line count, the #2 producer in the
+      # whole journal. One of the four is at WARN, so a level filter
+      # alone would leave a third of it behind.
+      #
+      # The cut is by logger name instead. Verified against the jars in
+      # the running image rather than inferred from log4j's abbreviated
+      # `%c{1.}` names: `device-firmware-upgrade-port-local-1.1.14.jar`
+      # holds exactly `com.tplink.smb.device.firmware.upgrade.local.
+      # {TokenBucket,monitor.LocalFirmwareUpgradeMonitor}`, and nothing
+      # else logs from that package. Everything #584/#586 rely on sits
+      # outside it — `BaseFirmwareUpgradeMonitor` and
+      # `FirmwareUpgradeRepositoryImpl` are `...upgrade.core.*` (the
+      # sibling is `core`, not the `common` the issue guessed), and
+      # `DeviceUpgradeStaticTask` (`DEVICE_FILE_DOWNLOAD_FAIL`) plus the
+      # audit-log warner are `com.tplink.smb.omada.*`. Pinning
+      # `...upgrade.local` at `error` therefore drops 85,194 of the
+      # 85,230 noise lines and keeps every detector, including any
+      # genuine ERROR the quieted package might emit.
+      #
+      # Why patch the file rather than filter downstream: the loggers
+      # write to a RollingFile appender and the entrypoint `tail -F`s
+      # `logs/server.log` to stdout, so cutting at the logger removes
+      # the lines from journald, from the 4 GB ring, and from
+      # VictoriaLogs at once. A vector transform (the
+      # `drop_cadvisor_libpod_noise` shape) would only reach the last.
+      #
+      # Why a rendered file rather than an env var: neither override
+      # path works on this image, both checked against a throwaway
+      # container on hpp-1. `LOG4J_CONFIGURATION_FILE` (including
+      # log4j2's comma-separated composite form) is discarded because
+      # Spring Boot re-initializes logging from the classpath copy after
+      # startup, and Spring's own `logging.level.*` is not honoured
+      # either. Overwriting the classpath file is what actually takes.
+      #
+      # Why /run and not the store: `fix_permissions` in the entrypoint
+      # `chown -R`s the whole properties dir on every start (it fires on
+      # each boot today), and the script runs under `set -e` — a
+      # read-only store mount makes that chown fail and the container
+      # never starts. So the file has to be writable.
+      #
+      # Re-extracting upstream's copy out of the image on every start,
+      # rather than vendoring one, means an image bump carries its own
+      # log4j2 changes through and the stanza below stays the only part
+      # that is ours. If a bump ever moves or renames that file the
+      # extraction fails, ExecStartPre fails and the container stays
+      # down — deliberately loud rather than fail-soft, because a
+      # fail-soft path would have to bind-mount a file podman would then
+      # create as an empty *directory* over the live config. Down is
+      # caught by SystemdUnitFailed within 5m; a directory mounted over
+      # log4j2.properties would take the controller's logging with it.
+      systemd.services.podman-omada = {
+        preStart = ''
+          set -euo pipefail
+
+          conf=/run/omada/log4j2.properties
+
+          podman run --rm --network=none --entrypoint cat \
+            ${config.virtualisation.oci-containers.containers.omada.image} \
+            /opt/tplink/EAPController/properties.defaults/log4j2.properties >"$conf"
+
+          cat >>"$conf" <<'EOF'
+
+          # Appended by modules/apps/omada.nix - see #588.
+          logger.fwlocal.name = com.tplink.smb.device.firmware.upgrade.local
+          logger.fwlocal.type = asyncLogger
+          logger.fwlocal.level = error
+          logger.fwlocal.additivity = false
+          logger.fwlocal.appenderRef.rolling.ref = RollingFile
+          EOF
+        '';
       };
 
       # Device-facing ports only. Management (8043/8044/8088) and the
