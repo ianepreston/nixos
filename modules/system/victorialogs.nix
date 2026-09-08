@@ -10,7 +10,11 @@
 #
 # Data is intentionally ephemeral per #65 / #126 — no backup hook.
 # If the host dies, only historical logs are lost; the runtime config
-# and vector wire-up recreate themselves declaratively.
+# and vector wire-up recreate themselves declaratively. That's about
+# host-failure DR, not reboots: the storage dir is preserved across
+# the impermanence rollback (see modules/system/preservation-server.nix)
+# so the retention window below survives the nightly upgrade reboot.
+# Closes #578.
 _: {
   flake.modules.nixos.victorialogs =
     {
