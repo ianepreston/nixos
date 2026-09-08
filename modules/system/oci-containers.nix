@@ -203,11 +203,45 @@ _: {
         boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
         boot.kernel.sysctl."net.ipv6.conf.all.forwarding" = 1;
 
+        # Restic paths per container app, from the same `stateDirs`
+        # declaration that drives the tmpfiles rules below — the container
+        # analogue of what `myAppState` does for native apps
+        # (modules/system/app-state.nix).
+        #
+        # This deliberately replaces the old blanket `/var/lib/containers`
+        # backup path (#567). That path swept in podman's image store at
+        # /var/lib/containers/storage, which was 75 GB of amos1's 102 GB
+        # snapshot — layers a `podman pull` reproduces for free. Enumerating
+        # the app dirs instead keeps the intent legible at the declaration
+        # site: back up app state, not the image cache. Also dropped as a
+        # side effect, all reproducible: /var/lib/containers/cache (podman's
+        # blob-info sqlite), apprise's config dir (re-rendered from sops by
+        # each consumer's oneshot), and orphaned dirs left on disk by apps
+        # removed in #425.
+        #
+        # An app with nothing worth persisting sets `stateDirs = [ ]` and so
+        # contributes no path (see modules/apps/ytdlp-web-player.nix).
+        #
+        # Multi-subdir apps list the parent *and* its children so tmpfiles
+        # creates the whole tree (e.g. omada's data/ and logs/); as restic
+        # roots those children are redundant, so descendants of another
+        # declared dir are dropped. Restic groups snapshots by the paths
+        # set (see the `classify` comment in server-backups.nix), so
+        # keeping the root list minimal and stable also keeps the snapshot
+        # history from fragmenting.
+        services.restic.backups.server.paths =
+          let
+            dirs = lib.unique (
+              lib.concatLists (lib.mapAttrsToList (_: app: app.stateDirs) config.myContainerApp)
+            );
+          in
+          lib.filter (d: !(lib.any (other: other != d && lib.hasPrefix (other + "/") d) dirs)) dirs;
+
         systemd = {
           # Parent directory for all containerized app state. Apps create their
-          # own subdirs (/var/lib/containers/<app>) owned by the server user,
-          # which lets a single backup path cover every app automatically.
-          # Per-app subdirs come from `myContainerApp.<name>.stateDirs`.
+          # own subdirs (/var/lib/containers/<app>) owned by the server user.
+          # Per-app subdirs come from `myContainerApp.<name>.stateDirs`, which
+          # is also what the restic paths above are derived from.
           tmpfiles.rules = [
             "d /var/lib/containers 0755 root root -"
           ]
