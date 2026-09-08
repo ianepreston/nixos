@@ -402,9 +402,9 @@
             };
           };
 
-          # Standalone metrics oneshot — fires automatically as an
-          # ExecStartPost of the backup unit, but also runnable on
-          # demand. Reads the latest snapshot, aggregates per-app sizes
+          # Standalone metrics oneshot — fires from the backup unit's
+          # ExecStartPost, from its own boot + 6h timer below (#579),
+          # and on demand. Reads the latest snapshot, aggregates per-app sizes
           # via `restic ls`, writes a textfile_collector `.prom` for
           # node_exporter to pick up. Best-effort: if it fails the
           # backup is still considered successful (it's a separate
@@ -469,16 +469,51 @@
           };
         };
 
-        timers.restic-check-server = {
-          description = "Weekly restic check for server repo";
-          wantedBy = [ "timers.target" ];
-          timerConfig = {
-            # Sunday 04:30 — well clear of the 03:00 nightly backup
-            # window plus its 30m randomized delay, and after pruning
-            # has typically settled.
-            OnCalendar = "Sun *-*-* 04:30:00";
-            Persistent = true;
-            RandomizedDelaySec = "30m";
+        timers = {
+          restic-check-server = {
+            description = "Weekly restic check for server repo";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              # Sunday 04:30 — well clear of the 03:00 nightly backup
+              # window plus its 30m randomized delay, and after pruning
+              # has typically settled.
+              OnCalendar = "Sun *-*-* 04:30:00";
+              Persistent = true;
+              RandomizedDelaySec = "30m";
+            };
+          };
+
+          # Boot + 6-hourly refresh, on top of the backup unit's
+          # ExecStartPost trigger above.
+          #
+          # `textfileDir` sits on the rolled-back @root subvolume, so
+          # every `.prom` is wiped at boot. Every other producer in the
+          # repo already carries an OnBootSec (mylar3, sabnzbd, valheim,
+          # llama, podman-images, rollback-root) and so repopulates
+          # within minutes; restic was written *only* by the daily
+          # ExecStartPost at ~03:00, and the nixos-upgrade reboot lands
+          # at ~04:45 — destroying it for the remaining ~22h of the day.
+          # ResticSnapshotCountHigh (#568) was therefore evaluating an
+          # absent series almost all the time and had never once had
+          # data. Closes #579.
+          #
+          # 6h rather than boot-only: a run that loses the race with the
+          # /mnt/backups automount then self-heals long before the next
+          # nightly backup, and it lets ResticMetricsStale sit at a
+          # meaningful 12h instead of the >24h a daily cadence forces.
+          # The job is read-only against the repo and takes ~70s, so
+          # four walks a day is negligible load on the NAS.
+          restic-metrics-server = {
+            description = "Refresh restic snapshot metrics for node_exporter";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnBootSec = "5m";
+              OnUnitActiveSec = "6h";
+              # Nothing downstream needs sub-minute placement, and
+              # loosening this lets systemd batch the wakeup.
+              AccuracySec = "1m";
+              Unit = "restic-metrics-server.service";
+            };
           };
         };
       };

@@ -213,6 +213,60 @@ _: {
                 };
               }
               {
+                # Liveness check for the metric ResticSnapshotCountHigh
+                # above depends on — same role as ValheimMetricsStale /
+                # LlamaMetricsStale / PodmanImageMetricsStale, and
+                # restic-metrics-server.service is left out of the
+                # unit-include regex below for the same reason.
+                #
+                # Two branches, because for restic "gone" is the failure
+                # mode that actually happened (#579) and a bare
+                # `time() - mtime` cannot see it. textfileDir lives on
+                # the rolled-back @root subvolume, so restic.prom is
+                # destroyed on every boot; until #579 nothing rewrote it
+                # until the next 03:00 backup, leaving
+                # ResticSnapshotCountHigh evaluating an empty vector for
+                # ~22h a day with no complaint from anything. A missing
+                # file means *no* node_textfile_mtime_seconds series to
+                # subtract from, so the staleness branch alone is silent
+                # in precisely the case worth alerting on.
+                #
+                # Branch 2 reads as "an instance that runs the nightly
+                # backup but is publishing no restic.prom at all".
+                # node_systemd_unit_state{name="restic-backups-server.service"}
+                # is the per-instance anchor: it exists exactly on hosts
+                # importing server-backups.nix (the unit is in the
+                # unit-include regex), which keeps this from firing
+                # forever on hosts that legitimately have no restic repo.
+                # `max by (instance)` collapses the one-series-per-state
+                # fan-out to a single 1 per host; plain `absent()` is not
+                # usable here because it drops the instance label and so
+                # would only fire when *every* host lost the file.
+                #
+                # 12h: the metric refreshes on boot, every 6h, and after
+                # each nightly backup (modules/system/server-backups.nix),
+                # so 12h is two missed runs. `for` is 15m rather than the
+                # usual 10m to clear the ~5m post-boot window where the
+                # file is legitimately absent before the OnBootSec timer
+                # has run.
+                alert = "ResticMetricsStale";
+                expr = ''
+                  (time() - node_textfile_mtime_seconds{file="${textfileDir}/restic.prom"} > 43200)
+                  or
+                  (
+                    max by (instance) (node_systemd_unit_state{name="restic-backups-server.service"})
+                    unless on (instance)
+                    node_textfile_mtime_seconds{file="${textfileDir}/restic.prom"}
+                  )
+                '';
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "restic metrics are stale or missing on {{ $labels.instance }}";
+                  description = "restic.prom has not been rewritten recently (or is absent entirely) on {{ $labels.instance }}, so ResticSnapshotCountHigh and the restic size metrics are evaluating frozen or empty data. Check restic-metrics-server.service and its timer, and that /mnt/backups is mounted.";
+                };
+              }
+              {
                 alert = "HostHighMemory";
                 expr = "(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10";
                 for = "10m";
