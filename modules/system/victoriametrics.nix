@@ -187,6 +187,28 @@ _: {
                 };
               }
               {
+                # Retention drift. `restic forget` groups snapshots
+                # before applying the policy, and its default grouping
+                # (`host,paths`) fragmented ours into one frozen,
+                # never-expiring budget per paths-set — so the repo held
+                # ~4x the intended snapshots for months with nothing
+                # watching (#568). `--group-by host` in
+                # modules/system/server-backups.nix fixes the cause;
+                # this watches the effect. 7 daily + 4 weekly + 6
+                # monthly is ~17 in steady state, so 25 leaves room for
+                # a manual snapshot or two without flapping. Metric is
+                # rewritten once per nightly backup, hence the long
+                # `for` — it only needs to survive a couple of runs.
+                alert = "ResticSnapshotCountHigh";
+                expr = "restic_repo_snapshot_count > 25";
+                for = "6h";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "restic repo on {{ $labels.instance }} is retaining too many snapshots";
+                  description = "{{ $value }} snapshots in the restic repo on {{ $labels.instance }}; the 7-daily/4-weekly/6-monthly policy implies ~17. Suspect retention fragmenting into per-paths-set groups again — check `restic snapshots --group-by host` and that pruneOpts still carries --group-by host (see modules/system/server-backups.nix, #568).";
+                };
+              }
+              {
                 alert = "HostHighMemory";
                 expr = "(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10";
                 for = "10m";
