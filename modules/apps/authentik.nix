@@ -139,9 +139,10 @@
       # The default has been silently broken on every fresh authentik
       # install — hpp-1 only worked because the field was set by hand
       # in the UI before this blueprint existed. Encoding it here makes
-      # forward-auth deterministic across hosts (and incidentally lets
-      # gatus's external probes follow the redirect over HTTPS, so the
-      # cert-expiration condition succeeds).
+      # forward-auth deterministic across hosts. (This used to also be
+      # what let gatus's probes follow the redirect over HTTPS; they
+      # stop at the 302 now — see the ignore-redirect note in
+      # ../apps/gatus.nix — so only real browsers depend on it.)
       outpostEntry = ''
         - model: authentik_outposts.outpost
           identifiers:
