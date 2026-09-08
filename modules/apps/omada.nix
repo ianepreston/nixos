@@ -46,12 +46,15 @@
 # 0.0.0.0 rather than 127.0.0.1, so the host firewall — not podman's
 # DNAT — is the gate. That's fine in both directions that matter:
 #
-#   * Only the device-facing ports are opened below. The management
-#     UI (8043) stays closed, so Caddy on loopback is still the sole
-#     path to it, same as UniFi.
+#   * The device-facing ports are opened below, plus the management
+#     port (8043) scoped to the infra VLAN, which adopted devices
+#     need for firmware images (see the firewall block). No general
+#     LAN client can reach the management UI directly, so Caddy on
+#     loopback is still the sole browser path to it, same as UniFi.
 #   * vlan30 can't reach any of it. iot-network.nix installs a deny
 #     chain as the *first* rule in nixos-fw for `-i iot`, which runs
-#     ahead of every `allowedTCPPorts` accept.
+#     ahead of every accept here — the `allowedTCPPorts` ones and the
+#     appended 8043 rule alike.
 #
 # ## Port collision with UniFi
 #
@@ -118,8 +121,10 @@ _: {
   flake.modules.nixos.omada =
     { config, lib, ... }:
     let
-      # Management HTTPS — the UI Caddy proxies to. Upstream default;
-      # deliberately NOT in the firewall allowlist.
+      # Management HTTPS — the UI Caddy proxies to, and the port
+      # adopted devices pull firmware images from. Upstream default;
+      # deliberately NOT in the flat allowlist — it is opened to the
+      # infra VLAN only, in the extraCommands rule below.
       manageHttpsPort = 8043;
       # Guest/user portal HTTPS. Moved off upstream's 8843 because the
       # UniFi container holds that port (see header). Not firewalled
@@ -268,18 +273,55 @@ _: {
         '';
       };
 
-      # Device-facing ports only. Management (8043/8044/8088) and the
-      # portal (8844) are deliberately absent — Caddy reaches those over
-      # loopback. Also absent: the controller-discovery ports the Omada
-      # phone app uses to find a controller (19810/27001 UDP). The app
-      # would then have to reach the management port, which is closed,
-      # so opening discovery for it would buy nothing.
+      # Device-facing ports. 8044/8088 and the portal (8844) are
+      # deliberately absent — Caddy reaches the UI over loopback. Also
+      # absent: the controller-discovery ports the Omada phone app uses
+      # to find a controller (19810/27001 UDP). The app would then have
+      # to reach the management port, which no general LAN client can,
+      # so opening discovery for it would still buy nothing.
       networking.firewall = {
         # 29810 is how a factory-default device finds the controller;
         # it arrives as a broadcast, which the allowlist accept matches
         # before nixos-fw-log-refuse drops non-unicast traffic.
         allowedUDPPorts = [ 29810 ];
         allowedTCPPorts = deviceTcpPorts;
+
+        # Firmware images: adopted devices fetch them from the
+        # controller on the management port, not from TP-Link's CDN
+        # (#584). The controller downloads the image itself, caches it
+        # under data/device-firmware/, and serves it over 8043 — so
+        # with 8043 closed every upgrade failed. The device SYNs, is
+        # dropped (silently: logRefusedConnections is off), stalls in
+        # FILE_DOWNLOAD_START, and the controller times it out at ten
+        # minutes with STAGE_DOWNVAL_TIMEOUT ->
+        # DEVICE_FILE_DOWNLOAD_FAIL. Adoption, config push and
+        # telemetry all ride 29811-29817, which is why everything else
+        # worked and only upgrades broke.
+        #
+        # Scoped to the infra VLAN rather than opened flat, because 8043
+        # is also the browser UI: a flat rule would put Omada's login
+        # page on the LAN and lose the authentik forward-auth that
+        # omada.<serverDomain> routes through (Omada's own local admin
+        # login would still apply — it is the outer layer that goes).
+        # Managed devices live on 192.168.15.0/24, so that is the only
+        # source that needs it. Source-CIDR rather than an interface
+        # name for the same reason as flaresolverr.nix: the LAN NIC is
+        # enp1s0 on hpp-1 and enp4s0 on amos1. IPv4-only — the LAN is
+        # v4.
+        #
+        # vlan30 stays out regardless: iot-network.nix inserts its deny
+        # chain at position 1 in nixos-fw, ahead of anything appended
+        # here.
+        #
+        # Not opened: 8044, the v6.3+ upgrade-ES listener. No traffic to
+        # it was seen during a failing upgrade, so it goes untouched
+        # until a capture shows the device wants it.
+        extraCommands = ''
+          iptables -A nixos-fw -p tcp -s 192.168.15.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept
+        '';
+        extraStopCommands = ''
+          iptables -D nixos-fw -p tcp -s 192.168.15.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept || true
+        '';
       };
 
       myAuthentik.forwardAuthApps.omada = {
