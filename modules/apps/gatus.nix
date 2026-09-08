@@ -16,20 +16,26 @@
 #                       purely the Caddy route, with auth omitted.
 #
 # Probe strategy. Each endpoint hits https://<app>.<serverDomain> from
-# outside Caddy and asserts:
-#   * [STATUS] == any(200, 302)
+# outside Caddy, does NOT follow redirects (client.ignore-redirect),
+# and asserts:
+#   * [STATUS] == any(200, 301, 302, 307, 308)
 #       Apps gated by authentik forward-auth respond 302 (redirect to
 #       the outpost) for an unauthenticated request — that *is* the
 #       healthy response: it confirms Caddy → forward_auth → outpost
 #       is alive. A 200 means the app speaks OIDC natively or is
-#       publicly exposed. Anything else (5xx, timeout, bad cert) trips.
+#       publicly exposed. Apps that redirect from their own handler
+#       pick their own code — seerr answers 307 to /login — so every
+#       redirect form is accepted rather than just 302. Anything else
+#       (4xx, 5xx, timeout, bad cert) trips.
 #   * [RESPONSE_TIME] < 2000ms (issue spec).
 #   * [CERTIFICATE_EXPIRATION] > 336h (14d).
 #
 # The endpoint list is sourced from `config.myCaddy.apps` so it stays
 # in sync as apps are added/removed without duplicating the registry.
 # Gatus itself appears in the list — probing its own admin route is a
-# useful end-to-end check of the forward-auth chain.
+# useful end-to-end check of the forward-auth chain. So does authentik
+# (registered by modules/apps/authentik.nix), so there is no separate
+# infrastructure-group probe for it.
 #
 # Alerts route through prometheus: gatus exposes /metrics, prometheus
 # scrapes it, and a `gatus_results_endpoint_success == 0` rule fires
@@ -48,7 +54,7 @@
 #     checking the `Location` header matches the outpost URL — gatus
 #     supports `[HEADERS].Location == ...` conditions but the exact
 #     redirect URL depends on the embedded outpost state. Initial
-#     cut accepts any 302; tighten later.
+#     cut accepts any redirect status; tighten later.
 _: {
   flake.modules.nixos.gatus =
     {
@@ -63,40 +69,35 @@ _: {
       gatusHost = "gatus.${hostSpec.serverDomain}";
       statusHost = "status.${hostSpec.serverDomain}";
 
-      authentikHost = "authentik.${hostSpec.serverDomain}";
-
       # Per-app HTTP probe. Hits the external (caddy-fronted) URL from
       # outside, so DNS + TLS + caddy route + forward-auth chain (if
-      # any) are all on the path. 302 is treated as healthy because
-      # forward-auth gated apps redirect unauthenticated requests to
-      # the authentik outpost — that redirect IS the signal we want.
+      # any) are all on the path. A redirect is treated as healthy
+      # because forward-auth gated apps redirect unauthenticated
+      # requests to the authentik outpost — that redirect IS the
+      # signal we want.
+      #
+      # ignore-redirect stops there instead of walking the whole OIDC
+      # login flow. Following it cost five extra requests per probe to
+      # learn nothing, and at ~20 gated apps × 1440 probes/day that was
+      # 94% of authentik's log bytes and >50% of the entire host
+      # journal (closes #587). The asserted status is the first
+      # response, and TLS state comes from the first hop, so both
+      # [STATUS] and [CERTIFICATE_EXPIRATION] still describe what they
+      # did before.
       mkAppEndpoint = name: app: {
         inherit name;
         group = "apps";
         url = "https://${app.host}";
         interval = "60s";
         conditions = [
-          "[STATUS] == any(200, 302)"
+          "[STATUS] == any(200, 301, 302, 307, 308)"
           "[RESPONSE_TIME] < 2000"
           "[CERTIFICATE_EXPIRATION] > 336h"
         ];
-        client.timeout = "10s";
-      };
-
-      # Authentik itself isn't in myCaddy.apps (it's wired via
-      # services.authentik-nix's own caddy hook), so probe it
-      # explicitly. Same shape as app probes.
-      authentikEndpoint = {
-        name = "authentik";
-        group = "infrastructure";
-        url = "https://${authentikHost}/";
-        interval = "60s";
-        conditions = [
-          "[STATUS] == 200"
-          "[RESPONSE_TIME] < 2000"
-          "[CERTIFICATE_EXPIRATION] > 336h"
-        ];
-        client.timeout = "10s";
+        client = {
+          timeout = "10s";
+          ignore-redirect = true;
+        };
       };
 
       # External dependency probes — these are the meta-monitoring
@@ -155,7 +156,7 @@ _: {
           header = "Homelab status";
         };
 
-        endpoints = appEndpoints ++ [ authentikEndpoint ] ++ externalEndpoints;
+        endpoints = appEndpoints ++ externalEndpoints;
       };
     in
     {
