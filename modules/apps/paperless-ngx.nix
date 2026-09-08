@@ -24,6 +24,8 @@
 # only generates a key when the env file doesn't supply one; because
 # ours does, it just creates the empty shim file the units'
 # EnvironmentFile list expects (ours is listed second, so it wins).
+# That shim unit reads the sops env file too, and needs its own
+# ordering edge against sops — see the systemd.services block below.
 #
 # Version currency: nixos-26.05 pins 2.20.15, the tail of the old
 # major, while upstream is on 3.x. Per CLAUDE.md ("wire a per-package
@@ -280,6 +282,27 @@
       systemd.services = {
         paperless-task-queue.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
         paperless-web.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
+
+        # paperless-secret-key.service reads the same sops-rendered env
+        # file as the four units above, but it is neither a postgres
+        # consumer nor an OIDC consumer, so it is deliberately absent
+        # from `paperlessUnits` and gets no ordering from
+        # myPostgresApp/myAuthentik. Those two aggregators are what
+        # thread `After=sops-install-secrets.service` onto the four —
+        # the postgres helper (paperless-ngx-db-password.service) is
+        # After=sops and Before=+WantedBy= its consumerService list —
+        # so without this the shim unit races sops at boot. It has no
+        # `-` prefix on its EnvironmentFile, and all four units carry
+        # `Requires=` on it, so losing that race takes the whole app
+        # down until someone restarts it by hand — a `Type=oneshot` +
+        # `RemainAfterExit=true` failure retries nothing (#580).
+        # Declared here rather than by widening `paperlessUnits`, so the
+        # edge is stated where it applies instead of arriving as a side
+        # effect of the DB wiring.
+        paperless-secret-key = {
+          after = [ "sops-install-secrets.service" ];
+          wants = [ "sops-install-secrets.service" ];
+        };
       };
 
       # Preservation defaults the bind-mount root to root:root mode
