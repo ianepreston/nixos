@@ -101,11 +101,18 @@
             # `--latest 1 --host <h>` does NOT return a single snapshot:
             # restic groups by (host, paths-set) and returns the latest
             # for each group. Repos that have evolved their `paths`
-            # list over time (e.g. new app modules adding to
-            # services.restic.backups.server.paths) end up with many
-            # groups and many "latest" results. Listing all snapshots
-            # for the host and picking the chronologically newest is
-            # the only robust way to find the actually-latest backup.
+            # list over time (app modules contribute their own state
+            # dirs, so the set changes whenever an app is added or
+            # removed) end up with many groups and many "latest"
+            # results. Listing all snapshots for the host and picking
+            # the chronologically newest is the only robust way to find
+            # the actually-latest backup.
+            #
+            # The same default grouping governs `restic forget`, where
+            # it silently fragmented the retention policy into one
+            # never-expiring budget per paths-set — hence the explicit
+            # `--group-by host` in `pruneOpts` below (#568). Nothing
+            # analogous exists for `snapshots`, so this loop stays.
             snapshots = json.loads(restic("snapshots", "--host", HOST))
             if not snapshots:
                 sys.stderr.write(f"no snapshots for host {HOST}\n")
@@ -340,7 +347,19 @@
             RandomizedDelaySec = "30m";
           };
 
+          # `--group-by host` is load-bearing, not cosmetic. restic's
+          # default grouping is `host,paths`, and `paths` is not static
+          # here — every app module contributes its own state dirs, so
+          # adding or removing an app mints a brand-new retention group
+          # with a fresh 7/4/6 budget. Once a paths-set stops recurring
+          # its group is frozen: no new snapshots arrive to age the old
+          # ones out, so its newest ~17 are kept forever and pin their
+          # blobs against dedup. That kept ~4x the intended snapshots
+          # (60 on amos1, 72 on hpp-1, vs the ~17 the policy implies)
+          # until #568. One repo per host (see `repository` above) means
+          # grouping by host alone collapses to a single policy.
           pruneOpts = [
+            "--group-by host"
             "--keep-daily 7"
             "--keep-weekly 4"
             "--keep-monthly 6"
