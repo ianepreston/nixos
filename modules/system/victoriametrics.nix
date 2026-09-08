@@ -184,6 +184,76 @@ _: {
                 };
               }
               {
+                # Log-rate runaway — "something on this host is flooding
+                # the journal", deliberately not scoped to a unit (#590).
+                #
+                # The gap this fills: on 2026-09-08 the Valheim container
+                # wedged into a 68/s logging loop after a single transient
+                # HTTP failure (see the GetPublicIP block in
+                # modules/apps/valheim.nix) and wrote 1.04 GB of journal —
+                # ~96% of hpp-1's 24h volume — in under four hours. Not one
+                # existing rule fired, and each was correct to stay silent:
+                # the unit never failed (SystemdUnitFailed), systemd never
+                # restarted it (ServiceRestartLoop, NRestarts=0), the game
+                # server was up and serving throughout (ValheimServerDown),
+                # its exporter kept publishing (ValheimMetricsStale), and
+                # journald's rotation absorbed the gigabyte without going
+                # near a disk threshold (FilesystemAlmostFull). journald's
+                # own rate limiter did not engage either — the NixOS default
+                # (RateLimitInterval=30s, RateLimitBurst=10000) permits
+                # 333 msg/s per service, and the loop sat well under it.
+                #
+                # A healthy service logging itself into the ground is a
+                # whole class of failure with no signal of its own, so this
+                # names no unit: it fires on the aggregate and the operator
+                # finds the culprit. A per-unit rule would only ever have
+                # caught the one instance already seen.
+                #
+                # No new exporter — vector's `internal_metrics` source
+                # (modules/system/vector.nix) already counts every event its
+                # journald source reads, and the `vector` scrape job below
+                # already collects it.
+                #
+                # Threshold from 7 days of per-minute journal buckets on
+                # both servers, measured as the rolling 5m rate this
+                # expression evaluates:
+                #
+                #   host   p50    p90    p99    max (normal)   incident
+                #   hpp-1  5.2/s  6.1/s  12.1/s  136.7/s       415/s
+                #   amos1  4.9/s  6.3/s  21.9/s   69.0/s        —
+                #
+                # `for: 15m` is the load-bearing half, not the threshold.
+                # The only thing in normal operation that crosses 50/s is
+                # nix-gc printing one line per deleted store path (38,860
+                # lines across 00:00–00:07 on 2026-09-07, on both hosts at
+                # once), plus a recurring ~46/s nightly on amos1 at 01:00.
+                # Those are bounded runs of work: the longest stretch above
+                # 50/s anywhere in the 7d sample was 7 minutes, so a 15m
+                # confirmation clears every one of them while still firing
+                # on a runaway that has no reason to ever stop. Do not trade
+                # the `for` down without re-measuring — a burst threshold
+                # high enough to reject nix-gc on its own (>140/s) would
+                # have to sit above the 68/s loop this rule exists for.
+                #
+                # Caveat when it does fire: vector reads the journal from a
+                # persisted cursor, so a vector outage long enough to build
+                # a real backlog makes the catch-up replay look like a rate
+                # spike. Check whether vector restarted recently before
+                # chasing a producer.
+                #
+                # Finding the culprit:
+                #   journalctl --since -15m -o json --output-fields=_SYSTEMD_UNIT \
+                #     | jq -r '._SYSTEMD_UNIT // "?"' | sort | uniq -c | sort -rn | head
+                alert = "JournalLogRateHigh";
+                expr = ''rate(vector_component_received_events_total{component_id="journald",component_kind="source"}[5m]) > 50'';
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Journal log rate runaway on {{ $labels.host }}";
+                  description = "vector has been reading {{ $value | humanize }} journal events/sec on {{ $labels.host }} for 15m; normal is ~5/s and the busiest legitimate burst measured (nix-gc) tops out around 137/s for a few minutes. Something is stuck in a logging loop. Find it with `journalctl --since -15m -o json --output-fields=_SYSTEMD_UNIT | jq -r '._SYSTEMD_UNIT' | sort | uniq -c | sort -rn | head`, then check whether vector merely restarted and is replaying a backlog before blaming the top unit.";
+                };
+              }
+              {
                 # initrd @old_roots prune failed (#310). The host still
                 # boots — @root is recreated from @root-blank *before*
                 # the prune — but the initrd rollback left a

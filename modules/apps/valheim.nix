@@ -90,6 +90,40 @@
 # behaviour. UDP > 1024, so the remapped PUID user can bind without
 # CAP_NET_BIND_SERVICE.
 #
+# ## GetPublicIP log-rate runaway (upstream game bug, #590)
+#
+# One transient HTTP failure can wedge the game server into a permanent
+# ~68/s logging loop. Seen once on hpp-1 on 2026-09-08: the container came
+# up at 05:15 after a nixos-upgrade reboot, looped until it was restarted
+# by hand at 09:05, and wrote 4,721,938 lines / 1.04 GB of journal in that
+# 3h50m — ~96% of the host's entire 24h journal volume.
+#
+# `ZNet.GetPublicIP` walks a fallback list of public-IP endpoints, reusing
+# one shared `HttpClient` and assigning `.Timeout` per attempt. In .NET that
+# is illegal once a request has been sent, so the first genuine failure
+# poisons the client permanently:
+#
+#   1 System.Net.Http.HttpRequestException   ipinfo.io returned non-2xx
+#   942775 System.InvalidOperationException  "This instance has already
+#                                            started one or more requests"
+#
+# Every attempt after the first throws in `set_Timeout` before touching the
+# network — no I/O, no timeout, no backoff — so it spins as fast as the
+# retry loop allows. Nothing here can fix it; the image only wraps the game
+# binary. Recovery is `podman restart valheim`.
+#
+# Note the obvious mitigation does not work: `SERVER_PUBLIC = "false"` is
+# already set below and the public-IP lookup runs regardless.
+#
+# Nothing alerted at the time — the unit stayed active, systemd never
+# restarted it, the server kept serving and the exporter kept publishing.
+# That gap is now covered generically by `JournalLogRateHigh` in
+# modules/system/victoriametrics.nix rather than by anything Valheim-
+# specific, since a service logging itself into the ground is not a
+# Valheim-only failure mode. Deliberately not filtered in vector.nix
+# either: this is an episodic malfunction, not steady background noise,
+# and filtering it would hide the evidence of a broken server.
+#
 # Adding mods later (BepInEx / Valheim+ / Jotunn):
 # Set `BEPINEX = "true"` in the `environment` block below; on next
 # start the image installs BepInEx into /config/bepinex. Drop mod
@@ -504,6 +538,10 @@ _: {
           # a PlayFab session lookup and is independent of the browser
           # listing, so unlisted + join-code is the minimum-exposure
           # combination that still lets a console player in.
+          #
+          # It does *not* suppress the game's public-IP lookup, so it is
+          # not a mitigation for the GetPublicIP logging loop — see that
+          # section in the header (#590).
           SERVER_PUBLIC = "false";
           # Switch the networking backend from Steam to PlayFab so
           # non-Steam clients can join and traffic is relayed rather
