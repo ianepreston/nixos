@@ -151,7 +151,10 @@ _: {
       # /config/worlds_local; the image generates a fresh map whenever that
       # basename has no save behind it. So incrementing this starts a brand
       # new world on next container start — which is the intended mechanism
-      # for wiping and re-rolling when 1.0 lands.
+      # for wiping and re-rolling. g2 is the 1.0 / Deep North reseed: the
+      # final biome only generates in terrain a world has never streamed in,
+      # so carrying g1 forward would leave the new content stranded behind
+      # already-explored map.
       #
       # This is deliberately one value shared by every host rather than a
       # hostSpec option: a reseed is a "start over everywhere" decision, and
@@ -162,7 +165,7 @@ _: {
       # /var/lib/containers/valheim/config/worlds_local (and in restic) under
       # the previous name, so a bump is reversible by reverting this number.
       # Delete them by hand once you're sure you don't want them back.
-      worldGeneration = 1;
+      worldGeneration = 2;
       worldName = "${hostSpec.hostName}-g${toString worldGeneration}";
     in
     {
