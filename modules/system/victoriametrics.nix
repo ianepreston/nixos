@@ -670,6 +670,103 @@ _: {
                 };
               }
               {
+                # Omada's adopted devices, from the omada-metrics oneshot
+                # in ../apps/omada-metrics.nix. Everything below the
+                # controller was unmonitored until #586: container
+                # liveness, UI reachability and the application log were
+                # all covered, but not a single metric described the
+                # switches themselves. The module is prod-only, so these
+                # series are absent on hpp-1 and the rules simply never
+                # evaluate there.
+                #
+                # Critical rather than warning: there are two switches and
+                # they *are* the network. Anything downstream losing one
+                # will also trip GatusEndpointDown and friends; this rule
+                # is what names the cause instead of leaving a wall of
+                # symptom alerts. 5m rides out a reboot triggered by a
+                # config push or a firmware upgrade.
+                alert = "OmadaDeviceDown";
+                expr = "omada_device_up == 0";
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "Omada device {{ $labels.name }} is not connected";
+                  description = "The Omada controller on {{ $labels.instance }} has not had {{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) in the Connected state for 5m. Check omada_device_status for which state it is in — 2 Pending, 3 Heartbeat Missed, 4 Isolated — and omada_device_detail_status for the cause.";
+                };
+              }
+              {
+                # The rule #584 needed and nothing had: a firmware upgrade
+                # failed nightly for four days, the controller's audit log
+                # recorded none of it (#585), and the UI showed only a
+                # device that was not upgraded.
+                #
+                # 48h, not the 7d the issue originally proposed, for two
+                # measured reasons. The controller's own auto-upgrade
+                # schedules are *daily* (`execute_cron` "0 0 12 * * ?" and
+                # "0 0 23 * * ?", one per model, in its `autocheckupgrade`
+                # collection), so 48h already means two full unattended
+                # cycles failed to land it. And a `for:` clock restarts
+                # whenever the series goes absent — amos1 reboots on kernel
+                # updates every 2-8 days, so a 7d window would usually have
+                # been reset before it matured, i.e. would rarely have
+                # fired at all.
+                #
+                # Warning, not critical: a pending upgrade is a thing to
+                # get to, not a thing to wake up for. Pair it with
+                # OmadaFirmwareUpgradeFailed in ./log-alerts.nix, which
+                # catches the attempt as it fails rather than the state it
+                # leaves behind.
+                alert = "OmadaFirmwareUpgradeAvailable";
+                expr = "omada_device_firmware_upgrade_available == 1";
+                for = "48h";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Omada device {{ $labels.name }} has a pending firmware upgrade";
+                  description = "{{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) has had a newer firmware build available for 48h, which is two missed runs of the controller's daily auto-upgrade. omada_device_firmware_info carries the running and available versions. Adopted devices fetch images from the controller on 8043, so start there — see the firewall block in modules/apps/omada.nix, and check OmadaFirmwareUpgradeFailed.";
+                };
+              }
+              {
+                # The exporter's own failure that nothing else can see. A
+                # revoked Open API client, a role change, or an endpoint
+                # renamed by a controller upgrade all leave the oneshot
+                # exiting 0 and rewriting omada.prom on time — so
+                # OmadaMetricsStale below stays quiet — while every device
+                # series quietly disappears. 15m is roughly seven missed
+                # runs of the 2m timer, which is enough to ride out a
+                # controller restart without firing.
+                #
+                # A controller that is down entirely is deliberately out of
+                # scope: the exporter publishes omada_controller_up 0 and
+                # no omada_scrape_error at all in that case, because
+                # SystemdUnitFailed and GatusEndpointDown already carry it.
+                # See the `errors` block in ../apps/omada-metrics.nix.
+                alert = "OmadaScrapeFailing";
+                expr = "omada_scrape_error == 1";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Omada exporter cannot read {{ $labels.endpoint }} on {{ $labels.instance }}";
+                  description = "omada-metrics.service has been failing to read the {{ $labels.endpoint }} Open API endpoint for 15m, so the metrics it feeds are missing rather than stale. If endpoint is \"token\", the Open API client has been revoked or rotated — remint it under Global View → Settings → Platform Integration and update sops. Otherwise check `journalctl -u omada-metrics` for the errorCode; -1007 is a role change. See modules/apps/omada-metrics.nix.";
+                };
+              }
+              {
+                # Same liveness-check-on-the-checker shape as
+                # ValheimMetricsStale / LlamaMetricsStale /
+                # PodmanImageMetricsStale above, and omada-metrics.service
+                # is left out of the unit-include regex for the same
+                # reason: watching mtime covers every way the pipeline can
+                # stall, not just a failed unit. 15m is roughly seven
+                # missed runs of the 2m timer.
+                alert = "OmadaMetricsStale";
+                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/omada.prom"} > 900'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Omada metrics are stale on {{ $labels.instance }}";
+                  description = "omada.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so OmadaDeviceDown and OmadaFirmwareUpgradeAvailable are evaluating frozen data. Check omada-metrics.service and its timer.";
+                };
+              }
+              {
                 alert = "HighCaddy5xx";
                 expr = ''sum by (instance, server) (rate(caddy_http_requests_total{code=~"5.."}[5m])) > 0.1'';
                 for = "5m";
