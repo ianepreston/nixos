@@ -151,7 +151,7 @@
           # "fetchFromGitHub rev pins" custom manager; hash is regenerated
           # manually from the failing build.
           # renovate: datasource=github-tags depName=dahlb/ha_blueair
-          rev = "3de0caee435fcdbb7eff2884eba98494a185cacd"; # v1.56.3
+          rev = "9a3bc39695f61006bffa24f883c5e77b0321191a"; # v1.56.4
           hash = "sha256-vSx7ztWzVbENixOASV13z065DRNNE1/zlguHP5TqsuA=";
         };
         dependencies = [ blueair-api ];
