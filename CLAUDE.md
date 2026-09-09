@@ -149,11 +149,15 @@ separate volume bookkeeping under `/var/lib/containers/<app>`, and inter-app DNS
 that doesn't exist between native services. Reach for a container only when one
 of the exceptions below applies.
 
-When evaluating a candidate, check the version in both `nixos-25.11` and
-`nixos-unstable`:
+When evaluating a candidate, check the version in both the stable channel the
+flake tracks (the `nixpkgs` input in `flake.nix`) and `nixos-unstable`. Derive
+the stable ref from `flake.nix` rather than hardcoding it here, so this doesn't
+drift when the channel bumps:
 
 ```sh
-nix eval --raw "github:NixOS/nixpkgs/nixos-25.11#<app>.version"
+# stable channel is whatever flake.nix tracks — don't hardcode it
+stable=$(grep -oE 'nixos-[0-9]+\.[0-9]+' flake.nix | head -1)
+nix eval --raw "github:NixOS/nixpkgs/$stable#<app>.version"
 nix eval --raw "github:NixOS/nixpkgs/nixos-unstable#<app>.version"
 ```
 
