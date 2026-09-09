@@ -76,7 +76,7 @@ opt.iskeyword:append "-" -- treats words with `-` as single words
 opt.formatoptions:remove { "c", "r", "o" } -- This is a sequence of letters which describes how automatic formatting is to be done
 -- opt.colorcolumn = { 80, 120 } -- set line width indication at columns 80 and 120
 opt.sessionoptions = "blank,buffers,curdir,folds,help,tabpages,winsize,winpos,terminal,localoptions"
-vim.lsp.set_log_level "off" -- LSP log gets huge and I don't care about it
+vim.lsp.log.set_level "off" -- LSP log gets huge and I don't care about it
 
 --- Get quarto to work as markdown
 vim.filetype.add {
