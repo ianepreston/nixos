@@ -519,7 +519,7 @@ _: {
         # renovate tracks `latest` and bumps the digest on its own
         # (see renovate.json's digest manager).
         # renovate: datasource=docker depName=lloesche/valheim-server
-        image = "lloesche/valheim-server:latest@sha256:20fde516ce311e6084f82f295c9eb6934af57b357c657937a04f62bdf5946149";
+        image = "lloesche/valheim-server:latest@sha256:bbda47cbbc9fd7b0385803ba0a70ba2084df4cb87ec6170a145aec5df06be07e";
         volumes = [
           "/var/lib/containers/valheim/config:/config"
           "/var/lib/containers/valheim/cache:/opt/valheim"
