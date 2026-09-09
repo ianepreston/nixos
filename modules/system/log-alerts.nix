@@ -1,10 +1,17 @@
-# Security alert rules — the log-derived half.
+# Log-derived alert rules — everything alertable that lives in a log
+# line rather than a metric.
 #
-# Closes the gap found by the 2026-08-26 monitoring review: of the 34
-# alert rules on these hosts, none were security rules. The checklist
-# in "Homelab Audit Scope, Threat Model and Checklist" §5 asks for
-# repeated auth failures, config-change events, and new-device
-# detection; this module covers the first two.
+# Started as the security half of the 2026-08-26 monitoring review:
+# of the 34 alert rules on these hosts, none were security rules, and
+# the checklist in "Homelab Audit Scope, Threat Model and Checklist"
+# §5 asks for repeated auth failures, config-change events, and
+# new-device detection. Those rules (`security-auth`,
+# `security-config`) are still the bulk of the file and are why it
+# exists. It is named for the *mechanism* rather than for them
+# because the mechanism — a vmalert instance that can query
+# VictoriaLogs — is the scarce thing, and non-security rules that
+# need it have nowhere else to go: `omada-firmware` is the first
+# (#585).
 #
 # Why a *second* vmalert instance. vmalert takes exactly one
 # `-datasource.url`, and these rules query VictoriaLogs, not
@@ -16,10 +23,11 @@
 # next to `vmalert-main.service`, same notifier, same alertmanager,
 # same Discord receiver, same Watchdog guarantee.
 #
-# Where the rest of the security rules live: `CertificateExpiringSoon`
-# is a metrics rule (it reads gatus's `gatus_results_certificate_
-# expiration_seconds`) so it sits in the `security` rule group in
-# ./victoriametrics.nix. This file is the log-derived half only.
+# Where related metrics rules live: `CertificateExpiringSoon` reads
+# gatus's `gatus_results_certificate_expiration_seconds`, so it sits
+# in the `security` rule group in ./victoriametrics.nix. Anything
+# that can be expressed as a metric belongs there, not here — this
+# file is for signals that only ever exist as text.
 #
 # vlogs group semantics, which drive how these rules are written:
 #   * vmalert prepends `_time:<group interval>` to every expression,
@@ -39,11 +47,12 @@
 # The UI is loopback-only and deliberately not registered in
 # `myAuthentik.forwardAuthApps` (unlike vmalert-main). A second rules
 # UI is worth little over `curl 127.0.0.1:8882/api/v1/rules` through
-# an SSH forward, and this is the module where extra reachable
-# surface is the thing being argued against. Flip it to a forward-auth
-# app if the rule state ever needs to be checked from a phone.
+# an SSH forward, and the security rules here make this the module
+# where extra reachable surface is the thing being argued against.
+# Flip it to a forward-auth app if the rule state ever needs to be
+# checked from a phone.
 _: {
-  flake.modules.nixos.security-alerts =
+  flake.modules.nixos.log-alerts =
     _:
     let
       # 8880 is vmalert's default (taken by the UniFi controller),
@@ -248,6 +257,60 @@ _: {
                 annotations = {
                   summary = "pfSense config changed by {{ $labels.pf_actor }}";
                   description = "{{ $labels.pf_actor }} changed the pfSense configuration: {{ $labels.pf_change }}. If that was not you, the config history at Diagnostics → Backup & Restore → Config History has the diff and can roll it back.";
+                };
+              }
+            ];
+          }
+          {
+            name = "omada-firmware";
+            type = "vlogs";
+            interval = "5m";
+            rules = [
+              {
+                # The only detector a failed Omada firmware upgrade
+                # has. The controller's own audit log does not record
+                # unattended upgrades at all (#585), and the UI shows
+                # the device as simply not upgraded, so #584 failed
+                # nightly for four days with nothing anywhere to
+                # notice.
+                #
+                # Keyed on the terminal WARN the controller emits
+                # when it gives up on a device:
+                #   ... v2 device mac:A8-29-48-FD-37-47 source status
+                #   is UPGRADE_FINISHED, finished upgrade process in
+                #   STAGE_DOWNVAL_TIMEOUT, status sent to frontend is
+                #   DEVICE_FILE_DOWNLOAD_FAIL
+                # A successful upgrade emits no "sent to frontend"
+                # line at all, so filtering on the failure status
+                # rather than on the phrase is what keeps this from
+                # firing on every upgrade. Both observed stages come
+                # through as a label: `STAGE_DOWNVAL_TIMEOUT` (the
+                # device went quiet) and `FIRMWARE_DOWNLOAD_FAILED`
+                # (the device reported the failure itself)
+                # distinguish "could not reach the controller" from
+                # "fetched a bad image".
+                #
+                # Deliberately NOT keyed on the `Audit Log send
+                # failed Error` WARN that #586 originally proposed:
+                # that fires on successful unattended upgrades too
+                # (verified against the 2026-09-09 upgrade of
+                # 10-5A-95-61-96-FF, which completed and warned
+                # anyway), so it marks "an unattended upgrade ran",
+                # not "one failed".
+                #
+                # No threshold: an upgrade that reaches this state
+                # has already exhausted the controller's own retries.
+                alert = "OmadaFirmwareUpgradeFailed";
+                expr = ''
+                  unit:="podman-omada.service" "status sent to frontend is DEVICE_FILE_DOWNLOAD_FAIL"
+                    | extract "mac:<omada_mac> source status is"
+                    | extract "finished upgrade process in <omada_stage>,"
+                    | stats by (host, omada_mac, omada_stage) count() as failures
+                '';
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Omada firmware upgrade failed for {{ $labels.omada_mac }} ({{ $labels.omada_stage }})";
+                  description = "The Omada controller on {{ $labels.host }} gave up upgrading {{ $labels.omada_mac }} {{ $value }} time(s) in 5 minutes, in stage {{ $labels.omada_stage }}. Adopted devices fetch the image from the controller over 8043, so start with whether this one can still reach it — see the firewall block in modules/apps/omada.nix. Do not expect the controller's audit log to corroborate: it records nothing for scheduled upgrades.";
                 };
               }
             ];

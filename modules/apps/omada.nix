@@ -117,6 +117,37 @@
 #
 # Adoption traffic never goes near Caddy, so forward-auth doesn't
 # interfere with it — the device-facing ports are opened directly.
+#
+# ## Don't trust the audit log for unattended events
+#
+# The controller's audit log (Log → Audit Log in the UI) records
+# nothing for anything its own scheduler does. Every `auto_site_upgrade`
+# / `plan_site_upgrade` run instead emits a pair of
+#
+#   WARN c.t.s.o.m.c.a.a(): Audit Log send failed Error.OmadacId ...,
+#   auditLogKey DEVICE_ROLLING_UPGRADE, operator System, ip
+#
+# to the application log and drops the record on the floor (#585). The
+# failing writes are exactly the ones with an empty `ip`: across the
+# 85 records the controller *did* store over two weeks, every single
+# one carries `operator: admin` and a client address, and an upgrade
+# started by hand from the UI audits fine — including its failures.
+# Upstream defect in the vendor's Java application; nothing here
+# causes it and nothing here can fix it.
+#
+# Two consequences worth knowing before reaching for that log:
+#
+#   * A scheduled upgrade that fails leaves no trace a person would
+#     look at. That is how #584 ran nightly for four days unnoticed.
+#     `OmadaFirmwareUpgradeFailed` in ../system/log-alerts.nix is the
+#     detector that replaces it, keyed on the application log instead.
+#   * The WARN itself is not a failure signal — it fires on
+#     successful unattended upgrades too. Read it as "the scheduler
+#     touched firmware", nothing more.
+#
+# Re-check on controller bumps: if a later `mbentley/omada-controller`
+# tag stops emitting these, this section and the alert's premise both
+# go stale. Last confirmed present on 6.3.0.44-openj9.
 _: {
   flake.modules.nixos.omada =
     { config, lib, ... }:

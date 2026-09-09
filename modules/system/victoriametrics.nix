@@ -874,7 +874,7 @@ _: {
           {
             # The metrics half of the security rule set. The other
             # half is log-derived (authentik / sudo / pfSense) and
-            # lives in ./security-alerts.nix, on its own vmalert
+            # lives in ./log-alerts.nix, on its own vmalert
             # instance pointed at VictoriaLogs — vmalert's
             # `-datasource.url` is process-wide, so the two cannot
             # share an evaluator. Both emit into the same
