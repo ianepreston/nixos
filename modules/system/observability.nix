@@ -29,10 +29,10 @@
 #                     `victoriametrics-logs-datasource` plugin.
 #   vmalert-logs    — a second vmalert instance, pointed at
 #                     VictoriaLogs instead of VictoriaMetrics, that
-#                     evaluates the log-derived security rules
-#                     (auth failures, pfSense config changes). Split
-#                     out because `-datasource.url` is process-wide;
-#                     see security-alerts.nix.
+#                     evaluates the log-derived rules (auth failures,
+#                     pfSense config changes, Omada firmware upgrade
+#                     failures). Split out because `-datasource.url`
+#                     is process-wide; see log-alerts.nix.
 #   Alertmanager    — Discord receiver + a Watchdog → healthchecks.io
 #                     heartbeat receiver. Config rendered through
 #                     envsubst so webhook URLs never hit /nix/store.
@@ -56,7 +56,7 @@
     imports = with inputs.self.modules.nixos; [
       alertmanager
       grafana
-      security-alerts
+      log-alerts
       snmp-exporter
       vector
       victorialogs
