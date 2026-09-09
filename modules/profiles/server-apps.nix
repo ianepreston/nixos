@@ -8,9 +8,10 @@
 #
 # The import set is parameterized by `hostSpec.serverEnvironment`:
 # `commonApps` ship on every server; `devOnlyApps` ship only where
-# `serverEnvironment == "dev"` (hpp-1, tests-server), not on prod
-# (amos1). Promoting an app dev->prod is a one-line move between the
-# two lists; adding a shared app is a single append to `commonApps`.
+# `serverEnvironment == "dev"` (hpp-1, tests-server) and
+# `prodOnlyApps` only where it is `"prod"` (amos1). Promoting an app
+# dev->prod is a one-line move between the lists; adding a shared app
+# is a single append to `commonApps`.
 #
 # Structural guard at the bottom: every native server-app with
 # persistent state on /var/lib/<app> must have a matching
@@ -70,6 +71,19 @@
         ytdlp-web-player
       ];
 
+      # Apps that ship only on prod-environment servers — the mirror of
+      # `devOnlyApps`, for things whose subject only exists on prod.
+      # `omada-metrics` is the first: it polls the Omada controller's
+      # Open API for per-device state, which needs an Open API client
+      # minted in that controller's UI and a device fleet to report on.
+      # amos1's controller owns the real network; hpp-1's is an empty
+      # dev instance with zero adopted devices, so an exporter there
+      # would cost a second hand-provisioned credential to publish
+      # nothing. See modules/apps/omada-metrics.nix.
+      prodOnlyApps = with inputs.self.modules.nixos; [
+        omada-metrics
+      ];
+
       # State dirs the impermanence guard expects to be preserved. The
       # app tier is derived from `config.myAppState` — the single source
       # of truth for native-app on-disk state (see
@@ -121,7 +135,10 @@
       missing = lib.subtractLists preservedDirs expectedPreservedDirs;
     in
     {
-      imports = commonApps ++ lib.optionals (hostSpec.serverEnvironment == "dev") devOnlyApps;
+      imports =
+        commonApps
+        ++ lib.optionals (hostSpec.serverEnvironment == "dev") devOnlyApps
+        ++ lib.optionals (hostSpec.serverEnvironment == "prod") prodOnlyApps;
 
       assertions = [
         {
