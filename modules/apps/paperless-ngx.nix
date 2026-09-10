@@ -55,9 +55,10 @@
 # The embedding half puts a vector store on disk at
 # `<dataDir>/llm_index/llmindex.db` (SQLite + sqlite-vec, WAL) and a
 # downloaded model cache at `<dataDir>/hf_cache`. Both land inside the
-# preserved stateDir, so impermanence is handled — but neither is
-# quiesced for restic and the nightly rebuild currently fires at 02:10,
-# inside the backup window. That is #558.
+# preserved stateDir, so impermanence is handled. Backups treat the two
+# differently — the index is excluded and re-embedded, the model cache is
+# kept — and the nightly index task moves out of the backup window; see
+# the restic exclude and PAPERLESS_LLM_INDEX_TASK_CRON below (#558).
 { inputs, ... }:
 {
   flake.modules.nixos.paperless-ngx =
@@ -252,6 +253,30 @@
           # so a cold rebuild needs the network before suggestions work.
           PAPERLESS_AI_LLM_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2";
 
+          # Upstream schedules the index task at 02:10 (the "Rebuild LLM
+          # index" entry in `paperless/settings/custom.py`), which lands
+          # between the 02:00 postgres dump and the 03:00-03:30 restic run.
+          # 07:10 is clear of those and of ~03:46 nix-optimise, ~05:18
+          # nixos-upgrade and ~06:34 podman-image-prune. Local time, not UTC:
+          # the module sets PAPERLESS_TIME_ZONE from the system zone, and
+          # celery beat reads these crons in it.
+          #
+          # The name oversells the task — `llmindex_index` defaults
+          # `rebuild=False` and re-embeds only documents whose `modified`
+          # differs from the store's, so a quiet night costs a postgres scan
+          # and nothing else. What makes the slot matter is the restic exclude
+          # below: with the index dropped from snapshots, this task is the
+          # only *unattended* thing that recreates it (chat has no trigger of
+          # its own, and the suggestions path fires only when someone opens a
+          # document). So the run that counts is the full re-embed on the
+          # first night after a restore — exactly the one that must not land
+          # on top of the backups.
+          #
+          # Not "disable" (which upstream accepts): that would leave the index
+          # unrecoverable without a human, and would also stop the
+          # bloat-gated vec0 compaction that reclaims deleted rows.
+          PAPERLESS_LLM_INDEX_TASK_CRON = "10 7 * * *";
+
           # Not a paperless setting: `services.paperless.settings` is a
           # freeform env-var set (the module puts NLTK_DATA and
           # GRANIAN_* through the same attrset), and it is the only
@@ -317,6 +342,36 @@
       };
 
       services = {
+        # The vector store is a live, unquiesced SQLite file that restic would
+        # otherwise snapshot mid-write. Nothing in it is authored — every vector
+        # is derived from postgres — so dropping it and letting paperless
+        # re-embed is cheaper than teaching mySqliteQuiesce to coexist with
+        # myPostgresApp for one app's derived cache.
+        #
+        # Excluding is load-bearing, not just a saving. `llm_index_exists()` is
+        # only "does `document_chunks` appear in sqlite_master", and there is no
+        # integrity check or corruption handler anywhere in `paperless_ai/`, so a
+        # torn-but-openable file would report "index exists" forever: the nightly
+        # would keep taking its incremental branch, suggestions would silently
+        # drop to non-RAG (the classifier swallows the retrieval exception) and
+        # chat would break with no fallback. An absent index is the only damaged
+        # state paperless can actually detect.
+        #
+        # Restoring clears it rather than leaving it stale: `recovery:paperless-ngx`
+        # goes through `_restore-pg`, whose `restic restore --delete` removes
+        # target files that the snapshot does not contain.
+        #
+        # `hf_cache` deliberately stays *in* the backup despite being equally
+        # re-downloadable — `--delete` would wipe it too, and the re-embed this
+        # exclude depends on cannot start until all-MiniLM-L6-v2 comes back from
+        # huggingface.co. ~90 MB of immutable files that dedupe across every
+        # snapshot is a cheap way to keep a third-party host off the
+        # disaster-recovery path.
+        #
+        # Priced against a near-empty archive (single-digit documents on both
+        # servers as of #558). Revisit if a full re-embed stops being minutes.
+        restic.backups.server.exclude = [ "${dataDir}/llm_index" ];
+
         # Open a loopback TCP port on the upstream module's per-app redis
         # so redis_exporter (in modules/system/victoriametrics.nix) can
         # scrape it. Paperless itself keeps talking to the unix socket;
