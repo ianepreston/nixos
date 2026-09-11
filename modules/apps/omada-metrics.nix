@@ -17,12 +17,13 @@
 # ## prod-only
 #
 # Imported through `prodOnlyApps` in ../profiles/server-apps.nix, not
-# `commonApps`, so it lands on amos1 and not hpp-1. omada.nix itself is
-# common — both hosts run a controller for the UniFi swap — but hpp-1's
-# is an empty dev instance with zero adopted devices, and the Open API
-# client below has to be minted by hand in each controller's UI. A
-# second hand-provisioned credential to publish an empty device list is
-# not worth having.
+# `commonApps`, so it lands on amos1 and not hpp-1 — as does omada.nix
+# itself, which joined it there once hpp-1's controller had gone months
+# without adopting anything. There is one network and amos1 manages it,
+# so both the controller and this exporter have their subject only on
+# prod; the Open API client below also has to be minted by hand in each
+# controller's UI, and a second hand-provisioned credential to publish
+# an empty device list was never worth having.
 #
 # ## Open API, not the session API or the embedded mongo
 #

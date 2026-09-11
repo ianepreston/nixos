@@ -23,9 +23,15 @@
 # added — absent from `myCaddy.apps`, `myAuthentik.forwardAuthApps` and
 # `myAuthentik.oidcApps` on hpp-1 and amos1 alike. That matters because
 # this blueprint applies everywhere: a name that is retired on one host
-# but live on the other (readeck, which is dev-only and so orphaned on
-# amos1) must NOT be listed, or the deletion would break the host where
-# it still runs.
+# but live on the other must NOT be listed, or the deletion would break
+# the host where it still runs. Three names are in that state today —
+# readeck is dev-only and so orphaned on amos1; omada and unifi went
+# prod-only and so are orphaned on hpp-1, where the dev authentik still
+# holds the proxy provider and application tile for each. Those orphans
+# are the tolerable half of the tradeoff described above: they only
+# become a hazard if the same name is later reclaimed by an *OIDC*
+# provider on that host, and a forward-auth app coming back re-upserts
+# the object it left.
 #
 # `state: absent` is idempotent — once an object is gone the identifier
 # matches nothing and the entry is a no-op — so entries can stay

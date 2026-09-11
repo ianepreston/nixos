@@ -46,10 +46,6 @@
         manyfold
         miniflux
         mylar3
-        # Runs alongside unifi for the UniFi -> TP-Link swap; both
-        # controllers stay up until the cutover is done. See
-        # modules/apps/omada.nix.
-        omada
         paperless-ngx
         pinchflat
         profilarr
@@ -60,7 +56,6 @@
         shelfmark
         sonarr
         tandoor
-        unifi
         valheim
       ];
 
@@ -73,15 +68,30 @@
 
       # Apps that ship only on prod-environment servers — the mirror of
       # `devOnlyApps`, for things whose subject only exists on prod.
-      # `omada-metrics` is the first: it polls the Omada controller's
-      # Open API for per-device state, which needs an Open API client
-      # minted in that controller's UI and a device fleet to report on.
-      # amos1's controller owns the real network; hpp-1's is an empty
-      # dev instance with zero adopted devices, so an exporter there
-      # would cost a second hand-provisioned credential to publish
-      # nothing. See modules/apps/omada-metrics.nix.
+      #
+      # The network controllers are the case that defines the list. There
+      # is exactly one network and amos1 manages it, so a dev instance has
+      # no subject: hpp-1's UniFi controller had an empty `ace.device`
+      # collection and its Omada controller had never logged an adoption,
+      # after both had run for months. What they did have was cost —
+      # ~1.1 GB resident for Omada's JVM and a 1.5 GB peak for UniFi OS
+      # Server on a box that also runs Home Assistant, Jellyfin and the
+      # arrs — and a hazard: two controllers of the same brand on one
+      # broadcast domain both answer device discovery, so a
+      # factory-default device shows as pending adoption in both UIs and
+      # adopting from the wrong one costs a factory reset to undo.
+      # Verifying a controller change on dev was never worth that, since
+      # the thing under test (adoption, config push, firmware) only
+      # happens where the devices are.
+      #
+      # `omada-metrics` is prod-only for the same reason one step removed:
+      # it polls the Omada controller's Open API for per-device state,
+      # which needs an Open API client minted in that controller's UI and
+      # a device fleet to report on. See modules/apps/omada-metrics.nix.
       prodOnlyApps = with inputs.self.modules.nixos; [
+        omada
         omada-metrics
+        unifi
       ];
 
       # State dirs the impermanence guard expects to be preserved. The
@@ -105,13 +115,11 @@
       # myAppState app, so it isn't in the derived set:
       #   /var/lib/mosquitto          - system MQTT broker (modules/system/mosquitto.nix)
       #   /var/lib/private/authentik  - DynamicUser SSO, bare-string preserve entry (modules/apps/authentik.nix)
-      #   /var/lib/unifi-os-server    - container app whose state lives outside /var/lib/containers (modules/apps/unifi.nix)
       #   /var/lib/sabnzbd-incomplete - preserve-only bind mount, deliberately not backed up (modules/apps/sabnzbd.nix)
       residualPreservedDirs = [
         "/var/lib/mosquitto"
         "/var/lib/private/authentik"
         "/var/lib/sabnzbd-incomplete"
-        "/var/lib/unifi-os-server"
       ]
       # Conditional, unlike the rest: the GGUF model cache only exists on a
       # server actually running llama-server, which needs a GPU — hpp-1
@@ -125,7 +133,17 @@
       # Preserve-only (not `myAppState`): a GGUF is re-downloadable bytes,
       # not authored state, so it must stay out of restic. See
       # modules/apps/llm.nix.
-      ++ lib.optional (config.myAuthentik.forwardAuthApps ? llm) "/var/lib/private/llama-cpp";
+      ++ lib.optional (config.myAuthentik.forwardAuthApps ? llm) "/var/lib/private/llama-cpp"
+      # Conditional for the same reason, one list apart: UniFi OS Server
+      # keeps its state outside /var/lib/containers (the upstream
+      # module's `stateDir`), so modules/apps/unifi.nix declares the
+      # preservation entry by hand rather than getting it from
+      # `myContainerApp`. Now that unifi is in `prodOnlyApps`, a dev
+      # server never imports that module and never creates the
+      # directory — asserting it flat would fail eval on hpp-1. Keyed
+      # off the forward-auth app because `services.unifi-os-server` only
+      # exists where the upstream module is imported.
+      ++ lib.optional (config.myAuthentik.forwardAuthApps ? unifi) "/var/lib/unifi-os-server";
 
       expectedPreservedDirs =
         map (a: a.stateDir) (lib.attrValues config.myAppState) ++ residualPreservedDirs;
