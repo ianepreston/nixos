@@ -7,13 +7,20 @@
 # Retire this module's UniFi counterpart, not this one, when the swap
 # lands.
 #
-# In `commonApps`, so hpp-1 and amos1 each run an instance — the same
-# arrangement UniFi has had all along. Worth knowing before adopting:
-# two controllers on one broadcast domain both answer device discovery,
-# so a factory-default switch or AP shows up as pending adoption in
-# *both* UIs. Adopt from the one that is meant to own the site (amos1
-# for the real network); a device can only be adopted once, and taking
-# it in the wrong controller means a factory reset to get it back.
+# In `prodOnlyApps`, so amos1 runs the only instance — as does UniFi,
+# which moved there in the same change. It started out in `commonApps`
+# alongside UniFi, but a dev controller has no subject: there is one
+# network and amos1 manages it, so hpp-1's instance went months without
+# adopting a device while holding ~1.1 GB of JVM. It also actively got
+# in the way, because two controllers of the same brand on one
+# broadcast domain both answer device discovery: a factory-default
+# switch or AP showed up as pending adoption in *both* UIs, and a
+# device can only be adopted once, so taking it in the wrong controller
+# meant a factory reset to get it back.
+#
+# If a second instance is ever wanted for testing, put it somewhere
+# that cannot see the LAN's discovery broadcasts — the collision above
+# is the reason, not the resource cost.
 #
 # ## Container, not a nixpkgs module
 #
@@ -59,7 +66,8 @@
 # ## Port collision with UniFi
 #
 # UniFi OS Server already holds 0.0.0.0:8843 (its guest portal HTTPS)
-# on both servers, and 8843 is also Omada's default
+# on amos1, the one host that now runs either controller, and 8843 is
+# also Omada's default
 # `PORTAL_HTTPS_PORT` — so with host networking the two cannot both
 # take the default. Omada's portal moves to 8844. Everything else
 # Omada wants (8043/8044/8088, 19810+27001+29810 UDP, 29811-29817 TCP)

@@ -6,11 +6,19 @@
 # can't traverse forward-auth, so the device-facing service ports
 # stay open directly on the firewall.
 #
+# In `prodOnlyApps` (../profiles/server-apps.nix), so amos1 runs the
+# only instance — the same move Omada made, for the same reason. hpp-1
+# ran a second controller for months and its `ace.device` collection
+# never held a single device, because there is one network and amos1
+# manages it. See the prodOnlyApps comment for the discovery-collision
+# hazard a second same-brand controller creates on one broadcast
+# domain.
+#
 # `uosSystemIP` is the inform address embedded in adoption URLs
 # (`http://<ip>:8080/inform`), so it has to be the LAN address that
 # UniFi devices on the same subnet can reach — not 127.0.0.1, and not
-# the tailscale IP. Sourced from `hostSpec.serverLanIp` so dev and
-# prod each get their own static address.
+# the tailscale IP. Sourced from `hostSpec.serverLanIp` rather than
+# hardcoded so the module carries no host knowledge of its own.
 #
 # The container's UI port (container 443) is rebound to loopback only
 # via `extraPorts` so Caddy's forward-auth gate is the only path in;

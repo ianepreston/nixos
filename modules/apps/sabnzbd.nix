@@ -21,8 +21,10 @@
 # for the same reason.
 #
 # Port is 18080, not the sabnzbd default 8080, because UniFi's
-# adoption inform endpoint owns :8080 on this host. See
-# modules/apps/unifi.nix.
+# adoption inform endpoint owns :8080 on amos1. Kept uniform across
+# servers rather than made per-host — UniFi is prod-only now, so :8080
+# is free on a dev server, but one port for one app everywhere is worth
+# more than reclaiming it. See modules/apps/unifi.nix.
 _: {
   flake.modules.nixos.sabnzbd =
     {

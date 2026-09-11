@@ -1146,8 +1146,10 @@ _: {
                 # virtualisation.oci-containers): each registers a
                 # podman-<name>.service unit. Includes unifi-os-server —
                 # it runs as an OCI container (podman-unifi-os-server),
-                # not a native service. bookorbit is dev-only, so the
-                # token simply never matches on prod hosts.
+                # not a native service. The list is environment-blind on
+                # purpose: bookorbit is dev-only and omada/unifi-os-server
+                # are prod-only, so those tokens simply never match on the
+                # other environment's hosts.
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
                 + "|seerr|shelfmark|unifi-os-server"
