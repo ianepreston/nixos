@@ -1,4 +1,5 @@
-# Valheim - dedicated server (lloesche/valheim-server container).
+# Valheim - dedicated server (ghcr.io/community-valheim-tools/valheim-server
+# container, formerly lloesche/valheim-server).
 # Gameplay is UDP and there's no web UI to put behind Caddy/Authentik.
 # Since crossplay went on there is no inbound listening surface at all:
 # the server reaches PlayFab outbound and players arrive over that
@@ -76,7 +77,7 @@
 # image leaves crossplay off by default — relevant if BEPINEX is ever
 # turned on below.
 #
-# World state and lloesche's automatic world backups (every 2h by
+# World state and the image's automatic world backups (every 2h by
 # default into /config/backups inside the container) live under
 # /var/lib/containers/valheim/config, which the daily restic snapshot
 # in modules/system/server-backups.nix picks up automatically. The
@@ -120,9 +121,39 @@
 # That gap is now covered generically by `JournalLogRateHigh` in
 # modules/system/victoriametrics.nix rather than by anything Valheim-
 # specific, since a service logging itself into the ground is not a
-# Valheim-only failure mode. Deliberately not filtered in vector.nix
-# either: this is an episodic malfunction, not steady background noise,
-# and filtering it would hide the evidence of a broken server.
+# Valheim-only failure mode.
+#
+# ### Recurrence on amos1, 2026-09-11 — and why there is now a filter
+#
+# It recurred, harder. amos1's server was restarted by the in-container
+# UPDATE_CRON at ~07:16 and wedged at 09:08:21, running at **~400/s** (vs
+# hpp-1's 68/s) until the unit was stopped at 16:05. `JournalLogRateHigh`
+# fired and worked exactly as designed — it is what caught this.
+#
+# hpp-1's server restarted within 17 minutes of amos1's (same update) and
+# did *not* wedge. So this is not amos1-specific: the loop starts from one
+# transient HTTP failure on the first public-IP fetch after a server start,
+# making every restart on every host a coin flip.
+#
+# The new cost this time was not disk, it was **retention**. Both hosts cap
+# the journal at ~4G. hpp-1 gets ~9 days out of that budget; amos1 was
+# reduced to 6.5 hours, its oldest surviving entry rotating forward faster
+# than the incident itself (the 09:08 onset had already been vacuumed away
+# by the time it was diagnosed). Losing every other unit's history on a prod
+# host is a debugging capability you need most during an *unrelated*
+# incident, which is a worse failure than the 1 GB of churn #590 measured.
+#
+# Hence the `VALHEIM_LOG_FILTER_CONTAINS_*` vars in the environment block
+# below. The earlier stance here — "deliberately not filtered" — was about
+# vector.nix, and that part still holds for a different reason than it
+# claimed: vector reads *from* journald, so a vector rule drops these lines
+# only after they have already been written to /var/log/journal and rotated
+# the journal away. It would protect downstream log storage and nothing
+# else. The image's own log filter runs inside the container, ahead of
+# podman's log driver, and is the only layer that can protect retention.
+#
+# The filter is deliberately partial — see the comment on the vars for why
+# suppressing all five lines would make the wedge undetectable.
 #
 # Adding mods later (BepInEx / Valheim+ / Jotunn):
 # Set `BEPINEX = "true"` in the `environment` block below; on next
@@ -131,7 +162,7 @@
 # restart `podman-valheim.service`. Server-side-only mods just need
 # the DLL; client-affecting mods need every player to install the
 # same mod locally. See
-# https://github.com/lloesche/valheim-server-docker#bepinex.
+# https://github.com/community-valheim-tools/valheim-server-docker#bepinex.
 _: {
   flake.modules.nixos.valheim =
     {
@@ -517,12 +548,32 @@ _: {
       #   ];
 
       virtualisation.oci-containers.containers.valheim = {
-        # lloesche tags by date (`latest`, `YYYY-MM-DD`) rather than
-        # semver, so pin to the digest of `latest` for reproducibility;
-        # renovate tracks `latest` and bumps the digest on its own
-        # (see renovate.json's digest manager).
-        # renovate: datasource=docker depName=lloesche/valheim-server
-        image = "lloesche/valheim-server:latest@sha256:bbda47cbbc9fd7b0385803ba0a70ba2084df4cb87ec6170a145aec5df06be07e";
+        # `ghcr.io/community-valheim-tools/valheim-server` is the canonical
+        # image. The project was formerly lloesche/valheim-server-docker (the
+        # GitHub repo now redirects to the community org) and it still mirrors
+        # builds to the old Docker Hub name, but that image self-describes as
+        # a "Legacy container image mirror" and the README only promises
+        # drop-in compatibility "for the moment" — so track the real one.
+        #
+        # This was a same-revision cutover, not a version bump: Docker Hub
+        # `lloesche/valheim-server:latest` and GHCR `1.2.0`/`latest` both carry
+        # org.opencontainers.image.revision=a134fb4dc7a850eec5b3ba7f0bc89bce434f0348.
+        # The digest differs purely because each registry serves its own
+        # manifest index; it is not different content.
+        #
+        # GHCR also publishes real semver tags (1.0.0, 1.1.0, 1.2.0), which the
+        # old Docker Hub mirror did not — hence the `<version>@sha256:` pin
+        # used everywhere else in this repo, rather than the digest-of-`latest`
+        # pin this line used to carry.
+        #
+        # Cost of the move, accepted deliberately: renovate cannot read a
+        # per-tag publish time from ghcr.io, so per the `timestamp-optional`
+        # rule in renovate.json this image no longer serves the 7-day
+        # minimumReleaseAge cooldown that Docker Hub images get — updates land
+        # unaged. Tolerable here because the container self-updates the game
+        # on its own UPDATE_CRON anyway, so the image tag is only the wrapper.
+        # renovate: datasource=docker depName=ghcr.io/community-valheim-tools/valheim-server
+        image = "ghcr.io/community-valheim-tools/valheim-server:1.2.0@sha256:138c6f10759e8342309cfefe0b191221a956771ada1ea87157013d62e2befa19";
         volumes = [
           "/var/lib/containers/valheim/config:/config"
           "/var/lib/containers/valheim/cache:/opt/valheim"
@@ -551,6 +602,33 @@ _: {
           # than requiring an inbound port-forward. See the crossplay
           # block at the top of this file for the LAN-join tradeoff.
           CROSSPLAY = "true";
+
+          # Drop the three stack-frame lines of the GetPublicIP wedge (see
+          # that section at the top of this file). The loop emits five lines
+          # per iteration; these three are pure noise, carrying no
+          # incremental information after the first occurrence, so this cuts
+          # the flood by 60% without losing a single diagnostic.
+          #
+          # The two informative lines are kept on purpose, because the flood
+          # is also the detector: `JournalLogRateHigh` fires on journald
+          # event rate, so filtering all five would make the wedge silent and
+          # nothing else would notice it (that is exactly the gap #590 was
+          # opened about). The ~160/s that survives still clears the 50/s
+          # threshold comfortably, so detection is unchanged while the burn
+          # rate drops 2.5x. Filtering the remaining
+          # "Could not extract valid IP address" line would take this to 80%
+          # and is a one-line addition — but it trades away that detection,
+          # so make it deliberately, not as a drive-by.
+          #
+          # Matching is case-sensitive substring (valheim-logfilter is Go,
+          # `strings.Contains`). The suffix after the prefix is just a unique
+          # name. Do NOT reach for the `ON_VALHEIM_LOG_FILTER_*` hook
+          # variants here: runHook does exec.Command("/bin/bash", "-c", ...)
+          # per matching line, so at this rate the mitigation would cost far
+          # more than the logging it replaces.
+          VALHEIM_LOG_FILTER_CONTAINS_GetPublicIPCheckDisposed = "at System.Net.Http.HttpClient.CheckDisposedOrStarted";
+          VALHEIM_LOG_FILTER_CONTAINS_GetPublicIPSetTimeout = "at System.Net.Http.HttpClient.set_Timeout";
+          VALHEIM_LOG_FILTER_CONTAINS_GetPublicIPFrame = "at ZNet.<GetPublicIP>g__DownloadStringAsync";
         };
         environmentFiles = [ config.sops.templates."valheim.env".path ];
         extraOptions = [ "--network=host" ];
