@@ -56,7 +56,6 @@
         shelfmark
         sonarr
         tandoor
-        valheim
       ];
 
       # Apps that ship only on dev-environment servers.
@@ -88,10 +87,23 @@
       # it polls the Omada controller's Open API for per-device state,
       # which needs an Open API client minted in that controller's UI and
       # a device fleet to report on. See modules/apps/omada-metrics.nix.
+      # `valheim` is prod-only for a different reason: two dedicated
+      # servers cannot coexist behind one public IP. Both hosts ran the
+      # container on `--network=host` UDP 2456, so both registered the
+      # *same* public endpoint with PlayFab, and a join code resolves to
+      # an endpoint — whichever host claimed it most recently answered
+      # every code, including the other's. On 2026-09-11 amos1 restarted
+      # last and silently swallowed hpp-1's joins: the client showed
+      # hpp-1's session name (that travels with the code) while dropping
+      # the player into amos1's world. A dev instance also doubles the
+      # worlds a `worldGeneration` bump reseeds, which is how three days
+      # of play ended up stranded on hpp-1's copy. See the "prod-only"
+      # section in modules/apps/valheim.nix.
       prodOnlyApps = with inputs.self.modules.nixos; [
         omada
         omada-metrics
         unifi
+        valheim
       ];
 
       # State dirs the impermanence guard expects to be preserved. The

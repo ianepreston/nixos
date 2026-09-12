@@ -27,10 +27,51 @@
 # regenerates on every server restart, so it has to be re-shared after
 # a container bounce. Read the current one off the server log:
 #
-#   ssh hpp-1 -- sudo podman logs valheim 2>&1 | grep -i 'join code' | tail -1
+#   ssh amos1 -- sudo podman logs valheim 2>&1 | grep -i 'join code' | tail -1
 #
 # which prints a line of the form
-#   Session "hpp-1-g1-valheim" with join code 123456 and IP a.b.c.d:2456 is active ...
+#   Session "amos1-g2-valheim" with join code 123456 and IP a.b.c.d:2456 is active ...
+#
+# ## prod-only: one dedicated server per public IP
+#
+# Imported through `prodOnlyApps` in ../profiles/server-apps.nix, so this
+# lands on amos1 only. That is not a cost-saving like the network
+# controllers — it is a correctness requirement, and it was learned the
+# hard way on 2026-09-11.
+#
+# A PlayFab join code resolves to a *network endpoint*, not to a server
+# identity. This container runs `--network=host` on UDP 2456, so two
+# hosts behind one home NAT register the identical public endpoint
+# (`<public-ip>:2456`) with PlayFab. They collide, and the host that
+# claimed the endpoint most recently answers every code — including the
+# other host's. The failure is near-undebuggable from the client: the
+# session *name* travels with the code, so joining with hpp-1's code
+# showed "hpp-1-g2-valheim" in the UI while actually connecting to
+# amos1's server and amos1's world. Only the two servers' logs
+# disagreeing (one recording the join, the other recording nothing)
+# makes it visible.
+#
+# Running the app on one host removes the collision outright. If a dev
+# instance is ever wanted back, it needs a distinct game port, not just a
+# distinct world name.
+#
+# The same incident showed the second reason. `worldGeneration` is one
+# number shared by every host, so a bump reseeds once per host — the
+# 2026-09-11 1.0/Deep North reseed created `hpp-1-g2` *and* `amos1-g2`,
+# two unrelated maps. Players followed whichever join code they could
+# see and built three days of world on the dev host's copy, which then
+# had to be migrated onto amos1 by hand. One host, one world, one reseed.
+#
+# A contributing factor worth remembering, since it is the reason nobody
+# noticed for three days: valheim-joincode-notify reads codes out of the
+# journal, so journald rate-limiting is silent data loss for it. The
+# GetPublicIP flood (see #590 and the log-filter notes below) was getting
+# ~4,160 messages per 30s suppressed on amos1, the join-code line among
+# them, so prod announced no code at all while looking perfectly healthy
+# — unit `active (running)`, hundreds of MB of journal read, zero
+# matches. The per-unit rate cap below plus the log filter close that
+# window; the structural fix is that there is now only one server whose
+# code can go missing.
 #
 # ## Restart cadence vs. the join code
 #
@@ -187,10 +228,14 @@ _: {
       # so carrying g1 forward would leave the new content stranded behind
       # already-explored map.
       #
-      # This is deliberately one value shared by every host rather than a
-      # hostSpec option: a reseed is a "start over everywhere" decision, and
-      # a per-host knob would just be two numbers to keep in sync. The
-      # hostName prefix is what keeps hpp-1's and amos1's worlds distinct.
+      # This is deliberately one value rather than a hostSpec option: a
+      # reseed is a "start over" decision, and a per-host knob would just
+      # be numbers to keep in sync. Only amos1 runs this now (see the
+      # prod-only section in the header), so a bump reseeds exactly one
+      # world — when it shipped on both hosts it quietly made two, which
+      # is how the g2 reseed stranded three days of play on hpp-1's copy.
+      # The hostName prefix is retained so the world name still says which
+      # host owns it.
       #
       # The old world's files are *not* deleted — they stay in
       # /var/lib/containers/valheim/config/worlds_local (and in restic) under
