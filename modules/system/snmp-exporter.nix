@@ -1,5 +1,6 @@
-# SNMP exporter — pull metrics from external network devices (pfSense
-# router and Synology NAS today; switch/UniFi deferred) via SNMPv2c.
+# SNMP exporter — pull metrics from external network devices: the
+# pfSense router and Synology NAS over SNMPv2c, and the Omada switches
+# and APs over SNMPv3.
 #
 # Why v2c rather than v3: pfSense's built-in `bsnmpd` is v1/v2c only
 # — v3 means installing net-snmp from the FreeBSD package manager and
@@ -30,6 +31,27 @@
 # it. enableConfigCheck is disabled because the configurationPath is
 # now a runtime path, not a store path.
 #
+# Omada gear is SNMPv3, not v2c. The controller pushes one
+# site-wide SNMP config to every device it manages and v3 is the only
+# version it offers, so the switches and APs need their own auth
+# entries. Those land as a *second* --config.file rather than another
+# substitution into upstream's snmp.yml: snmp_exporter accepts the
+# flag repeatedly and merges the files, and an auths-only file is
+# valid on its own (verified against 0.30.1 with --dry-run). Nothing
+# to sed here anyway — these credentials are ours, not an upstream
+# default.
+#
+# Two Omada auths, not one, because EAP770/EAP772 firmware does not
+# implement AuthPriv. Saving an AuthPriv site config makes the
+# controller warn and silently apply AuthNoPriv + MD5 to the APs
+# alone. So the switches keep SHA + AES and the APs get a weaker
+# entry with the same username and password (v3 derives the localized
+# key from the protocol, so one password serves both). The APs are on
+# TRUST and what travels in the clear is clientCount / sysName /
+# uptime; the shared password is not exposed by it. Re-test the APs
+# against `omada_v3` after any AP firmware bump and delete
+# `omada_v3_ap` when it answers.
+#
 # Listener is loopback-only; VictoriaMetrics scrapes locally via the
 # multi-target relabel pattern in modules/system/victoriametrics.nix.
 _: {
@@ -44,6 +66,8 @@ _: {
       sopsFolder = "${inputs.nix-secrets}/sops";
       upstreamSnmpYml = builtins.readFile "${pkgs.prometheus-snmp-exporter.src}/snmp.yml";
       communityPlaceholder = config.sops.placeholder."snmp/community";
+      # Must match Settings -> Site -> SNMP in the Omada controller.
+      omadaSnmpUser = "omada_ro";
       # Both shipped auths (public_v1 and public_v2) have
       # `community: public`. Replacing them both is fine; we use
       # auth=public_v2 in the scrape jobs and the unused v1 entry
@@ -53,8 +77,48 @@ _: {
           upstreamSnmpYml;
     in
     {
-      sops.secrets."snmp/community" = {
-        sopsFile = "${sopsFolder}/server-shared.yaml";
+      # All three secrets come from the shared file: both servers run
+      # the observability stack and both poll the same devices.
+      sops = {
+        secrets = {
+          "snmp/community".sopsFile = "${sopsFolder}/server-shared.yaml";
+          "snmp/v3_auth_password".sopsFile = "${sopsFolder}/server-shared.yaml";
+          "snmp/v3_priv_password".sopsFile = "${sopsFolder}/server-shared.yaml";
+        };
+
+        templates = {
+          "snmp.yml" = {
+            content = renderedSnmpYml;
+            owner = "snmp-exporter";
+            group = "snmp-exporter";
+            restartUnits = [ "prometheus-snmp-exporter.service" ];
+          };
+
+          "snmp-omada.yml" = {
+            content = ''
+              auths:
+                # Switches (192.168.15.x) — full AuthPriv.
+                omada_v3:
+                  version: 3
+                  username: ${omadaSnmpUser}
+                  security_level: authPriv
+                  auth_protocol: SHA
+                  password: ${config.sops.placeholder."snmp/v3_auth_password"}
+                  priv_protocol: AES
+                  priv_password: ${config.sops.placeholder."snmp/v3_priv_password"}
+                # APs — firmware-forced AuthNoPriv + MD5, same credentials.
+                omada_v3_ap:
+                  version: 3
+                  username: ${omadaSnmpUser}
+                  security_level: authNoPriv
+                  auth_protocol: MD5
+                  password: ${config.sops.placeholder."snmp/v3_auth_password"}
+            '';
+            owner = "snmp-exporter";
+            group = "snmp-exporter";
+            restartUnits = [ "prometheus-snmp-exporter.service" ];
+          };
+        };
       };
 
       # The prometheus exporters module defaults to DynamicUser=true,
@@ -70,13 +134,6 @@ _: {
       };
       users.groups.snmp-exporter = { };
 
-      sops.templates."snmp.yml" = {
-        content = renderedSnmpYml;
-        owner = "snmp-exporter";
-        group = "snmp-exporter";
-        restartUnits = [ "prometheus-snmp-exporter.service" ];
-      };
-
       services.prometheus.exporters.snmp = {
         enable = true;
         listenAddress = "127.0.0.1";
@@ -84,6 +141,14 @@ _: {
         # configurationPath is a runtime path under /run; the build-
         # time dry-run check needs a store path.
         enableConfigCheck = false;
+        # The module renders its own --config.file first; this one is
+        # appended after it and merged in. Split out rather than
+        # folded into the rendered snmp.yml above so the Omada
+        # credentials stay readable as YAML instead of a
+        # replaceStrings target.
+        extraFlags = [
+          "--config.file=${config.sops.templates."snmp-omada.yml".path}"
+        ];
       };
     };
 }
