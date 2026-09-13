@@ -1353,6 +1353,91 @@ _: {
                   }
                 ];
               }
+              # Omada switches and APs (SNMPv3 — see
+              # modules/system/snmp-exporter.nix for why there are two
+              # auths and why the APs get the weaker one). SNMP is a
+              # site-level setting in the controller, pushed to every
+              # managed device; the controller itself is not an agent
+              # and has nothing to scrape.
+              #
+              # Switches: if_mib + system gets per-port counters,
+              # errors, link state and uptime. PoE draw is behind a
+              # TP-Link private MIB that upstream's generated snmp.yml
+              # does not carry, so it is not available here.
+              {
+                job_name = "snmp_omada_switches";
+                metrics_path = "/snmp";
+                params = {
+                  module = [
+                    "if_mib"
+                    "system"
+                  ];
+                  auth = [ "omada_v3" ];
+                };
+                static_configs = [
+                  {
+                    targets = [
+                      "192.168.15.2"
+                      "192.168.15.3"
+                    ];
+                  }
+                ];
+                relabel_configs = [
+                  {
+                    source_labels = [ "__address__" ];
+                    target_label = "__param_target";
+                  }
+                  {
+                    source_labels = [ "__param_target" ];
+                    target_label = "instance";
+                  }
+                  {
+                    target_label = "__address__";
+                    replacement = "127.0.0.1:${toString config.services.prometheus.exporters.snmp.port}";
+                  }
+                ];
+              }
+              # APs: the shipped `eap` module is TP-Link's private
+              # enterprise tree (11863) and carries exactly one gauge,
+              # `clientCount` — per-AP associated clients, which is the
+              # number the coverage/band-steering work keeps needing.
+              # `system` supplies sysName/sysUpTime so the two APs are
+              # distinguishable in a dashboard. if_mib is deliberately
+              # absent: EAPs are thinner on standard mib-2 than the
+              # switches, so add it only if a walk shows it returns.
+              {
+                job_name = "snmp_omada_aps";
+                metrics_path = "/snmp";
+                params = {
+                  module = [
+                    "eap"
+                    "system"
+                  ];
+                  auth = [ "omada_v3_ap" ];
+                };
+                static_configs = [
+                  {
+                    targets = [
+                      "omada-ap-basement.ipreston.net"
+                      "omada-ap-upstairs.ipreston.net"
+                    ];
+                  }
+                ];
+                relabel_configs = [
+                  {
+                    source_labels = [ "__address__" ];
+                    target_label = "__param_target";
+                  }
+                  {
+                    source_labels = [ "__param_target" ];
+                    target_label = "instance";
+                  }
+                  {
+                    target_label = "__address__";
+                    replacement = "127.0.0.1:${toString config.services.prometheus.exporters.snmp.port}";
+                  }
+                ];
+              }
             ];
           };
         };
