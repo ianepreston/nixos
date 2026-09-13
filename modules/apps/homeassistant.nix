@@ -85,14 +85,17 @@
         doCheck = false;
       };
 
+      # Pinned to whatever ha_blueair's manifest.json requires — the version
+      # is an `==` constraint there and manifestCheckPhase enforces it, so
+      # this moves in lockstep with the component below, not independently.
       blueair-api = hapy.buildPythonPackage {
         pname = "blueair-api";
-        version = "1.56.0";
+        version = "1.56.2";
         pyproject = true;
         src = pkgsUnstable.fetchPypi {
           pname = "blueair_api";
-          version = "1.56.0";
-          hash = "sha256-3tAjJqMuuDtbpvYpM5jpTcSIw66Y3OJsTMYmWOhvdTw=";
+          version = "1.56.2";
+          hash = "sha256-+l1KVCeI3nHtdrL2en0gicJ+VekxsKIEgXIqGkPcLpc=";
         };
         build-system = [ hapy.setuptools ];
         dependencies = with hapy; [
@@ -141,7 +144,9 @@
       ha_blueair = pkgsUnstable.buildHomeAssistantComponent {
         owner = "dahlb";
         domain = "ha_blueair";
-        version = "1.56.3";
+        # Tracks the rev comment below by hand — the renovate manager bumps
+        # `rev` and its trailing comment, not this.
+        version = "1.56.5";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
@@ -151,8 +156,8 @@
           # "fetchFromGitHub rev pins" custom manager; hash is regenerated
           # manually from the failing build.
           # renovate: datasource=github-tags depName=dahlb/ha_blueair
-          rev = "9a3bc39695f61006bffa24f883c5e77b0321191a"; # v1.56.4
-          hash = "sha256-vSx7ztWzVbENixOASV13z065DRNNE1/zlguHP5TqsuA=";
+          rev = "fe23be14a01bc99dc4d89c26ae0eda45608585a5"; # v1.56.5
+          hash = "sha256-37j3ARZc2K0KUO97wpDSltMlSyl643zv6F611k8y8EI=";
         };
         dependencies = [ blueair-api ];
       };
