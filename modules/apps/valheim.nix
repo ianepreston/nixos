@@ -648,7 +648,7 @@ _: {
         # unaged. Tolerable here because the container self-updates the game
         # on its own UPDATE_CRON anyway, so the image tag is only the wrapper.
         # renovate: datasource=docker depName=ghcr.io/community-valheim-tools/valheim-server
-        image = "ghcr.io/community-valheim-tools/valheim-server:1.2.0@sha256:138c6f10759e8342309cfefe0b191221a956771ada1ea87157013d62e2befa19";
+        image = "ghcr.io/community-valheim-tools/valheim-server:1.3.0@sha256:c43502d3b28c8d341f5362f365deb4802018bda9fc49f98c7631b099f597eb49";
         volumes = [
           "/var/lib/containers/valheim/config:/config"
           "/var/lib/containers/valheim/cache:/opt/valheim"
