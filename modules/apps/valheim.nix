@@ -76,20 +76,22 @@
 # ## Restart cadence vs. the join code
 #
 # The image runs its own cron inside the container: `UPDATE_CRON` checks
-# for a game update every 15 minutes and `RESTART_CRON` restarts daily at
-# 05:10 — both left at their upstream defaults here. Every one of those
-# restarts rotates the join code (it's a fresh PlayFab session), which is
-# what valheim-joincode-notify below exists to announce.
+# for a game update every 15 minutes (upstream default) and
+# `RESTART_CRON` restarts the game server — set below to Mondays 05:10
+# rather than upstream's daily 05:10, see "Phase 1" further down. Every
+# one of those restarts rotates the join code (it's a fresh PlayFab
+# session), which is what valheim-joincode-notify below exists to
+# announce.
 #
 # That is less disruptive than it sounds because `UPDATE_IF_IDLE` and
 # `RESTART_IF_IDLE` also default to `true`: the container only takes
 # either action when no players are connected, so the code never rotates
 # out from under a live session. The cost is entirely "look up the new
-# code before you next sit down to play" — a player holding yesterday's
-# code has a stale one, and the saved server entry (Join Game -> Add
-# server) is keyed on the code, so it needs deleting and re-adding rather
-# than reconnecting. Upstream Valheim offers no way to pin a code across
-# restarts.
+# code before you next sit down to play" — a player holding a code from
+# before the last bounce has a stale one, and the saved server entry
+# (Join Game -> Add server) is keyed on the code, so it needs deleting
+# and re-adding rather than reconnecting. Upstream Valheim offers no way
+# to pin a code across restarts.
 #
 # `RESTART_CRON` and `UPDATE_CRON` are independent, and an earlier version
 # of this comment wrongly conflated them — disabling the restart cron does
@@ -100,7 +102,7 @@
 # into `supervisorctl restart valheim-server`. That path runs off
 # UPDATE_CRON's 15-minute check regardless of what RESTART_CRON is set to.
 #
-# So the daily bounce buys exactly one thing: a periodic clean slate as
+# So the bounce buys exactly one thing: a periodic clean slate as
 # insurance against a game-server memory leak. That is also all upstream
 # ever claimed for it — the README documents RESTART_CRON with no rationale
 # at all, and the feature request that introduced it (lloesche/
@@ -109,10 +111,43 @@
 # The leak reports behind that concern are real but come from busy servers
 # with large worlds and week-long uptimes, which is not this.
 #
-# Pulling the cron back is tracked in #458, gated on the
-# valheim-metrics exporter below having run long enough to establish a
-# baseline. Don't change it before then: the metrics are what tell us
-# whether the insurance was ever worth paying for.
+# ### Phase 1 — daily to weekly, 2026-09-14 (#458)
+#
+# The valheim-metrics exporter below exists to answer whether that
+# insurance was ever worth paying for. Seven days of
+# `valheim_server_rss_bytes` against `valheim_server_uptime_seconds` on
+# amos1, spanning 8 restart cycles and the first real multiplayer session
+# (3 concurrent players, ZDOS ~114,500, 2026-09-13), say it was not. RSS
+# *falls* with uptime, in mean and in max:
+#
+#   uptime    0h     1h     4h     8h    10h    15h    22h
+#   mean    1252   1305   1201   1058    622    633    548   MB
+#   max     1518   1511   1521   1518    786    829    852   MB
+#
+# Every cycle starts at 1.48-1.52 GB in hour 0-1, decays to a 430-850 MB
+# steady state by hour 9-10, and then sits flat for the rest of the cycle
+# (09-08 15:00 -> 09-09 05:00: 428.5 -> 426.4 MB over 14h). Player load
+# is a ~+170 MB bump that comes back on logoff, so RSS tracks occupancy,
+# not uptime. Peak across the whole window was 1.52 GB, at uptime 4.7h.
+#
+# So the restart *creates* the high-water mark rather than preventing
+# one. The 1.5 GB is a startup transient — the exporter reads VmRSS from
+# /proc of the pgrep'd pid every 2m, so that decay is one process's own
+# RSS, not a pid switch.
+#
+# What the daily cron made unobservable is the week-scale question: no
+# cycle ever exceeded a 24h uptime, so a slow leak could not have shown
+# up in that data even if it were there. Weekly uptimes are the first
+# window where one could, which is why Phase 2 (`RESTART_CRON = ""`,
+# leaving restarts to update/reboot/deploy) is still gated rather than
+# taken in the same change.
+#
+# Detection for that window is `ValheimMemoryBaselineHigh` in
+# modules/system/victoriametrics.nix. The pre-existing 4 GiB
+# `ValheimMemoryHigh` is a survival ceiling: a leak carrying RSS from
+# 600 MB to 2 GB over a week would clear a whole weekly cycle in
+# silence, which was fine when the process was reset every 24h and is
+# not fine when detecting that leak is the point of the phase.
 #
 # Some mods misbehave under the PlayFab backend, which is why the
 # image leaves crossplay off by default — relevant if BEPINEX is ever
@@ -757,12 +792,13 @@ _: {
           #     (/machine.slice/libpod-<id>.scope/container) is not in its
           #     series at all, so no timeseries tracked the server's memory.
           #
-          # That last gap is the load-bearing one: the daily RESTART_CRON
-          # bounce (see the restart-cadence notes at the top of this file)
-          # exists upstream purely as insurance against a game-server memory
-          # leak, and nothing here could have told us whether that leak was
-          # real. These metrics are the prerequisite for pulling that cron
-          # back — see #458.
+          # That last gap is the load-bearing one: the RESTART_CRON bounce
+          # (see the restart-cadence notes at the top of this file) exists
+          # upstream purely as insurance against a game-server memory leak,
+          # and nothing here could have told us whether that leak was real.
+          # These metrics are what paid for pulling the cron back from daily
+          # to weekly, and they are what Phase 2 will be judged on — see
+          # #458.
           #
           # Everything is read from the host PID namespace: `--network=host`
           # means valheim_server.x86_64 is plainly visible in /proc, so this
@@ -934,6 +970,28 @@ _: {
           # than requiring an inbound port-forward. See the crossplay
           # block at the top of this file for the LAN-join tradeoff.
           CROSSPLAY = "true";
+
+          # Weekly rather than upstream's daily default — every restart
+          # rotates the join code, and the metrics say the daily clean
+          # slate was insurance against a leak that isn't there. Full
+          # evidence in the "Phase 1" section at the top of this file
+          # (#458).
+          #
+          # This is the container's own crontab, not a systemd calendar
+          # spec, and it runs in host local time: the oci-containers
+          # wrapper in modules/system/oci-containers.nix sets
+          # `TZ = config.time.timeZone` on every container. So Mondays
+          # 05:10 America/Edmonton, same wall-clock slot the daily
+          # bounce used.
+          #
+          # `RESTART_IF_IDLE` (default true) skips rather than defers,
+          # so a restart that lands on a populated server is lost until
+          # the next occurrence — 14 days, not 48 hours as under the
+          # daily cron. That is acceptable precisely because the RSS
+          # data says nothing depends on the bounce happening; if it
+          # ever does, that is a reason to reconsider the slot, not to
+          # go back to daily.
+          RESTART_CRON = "10 5 * * 1";
 
           # Drop the three stack-frame lines of the GetPublicIP wedge (see
           # that section at the top of this file). The loop emits five lines
