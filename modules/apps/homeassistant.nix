@@ -62,9 +62,10 @@
       # are pinned to the component manifests' `requirements` — the
       # manifestRequirementsCheckHook fails the component build otherwise. These
       # are intentionally NOT renovate-tracked: they must move in lockstep with
-      # the component (renovate bumps the component `tag` below; regenerate its
-      # hash from the failing build, and if the new manifest pins a different lib
-      # version, bump the lib version + hash here at the same time).
+      # the component (renovate bumps the component's `version` + `tag`/`rev`
+      # below and CI regenerates the fetch hash, so if the new manifest pins a
+      # different lib version, bump the lib version + hash here at the same
+      # time — the component build fails loudly until you do).
       hoymiles-wifi = hapy.buildPythonPackage {
         pname = "hoymiles-wifi";
         version = "0.5.5";
@@ -112,11 +113,16 @@
       bambu_lab = pkgsUnstable.buildHomeAssistantComponent {
         owner = "greghesp";
         domain = "bambu_lab";
+        # `version` and `tag` are one number written twice, so renovate
+        # rewrites them together: the marker below opens a span that runs
+        # through the `tag` line, and every occurrence of the old version in
+        # it is replaced. The span deliberately stops short of `hash`, which
+        # is regenerated in CI (scripts/regen-fetch-hashes.sh, #625).
+        # renovate: datasource=github-releases depName=greghesp/ha-bambulab
         version = "2.2.25";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "greghesp";
           repo = "ha-bambulab";
-          # renovate: datasource=github-releases depName=greghesp/ha-bambulab
           tag = "v2.2.25";
           hash = "sha256-tqa+pWsOWDtE4I61CvSYmMD74jwWkCsXwNUz7Hh/qyk=";
         };
@@ -129,11 +135,11 @@
       hoymiles_wifi = pkgsUnstable.buildHomeAssistantComponent {
         owner = "suaveolent";
         domain = "hoymiles_wifi";
+        # renovate: datasource=github-releases depName=suaveolent/ha-hoymiles-wifi
         version = "0.5.1";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
-          # renovate: datasource=github-releases depName=suaveolent/ha-hoymiles-wifi
           tag = "v0.5.1";
           hash = "sha256-6NxsnRAo8KjlKYfyqosdS0Q34j0KBNNRUWbZmQOvxJk=";
         };
@@ -144,19 +150,19 @@
       ha_blueair = pkgsUnstable.buildHomeAssistantComponent {
         owner = "dahlb";
         domain = "ha_blueair";
-        # Tracks the rev comment below by hand — the renovate manager bumps
-        # `rev` and its trailing comment, not this.
+        # Pinned by immutable commit rev, not tag: dahlb/ha_blueair re-cuts
+        # release tags in place, which silently invalidates a tag-pinned fetch
+        # hash (see #454). The marker's span covers `version` and `rev`, so
+        # renovate rewrites the human-readable version and the commit it
+        # resolves to in one edit — no trailing `# vX.Y.Z` comment to keep in
+        # sync. The hash is regenerated in CI
+        # (scripts/regen-fetch-hashes.sh, #625).
+        # renovate: datasource=github-tags depName=dahlb/ha_blueair
         version = "1.56.5";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
-          # Pinned by immutable commit rev, not tag: dahlb/ha_blueair re-cuts
-          # release tags in place, which silently invalidates a tag-pinned
-          # fetch hash (see #454). Renovate bumps rev+version comment via the
-          # "fetchFromGitHub rev pins" custom manager; hash is regenerated
-          # manually from the failing build.
-          # renovate: datasource=github-tags depName=dahlb/ha_blueair
-          rev = "fe23be14a01bc99dc4d89c26ae0eda45608585a5"; # v1.56.5
+          rev = "fe23be14a01bc99dc4d89c26ae0eda45608585a5";
           hash = "sha256-37j3ARZc2K0KUO97wpDSltMlSyl643zv6F611k8y8EI=";
         };
         dependencies = [ blueair-api ];

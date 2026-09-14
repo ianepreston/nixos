@@ -14,6 +14,7 @@
 - [Local LLM Inference](#local-llm-inference)
 - [Secrets Management](#secrets-management)
 - [Task Automation](#task-automation)
+- [Fetch Hashes](#fetch-hashes-are-regenerated-in-ci)
 - [Bootstrapping a New Host](#bootstrapping-a-new-host)
 - [Guidance and Resources](#guidance-and-resources)
 
@@ -942,12 +943,15 @@ shipped the UI config flow fails
    `manifestRequirementsCheckHook` fails the build otherwise.
 
 Custom-component versions are Renovate-tracked via the `github-releases` `tag`
-custom manager in `renovate.json`, kept **manual** (grouped as "home-assistant
-custom components"): Renovate bumps the `tag`, then the `fetchFromGitHub` hash
-is regenerated from the failing build, and if the new manifest pins a different
-lib version the paired `buildPythonPackage` is bumped in the same PR. The libs
-themselves are deliberately _not_ Renovate-tracked — they must move in lockstep
-with the component.
+and `github-tags` rev-pin custom managers in `renovate.json`, kept **manual**
+(grouped as "home-assistant custom components"). Each manager's match spans the
+component's `version` line through its `tag`/`rev`, so Renovate rewrites the
+same number in both places at once; CI then regenerates the `fetchFromGitHub`
+hash (see [Fetch hashes](#fetch-hashes-are-regenerated-in-ci)). What's left for
+a human is the paired python lib: if the new manifest pins a different version,
+bump the `buildPythonPackage` in the same PR. The libs themselves are
+deliberately _not_ Renovate-tracked — they must move in lockstep with the
+component, and the build fails loudly until they do.
 
 ### Config: declarative vs. stateful
 
@@ -1474,6 +1478,7 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task check`                                     | Full pre-push check (fmt-check + lint + flake check)                             |
 | `task iso`                                       | Build the installer/recovery ISO                                                 |
 | `task garbage_collect`                           | Remove store objects older than 7 days                                           |
+| `task hashes [-- --check]`                       | Regenerate the fetch hashes Renovate can't maintain; `--check` only reports      |
 | `task bootstrap:new HOST=x DEST=ip`              | New host pipeline: install, hwconfig, secrets setup, sync + rebuild              |
 | `task bootstrap:reinstall HOST=x DEST=ip`        | Reinstall existing host: install + sync + rebuild (no secrets pause)             |
 | `task bootstrap:install HOST=x DEST=ip`          | Run nixos-anywhere to install NixOS; prints age key at end                       |
@@ -1493,6 +1498,52 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task llm:models [HOST=x]`                       | List cached GGUFs on a llama-server host, flagging the live one                  |
 | `task llm:models:prune [HOST=x] [APPLY=true]`    | Remove superseded GGUFs; dry run unless `APPLY=true`                             |
 | `task secrets:rekey`                             | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
+
+## Fetch Hashes Are Regenerated in CI
+
+Renovate rewrites a `version`, `tag` or `rev` and nothing else. The `hash` next
+to it is a fixed-output derivation's _declared_ content address, and a stale one
+does not fail: nix addresses the FOD by that hash, finds the path already in the
+store, and skips the fetch — building the old source under the new label. That
+is not a hole in the checks. It is structural, and it happened: a ha_blueair
+bump merged with the previous hash in place, six checks green, and two hosts ran
+the old code for two months. The `check` jobs run on hpp-1, whose warm
+`/nix/store` is precisely the store that cannot notice; only a store that has
+never built the component fails, with `hash mismatch in fixed-output
+derivation`.
+
+`.github/workflows/renovate-hashes.yml` closes it from the other side: on every
+`renovate/**` branch it recomputes the hashes in the files that branch touched
+and pushes a fixup commit, so the hash is right by construction rather than
+merely loud. `scripts/regen-fetch-hashes.sh` does the work and is also the local
+entry point (`task hashes`, or `task hashes -- --check` to report without
+rewriting). It covers two shapes:
+
+- **`fetchFromGitHub`** blocks are found structurally, no annotation needed.
+  The hash is the NAR hash of the unpacked `archive/<ref>.tar.gz`, which
+  `nix-prefetch-url --unpack` reproduces exactly — one download, no build.
+- **Hashes only a build can reveal** — vendored dependency trees, today just
+  the `pkgs.caddy.withPlugins` plugin closure — carry a
+  `# regen-hash: <flake attr>` comment directly above the `hash`. There is no
+  URL to prefetch, so the script swaps in `lib.fakeHash`, builds that attribute,
+  and takes the `got:` line out of the mismatch error. The marker names the
+  attribute because nothing else in the file says where that derivation is
+  reachable in the flake; a future `cargoHash` or `npmDepsHash` pin joins in by
+  adding that one line.
+
+Two supporting details in `renovate.json`. The custom managers' matches span
+from the `# renovate:` comment through the `tag`/`rev` line, which lets
+`autoReplaceGlobalMatch` (on by default) rewrite the version everywhere it
+appears inside that span — the component's `version` attribute and its tag —
+while deliberately stopping short of `hash`. And `gitIgnoredAuthors` lists the
+identity the workflow commits as, because Renovate treats a branch carrying a
+commit it didn't write as human-edited and stops updating it.
+
+Still manual on purpose: `fetchPypi` pins (blueair-api's version is an `==`
+constraint from the component's own `manifest.json`, which
+`manifestRequirementsCheckHook` enforces at build time — loudly, which is the
+property everything else here is trying to buy) and merging the caddy and
+HA-component PRs.
 
 ## Bootstrapping a New Host
 

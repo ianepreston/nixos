@@ -1,5 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "gitIgnoredAuthors: .github/workflows/renovate-hashes.yml pushes a fetch-hash fixup commit onto renovate/** branches (#625). Renovate treats a branch carrying a commit by anyone but itself as edited by a human and stops updating it, so without this entry a newer release would never reach an already-opened PR."
+  ],
+  "gitIgnoredAuthors": ["renovate-hash-regen@users.noreply.github.com"],
   "extends": [
     "config:recommended",
     ":dependencyDashboard"
@@ -30,12 +34,12 @@
       "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
-      "description": "Caddy plugin bumps require regenerating the pkgs.caddy.withPlugins hash in modules/system/caddy.nix; keep manual.",
+      "description": "The pkgs.caddy.withPlugins hash is regenerated in CI now (.github/workflows/renovate-hashes.yml), but caddy is the ingress every host's apps sit behind, so plugin bumps still get a human look before merge.",
       "matchPackageNames": ["/caddy/"],
       "automerge": false
     },
     {
-      "description": "Home Assistant custom-component bumps need the fetchFromGitHub hash regenerated (build prints it), and possibly a matching python-lib version+hash bump; keep manual and grouped.",
+      "description": "Home Assistant custom-component bumps get their fetchFromGitHub hash regenerated in CI (.github/workflows/renovate-hashes.yml), but a new component release can pin a different version of a python lib nixpkgs doesn't package (blueair-api, hoymiles-wifi in modules/apps/homeassistant.nix) — still a hand edit; keep manual and grouped.",
       "matchDepNames": [
         "greghesp/ha-bambulab",
         "suaveolent/ha-hoymiles-wifi",
@@ -80,19 +84,21 @@
     },
     {
       "customType": "regex",
-      "description": "Update fetchFromGitHub tags in Nix files (tag = \"vX.Y.Z\"), e.g. Home Assistant custom components. Hash is regenerated manually from the failing build.",
+      "description": "Update fetchFromGitHub tags in Nix files (Home Assistant custom components). The match spans the renovate comment through the `tag` line, so the one version number written twice — `version` and `tag` — is rewritten in a single edit (autoReplaceGlobalMatch defaults to true, replacing every occurrence inside the match). It stops short of `hash`, which no string substitution can derive: CI regenerates that (.github/workflows/renovate-hashes.yml). extractVersionTemplate strips the tag's `v` so `version` stays a bare version, and the {1,7} line bound keeps a match from running past its own component into the next one's `tag`.",
       "managerFilePatterns": ["/\\.nix$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*tag\\s*=\\s*\"(?<currentValue>[^\"]+)\""
-      ]
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*version\\s*=\\s*\"(?<currentValue>[^\"]+)\";(?:[^\\n]*\\n){1,7}?\\s*tag\\s*=\\s*\"[^\"]+\";"
+      ],
+      "extractVersionTemplate": "^v(?<version>.+)$"
     },
     {
       "customType": "regex",
-      "description": "Update fetchFromGitHub rev pins in Nix files (rev = \"<sha>\"; # vX.Y.Z), for sources whose upstream re-cuts tags in place (e.g. dahlb/ha_blueair). currentDigest is the immutable commit; the trailing comment carries currentValue so Renovate can look up newer releases and re-pin the digest. Hash is regenerated manually from the failing build.",
+      "description": "Update fetchFromGitHub rev pins in Nix files, for sources whose upstream re-cuts tags in place (dahlb/ha_blueair). currentDigest is the immutable commit the tag currently points at; currentValue is the component's own `version`, which the same match rewrites — so there is no trailing `# vX.Y.Z` comment left to drift, which is precisely what went stale in #606. github-tags carries the commit sha on each release, so stripping the `v` via extractVersionTemplate doesn't cost the digest lookup. The match stops short of `hash`; CI regenerates that (.github/workflows/renovate-hashes.yml).",
       "managerFilePatterns": ["/\\.nix$/"],
       "matchStrings": [
-        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*rev\\s*=\\s*\"(?<currentDigest>[0-9a-f]{7,40})\";\\s*#\\s*(?<currentValue>\\S+)"
-      ]
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*version\\s*=\\s*\"(?<currentValue>[^\"]+)\";(?:[^\\n]*\\n){1,7}?\\s*rev\\s*=\\s*\"(?<currentDigest>[0-9a-f]{7,40})\";"
+      ],
+      "extractVersionTemplate": "^v(?<version>.+)$"
     },
     {
       "customType": "regex",

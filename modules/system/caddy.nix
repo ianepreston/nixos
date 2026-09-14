@@ -67,13 +67,17 @@ _: {
           email = hostSpec.email.personal;
           # Caddy with the Cloudflare DNS plugin so the ACME DNS-01
           # challenge can create _acme-challenge TXT records. The hash
-          # pins the plugin closure; bump it when the plugin version
-          # changes (build will print the expected value).
+          # pins the xcaddy-vendored source tree the plugin list produces;
+          # Renovate bumps the plugin version and nothing else, so the hash
+          # is regenerated in CI on every renovate branch — the
+          # `regen-hash:` marker names the attribute that has to be built to
+          # learn it (see scripts/regen-fetch-hashes.sh and #625).
           package = pkgs.caddy.withPlugins {
             plugins = [
               # renovate: datasource=github-tags depName=caddy-dns/cloudflare
               "github.com/caddy-dns/cloudflare@v0.2.4"
             ];
+            # regen-hash: nixosConfigurations.hpp-1.config.services.caddy.package.src
             hash = "sha256-dQvk6ezY6TQ1J7PjhCXnThF/SqVgPwBO8/RXzHCY+js=";
           };
           globalConfig = ''
