@@ -238,14 +238,48 @@ the containerize-to-nixos-modules branch):
   fails "Invalid handler specified". This taxes experimentation, not steady
   state, so it fits a stable device set and the declarative/reproducible payoff.
   Custom-component versions are renovate-tracked (the `github-releases` `tag`
-  custom manager in `renovate.json`, kept manual — the fetch hash is regenerated
-  from the failing build); their unpackaged python libs are pinned to each
-  manifest's `requirements` and bumped in lockstep by hand. OIDC creds reach HA
+  and `github-tags` rev-pin custom managers in `renovate.json`, kept manual);
+  each manager's match spans `version` through `tag`/`rev`, so renovate rewrites
+  both halves of the number in one edit, and CI regenerates the fetch hash
+  beside them (see "Fetch hashes are regenerated in CI" below). Their unpackaged
+  python libs are pinned to each manifest's `requirements` and bumped in
+  lockstep by hand. OIDC creds reach HA
   via `!secret` from a sops-rendered `secrets.yaml` (not env), and UI-authored
   automations/scripts/scenes are file-based `!include` targets seeded by the
   service `preStart`. Stateful config (`/var/lib/hass/.storage`) does not merge
   between instances — do device pairing directly on the target host; only the
   `automations.yaml`/`scripts.yaml`/`scenes.yaml` files port cleanly.
+
+## Fetch hashes are regenerated in CI
+
+Renovate rewrites a `version`/`tag`/`rev` and nothing else. The `hash` beside it
+is a fixed-output derivation's *declared* content address, so a stale one is not
+a build failure — nix addresses the FOD by that hash, finds the old path already
+in the store, and skips the fetch entirely. #606 merged a ha_blueair bump with
+the previous hash still in place, all checks green, and two hosts ran the old
+code for two months; the `check` jobs run on hpp-1, whose warm store is exactly
+the store that can't notice (#625).
+
+So don't hand-maintain them: `.github/workflows/renovate-hashes.yml` runs
+`scripts/regen-fetch-hashes.sh` on every `renovate/**` branch and pushes a fixup
+commit. Run the same script by hand (`task hashes`, or `task hashes -- --check`
+to only report) after editing a pin yourself. Two paths, both automatic:
+
+- **`fetchFromGitHub` blocks** are found structurally — no annotation needed.
+  The hash is the NAR hash of the unpacked `archive/<ref>.tar.gz`, which
+  `nix-prefetch-url --unpack` reproduces, so there's nothing to build.
+- **Hashes only a build can reveal** (vendored dependency trees — today
+  `pkgs.caddy.withPlugins` in `modules/system/caddy.nix`) need a
+  `# regen-hash: <flake attr>` comment on the line directly above the `hash`.
+  The script swaps in `lib.fakeHash`, builds that attribute, and reads the real
+  hash off the mismatch error; the marker exists because nothing in the file
+  says where the derivation is reachable in the flake. A new `cargoHash` /
+  `npmDepsHash` / vendor pin is covered by adding that one comment line.
+
+Two things stay deliberately manual: `fetchPypi` pins (blueair-api's version is
+an `==` constraint from the component's own `manifest.json`, enforced loudly at
+build time by `manifestRequirementsCheckHook`) and the `automerge: false` on the
+caddy / HA-component package rules.
 
 ## NFS UID alignment
 

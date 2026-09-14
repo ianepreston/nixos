@@ -31,6 +31,13 @@ tasks:
     # invocations didn't match the tools' actual flag semantics).
     cmds:
       - nix flake check --all-systems
+  hashes:
+    desc: Regenerate the fetch hashes Renovate can't maintain (pass -- --check to only report)
+    # Same script CI runs on every renovate/** branch
+    # (.github/workflows/renovate-hashes.yml). Run it by hand after editing a
+    # pinned `rev`/`tag` yourself — a stale hash silently builds the old
+    # source on any host whose store already has it (#625).
+    cmd: REGEN_NIX_ARGS='--override-input nix-secrets path:../nix-secrets' ./scripts/regen-fetch-hashes.sh {{.CLI_ARGS}}
   build:
     desc: Build a specific host (default luna)
     vars:

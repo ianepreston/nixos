@@ -1,0 +1,98 @@
+---
+name: renovate hashes
+# Renovate rewrites a version, tag or rev and nothing else. The `hash` beside
+# it is a fixed-output derivation's *declared* content address, which no string
+# substitution can derive — and when it is left stale, nothing downstream
+# necessarily complains: a rev-only change leaves the FOD's output path
+# byte-identical to one already in the store, so nix skips the fetch and builds
+# the old source. #606 merged exactly that, with all six checks green, and two
+# hosts ran ha_blueair v1.56.3 under a v1.56.4 label for two months (#622 fixed
+# it; the full write-up is #625).
+#
+# CI can't catch that by being stricter, because there is no failure to catch:
+# the `check` jobs run on hpp-1, whose warm /nix/store by definition holds the
+# stale path. So instead of trying to make the mistake loud, this job removes
+# it — it recomputes every fetch hash in the files the branch touched and
+# pushes a fixup commit, making the hash correct by construction.
+# scripts/regen-fetch-hashes.sh has the details of both regeneration paths.
+#
+# Notes on the plumbing:
+#   * No fork-PR guard is needed here (unlike check.yml): `push` fires only for
+#     branches in this repo, so nothing a fork can write reaches this runner.
+#   * The push uses the same GitHub App as flake-update.yml
+#     (FLAKE_UPDATE_APP_ID / FLAKE_UPDATE_APP_PRIVATE_KEY, contents + PR
+#     write), and the commit author is pinned to an address listed in
+#     renovate.json's `gitIgnoredAuthors` — otherwise Renovate would read its
+#     own branch as human-edited and stop updating the PR.
+#   * Third-party actions are pinned to full commit SHAs; see the rationale
+#     header in check.yml.
+on:
+  push:
+    branches: ["renovate/**"]
+  # Renovate is otherwise the only thing that can trigger this, which makes it
+  # awkward to exercise: `gh workflow run renovate-hashes.yml --ref <branch>`
+  # runs the same job against any branch.
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regen:
+    name: regenerate fetch hashes
+    # Our own fixup push re-triggers this workflow. The second pass would
+    # find nothing to do, but finding that out costs a real (network) build
+    # for vendored-dependency hashes, so skip it by subject line.
+    if: ${{ !contains(github.event.head_commit.message, 'regenerate fetch hashes') }}
+    runs-on: [self-hosted, nixos]
+    permissions:
+      contents: read
+    steps:
+      - name: Mint flake update app token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.FLAKE_UPDATE_APP_ID }}
+          private-key: ${{ secrets.FLAKE_UPDATE_APP_PRIVATE_KEY }}
+      # fetch-depth: 0 is what makes origin/<default branch> available below,
+      # and the app token is what lets the final step push back.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      # Regenerating a hash that is only knowable by building (the caddy
+      # plugin closure) evaluates a full nixosConfiguration, which pulls the
+      # private nix-secrets flake input.
+      - name: Authorize nix-secrets clone
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      # Scoped to the branch's own changes: a docker-digest branch touches no
+      # hash pin and costs nothing, while a caddy-plugin branch pays for the
+      # one build that can answer what its vendor hash is now.
+      - name: Regenerate the fetch hashes this branch moved
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(
+            git diff --name-only \
+              "origin/${{ github.event.repository.default_branch }}...HEAD" -- '*.nix'
+          )
+          if [[ ${#changed[@]} -eq 0 ]]; then
+            echo "branch touches no .nix files"
+            exit 0
+          fi
+          printf 'scanning %s\n' "${changed[@]}"
+          ./scripts/regen-fetch-hashes.sh "${changed[@]}"
+      - name: Push the fixup
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "hashes already matched the pinned sources"
+            exit 0
+          fi
+          git --no-pager diff
+          git config user.name "renovate hash regen"
+          git config user.email "renovate-hash-regen@users.noreply.github.com"
+          git commit --all --message "chore(deps): regenerate fetch hashes"
+          git push origin "HEAD:${{ github.ref_name }}"
