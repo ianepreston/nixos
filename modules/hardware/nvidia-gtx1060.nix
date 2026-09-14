@@ -1,8 +1,29 @@
 # NVIDIA GTX 1060 - Simple Aspect
 # Proprietary drivers with PRIME offload for Intel+NVIDIA laptop
-_: {
+{ inputs, ... }:
+{
   flake.modules.nixos.nvidia-gtx1060 =
-    { config, lib, ... }:
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    let
+      # nixpkgs stable is on nvidia 595.71.05, which does not compile
+      # against linux 7.x: nvidia/os-interface.c and friends call
+      # strncpy()/strscpy() in ways 7.x dropped, so the module build dies
+      # on `implicit declaration of function 'strncpy'`. That is what
+      # forced luna off linuxPackages_latest in #512. NVIDIA fixed it in
+      # 595.99.02, which is only in nixpkgs-unstable so far — take the
+      # driver from there (same `production` branch stable's `latest`
+      # resolves to) and keep the host on the latest kernel. Drop this
+      # override once stable ships >= 595.99.02.
+      pkgsUnstable = import inputs.nixpkgs-unstable {
+        inherit (pkgs.stdenv.hostPlatform) system;
+        inherit (pkgs) config;
+      };
+    in
     {
       boot = {
         kernelParams = [
@@ -20,7 +41,8 @@ _: {
       hardware.nvidia = {
         open = false;
         modesetting.enable = true;
-        package = config.boot.kernelPackages.nvidiaPackages.latest;
+        package =
+          (pkgsUnstable.linuxPackagesFor config.boot.kernelPackages.kernel).nvidiaPackages.production;
         powerManagement = {
           enable = true;
           finegrained = false;

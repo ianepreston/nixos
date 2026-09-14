@@ -50,17 +50,7 @@
               systemd-boot.enable = true;
               efi.canTouchEfiVariables = true;
             };
-            # Pinned off linuxPackages_latest. The NVIDIA 595.71.05 kernel
-            # module fails to build against 7.x — nvidia/os-interface.c
-            # calls strncpy() without including <linux/string.h>, which
-            # 7.x no longer pulls in transitively:
-            #   error: implicit declaration of function 'strncpy'
-            # This was pinned to linuxPackages_7_1 (#512) until 7.1 went
-            # EOL and nixpkgs removed it; 7.2 still fails the same way, so
-            # luna now rides the nixpkgs default kernel like terra/amos1
-            # (the other nvidia hosts). Revert to `pkgs.linuxPackages_latest`
-            # once nvidia ships a 7.x-compatible driver.
-            kernelPackages = pkgs.linuxPackages;
+            kernelPackages = pkgs.linuxPackages_latest;
           };
 
           networking = {
