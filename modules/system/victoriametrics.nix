@@ -506,7 +506,7 @@ _: {
                 };
               }
               {
-                # Valheim's three alerts below all read metrics published
+                # Valheim's four alerts below all read metrics published
                 # by the valheim-metrics oneshot in modules/apps/valheim.nix
                 # — nothing else on the host can see the game server. It is
                 # UDP-only under crossplay so gatus has no endpoint to poll,
@@ -575,9 +575,18 @@ _: {
                 # reach ~19 GiB before firing and then blames the host
                 # rather than naming the app.
                 #
-                # Revisit the threshold once there is real player load —
-                # a populated world legitimately holds more ZDOs, and the
-                # baseline this was set against is an empty one.
+                # Re-checked under real player load on 2026-09-14, which
+                # was #458's own gate on the number: 3 concurrent players
+                # at ZDOS ~114,500 held 763-796 MB, and the peak across
+                # 7 days / 8 restart cycles on amos1 was 1.52 GB. 4 GiB
+                # keeps ~2.6x headroom over that and stands unchanged;
+                # the ~1.1 GiB idle figure in the description below is
+                # the 2026-08-22 baseline, now the low end of the range
+                # rather than the whole of it.
+                #
+                # This is a ceiling, not a trend line. The slow-leak
+                # detector that the weekly restart cadence needs is
+                # ValheimMemoryBaselineHigh, immediately below.
                 alert = "ValheimMemoryHigh";
                 expr = "valheim_server_rss_bytes > 4 * 1024 * 1024 * 1024";
                 for = "30m";
@@ -585,6 +594,52 @@ _: {
                 annotations = {
                   summary = "Valheim server memory high on {{ $labels.instance }}";
                   description = "valheim_server RSS has been above 4 GiB for 30m on {{ $labels.instance }} (currently {{ $value | humanize1024 }}B), against a ~1.1 GiB idle baseline. Suspect the upstream memory leak that RESTART_CRON exists to paper over; restart the container and see modules/apps/valheim.nix.";
+                };
+              }
+              {
+                # The leak detector for week-long uptimes, added with the
+                # #458 Phase 1 move to a weekly RESTART_CRON. The 4 GiB
+                # ceiling above is a survival threshold — it front-runs
+                # HostHighMemory and nothing finer. Against the 430-850 MB
+                # steady state measured across 8 cycles on amos1 it sits
+                # ~5x away, so a leak carrying RSS from 600 MB to 2 GB
+                # over a week would clear an entire weekly cycle without
+                # a page. That was tolerable while the daily bounce reset
+                # the process every 24h. It is not, when detecting such a
+                # leak is the whole point of running weekly uptimes.
+                #
+                # `min_over_time` is what makes a threshold this low safe:
+                # it watches the floor, not the peak, and both known
+                # transients are peaks — the 1.48-1.52 GB startup spike,
+                # and the ~+170 MB a populated world adds while players
+                # are on. A leak is not a peak; it never gives the memory
+                # back, so it is the one thing that lifts a floor.
+                #
+                # 12h and not 6h, which was the first guess and is wrong:
+                # the startup spike is not a spike but a ~9h plateau that
+                # steps down sharply (09-10: ~1482 MB held 06:00-14:00,
+                # 682 MB at 15:00), so a 6h window fits entirely inside
+                # it. Measured against 7d of amos1 data, the worst-case
+                # floor by window width is 1.479 GB at 6h, 1.476 GB at 8h,
+                # and 1.130 GB from 10h out — and that last figure is
+                # itself an edge-of-retention artifact, with real cycles
+                # flooring at 430-850 MB. So 12h clears the plateau and
+                # leaves 2 GiB at ~2.4x the realistic floor.
+                #
+                # Cost of the wide window is latency: this cannot fire
+                # within 12h of a restart and lags a threshold crossing
+                # by up to 12h. Irrelevant for a week-scale leak.
+                #
+                # The exporter publishes rss 0 while the server is down,
+                # which drops the minimum to 0 and silences this. That is
+                # the safe direction, and ValheimServerDown owns that case.
+                alert = "ValheimMemoryBaselineHigh";
+                expr = "min_over_time(valheim_server_rss_bytes[12h]) > 2 * 1024 * 1024 * 1024";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server baseline memory has risen on {{ $labels.instance }}";
+                  description = "valheim_server RSS has not dropped below 2 GiB at any point in the last 12h on {{ $labels.instance }} (floor currently {{ $value | humanize1024 }}B), against a 430-850 MB steady state. A raised floor rather than a peak is the shape of the leak RESTART_CRON used to paper over, and the weekly cadence is what lets it accumulate — see the restart-cadence notes in modules/apps/valheim.nix (#458).";
                 };
               }
               {
@@ -1195,7 +1250,14 @@ _: {
           # Loopback-only — Caddy proxies the UI (vmui) for human
           # access; scraping is local; no need to expose on the LAN.
           listenAddress = "127.0.0.1:${toString vmPort}";
-          retentionPeriod = "15d";
+          # 15d had days to spare against the old daily Valheim restart
+          # cadence. #458 moved that to weekly, and judging its Phase 2
+          # ("restart only on update, reboot or deploy") means comparing
+          # several complete week-long cycles — 15d holds two. 45d holds
+          # six and costs ~350 MB: the whole store measured 116 MB for
+          # 15 days on amos1 (2026-09-14), on a filesystem with 331 GB
+          # free. Still ephemeral by design, see the header.
+          retentionPeriod = "45d";
           prometheusConfig = {
             # 30s scrape gives Grafana enough samples for `rate()` over
             # short windows. With the default 1m, `rate(...[$__rate_interval])`
