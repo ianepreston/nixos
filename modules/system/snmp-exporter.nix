@@ -97,7 +97,10 @@ _: {
           "snmp-omada.yml" = {
             content = ''
               auths:
-                # Switches (192.168.15.x) — full AuthPriv.
+                # Switches (192.168.15.x) — full AuthPriv. The controller's
+                # Privacy Mode must be AES to match: a DES/AES mismatch
+                # is silently dropped by the switch and reads as a
+                # plain request timeout (#629).
                 omada_v3:
                   version: 3
                   username: ${omadaSnmpUser}

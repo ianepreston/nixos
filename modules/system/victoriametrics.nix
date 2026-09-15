@@ -1426,9 +1426,15 @@ _: {
               # errors, link state and uptime. PoE draw is behind a
               # TP-Link private MIB that upstream's generated snmp.yml
               # does not carry, so it is not available here.
+              #
+              # The if_mib walk takes ~11s per switch (~1,200 PDUs over
+              # v3 AuthPriv), past the 10s default scrape_timeout, so
+              # every scrape was cancelled and the target read up=0
+              # (#629). 25s leaves headroom inside the 30s interval.
               {
                 job_name = "snmp_omada_switches";
                 metrics_path = "/snmp";
+                scrape_timeout = "25s";
                 params = {
                   module = [
                     "if_mib"
