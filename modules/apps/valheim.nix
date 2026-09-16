@@ -717,8 +717,23 @@ _: {
               # live follow. J=spawn, L=zdo destroyed, R=server lifecycle,
               # C=journal cursor (emitted by --show-cursor, last in a
               # non-following stream).
+              #
+              # `-u` is load-bearing, not a tidiness flag. sed's stdout here
+              # is a pipe, so without it stdio picks full buffering and holds
+              # output until 4 KiB accumulates. Events are a few dozen bytes
+              # and arrive minutes to hours apart, so in the *live* pass that
+              # buffer never fills and every notification is stranded — the
+              # unit sits `active (running)`, journalctl keeps flushing into
+              # it (verified: journalctl -f flushes per entry), and nothing is
+              # ever posted. The replay pass hid it, because EOF flushes: the
+              # roster rebuilt correctly, which is exactly why the unit looked
+              # healthy while announcing nothing from 09-14 through 09-15.
+              # `valheim-joincode-notify` above dodges this with
+              # `grep --line-buffered`; this is the same flag on the other
+              # tool. Cost is nil — journalctl's --grep means sed only ever
+              # sees the handful of matching lines, not the raw journal.
               normalize() {
-                "$sed" -nE \
+                "$sed" -u -nE \
                   -e 's/.*Got character ZDOID from (.+) : (-?[0-9]+):[0-9]+[[:space:]]*$/J\t\2\t\1/p' \
                   -e 's/.*Destroying abandoned non persistent zdo -?[0-9]+:[0-9]+ owner (-?[0-9]+)[[:space:]]*$/L\t\1/p' \
                   -e 's/.*(New session server |Game - OnApplicationQuit).*/R/p' \
