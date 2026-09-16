@@ -498,16 +498,30 @@ _: {
               # Position first, read second — see the cursor note above.
               # `--show-cursor` appends a `-- cursor: <id>` line after the
               # last entry, which is what -n 1 is here to produce cheaply.
+              #
+              # `|| true` because NixOS generates this script with `set -e`
+              # in the wrapper, so with pipefail a failing substitution
+              # aborts the unit, and journalctl legitimately exits 1 when
+              # the container has logged nothing this boot yet. See the
+              # longer note on the replay guard in valheim-player-notify
+              # below (#640). An empty cursor is already handled: it
+              # selects the follow-from-now branch further down.
               cursor="$("$journalctl" -u podman-valheim.service -b -n 1 -o cat --show-cursor 2>/dev/null \
-                | ${pkgs.gnused}/bin/sed -n 's/^-- cursor: //p')"
+                | ${pkgs.gnused}/bin/sed -n 's/^-- cursor: //p')" || true
 
               # Pass 1 — backlog. `-oE 'registered with join code [0-9]+'`
               # yields exactly five whitespace-separated fields; the code is
               # the last, so ''${line##* } is the code. Only the newest match
               # is announced; earlier ones in this boot are already stale.
+              # `|| true` for the same reason as the cursor above: `grep`
+              # exits 1 until the first join code is logged, which under
+              # pipefail + the wrapper's `set -e` killed this unit on every
+              # boot — 4 failed starts on 2026-09-15, clearing only once a
+              # code appeared at 05:19:59 (#640). "No code yet" is exactly
+              # what the empty branch below is written to handle.
               backlog="$("$journalctl" -u podman-valheim.service -b --lines=all -o cat 2>/dev/null \
                 | "$grep" -oE 'registered with join code [0-9]+' \
-                | tail -1)"
+                | tail -1)" || true
               if [ -n "$backlog" ]; then
                 notify "''${backlog##* }"
               else
@@ -771,8 +785,27 @@ _: {
               # here a repeat would be absorbed silently by the roster and
               # the notification would be *lost*, so the boundary has to be
               # exact.)
-              "$journalctl" -u podman-valheim.service -b --lines=all -o cat \
-                --show-cursor --grep="$pattern" | normalize | dispatch
+              #
+              # The `if !` is load-bearing, not style (#640). NixOS emits
+              # this script with `set -e` in the generated wrapper — the
+              # script's own `set -uo pipefail` deliberately omits `-e`,
+              # which is moot — so combined with pipefail a non-zero
+              # journalctl aborts the unit outright, before even the
+              # "roster rebuilt" line below. journalctl exits 1 both for
+              # "no entries matched" and for a real error, and *no entries
+              # matched is the normal state for the first ~60s of a boot*:
+              # the container has not logged a session line yet. So this
+              # raced the container on every boot and fail-looped both
+              # notify units until it happened to win — 4 failed starts on
+              # 2026-09-15, 10 on 09-14, each recovering ~2s after the
+              # first matching line appeared. An empty backlog is a fine
+              # starting state; the live follow below catches everything
+              # after it. A genuine journalctl error stays visible because
+              # stderr is still not suppressed.
+              if ! "$journalctl" -u podman-valheim.service -b --lines=all -o cat \
+                --show-cursor --grep="$pattern" | normalize | dispatch; then
+                echo "no matching entries for this boot yet (or journalctl failed — check stderr above); starting from an empty roster"
+              fi
 
               echo "roster rebuilt from journal: $(online) player(s) online"
 
