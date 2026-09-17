@@ -141,6 +141,17 @@
           sleepIdleSeconds = 300;
         };
 
+        # The only crossplay Valheim server: a PlayFab join code resolves
+        # to a network endpoint, so a second crossplay host behind this
+        # NAT would answer amos1's codes (2026-09-11, #644). hpp-1 runs
+        # the Steam backend for exactly that reason. Notifications (join
+        # code + player join/leave) both belong to this instance since it
+        # is the one players actually use.
+        myValheim = {
+          enable = true;
+          crossplay = true;
+        };
+
         system.stateVersion = "25.11";
       }
     ];
