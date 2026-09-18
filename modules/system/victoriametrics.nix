@@ -514,12 +514,19 @@ _: {
                 # Valheim's four alerts below all read metrics published
                 # by the valheim-metrics oneshot in modules/apps/valheim.nix
                 # — nothing else on the host can see the game server. It is
-                # UDP-only under crossplay so gatus has no endpoint to poll,
-                # and supervisord restarts it *inside* the container, so
-                # SystemdUnitFailed sees podman-valheim.service sitting
-                # `active` throughout a crash loop. Metrics are absent on
-                # hosts without the valheim module, so these simply never
-                # evaluate there.
+                # UDP-only (and STATUS_HTTP is off) so gatus has no endpoint
+                # to poll, and supervisord restarts it *inside* the
+                # container, so SystemdUnitFailed sees podman-valheim.service
+                # sitting `active` throughout a crash loop.
+                #
+                # These are host-blind: the exporter only exists where
+                # `myValheim.enable` is set (amos1 and hpp-1), so on every
+                # other server the series are simply absent and nothing
+                # evaluates. Known noise on the dev host: stopping the
+                # container to swap mod DLLs trips ValheimServerDown after
+                # 15m. Left unscoped until that actually becomes annoying —
+                # an environment filter has no precedent elsewhere in this
+                # file.
                 #
                 # 15m rather than the usual 5m: a nixos-upgrade that pulls a
                 # new image takes the container down for several minutes

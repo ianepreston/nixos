@@ -67,10 +67,15 @@ tasks:
     desc: Rebuild nix-darwin, pass :[flaketarget] for the target
     cmd: sudo darwin-rebuild switch --flake .#{{ index .MATCH 0 }}
   valheim:joincode:
-    desc: Print the current Valheim crossplay join code (default HOST=amos1)
+    desc: Print the current Valheim crossplay join code (crossplay hosts only; default HOST=amos1)
     # PlayFab issues a fresh 6-digit code on every server start, so this
     # has to be re-read (and re-shared with players) after any restart of
     # podman-valheim.service. The code is only in the server's stdout.
+    #
+    # Only meaningful on a host with `myValheim.crossplay = true`. A
+    # Steam-backend server (hpp-1) registers no PlayFab session and has no
+    # code at all — players join it by address — so the failure message
+    # below is the expected output there, not a bug.
     vars:
       HOST: '{{.HOST | default "amos1"}}'
     cmd: |

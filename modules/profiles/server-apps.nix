@@ -56,6 +56,14 @@
         shelfmark
         sonarr
         tandoor
+        # Ships everywhere but is off unless a host sets
+        # `myValheim.enable`, because the interesting question is not
+        # which hosts import it but which run it and with which
+        # networking backend — and tests-server, the other dev-environment
+        # host, has no business downloading 1.5 GB of steamcmd for a
+        # recovery drill. amos1 and hpp-1 opt in from their host files.
+        # See modules/apps/valheim.nix.
+        valheim
       ];
 
       # Apps that ship only on dev-environment servers.
@@ -87,23 +95,20 @@
       # it polls the Omada controller's Open API for per-device state,
       # which needs an Open API client minted in that controller's UI and
       # a device fleet to report on. See modules/apps/omada-metrics.nix.
-      # `valheim` is prod-only for a different reason: two dedicated
-      # servers cannot coexist behind one public IP. Both hosts ran the
-      # container on `--network=host` UDP 2456, so both registered the
-      # *same* public endpoint with PlayFab, and a join code resolves to
-      # an endpoint — whichever host claimed it most recently answered
-      # every code, including the other's. On 2026-09-11 amos1 restarted
-      # last and silently swallowed hpp-1's joins: the client showed
-      # hpp-1's session name (that travels with the code) while dropping
-      # the player into amos1's world. A dev instance also doubles the
-      # worlds a `worldGeneration` bump reseeds, which is how three days
-      # of play ended up stranded on hpp-1's copy. See the "prod-only"
-      # section in modules/apps/valheim.nix.
+      # `valheim` used to be here, for a reason that turned out to be
+      # narrower than "one server per household": two *crossplay* servers
+      # cannot coexist behind one public IP. Both hosts ran the container
+      # on `--network=host` UDP 2456, so both registered the same public
+      # endpoint with PlayFab, and a join code resolves to an endpoint —
+      # whichever host claimed it most recently answered every code,
+      # including the other's (2026-09-11, #644). A Steam-backend server
+      # registers no PlayFab session at all, so it has nothing to collide
+      # with; valheim is in `commonApps` above, gated on
+      # `myValheim.enable`, with crossplay itself the per-host toggle.
       prodOnlyApps = with inputs.self.modules.nixos; [
         omada
         omada-metrics
         unifi
-        valheim
       ];
 
       # State dirs the impermanence guard expects to be preserved. The

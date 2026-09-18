@@ -40,6 +40,27 @@
           networkmanager.enable = true;
         };
 
+        # Valheim dev instance — a place to test BepInEx mods, image
+        # bumps and config changes before they reach amos1 (#644).
+        #
+        # `crossplay = false` is what makes it independent rather than a
+        # second claimant on amos1's PlayFab endpoint: the Steam backend
+        # registers no relay session, so there is no join code here and no
+        # way to wander into this world by accident. Join deliberately, by
+        # typing 192.168.10.10:2456 into Join Game -> Add server. Steam
+        # clients only — console players cannot reach a Steam-backend
+        # server at all.
+        #
+        # `playerNotify = false` because join/leave here is terminal-side
+        # noise, not something the players' Discord channel wants; see the
+        # option's description for how to repoint it instead.
+        myValheim = {
+          enable = true;
+          crossplay = false;
+          bepinex = true;
+          playerNotify = false;
+        };
+
         system.stateVersion = "25.11";
       }
     ];
