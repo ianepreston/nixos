@@ -39,9 +39,16 @@
               # makes *every* launch fail at exactly 60s, no matter what the
               # app does — which is what 90 did here. Keep it well under 60;
               # it only needs to be long enough to catch a Steam that bails
-              # out immediately. The pre_command does not need to fit in this
-              # budget: ExecStartPre is covered by the separate hardcoded
-              # START_JOB_TIMEOUT = 90s, explicitly decoupled upstream.
+              # out immediately.
+              #
+              # The pre_command shares this 60s budget. ExecStartPre has its
+              # own hardcoded bound (START_JOB_TIMEOUT = 90s) that upstream
+              # decoupled from this value, but the start job and this dwell
+              # both run inside the single `launch_session()` future the
+              # webserver wraps in APP_LAUNCH_HTTP_TIMEOUT_SECS
+              # (moonshine-core/src/webserver/mod.rs) — so 60s is the ceiling
+              # that actually binds, not 90s, and the pre_command below is
+              # sized against what's left of it.
               launch_timeout_secs = 10;
               # Steam is single-instance per user: with a desktop Steam
               # already running, the steam:// URL is handed to *that*
@@ -49,17 +56,39 @@
               # stream session dies with a 503. Ask the running one to shut
               # down first and wait for it. Upstream's recommended
               # workaround (moonshine issue #134, TIPS.md).
+              #
+              # Asking is not enough on its own, so escalate: a Steam wedged
+              # on a depot download ignores `-shutdown` outright and only
+              # died ~128s later by segfaulting (#649). The old
+              # ask-and-wait-30s loop ran to exhaustion and then launched
+              # into the still-live instance — exactly the failure the guard
+              # exists to prevent. Raising the bound can't fix that: the
+              # whole thing has to fit the ~48s left of the 60s launch budget
+              # after the dwell above, and no wait that fits is long enough
+              # for a Steam that never intends to exit. SIGTERM then SIGKILL
+              # is what makes the guard a guarantee rather than a request.
+              # 20/10/2 is worst case ~32s, leaving ~16s of margin; a settled
+              # Steam answers `-shutdown` in ~3s and never reaches SIGTERM.
               pre_command = [
                 [
                   "${pkgs.bash}/bin/bash"
                   "-c"
                   ''
                     if ${pkgs.procps}/bin/pgrep -x steam >/dev/null; then
-                      /run/current-system/sw/bin/steam -shutdown &>/dev/null
-                      for _ in $(seq 1 30); do
+                      /run/current-system/sw/bin/steam -shutdown &>/dev/null || true
+                      for _ in $(seq 1 20); do
                         ${pkgs.procps}/bin/pgrep -x steam >/dev/null || break
                         sleep 1
                       done
+                      if ${pkgs.procps}/bin/pgrep -x steam >/dev/null; then
+                        ${pkgs.procps}/bin/pkill -x steam || true
+                        for _ in $(seq 1 10); do
+                          ${pkgs.procps}/bin/pgrep -x steam >/dev/null || break
+                          sleep 1
+                        done
+                        ${pkgs.procps}/bin/pkill -KILL -x steam || true
+                        sleep 2
+                      fi
                     fi
                   ''
                 ]
