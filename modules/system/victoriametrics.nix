@@ -56,6 +56,15 @@ _: {
       vectorMetricsPort = 9598;
       gatusPort = 8084;
 
+      # CPU package temperature, vendor-agnostic: Intel exposes
+      # "Package id 0", AMD exposes "Tdie"/"Tctl". Bound here because
+      # the CPU rules below use it three times and it is long enough
+      # that inlining it hides what each rule actually differs in.
+      cpuPackageTemp = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"})'';
+      # Whole-system CPU busy fraction (0-1), used to restrict the
+      # cooling-baseline rule to low-load samples.
+      cpuBusyFraction = ''1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))'';
+
       # Same alert content as the prior prometheus.ruleFiles; vmalert
       # accepts the Prometheus rule YAML verbatim. Watchdog stays in
       # its own group so the route in alertmanager.nix
@@ -846,34 +855,63 @@ _: {
             ];
           }
           {
-            # Temperature alerts (#240). CPU package temps come from
-            # node_exporter's hwmon collector — Intel exposes "Package
-            # id 0", AMD exposes "Tdie"/"Tctl"; matching on the label
-            # makes this vendor-agnostic. iGPUs share the CPU package
-            # thermal zone, so there is no separate iGPU sensor to
-            # alert on. The NVIDIA rules use nvidia_smi_temperature_gpu
-            # which is absent until a host runs the nvidia exporter
-            # (#242); silently no-ops on hosts without an NVIDIA GPU.
+            # Temperature alerts (#240, retuned in #636). CPU package
+            # temps come from node_exporter's hwmon collector; see
+            # `cpuPackageTemp` above for the vendor-agnostic match.
+            # iGPUs share the CPU package thermal zone, so there is no
+            # separate iGPU sensor to alert on. The NVIDIA rules use
+            # nvidia_smi_temperature_gpu which is absent until a host
+            # runs the nvidia exporter (#242); silently no-ops on
+            # hosts without an NVIDIA GPU.
+            #
+            # The two CPU rules average over a 30m window instead of
+            # gating an instantaneous threshold behind `for:`. The
+            # original `> 80 for 10m` / `> 90 for 5m` form needs the
+            # temperature to stay above the line for the whole window,
+            # which amos1 never does: its cooler is an ARCTIC Alpine
+            # 23 CO (95 W rated) on a 105 W / 142 W PPT Ryzen 7 5800X,
+            # deliberately undersized to fit the rack case, so it
+            # spikes into the 80s and falls back within a minute or
+            # two. Over 15 days both rules only ever reached `pending`
+            # — 32 hours of them, including a 90.9°C peak — and
+            # neither fired. A window average counts the dips, so
+            # "hot in bursts all afternoon" and "pinned at 90°C" stop
+            # looking the same.
             name = "temperature";
             rules = [
               {
+                # 15d of history: the 30m mean peaked at 82.3°C on
+                # amos1 and 70.8°C on hpp-1, so this fires roughly
+                # monthly, on the nights `nixos-upgrade` builds
+                # authentik / CUDA llama-cpp / the NVIDIA modules from
+                # source and holds the CPU near throttle for ~25m.
+                # That is intentional rather than noise to suppress:
+                # half an hour averaging above 80°C is worth a line in
+                # the inbox even when the cause is known, and it is
+                # rare enough not to train the reader to ignore it.
                 alert = "HostCPUTemperatureHigh";
-                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 80'';
-                for = "10m";
+                expr = "avg_over_time((${cpuPackageTemp})[30m:1m]) > 80";
                 labels.severity = "warning";
                 annotations = {
                   summary = "CPU running hot on {{ $labels.instance }}";
-                  description = "CPU package temperature on {{ $labels.instance }} has been above 80°C for 10m. Currently {{ $value }}°C. Check airflow / fan health.";
+                  description = "CPU package temperature on {{ $labels.instance }} has averaged above 80°C over the last 30m ({{ $value }}°C). Expected on a from-source nixos-upgrade build; otherwise check airflow / fan health.";
                 };
               }
               {
+                # Same window at the throttle point. 90°C is the
+                # 5800X's Tctl limit, and averaging it over 30m means
+                # the CPU has been losing clock to heat for that whole
+                # half hour rather than touching the limit in passing.
+                # The worst 15m mean in 15d was 90.4°C (that same
+                # build) and the worst 30m mean 82.3°C, so the 30m
+                # window is what keeps an expected build off a
+                # critical-severity page.
                 alert = "HostCPUTemperatureCritical";
-                expr = ''max by (instance) (node_hwmon_temp_celsius * on (chip, sensor) group_left(label) node_hwmon_sensor_label{label=~"Package id.*|Tdie|Tctl"}) > 90'';
-                for = "5m";
+                expr = "avg_over_time((${cpuPackageTemp})[30m:1m]) > 90";
                 labels.severity = "critical";
                 annotations = {
-                  summary = "CPU thermal-throttling imminent on {{ $labels.instance }}";
-                  description = "CPU package temperature on {{ $labels.instance }} has been above 90°C for 5m. Currently {{ $value }}°C. Thermal throttling likely; investigate immediately.";
+                  summary = "CPU thermal-throttling on {{ $labels.instance }}";
+                  description = "CPU package temperature on {{ $labels.instance }} has averaged above 90°C over the last 30m ({{ $value }}°C). The CPU is throttling continuously, not in bursts; investigate immediately.";
                 };
               }
               {
@@ -950,6 +988,58 @@ _: {
                 annotations = {
                   summary = "NAS disk at thermal limit ({{ $labels.diskID }})";
                   description = "Synology disk {{ $labels.diskID }} has been above 60°C for 5m. Currently {{ $value }}°C. Drives are at or above the rated operating ceiling; intervene immediately.";
+                };
+              }
+            ];
+          }
+          {
+            # Cooling-health drift (#636). The temperature rules above
+            # answer "is it hot right now"; this one answers "is the
+            # cooling working as well as it did", which is the
+            # question that actually matters on a host whose hot
+            # bursts are expected by design.
+            #
+            # It measures the CPU package temperature over only the
+            # minutes the machine was near idle (< 15% busy), averaged
+            # across 24h. Restricting to low load is what makes it a
+            # cooling measurement rather than a workload one: a day of
+            # Jellyfin transcodes and a quiet day produce the same
+            # number, but a fan slowing down, dust in the fins, MX-2
+            # pumping out, or the rack warming up all move it.
+            #
+            # Calibration, 15 days on both server hosts: amos1 sat
+            # between 38.0°C and 43.5°C, hpp-1 between 41.5°C and
+            # 44.1°C. 60°C is therefore ~16°C above anything either
+            # host has actually done. The headroom is deliberate — the
+            # baseline tracks ambient, so it has to survive the
+            # difference between a heating season and a hot week
+            # without crying wolf. That does mean a slow 10°C
+            # degradation stays under the line; catching that needs
+            # fan RPM (#637), where "hot with the fan slow" is a far
+            # sharper statement than any temperature threshold alone.
+            #
+            # The alternative — comparing against this host's own
+            # reading two weeks ago — was rejected because retention
+            # is 15 days (see the header), so `offset 14d` sits on the
+            # edge of the data and would silently evaluate to nothing
+            # after any gap.
+            #
+            # Own group with a 5m interval rather than the file-wide
+            # 30s: a 24h mean cannot move meaningfully in half a
+            # minute, so 59 of every 60 evaluations would re-derive
+            # the same number. (Cost is not the reason — VM answers
+            # the 24h subquery in ~10ms on both hosts.)
+            name = "cooling";
+            interval = "5m";
+            rules = [
+              {
+                alert = "HostCPUCoolingDegraded";
+                expr = "avg_over_time(((${cpuPackageTemp}) and on (instance) ((${cpuBusyFraction}) < 0.15))[24h:5m]) > 60";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "CPU cooling degraded on {{ $labels.instance }}";
+                  description = "Near-idle CPU package temperature on {{ $labels.instance }} has averaged {{ $value }}°C over the last 24h, against a 38-44°C baseline for this fleet. Load is not the cause — this only samples minutes below 15% CPU. Check fan RPM, dust in the heatsink fins, thermal paste age, and the rack's ambient temperature.";
                 };
               }
             ];
