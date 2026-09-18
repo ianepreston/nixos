@@ -77,8 +77,13 @@ _: {
             name = "homelab";
             rules = [
               {
+                # `job="nut"` is excluded because the power group below
+                # owns that job's up-ness with far better runbooks, and
+                # firing both gave two pages for one fault (#643). The
+                # `instance` label there is a loopback exporter port,
+                # which told a human nothing anyway.
                 alert = "InstanceDown";
-                expr = "up == 0";
+                expr = ''up{job!="nut"} == 0'';
                 for = "5m";
                 labels.severity = "critical";
                 annotations = {
@@ -996,19 +1001,60 @@ _: {
                 };
               }
               {
-                # nut_exporter returns no metrics at all when it
-                # can't reach upsd, so `up == 0` for the nut job is
-                # how we detect master loss-of-comms. The 10m `for`
-                # window is intentionally longer than upsmon's
-                # NOCOMM_WARNTIME (300s) so a pfSense package
+                # #643. nut_exporter returns no metrics at all when it
+                # can't get a reading, so `up == 0` for the nut job is
+                # all we have — and it collapses "behemoth is gone"
+                # into "behemoth is fine but its NUT is dead", which
+                # need different responses.
+                #
+                # We split them on `snmp_pfsense`, which we already
+                # scrape off behemoth (192.168.10.1) for interface
+                # counters. If SNMP answers while the nut exporter
+                # can't read a thing, the router is up and it is NUT
+                # that is broken — a one-command fix, not an
+                # investigation.
+                #
+                # Deliberately *not* split on which NUT process died.
+                # All three observed shapes (driver dead / upsd dead /
+                # both) come from the same unchecked `nut.sh rc_start`
+                # and take the same repair, so a probe exporter that
+                # told them apart would cost a service per host and
+                # change nothing about what you do next. See the
+                # header of ./nut-client.nix.
+                #
+                # Critical rather than warning: this is the
+                # powerValue=1 UPS, the one actually feeding the
+                # server PSUs, so while it fires there is no OB/LB
+                # signal and no coordinated shutdown on any host. It
+                # also means the 5-minute pfSense cron watchdog has
+                # already failed twice over.
+                alert = "UpsMasterNutBroken";
+                expr = ''up{job="nut",ups_source="router"} == 0 and on() up{job="snmp_pfsense"} == 1'';
+                for = "10m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "behemoth is up but its NUT master is dead";
+                  description = "The router-side UPS has been unreadable for 10m while behemoth still answers SNMP, so this is the pfSense NUT package, not the network. The cron watchdog on behemoth should have repaired it within 5m and did not. Fix: `ssh behemoth /usr/local/etc/rc.d/nut.sh restart` (`service nut restart` does not work). Confirm the shape first with `upsc UPSA` on behemoth — `Driver not connected` vs `Connection refused` both mean the same restart. Until it clears, the UPS feeding the servers is unmonitored: a mains failure produces no OB/LB signal and no coordinated shutdown.";
+                };
+              }
+              {
+                # Everything the rule above doesn't claim: the NAS-side
+                # master, and the router-side case where behemoth
+                # itself is unreachable. The `unless on()` is
+                # fail-safe — if the snmp_pfsense target is missing
+                # entirely (snmp_exporter down), the router case lands
+                # here rather than vanishing.
+                #
+                # The 10m `for` window is intentionally longer than
+                # upsmon's NOCOMMWARNTIME (300s) so a pfSense package
                 # restart flap doesn't page.
                 alert = "UpsNoCommunication";
-                expr = ''up{job="nut"} == 0'';
+                expr = ''up{job="nut",ups_source="nas"} == 0 or (up{job="nut",ups_source="router"} == 0 unless on() up{job="snmp_pfsense"} == 1)'';
                 for = "10m";
                 labels.severity = "warning";
                 annotations = {
                   summary = "Lost communication with {{ $labels.ups_source }}-side UPS master";
-                  description = "nut_exporter for {{ $labels.ups_source }}-side UPS has failed to reach its master for 10m. If this is the router-side UPS, the pfSense NUT package may have crashed (known fragility — see #82). Loss of comms with both at once probably means LAN-down, not power.";
+                  description = "nut_exporter for the {{ $labels.ups_source }}-side UPS has failed to reach its master for 10m, and the master host is not answering on any other channel either — so treat this as a host or network problem, not a NUT one. Loss of comms with both masters at once probably means LAN-down, not power.";
                 };
               }
               {
