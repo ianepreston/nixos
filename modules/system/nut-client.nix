@@ -33,7 +33,82 @@
 # pfSense package restart / upgrade flap doesn't trigger anything
 # destructive — the pfSense NUT package is the weakest link per the
 # decision log on #82. Communications loss is surfaced via vmalert
-# rules (`UpsNoCommunication`) rather than upsmon SHUTDOWN actions.
+# rules (`UpsMasterNutBroken` / `UpsNoCommunication`) rather than
+# upsmon SHUTDOWN actions.
+#
+# The pfSense NUT package's weakness, concretely (#643). Its generated
+# `/usr/local/etc/rc.d/nut.sh` is neither idempotent nor checked:
+#
+#   rc_start() {
+#           /usr/bin/killall -q -9 upsmon upsd upsdrvctl usbhid-ups
+#           /usr/local/sbin/upsdrvctl start &   # backgrounded, unchecked
+#           /usr/local/sbin/upsd -u root        # races the driver
+#           sleep 1
+#           /usr/local/sbin/upsmon
+#   }
+#
+# pfSense re-runs it on every "Restarting packages" (each WAN link
+# flap via `rc.newwanip`) and twice during boot. A second invocation
+# `killall -9`s a *healthy* set, and whatever loses the ensuing race
+# stays dead — upsd's and the driver's early startup errors go to
+# stderr, which `/rc.start_packages` discards, so the failure is
+# silent. Three shapes observed, all from this one cause:
+#
+#   * driver dead, upsd alive  → `LIST VAR UPSA` = ERR DRIVER-NOT-CONNECTED
+#   * upsd dead, upsmon alive  → connection refused (2026-09-17 boot)
+#   * both dead
+#
+# All three are repaired by the same command, so we deliberately do
+# *not* try to tell them apart in alerting — see the rules in
+# ./victoriametrics.nix, which discriminate on the axis that actually
+# changes the response (is behemoth itself reachable?) using the
+# `snmp_pfsense` scrape we already run.
+#
+# Manual repair:
+#
+#   ssh behemoth /usr/local/etc/rc.d/nut.sh restart
+#
+# `service nut restart` does *not* work — the base rc script refuses
+# without `nut_enable=YES` in /etc/rc.conf and points at `onerestart`.
+# `nut.sh` is the pfSense package wrapper and the right entry point.
+#
+# pfSense self-heal (one-time, out-of-band — #643 Ask 2):
+#   1. System → Package Manager → install the **Cron** package.
+#   2. Services → Cron → Add, running as `root` every 5 minutes
+#      (min `*/5`, everything else `*`), with this as the command —
+#      one line, no wrapping:
+#
+#        U=/usr/local/bin/upsc; D=/usr/local/sbin/upsdrvctl; L=/usr/bin/logger; $U UPSA >/dev/null 2>&1 || { sleep 10; $U UPSA >/dev/null 2>&1; } || { $L -t nut-watchdog 'UPSA unreadable, repairing'; $D start >/dev/null 2>&1; sleep 5; $U UPSA >/dev/null 2>&1 || { /usr/local/etc/rc.d/nut.sh restart >/dev/null 2>&1; sleep 5; $D start >/dev/null 2>&1; sleep 5; }; $U UPSA >/dev/null 2>&1 && $L -t nut-watchdog 'UPSA repaired' || $L -t nut-watchdog 'UPSA repair FAILED'; }
+#
+#      Read it as: probe, re-probe, repair cheaply, escalate, report.
+#
+#      * `upsc` exits 1 on both DRIVER-NOT-CONNECTED and
+#        connection-refused, so one probe covers every shape above.
+#      * The 10s re-probe is load-bearing, not politeness. `upsdrvctl
+#        start` against a *live* driver prints "Duplicate driver
+#        instance detected! Terminating other driver!" and replaces
+#        it, so a false positive costs a real bounce.
+#      * `upsdrvctl start` is tried alone first: when upsd is up and
+#        only the driver died — the common shape — it repairs in place
+#        and upsd reconnects on its own, without bouncing upsd or
+#        upsmon the way `nut.sh restart` does.
+#      * The second `$D start` after `nut.sh restart` is there because
+#        one `nut.sh restart` is genuinely not always enough: on
+#        2026-09-18 the driver came up only on the second attempt
+#        (`nut_libusb_get_report: No device` the first time, clean the
+#        second), which is the same USB flakiness behind the recurring
+#        `libusb1: Could not open any HID devices` staleness flaps.
+#      * Those `Data stale` flaps (a few per day, 5-10s) still serve
+#        variables, so `upsc` succeeds and the watchdog ignores them.
+#      * The `logger` lines land in the pfSense syslog stream we
+#        already ship to VictoriaLogs, so a watchdog that is papering
+#        over a failing UPS every 5 minutes is visible rather than
+#        silent. `UPSA repair FAILED` is the one to look for.
+#
+#      Cron jobs live in `config.xml`, so this survives reboots and
+#      backup/restore — unlike a hand-edited `/etc/crontab`, which
+#      pfSense regenerates. Patching `nut.sh` itself is not an option:
+#      the package service handler rewrites it on every config change.
 #
 # Metrics. A pair of DRuggeri/nut_exporter instances run on loopback
 # ports 9199 (router-ups) / 9200 (nas-ups) and are scraped by the
@@ -236,6 +311,13 @@ _: {
         {
           job_name = "nut";
           metrics_path = "/ups_metrics";
+          # nut_exporter *hangs* rather than erroring when upsd is
+          # unreachable or answers DRIVER-NOT-CONNECTED, so the default
+          # 10s scrape_timeout was being burned in full on every
+          # attempt (#643). A healthy scrape returns in ~0.15s; 5s is
+          # ~30x headroom and gets `up` to 0 promptly instead of
+          # pinning a scrape worker for a third of the interval.
+          scrape_timeout = "5s";
           static_configs = [
             {
               targets = [ "127.0.0.1:${toString routerExporterPort}" ];
