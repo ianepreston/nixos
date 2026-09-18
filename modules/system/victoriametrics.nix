@@ -65,6 +65,32 @@ _: {
       # cooling-baseline rule to low-load samples.
       cpuBusyFraction = ''1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))'';
 
+      # CPU fan RPM (#637). amos1 is the only host in the fleet with a
+      # readable Super I/O — an ITE IT8665E behind the out-of-tree
+      # it87 fork pinned in modules/hosts/amos1.nix, which is also
+      # where the "why not nct6775 / asus-ec-sensors" reasoning lives
+      # — so this series exists there and nowhere else, and the two
+      # rules below silently no-op on every other host.
+      #
+      # fan1 is the CPU_FAN header. It is the only populated one of
+      # the chip's five channels (fan2/3/4/6 read a flat 0 — the rack
+      # case's own fans are not on board headers) and the only one
+      # that tracks CPU load: 1331 rpm at 42°C idle, ~1650 at the
+      # 70-76°C the host sits at under its normal Jellyfin/Valheim
+      # background, and 2109 after 45s of all-core load with Tctl
+      # pinned at 90°C. That last number answers the open question in
+      # #637 — the BIOS curve does reach the ARCTIC Alpine 23 CO
+      # fan's rated 2000 rpm ceiling, so there is no headroom left to
+      # reclaim from a BIOS setting.
+      #
+      # `pwm1` is deliberately unused: it read a constant 51 across
+      # that entire ramp, so the chip's PWM registers do not reflect
+      # the duty the firmware's fan curve is actually applying. The
+      # "same duty, falling RPM" bearing-wear rule #637 sketches
+      # cannot be built on it, and building it off a temperature band
+      # instead needs a baseline this host has no history for yet.
+      cpuFanRpm = ''max by (instance) (node_hwmon_fan_rpm{chip=~"platform_it87.*",sensor="fan1"})'';
+
       # Same alert content as the prior prometheus.ruleFiles; vmalert
       # accepts the Prometheus rule YAML verbatim. Watchdog stays in
       # its own group so the route in alertmanager.nix
@@ -914,6 +940,52 @@ _: {
                   description = "CPU package temperature on {{ $labels.instance }} has averaged above 90°C over the last 30m ({{ $value }}°C). The CPU is throttling continuously, not in bursts; investigate immediately.";
                 };
               }
+              # Fan rules (#637). These are what let a reader tell a
+              # failing cooler apart from a busy one: the rules above
+              # fire on "hot" regardless of cause, and a Jellyfin
+              # transcode and a seizing bearing look identical to
+              # them.
+              {
+                # Unambiguous: the fan has never been seen below
+                # 1331 rpm, which is where its curve idles at 42°C,
+                # so anything under 500 is a stopped fan, a pulled
+                # header or a dead tach — not a slow one.
+                #
+                # 5m rather than the "couple of minutes" #637
+                # suggests. The CPU defends itself by throttling at
+                # 90°C, so this alert's job is to get a human
+                # looking rather than to prevent damage in seconds,
+                # and the wider window rides out both a tach glitch
+                # and a BIOS fan-stop dip should Q-Fan ever be set
+                # to allow one (it does not today — the fan was
+                # still turning at 42°C).
+                alert = "HostCPUFanStopped";
+                expr = "${cpuFanRpm} < 500";
+                for = "5m";
+                labels.severity = "critical";
+                annotations = {
+                  summary = "CPU fan stopped on {{ $labels.instance }}";
+                  description = "CPU fan on {{ $labels.instance }} has been below 500 rpm for 5m (currently {{ $value }} rpm, against 1331 at idle and ~2100 under load). The cooler is an ARCTIC Alpine 23 CO with no thermal margin to spare on a 105 W 5800X; expect sustained throttling within minutes. Check the fan and its CPU_FAN header.";
+                };
+              }
+              {
+                # The same 30m window and the same 80°C line as
+                # HostCPUTemperatureHigh, plus the fan condition, so
+                # this fires alongside that rule and says *why*: at a
+                # 30m mean of 80°C the BIOS curve has the fan at
+                # 1900-2100 rpm, so under 1500 means the fan is not
+                # answering the heat. Ordered fan-first because
+                # `and` keeps the left-hand side's sample, and the
+                # rpm is the number worth putting in the
+                # notification.
+                alert = "HostCPUFanNotRamping";
+                expr = "avg_over_time((${cpuFanRpm})[30m:1m]) < 1500 and on (instance) avg_over_time((${cpuPackageTemp})[30m:1m]) > 80";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "CPU hot and fan not keeping up on {{ $labels.instance }}";
+                  description = "CPU fan on {{ $labels.instance }} has averaged {{ $value }} rpm over the last 30m while the CPU package averaged above 80°C — the curve puts it near 1900-2100 rpm at that temperature. This is the cooling failing rather than the workload being heavy, which is the distinction HostCPUTemperatureHigh cannot make alone. Check the fan bearing, dust in the heatsink fins and the rack's ambient temperature.";
+                };
+              }
               {
                 alert = "HostGPUTemperatureHigh";
                 expr = "max by (instance) (nvidia_smi_temperature_gpu) > 80";
@@ -1015,8 +1087,10 @@ _: {
             # difference between a heating season and a hot week
             # without crying wolf. That does mean a slow 10°C
             # degradation stays under the line; catching that needs
-            # fan RPM (#637), where "hot with the fan slow" is a far
-            # sharper statement than any temperature threshold alone.
+            # fan RPM, which HostCPUFanNotRamping in the temperature
+            # group above now supplies (#637) — "hot with the fan
+            # slow" is a far sharper statement than any temperature
+            # threshold alone.
             #
             # The alternative — comparing against this host's own
             # reading two weeks ago — was rejected because retention
