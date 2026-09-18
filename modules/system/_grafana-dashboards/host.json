@@ -296,6 +296,54 @@
         { "expr": "node_hwmon_temp_max_celsius{instance=\"$instance\",chip=~\"nvme_.*\"} < 200", "legendFormat": "{{chip}} {{sensor}} WCTEMP", "refId": "B" },
         { "expr": "node_hwmon_temp_crit_celsius{instance=\"$instance\",chip=~\"nvme_.*\"} < 200", "legendFormat": "{{chip}} {{sensor}} CCTEMP", "refId": "C" }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "rotrpm",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "id": 14,
+      "title": "Fan speed",
+      "description": "Super I/O fan tachometers. amos1 is the only host with a readable Super I/O today — an ITE IT8665E behind the out-of-tree it87 fork, see modules/hosts/amos1.nix for why nothing in-tree binds it — so this panel is empty elsewhere. There, `fan1` is the CPU_FAN header and the only populated channel: ~1331 rpm at 42°C idle, ~1650 rpm at the 70-76°C the host sits at under its normal background load, and 2109 rpm with Tctl pinned at 90°C, i.e. the ARCTIC Alpine 23 CO fan's rated ~2000 rpm ceiling is reached. `fan2`/`fan3`/`fan4`/`fan6` sit at a flat 0 — the rack case's own fans are not on board headers. HostCPUFanStopped and HostCPUFanNotRamping both key off `fan1`.",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "node_hwmon_fan_rpm{instance=\"$instance\"}", "legendFormat": "{{chip}} {{sensor}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "celsius",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "id": 15,
+      "title": "Board temperature",
+      "description": "Case-ambient proxy from the same Super I/O chip as the fan panel — the reading that separates \"the rack got warmer\" from \"the cooling got worse\" when HostCPUCoolingDegraded fires. Only `temp2` is plotted: of the IT8665E's six channels, `temp1` is a laggier copy of the CPU temperature already on the CPU temperatures panel via k10temp, and `temp3`-`temp6` all report one identical value that follows the CPU rather than the board. `temp2` held 23-24°C throughout a ramp that took Tctl from 42°C to 90°C, which is what an ambient sensor should do.",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=~\"platform_it87.*\",sensor=\"temp2\"}", "legendFormat": "board ambient", "refId": "A" }
+      ]
     }
   ],
   "refresh": "30s",

@@ -28,132 +28,177 @@
       llm
     ])
     ++ [
-      {
-        home-manager.sharedModules = with inputs.self.modules.homeManager; [
-          ssh-homelan
-        ];
-        boot.loader = {
-          systemd-boot.enable = true;
-          efi.canTouchEfiVariables = true;
-        };
-
-        networking = {
-          networkmanager.enable = true;
-        };
-
-        # Always-on local inference on the RTX 3070. Complements terra's
-        # larger model, which is only reachable when that desktop is on.
-        #
-        # Two models, one at a time (#519), same router shape as terra
-        # — see modules/hosts/terra.nix for the mechanism. amos1 wants it
-        # arguably more: it is the always-on host, so its single model
-        # choice is what constrains the fleet whenever terra is powered
-        # off, and the two models below sit within 110 MiB of each other
-        # (6080 and 6190 MiB measured), making `--models-max 1` eviction a
-        # like-for-like swap with no headroom cliff between them.
-        #
-        # 12.4 GB of models against an 8.0 GB card. Nothing about this is
-        # concurrent serving.
-        #
-        # Vision-capable (#524) — see modules/hosts/terra.nix for how
-        # `-hf` picks up the mmproj and why PDFs don't work.
-        #
-        # Nothing loads at boot, which matters more here than on terra:
-        # the GPU's other job is Jellyfin's NVENC transcoding, and staying
-        # cold until a request arrives is strictly better for that budget
-        # than the pre-router service's load-at-start. Idle eviction is
-        # unchanged and still the mechanism that hands VRAM back mid-day
-        # — verified to still work in router mode, where a child drops
-        # from full residency to ~330 MiB after `sleepIdleSeconds`.
-        #
-        # VRAM budget (8.0 GB, shared with Jellyfin's NVENC transcoding),
-        # worst case of the two, which is the vision model:
-        #   Qwen3-VL-4B Q4_K_M weights ~2.5 GB
-        #   mmproj (Q8_0, auto-picked) ~0.45 GB
-        #   KV cache @ 32768 ctx       ~2.3 GB  (36 layers x 8 KV heads
-        #                                        x 128 dim x 2 x q8_0
-        #                                        = ~72 KB/token; f16 is
-        #                                        ~144 KB/token)
-        #   compute buffers            ~0.9 GB
-        #
-        # Contention numbers stand as measured in #517 with a model
-        # resident: 1080p h264_nvenc peaks the card at 6586 MiB, 4K
-        # hevc_nvenc at 7730 MiB, both succeeding. Re-checked in #524 with
-        # a synthetic 4K cuda-decode -> scale_cuda -> hevc_nvenc pipeline,
-        # which peaked at 7179 MiB — lower than Jellyfin's real figure
-        # because it skips tone-mapping and subtitle burn-in, so treat
-        # #517's 7730 as the number that binds.
-        myLlamaCpp = {
-          enable = true;
-          cudaCapabilities = [ "8.6" ]; # RTX 3070, Ampere / sm_86
-
-          models = {
-            # Vision. Measured resident: 6188 MiB on the bench, 6132 MiB
-            # on the pre-router service after a real image request, and
-            # 6080 MiB under the router — below what Qwen3-8B held at
-            # 16384, so the Jellyfin headroom #517 validated carries over
-            # unchanged.
-            #
-            # 40960 does not clear that bar: it puts the model at
-            # 6800 MiB, 612 MiB worse, which eats into the ~1.5 GB a 4K
-            # transcode wants. Qwen3-VL-8B is out of the question here at
-            # all — 7374 MiB at only 16384 ctx. So 32768 is the ceiling,
-            # set by Jellyfin rather than by the model (Qwen3-VL trains to
-            # 262144).
-            #
-            # Known weakness of the 4B specifically: given a three-field
-            # ingredient schema it duplicates the food name into `unit` on
-            # 10 of 11 ingredients. Schema `description` fields do not fix
-            # it — llama.cpp compiles a JSON schema to a GBNF grammar and
-            # drops descriptions — but an instruction in the prompt body
-            # does. That lever belongs to the calling app, so Tandoor may
-            # or may not have it. This is the cost of the 8 GB budget;
-            # route to terra's `vision` when it matters. Document OCR
-            # itself was flawless on both.
-            "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M" = {
-              aliases = [ "vision" ];
-              ctxSize = 32768;
-              cacheTypeK = "q8_0";
-              cacheTypeV = "q8_0";
+      (
+        { config, ... }:
+        {
+          home-manager.sharedModules = with inputs.self.modules.homeManager; [
+            ssh-homelan
+          ];
+          boot = {
+            loader = {
+              systemd-boot.enable = true;
+              efi.canTouchEfiVariables = true;
             };
 
-            # Generalist. The model #524 displaced, back as a peer: an
-            # 8B-class text model against the 4B, for the jobs where the
-            # 4B's instruction-following is the binding constraint and no
-            # image is involved. 6199 MiB at 16384 per #517 and 6190 MiB
-            # measured under the router, i.e. within 110 MiB of the vision
-            # model above, so swapping between them never changes what
-            # Jellyfin can expect to find free.
-            "Qwen/Qwen3-8B-GGUF:Q4_K_M" = {
-              aliases = [ "text" ];
-              ctxSize = 16384;
-              cacheTypeK = "q8_0";
-              cacheTypeV = "q8_0";
-            };
+            # Fan RPM and motherboard temperatures (#637). Until this,
+            # the only hwmon devices here were `nvme`, `k10temp` and the
+            # sensor-less `asus` node registered by asus_wmi, so there
+            # was no fan data at all — which is what stops #636's heat
+            # rules from telling a slowing fan apart from a busy
+            # Jellyfin.
+            #
+            # The board is a ROG STRIX B350-F GAMING and its Super I/O
+            # is an ITE IT8665E. Nothing in-tree binds it:
+            #   - nct6775 is Nuvoton-only, and this board is ITE: its
+            #     ACPI unlock sequence (\_SB.PCI0.SBRG.SIO1.ENFG writes
+            #     0x87, 0x01, 0x55, 0x55 to 0x2e) is ITE's, not
+            #     Nuvoton's 0x87/0x87.
+            #   - the in-tree it87 knows no IT8665E, so it probes and
+            #     returns -ENODEV.
+            #   - asus-ec-sensors and asus_wmi_sensors each gate on a
+            #     DMI board list this board is absent from, and the WMI
+            #     methods asus_wmi_sensors calls (RWEC/PWEC/PWEr/PWEt)
+            #     are not among the ones this board's \AMW0.WMBD
+            #     implements.
+            # frankcrawford/it87 — nixpkgs' `it87` — is the maintained
+            # fork that does carry IT8665E. It lands on the same
+            # modules-tree path as the in-tree driver and so replaces
+            # it.
+            #
+            # No `acpi_enforce_resources=lax`, despite that being the
+            # stock ASUS advice: the DSDT declares the hwmon window
+            # (0x290-0x29f) only in the PNP0C02 motherboard-resources
+            # _CRS, never as an OperationRegion, so
+            # acpi_check_resource_conflict() has nothing to refuse and
+            # the driver's `ignore_resource_conflict=1` escape hatch
+            # stays unset. That also means no kernel command line
+            # change and no reboot to pick this up.
+            #
+            # Loaded explicitly because the driver's DMI autoload table
+            # lists PRIME B350-PLUS, not this board; detection itself is
+            # by chip ID, so the missing alias is the only gap.
+            extraModulePackages = [ config.boot.kernelPackages.it87 ];
+            kernelModules = [ "it87" ];
           };
 
-          # 8080 is unifi-os-server's on this host. Loopback-only: caddy
-          # is the sole client, so no allowedClients and no firewall hole.
-          port = 8091;
-          # Shorter than terra's 600s: the GPU has a second job here, and
-          # handing VRAM back to transcoding promptly matters more than
-          # avoiding an occasional model reload.
-          sleepIdleSeconds = 300;
-        };
+          networking = {
+            networkmanager.enable = true;
+          };
 
-        # The only crossplay Valheim server: a PlayFab join code resolves
-        # to a network endpoint, so a second crossplay host behind this
-        # NAT would answer amos1's codes (2026-09-11, #644). hpp-1 runs
-        # the Steam backend for exactly that reason. Notifications (join
-        # code + player join/leave) both belong to this instance since it
-        # is the one players actually use.
-        myValheim = {
-          enable = true;
-          crossplay = true;
-        };
+          # Always-on local inference on the RTX 3070. Complements terra's
+          # larger model, which is only reachable when that desktop is on.
+          #
+          # Two models, one at a time (#519), same router shape as terra
+          # — see modules/hosts/terra.nix for the mechanism. amos1 wants it
+          # arguably more: it is the always-on host, so its single model
+          # choice is what constrains the fleet whenever terra is powered
+          # off, and the two models below sit within 110 MiB of each other
+          # (6080 and 6190 MiB measured), making `--models-max 1` eviction a
+          # like-for-like swap with no headroom cliff between them.
+          #
+          # 12.4 GB of models against an 8.0 GB card. Nothing about this is
+          # concurrent serving.
+          #
+          # Vision-capable (#524) — see modules/hosts/terra.nix for how
+          # `-hf` picks up the mmproj and why PDFs don't work.
+          #
+          # Nothing loads at boot, which matters more here than on terra:
+          # the GPU's other job is Jellyfin's NVENC transcoding, and staying
+          # cold until a request arrives is strictly better for that budget
+          # than the pre-router service's load-at-start. Idle eviction is
+          # unchanged and still the mechanism that hands VRAM back mid-day
+          # — verified to still work in router mode, where a child drops
+          # from full residency to ~330 MiB after `sleepIdleSeconds`.
+          #
+          # VRAM budget (8.0 GB, shared with Jellyfin's NVENC transcoding),
+          # worst case of the two, which is the vision model:
+          #   Qwen3-VL-4B Q4_K_M weights ~2.5 GB
+          #   mmproj (Q8_0, auto-picked) ~0.45 GB
+          #   KV cache @ 32768 ctx       ~2.3 GB  (36 layers x 8 KV heads
+          #                                        x 128 dim x 2 x q8_0
+          #                                        = ~72 KB/token; f16 is
+          #                                        ~144 KB/token)
+          #   compute buffers            ~0.9 GB
+          #
+          # Contention numbers stand as measured in #517 with a model
+          # resident: 1080p h264_nvenc peaks the card at 6586 MiB, 4K
+          # hevc_nvenc at 7730 MiB, both succeeding. Re-checked in #524 with
+          # a synthetic 4K cuda-decode -> scale_cuda -> hevc_nvenc pipeline,
+          # which peaked at 7179 MiB — lower than Jellyfin's real figure
+          # because it skips tone-mapping and subtitle burn-in, so treat
+          # #517's 7730 as the number that binds.
+          myLlamaCpp = {
+            enable = true;
+            cudaCapabilities = [ "8.6" ]; # RTX 3070, Ampere / sm_86
 
-        system.stateVersion = "25.11";
-      }
+            models = {
+              # Vision. Measured resident: 6188 MiB on the bench, 6132 MiB
+              # on the pre-router service after a real image request, and
+              # 6080 MiB under the router — below what Qwen3-8B held at
+              # 16384, so the Jellyfin headroom #517 validated carries over
+              # unchanged.
+              #
+              # 40960 does not clear that bar: it puts the model at
+              # 6800 MiB, 612 MiB worse, which eats into the ~1.5 GB a 4K
+              # transcode wants. Qwen3-VL-8B is out of the question here at
+              # all — 7374 MiB at only 16384 ctx. So 32768 is the ceiling,
+              # set by Jellyfin rather than by the model (Qwen3-VL trains to
+              # 262144).
+              #
+              # Known weakness of the 4B specifically: given a three-field
+              # ingredient schema it duplicates the food name into `unit` on
+              # 10 of 11 ingredients. Schema `description` fields do not fix
+              # it — llama.cpp compiles a JSON schema to a GBNF grammar and
+              # drops descriptions — but an instruction in the prompt body
+              # does. That lever belongs to the calling app, so Tandoor may
+              # or may not have it. This is the cost of the 8 GB budget;
+              # route to terra's `vision` when it matters. Document OCR
+              # itself was flawless on both.
+              "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M" = {
+                aliases = [ "vision" ];
+                ctxSize = 32768;
+                cacheTypeK = "q8_0";
+                cacheTypeV = "q8_0";
+              };
+
+              # Generalist. The model #524 displaced, back as a peer: an
+              # 8B-class text model against the 4B, for the jobs where the
+              # 4B's instruction-following is the binding constraint and no
+              # image is involved. 6199 MiB at 16384 per #517 and 6190 MiB
+              # measured under the router, i.e. within 110 MiB of the vision
+              # model above, so swapping between them never changes what
+              # Jellyfin can expect to find free.
+              "Qwen/Qwen3-8B-GGUF:Q4_K_M" = {
+                aliases = [ "text" ];
+                ctxSize = 16384;
+                cacheTypeK = "q8_0";
+                cacheTypeV = "q8_0";
+              };
+            };
+
+            # 8080 is unifi-os-server's on this host. Loopback-only: caddy
+            # is the sole client, so no allowedClients and no firewall hole.
+            port = 8091;
+            # Shorter than terra's 600s: the GPU has a second job here, and
+            # handing VRAM back to transcoding promptly matters more than
+            # avoiding an occasional model reload.
+            sleepIdleSeconds = 300;
+          };
+
+          # The only crossplay Valheim server: a PlayFab join code resolves
+          # to a network endpoint, so a second crossplay host behind this
+          # NAT would answer amos1's codes (2026-09-11, #644). hpp-1 runs
+          # the Steam backend for exactly that reason. Notifications (join
+          # code + player join/leave) both belong to this instance since it
+          # is the one players actually use.
+          myValheim = {
+            enable = true;
+            crossplay = true;
+          };
+
+          system.stateVersion = "25.11";
+        }
+      )
     ];
   };
 }
