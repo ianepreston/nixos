@@ -64,9 +64,22 @@
 # changes the response (is behemoth itself reachable?) using the
 # `snmp_pfsense` scrape we already run.
 #
-# Manual repair:
+# Manual repair — escalate, don't lead with the hammer. Probe with
+# `upsc UPSA` (exits 1 on every shape above) between steps:
 #
-#   ssh behemoth /usr/local/etc/rc.d/nut.sh restart
+#   ssh behemoth /usr/local/sbin/upsdrvctl start     # driver-only: repairs in place
+#   ssh behemoth /usr/local/etc/rc.d/nut.sh restart  # upsd dead too
+#   ssh behemoth /usr/local/sbin/upsdrvctl start     # again; see below
+#
+# The driver-only shape — much the most common — never needs
+# `nut.sh restart`: upsd reconnects to a freshly started driver on its
+# own, so `upsdrvctl start` alone fixes it without bouncing upsd or
+# upsmon. Measured 2026-09-18 against an induced fault: repaired in
+# 15.8s with upsd's and upsmon's PIDs unchanged.
+#
+# Don't run `upsdrvctl start` speculatively. Against a *live* driver it
+# prints "Duplicate driver instance detected! Terminating other
+# driver!" and replaces it, so it is not a free no-op — probe first.
 #
 # `service nut restart` does *not* work — the base rc script refuses
 # without `nut_enable=YES` in /etc/rc.conf and points at `onerestart`.
@@ -91,7 +104,10 @@
 #      * `upsdrvctl start` is tried alone first: when upsd is up and
 #        only the driver died — the common shape — it repairs in place
 #        and upsd reconnects on its own, without bouncing upsd or
-#        upsmon the way `nut.sh restart` does.
+#        upsmon the way `nut.sh restart` does. Verified 2026-09-18 by
+#        killing the driver and watching cron repair it: detected and
+#        fixed 15.8s into the job, upsd/upsmon PIDs untouched, so the
+#        escalation below never ran.
 #      * The second `$D start` after `nut.sh restart` is there because
 #        one `nut.sh restart` is genuinely not always enough: on
 #        2026-09-18 the driver came up only on the second attempt
@@ -109,6 +125,15 @@
 #      backup/restore — unlike a hand-edited `/etc/crontab`, which
 #      pfSense regenerates. Patching `nut.sh` itself is not an option:
 #      the package service handler rewrites it on every config change.
+#
+#      To confirm the job still runs, you have to break something: the
+#      healthy path is silent by design and leaves no trace anywhere.
+#      pfSense has no /var/log/cron, routes no `cron` facility in
+#      /etc/syslog.conf, and mounts ZFS `noatime`, so neither a log nor
+#      the binary's atime can tell you whether cron fired. Kill the
+#      driver (`killall -9 usbhid-ups`, safe — upsd and upsmon stay up,
+#      the UPS stays on mains) and watch for the `nut-watchdog` pair
+#      within one 5-minute tick.
 #
 # Metrics. A pair of DRuggeri/nut_exporter instances run on loopback
 # ports 9199 (router-ups) / 9200 (nas-ups) and are scraped by the
