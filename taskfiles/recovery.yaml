@@ -38,6 +38,23 @@ tasks:
   # Per-app dispatchers below populate UNITS / PATHS / DB / SWAPS and
   # call the matching template. Marked `internal: true` so they don't
   # appear in `task --list`.
+  #
+  # All three run `restic unlock` and then pass `--retry-lock 10m`.
+  # `restic restore` takes a read lock, and the nightly `forget --prune`
+  # holds an exclusive one for ~47s at ~03:2x; restic retries zero times
+  # by default, so a recovery that happened to overlap would abort with
+  # exit 11 partway through (#676). Waiting beats failing mid-restore.
+  #
+  # The `unlock` is not redundant with the retry, it is what keeps the
+  # retry from making things worse. `checkForOtherLocks` (restic 0.18.1,
+  # internal/restic/lock.go:160) never consults `Stale()` — only the
+  # `unlock` command does — so a lock left behind by a dead process
+  # blocks acquisition just like a live one, and the retry burns the
+  # full 10m before failing anyway. A crash that leaves a stale lock on
+  # the repo is exactly the crash that leads to a recovery, and
+  # `recovery:all` chains every app in sequence. nixpkgs runs `restic
+  # unlock` before the nightly prune for this reason; these templates
+  # need their own.
   _restore-volume:
     internal: true
     requires:
@@ -75,7 +92,8 @@ tasks:
         # paths that aren't in the snapshot. Makes restore a clean
         # operation rather than an overlay — see issue #217.
         # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
+        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
           restore latest --target / --delete \$includes
 
         for u in {{.UNITS}}; do
@@ -121,7 +139,8 @@ tasks:
         echo "[+] Restoring /var/backup/postgresql {{.PATHS}}"
         # --delete: see comment in _restore-volume.
         # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
+        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
           restore latest --target / --delete \$includes
 
         echo "[+] Replaying \$DB database from pg_dumpall"
@@ -182,7 +201,8 @@ tasks:
         echo "[+] Restoring paths: {{.PATHS}}"
         # --delete: see comment in _restore-volume.
         # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" \
+        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
+        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
           restore latest --target / --delete \$includes
 
         for triple in {{.SWAPS}}; do

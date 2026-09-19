@@ -88,9 +88,27 @@
             OUT = os.environ["TEXTFILE_OUT"]
             HOST = os.environ["RESTIC_HOST"]
 
+            # `snapshots`, `stats` and `ls` each take a *read* lock on the
+            # repo, which blocks the nightly `forget --prune`'s exclusive
+            # lock and is blocked by it. restic retries zero times by
+            # default, so whichever of the two asks second dies with exit
+            # 11 rather than waiting a few seconds (#676). Both sides now
+            # wait; see the `pruneOpts` note below for the sizing.
+            #
+            # The budget is per-invocation, and this script runs three
+            # locking commands (`snapshots`, `stats`, then the `ls`
+            # walk), so against a lock nobody ever releases the unit can
+            # sit in `activating` for ~30m rather than 10m. Harmless —
+            # it holds nothing anyone else needs and TimeoutStartSec is
+            # infinity — but the nightly ExecStartPost `systemctl
+            # --no-block start` merges into that job instead of running
+            # a fresh post-backup refresh, so the .prom is stale until
+            # the next grid tick.
+            RETRY_LOCK = "10m"
+
 
             def restic(*args):
-                cmd = ["restic", "-r", REPO, "-p", PWF, "--json", *args]
+                cmd = ["restic", "-r", REPO, "-p", PWF, "--retry-lock", RETRY_LOCK, "--json", *args]
                 r = subprocess.run(cmd, capture_output=True, text=True)
                 if r.returncode != 0:
                     sys.stderr.write(r.stderr)
@@ -172,7 +190,7 @@
             # nodes. The snapshot summary's total_files_processed is
             # the truth check — they must match (modulo dirs/symlinks).
             proc = subprocess.Popen(
-                ["restic", "-r", REPO, "-p", PWF, "ls", "--long", "--recursive", "--json", snap_id],
+                ["restic", "-r", REPO, "-p", PWF, "--retry-lock", RETRY_LOCK, "ls", "--long", "--recursive", "--json", snap_id],
                 stdout=subprocess.PIPE,
                 text=True,
             )
@@ -349,12 +367,56 @@
             "/var/lib/containers/*/tmp"
           ];
 
+          # `backup` takes an append lock, which coexists with the
+          # metrics job's read lock but not with an exclusive one — and
+          # it is the *first* of this unit's three ExecStart= lines, so
+          # losing that race costs the snapshot itself, not just the
+          # prune. `Persistent = true` here and on restic-check-server
+          # below is what makes it reachable: a boot that has missed
+          # both windows fires both catch-ups in the same transaction,
+          # and `restic check`'s exclusive lock is held ~46s. Retry
+          # rather than fail, same as `pruneOpts` (#676).
+          #
+          # `extraBackupArgs` is joined into the `backup` invocation
+          # only; the prune and check lines take their own flag.
+          extraBackupArgs = [ "--retry-lock 10m" ];
+
+          # …and the flag on `backup` is not enough on its own, because
+          # the unit dies before ExecStart even runs. `initialize = true`
+          # makes nixpkgs emit an ExecStartPre of
+          # `restic cat config > /dev/null || restic init`, and `cat`
+          # takes a read lock (restic 0.18.1, cmd/restic/cmd_cat.go:71).
+          # Against the check's exclusive lock that probe fails, the
+          # `|| init` fallback then fails too ("config file already
+          # exists"), and the unit is dead at status=1 with no snapshot
+          # — observed directly by forcing the race on hpp-1.
+          #
+          # nixpkgs offers no way to put a flag on that probe:
+          # `resticCmd`'s only injection point is `extraOptions`, which
+          # becomes `-o key=value` (restic's extended options), not CLI
+          # flags. `backupPrepareCommand` is the lever that works —
+          # nixpkgs emits it as the *first* line of the same preStart,
+          # so a retrying probe here blocks until the lock clears and
+          # the unretried one right after it finds the repo free.
+          # RESTIC_REPOSITORY / RESTIC_PASSWORD_FILE come from the
+          # unit's own environment. `|| true` because this is only a
+          # wait: any real repo problem is the next line's to report,
+          # with its own error message.
+          backupPrepareCommand = ''
+            #!${pkgs.runtimeShell}
+            ${pkgs.restic}/bin/restic --retry-lock 10m cat config > /dev/null || true
+          '';
+
           timerConfig = {
             OnCalendar = "*-*-* 03:00:00";
             Persistent = true;
             RandomizedDelaySec = "30m";
           };
 
+          # Flags for `restic forget --prune`, globals included — restic
+          # registers `--retry-lock` on the root command, so it is
+          # accepted after the subcommand like any policy flag.
+          #
           # `--group-by host` is load-bearing, not cosmetic. restic's
           # default grouping is `host,paths`, and `paths` is not static
           # here — every app module contributes its own state dirs, so
@@ -366,7 +428,23 @@
           # (60 on amos1, 72 on hpp-1, vs the ~17 the policy implies)
           # until #568. One repo per host (see `repository` above) means
           # grouping by host alone collapses to a single policy.
+          #
+          # `--retry-lock` is what keeps this unit from failing when the
+          # metrics oneshot happens to be mid-walk: prune wants an
+          # exclusive lock, the metrics job holds a read lock, and
+          # restic's default of zero retries turned a few seconds of
+          # overlap into exit 11 and a SystemdUnitFailed page — twice in
+          # the week after the metrics timer landed (#676). 10m is ~7x
+          # the longest hold measured on either side (prune 47s, metrics
+          # walk up to 80s), so it absorbs the overlap without masking a
+          # genuinely wedged lock for long.
+          #
+          # Note this cannot be expressed via
+          # `services.restic.backups.server.extraOptions`: nixpkgs maps
+          # that to restic's `-o <key=value>` extended options, not to
+          # CLI flags.
           pruneOpts = [
+            "--retry-lock 10m"
             "--group-by host"
             "--keep-daily 7"
             "--keep-weekly 4"
@@ -381,6 +459,13 @@
           # snapshot contains the morning's dumps from both engines.
           # ExecStartPost runs only on successful ExecStart, giving us
           # the "last successful snapshot" liveness the issue asks for.
+          #
+          # That "successful" is per-unit, not per-snapshot: nixpkgs puts
+          # `backup`, `unlock` and `forget --prune` in three ExecStart=
+          # lines of this one oneshot, so a prune that fails suppresses
+          # both the heartbeat and the metrics refresh even though the
+          # snapshot itself landed — see `--retry-lock` in `pruneOpts`
+          # above for the concurrency case that used to trigger that.
           restic-backups-server = {
             after = [
               "mnt-backups.mount"
@@ -445,6 +530,13 @@
           # state, which is picked up by the `SystemdUnitFailed`
           # Prometheus rule in observability.nix and routed to
           # Alertmanager → Discord like any other unit failure.
+          #
+          # `check` is the third exclusive-lock taker in this module, so
+          # it gets the same `--retry-lock` as `forget --prune` (#676).
+          # The metrics grid below deliberately avoids this unit's 04:30
+          # + 30m jitter window, but its OnBootSec leg does not: a
+          # nixos-upgrade reboot lands at ~04:45-05:35 and puts a walk
+          # right on top of a Sunday check.
           restic-check-server = {
             description = "restic check for server repo";
             after = [ "mnt-backups.mount" ];
@@ -464,7 +556,7 @@
               set -euo pipefail
               export RESTIC_REPOSITORY=/mnt/backups/restic/${hostSpec.hostName}
               export RESTIC_PASSWORD_FILE=${config.sops.secrets."restic/password".path}
-              exec ${pkgs.restic}/bin/restic check --with-cache
+              exec ${pkgs.restic}/bin/restic check --with-cache --retry-lock 10m
             '';
           };
         };
@@ -501,17 +593,40 @@
           # /mnt/backups automount then self-heals long before the next
           # nightly backup, and it lets ResticMetricsStale sit at a
           # meaningful 12h instead of the >24h a daily cadence forces.
-          # The job is read-only against the repo and takes ~70s, so
-          # four walks a day is negligible load on the NAS.
+          # The job takes ~35-80s and only reads, so four walks a day is
+          # negligible load on the NAS — but "read-only" is not
+          # "lock-free": `snapshots`, `stats` and `ls` each take a read
+          # lock, which conflicts with `forget --prune`'s exclusive one.
+          #
+          # Hence a fixed OnCalendar grid rather than the
+          # `OnUnitActiveSec = "6h"` this started as. Relative-to-last-run
+          # meant the ExecStartPost trigger above re-armed the grid every
+          # night at the backup's own completion time, so 24h later a
+          # tick landed back inside the 03:00-03:30 backup window — a ~9%
+          # chance per host-night of overlapping, which collected two
+          # failures in the first week (#676). An absolute grid cannot
+          # drift into the window. 01:15/07:15/13:15/19:15 keeps the same
+          # four-a-day cadence and the same 12h ResticMetricsStale
+          # budget, and clears both the nightly backup and the Sunday
+          # `restic check` window (04:30 + 30m jitter) by over an hour.
+          #
+          # `--retry-lock` on both sides (see `pruneOpts` and
+          # `resticMetrics` above) is what makes an overlap survivable;
+          # this only makes one rare. Both are wanted — the ExecStartPost
+          # trigger and a manual `systemctl start` can still land
+          # mid-prune whatever the timer says.
           restic-metrics-server = {
             description = "Refresh restic snapshot metrics for node_exporter";
             wantedBy = [ "timers.target" ];
             timerConfig = {
               OnBootSec = "5m";
-              OnUnitActiveSec = "6h";
+              OnCalendar = "*-*-* 01,07,13,19:15:00";
               # Nothing downstream needs sub-minute placement, and
               # loosening this lets systemd batch the wakeup.
               AccuracySec = "1m";
+              # No Persistent=: a missed walk is made up by the next tick
+              # (or by the nightly ExecStartPost), and a catch-up at boot
+              # would only duplicate what OnBootSec already covers.
               Unit = "restic-metrics-server.service";
             };
           };
