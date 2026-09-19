@@ -36,9 +36,12 @@
 #     at `/v3/api-docs` — 1894 paths, and the source for every field
 #     name and enum quoted below. Note that path answers *without*
 #     authentication, unlike `/openapi/*`; it discloses the API surface
-#     but no data, and 8043 is only reachable from loopback and the
-#     infra VLAN (see the firewall block in ./omada.nix), so it is
-#     noted rather than treated as a finding.
+#     but no data. 8043 is reachable from loopback, the infra VLAN and
+#     the trusted LAN (see the firewall block in ./omada.nix — the LAN
+#     was added in #673 so the APs could fetch firmware); the iot VLAN
+#     and the internet-facing side are still out. So the surface is
+#     disclosed to hosts that already reach the login page, which is why
+#     it is noted rather than treated as a finding.
 #   * The embedded mongo on 127.0.0.1:27217 answers with no credentials
 #     at all and carries firmware currency (`modelfw`, keyed on the
 #     version a device is currently on). Rejected: it is a vendor-

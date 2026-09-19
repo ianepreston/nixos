@@ -51,13 +51,16 @@
 #
 # The tradeoff is that the container binds every one of its ports on
 # 0.0.0.0 rather than 127.0.0.1, so the host firewall — not podman's
-# DNAT — is the gate. That's fine in both directions that matter:
+# DNAT — is the gate. What that gate lets through:
 #
-#   * The device-facing ports are opened below, plus the management
-#     port (8043) scoped to the infra VLAN, which adopted devices
-#     need for firmware images (see the firewall block). No general
-#     LAN client can reach the management UI directly, so Caddy on
-#     loopback is still the sole browser path to it, same as UniFi.
+#   * The device-facing ports, opened below, plus the management port
+#     (8043), which is where adopted devices fetch firmware images
+#     from. It is scoped to the infra VLAN and the trusted LAN — the
+#     two places adopted devices sit; see the firewall block for why
+#     the scope has to be both. So unlike UniFi, Caddy on loopback is
+#     not the sole browser path to the UI: a LAN client can reach the
+#     login page directly, which costs the authentik layer in front of
+#     omada.<serverDomain>. Omada's own admin login still applies.
 #   * vlan30 can't reach any of it. iot-network.nix installs a deny
 #     chain as the *first* rule in nixos-fw for `-i iot`, which runs
 #     ahead of every accept here — the `allowedTCPPorts` ones and the
@@ -118,10 +121,13 @@
 #
 # No `bypassAuthPaths` today: Omada's API is session-cookie based
 # rather than API-key based, so there is no route carrying its own auth
-# that would be safe to open up. The cost is that the Omada *mobile
-# app* can't be used on the LAN — it connects straight to
-# https://<host>:8043, which stays firewalled. Browser only, through
-# omada.<serverDomain>.
+# that would be safe to open up. That no longer keeps the Omada *mobile
+# app* off the LAN, though — it connects straight to
+# https://<host>:8043, which #673 opened to the LAN, so only the
+# controller-discovery ports still stand between the app and a working
+# connection (see the port block below). Nothing here uses the app, so
+# the browser path through omada.<serverDomain> is still the only one
+# exercised.
 #
 # Adoption traffic never goes near Caddy, so forward-auth doesn't
 # interfere with it — the device-facing ports are opened directly.
@@ -162,8 +168,9 @@ _: {
     let
       # Management HTTPS — the UI Caddy proxies to, and the port
       # adopted devices pull firmware images from. Upstream default;
-      # deliberately NOT in the flat allowlist — it is opened to the
-      # infra VLAN only, in the extraCommands rule below.
+      # deliberately NOT in the flat allowlist — it is source-scoped to
+      # the infra VLAN and the trusted LAN in the extraCommands rule
+      # below, which is where the exposure is argued.
       manageHttpsPort = 8043;
       # Guest/user portal HTTPS. Moved off upstream's 8843 because the
       # UniFi container holds that port (see header). Not firewalled
@@ -315,9 +322,12 @@ _: {
       # Device-facing ports. 8044/8088 and the portal (8844) are
       # deliberately absent — Caddy reaches the UI over loopback. Also
       # absent: the controller-discovery ports the Omada phone app uses
-      # to find a controller (19810/27001 UDP). The app would then have
-      # to reach the management port, which no general LAN client can,
-      # so opening discovery for it would still buy nothing.
+      # to find a controller (19810/27001 UDP). Those stay closed
+      # because nothing here uses the phone app, not because they would
+      # be useless — since #673 opened 8043 to the LAN, a LAN client can
+      # reach the management port, so discovery is now the only thing
+      # the app would still be missing. Open them if the app is ever
+      # wanted; leave them closed until then.
       networking.firewall = {
         # 29810 is how a factory-default device finds the controller;
         # it arrives as a broadcast, which the allowlist accept matches
@@ -337,16 +347,30 @@ _: {
         # telemetry all ride 29811-29817, which is why everything else
         # worked and only upgrades broke.
         #
-        # Scoped to the infra VLAN rather than opened flat, because 8043
-        # is also the browser UI: a flat rule would put Omada's login
-        # page on the LAN and lose the authentik forward-auth that
+        # Scoped by source CIDR rather than opened flat, and the scope
+        # is a decision, not an inventory: 8043 is also the browser UI,
+        # so every source allowed here reaches Omada's login page
+        # directly, outside the authentik forward-auth that
         # omada.<serverDomain> routes through (Omada's own local admin
-        # login would still apply — it is the outer layer that goes).
-        # Managed devices live on 192.168.15.0/24, so that is the only
-        # source that needs it. Source-CIDR rather than an interface
-        # name for the same reason as flaresolverr.nix: the LAN NIC is
-        # enp1s0 on hpp-1 and enp4s0 on amos1. IPv4-only — the LAN is
-        # v4.
+        # login still applies — it is the outer layer that goes).
+        #
+        # Both the infra VLAN and the trusted LAN are allowed, because
+        # managed devices sit on both: the switches carry a management
+        # VLAN (mvlan_bridge_vlan 15, i.e. 192.168.15.0/24), the APs
+        # carry none and manage untagged off the LAN (192.168.10.0/24).
+        # The infra VLAN alone was the original scope and it broke every
+        # AP firmware upgrade the day APs were adopted (#673) — silently,
+        # ten minutes per attempt, with no refused-connection log to find
+        # it by. Per-device /32 accepts would have fixed those two APs
+        # and rebuilt the same trap for the next device adopted onto the
+        # LAN, so the LAN is allowed whole and the SSO layer on 8043 is
+        # knowingly given up for LAN clients. flaresolverr.nix has the
+        # same LAN-scoped shape; the difference worth naming is that
+        # flaresolverr is not a credentialed admin UI and this is.
+        #
+        # Source-CIDR rather than an interface name for the same reason
+        # as flaresolverr.nix: the LAN NIC is enp1s0 on hpp-1 and enp4s0
+        # on amos1. IPv4-only — the LAN is v4.
         #
         # vlan30 stays out regardless: iot-network.nix inserts its deny
         # chain at position 1 in nixos-fw, ahead of anything appended
@@ -357,9 +381,11 @@ _: {
         # until a capture shows the device wants it.
         extraCommands = ''
           iptables -A nixos-fw -p tcp -s 192.168.15.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept
+          iptables -A nixos-fw -p tcp -s 192.168.10.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept
         '';
         extraStopCommands = ''
           iptables -D nixos-fw -p tcp -s 192.168.15.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept || true
+          iptables -D nixos-fw -p tcp -s 192.168.10.0/24 --dport ${toString manageHttpsPort} -j nixos-fw-accept || true
         '';
       };
 
