@@ -1,0 +1,4 @@
+# Blank issues stay enabled on purpose: some issues are genuinely hybrid (a
+# defect report that also carries two enhancement asks, e.g. #643), and forcing
+# those into one template loses the structure rather than adding it.
+blank_issues_enabled: true
