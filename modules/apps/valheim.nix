@@ -318,6 +318,25 @@ _: {
       # sync by hand, same as server-backups.nix and _rollback-root.nix.
       textfileDir = "/var/lib/node-exporter-textfile-collector";
 
+      # The single interface between valheim-player-notify and
+      # valheim-metrics (#631). Deliberately a pair of files in /run rather
+      # than a systemd dependency — the exporter must stay readable when a
+      # wedged podman has the notifier stuck, so it reads the roster
+      # opportunistically and publishes nothing when it isn't there. That
+      # makes the *path* the whole contract, so both sides name it from here
+      # rather than each hardcoding it.
+      #
+      # `ready` exists because `roster` alone is not a safe signal: the
+      # notifier truncates it at startup and only refills it once the journal
+      # replay finishes, so a reader keyed on the roster file would see an
+      # authoritative-looking "0 players" for the length of every rebuild.
+      # The marker is written after the replay, and systemd drops the whole
+      # RuntimeDirectory on stop/restart (no RuntimeDirectoryPreserve), so it
+      # is absent for exactly the window in which the roster is a lie.
+      playerNotifyRuntimeDir = "/run/valheim-player-notify";
+      playerRoster = "${playerNotifyRuntimeDir}/roster";
+      playerRosterReady = "${playerNotifyRuntimeDir}/ready";
+
       # Bump to reseed. WORLD_NAME is the basename of the world's .db/.fwl in
       # /config/worlds_local; the image generates a fresh map whenever that
       # basename has no save behind it. So incrementing this starts a brand
@@ -555,6 +574,13 @@ _: {
             # means valheim_server.x86_64 is plainly visible in /proc, so this
             # never shells into the container. A wedged or paused podman can't
             # make the exporter hang, and there's no dependency on the podman
+            # units at all — no `after=`, no `requires=`.
+            #
+            # `valheim_players_online` (#631) keeps that property. It comes
+            # from valheim-player-notify's roster, but by reading two files
+            # out of /run, not by depending on the unit: a stuck notifier
+            # costs the gauge and nothing else. See the `playerRoster` notes
+            # at the top of this file.
             valheim-metrics = {
               description = "publish valheim server health to node_exporter textfile collector";
               serviceConfig = {
@@ -579,6 +605,7 @@ _: {
                 rss=0
                 uptime=0
                 cgmem=0
+                players=
 
                 # `|| true` so `set -e` survives the no-match case: pgrep exits
                 # 1 when the server is down, which is a value we want to
@@ -603,6 +630,40 @@ _: {
                   fi
                 fi
 
+                # Player count, one line per connected player, straight off
+                # valheim-player-notify's roster (#631). Read outside the
+                # `up` block on purpose: the roster is the notifier's state,
+                # not the game process's, and gating it on pgrep would make
+                # the gauge vanish for a different reason than it already
+                # does below.
+                #
+                # Every other presence signal this server emits is known bad
+                # under crossplay — the A2S query always answers 0, the
+                # `IDLE_DATAGRAM_*` counting the image uses instead trips on
+                # PlayFab lobby chatter, and the `now N player(s)` log lines
+                # are internally inconsistent (a 3->2 leave logged "now 3").
+                # The roster is derived from ZDO ownership instead, which is
+                # why it is the source here.
+                #
+                # `$players` stays empty unless the marker says the roster is
+                # both present and rebuilt, and an empty value omits the
+                # series entirely rather than publishing 0. The asymmetry is
+                # deliberate and load-bearing for #458, which wants to gate
+                # the restart cron on an empty server: a wrong 0 bounces a
+                # server with players on it, while a missing sample just
+                # fails the rule's guard and skips the bounce. A companion
+                # `_valid` gauge would instead keep publishing that wrong 0
+                # next to a flag any rule can forget to check. So: absent.
+                # Ask with `absent_over_time(valheim_players_online[...])` if
+                # the gap itself ever needs alerting.
+                #
+                # This is also why hpp-1 never publishes the series at all —
+                # it runs `playerNotify = false`, so there is no roster to
+                # read and no gauge, with no extra gating needed here.
+                if [ -e ${playerRosterReady} ]; then
+                  players=$(awk 'END { print NR }' ${playerRoster} 2>/dev/null || true)
+                fi
+
                 # Atomic write via tempfile + rename so a crashed run never
                 # leaves node_exporter reading a half-written .prom.
                 tmp=$(mktemp -p "$(dirname "$out")" .valheim.prom.XXXXXX)
@@ -619,6 +680,11 @@ _: {
                   echo "# HELP valheim_container_memory_bytes memory.current of the container payload cgroup. Total footprint including page cache, so it runs several GiB above RSS and is context rather than a leak signal."
                   echo "# TYPE valheim_container_memory_bytes gauge"
                   echo "valheim_container_memory_bytes $cgmem"
+                  if [ -n "$players" ]; then
+                    echo "# HELP valheim_players_online Players currently connected, from the valheim-player-notify roster. Absent rather than 0 whenever that roster is missing or mid-rebuild, so no-data and nobody-online stay distinguishable."
+                    echo "# TYPE valheim_players_online gauge"
+                    echo "valheim_players_online $players"
+                  fi
                 } > "$tmp"
                 chmod 0644 "$tmp"
                 mv "$tmp" "$out"
@@ -952,8 +1018,14 @@ _: {
                 # roster is fully reconstructed from the journal on every
                 # start (see the replay pass below), so carrying the old file
                 # across a restart would only risk stale entries surviving a
-                # reset they should have been cleared by.
-                RuntimeDirectory = "valheim-player-notify";
+                # reset they should have been cleared by. That teardown is
+                # also what makes the `ready` marker below a correct
+                # readiness signal for valheim-metrics.
+                #
+                # Left at the default RuntimeDirectoryMode (0755) with the
+                # unit's default root ownership, so the root valheim-metrics
+                # reads the roster without any extra grant.
+                RuntimeDirectory = baseNameOf playerNotifyRuntimeDir;
                 # Root: needs to read both the full journal and the sops
                 # secret. Everything below is off by default for a root unit.
                 ProtectHome = true;
@@ -970,8 +1042,9 @@ _: {
               script = ''
                 set -uo pipefail
 
-                rundir=/run/valheim-player-notify
-                roster="$rundir/roster"
+                rundir=${playerNotifyRuntimeDir}
+                roster=${playerRoster}
+                ready=${playerRosterReady}
                 cursorfile="$rundir/cursor"
                 webhook="$(cat ${config.sops.secrets."valheim/player_webhook".path})"
                 server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
@@ -1121,6 +1194,12 @@ _: {
                 fi
 
                 echo "roster rebuilt from journal: $(online) player(s) online"
+
+                # Only now is the roster an answer rather than a half-filled
+                # file. valheim-metrics keys its gauge on this marker; see the
+                # `playerRosterReady` note at the top of this file for why the
+                # roster file's own existence is not enough.
+                : > "$ready"
 
                 quiet=0
 
