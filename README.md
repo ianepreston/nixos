@@ -291,6 +291,14 @@ to seed from that host's restic repo (e.g. prod → dev). The longhand below
 documents what each per-app dispatcher actually does so the runbook keeps
 working if a task is unavailable or you need to deviate.
 
+Every longhand `restic` invocation below carries `--retry-lock 10m`, matching
+the dispatchers. A restore takes a read lock, and the nightly `forget --prune`
+holds an exclusive one for ~47s at around 03:2x — without the flag restic
+retries zero times and the restore aborts partway through with exit 11 (#676).
+If a restore still reports the repo as locked, a previous run died holding one:
+`sudo restic -r <repo> --password-file /run/secrets/restic/password unlock`
+clears a stale lock, which is what the dispatchers do automatically.
+
 1. **Reinstall the host:**
 
    ```bash
@@ -304,7 +312,7 @@ working if a task is unavailable or you need to deviate.
 
    ```bash
    sudo restic -r /mnt/backups/restic/<host> \
-     --password-file /run/secrets/restic/password \
+     --password-file /run/secrets/restic/password --retry-lock 10m \
      restore latest --target /
    ```
 
@@ -358,7 +366,7 @@ from an _older_ snapshot, pull that snapshot's dump to a temp path first:
 
 ```bash
 sudo restic -r /mnt/backups/restic/<host> \
-  --password-file /run/secrets/restic/password \
+  --password-file /run/secrets/restic/password --retry-lock 10m \
   restore <snapshot-id> --target /tmp/restore \
   --include /var/backup/postgresql
 # then point zcat at /tmp/restore/var/backup/postgresql/all.sql.gz
@@ -382,7 +390,7 @@ sudo systemctl stop podman-mealie.service
 
 # 2. Restore the volume from restic.
 sudo restic -r /mnt/backups/restic/<host> \
-  --password-file /run/secrets/restic/password \
+  --password-file /run/secrets/restic/password --retry-lock 10m \
   restore latest --target / --include /var/lib/containers/mealie
 
 # 3. Drop and recreate the database, then replay just the mealie
@@ -461,7 +469,7 @@ sudo systemctl stop jellyfin.service
 # 2. Restore both the live tree and the staging dir from the same
 #    snapshot.
 sudo restic -r /mnt/backups/restic/<host> \
-  --password-file /run/secrets/restic/password \
+  --password-file /run/secrets/restic/password --retry-lock 10m \
   restore latest --target / \
   --include /var/lib/jellyfin/data \
   --include /var/lib/jellyfin/config \
@@ -502,7 +510,7 @@ Same flow, but pointed at the other env's repo via the cross-mount:
 
 ```bash
 sudo restic -r /mnt/prod-backups/restic/<prod-host> \
-  --password-file /run/secrets/restic/password \
+  --password-file /run/secrets/restic/password --retry-lock 10m \
   restore latest --target /tmp/prod-restore
 ```
 
