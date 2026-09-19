@@ -54,6 +54,73 @@
 # healthy from the inside. Fixed in #661; the watcher below now reads
 # the same line this runbook does.
 #
+# ### PlayFab peer-relay stalls — what crossplay actually costs players (#627)
+#
+# The section above frames the crossplay tradeoff as "you lose
+# connect-by-address". That is the administrative cost. The cost players
+# *feel* is this one, and it is the more important half.
+#
+# Every peer reaches a crossplay server through Microsoft's PlayFab Party
+# relay. When a peer's relay endpoint is torn down under the game, Valheim
+# keeps calling the Party API with the now-stale handle:
+#
+#   Keep socket for playfab/<peer>, try to reconnect before timeout
+#   PlayFab network error ... code '4098': the operation was called with
+#     an invalid handle
+#   Failed to send, suspend TX on playfab/<peer> while trying to reconnect
+#   ... 90 seconds ...
+#   ZRpc timeout detected
+#   Destroying abandoned non persistent zdo <peer-prefix>:<n> owner <peer-prefix>
+#
+# The server *deliberately* keeps the dead peer's socket, hoping for a
+# reconnect, and holds it for the full `ZRpc timeout set to 90s` it logs on
+# every handshake. Valheim distributes simulation by ZDO ownership, so for
+# those 90s everything that peer owned — their character and every
+# creature or object their client was simulating — is frozen for all other
+# players. In a boss fight that is most of what is moving on screen, which
+# is why it reads as "the server died" rather than "one player lagged out".
+#
+# Three things make this hard to diagnose from the inside, and all three
+# are why the counters below exist:
+#
+#   - The host is idle and healthy throughout. CPU, RSS, NIC errors, UDP
+#     errors, conntrack and kernel log were all clean across the
+#     2026-09-13 incident window; `valheim_server_up` never dipped and
+#     uptime never reset, so it is not a supervisord crash-loop.
+#   - It looks like a player quitting. In that incident a second player
+#     left one second *before* the ZRpc timeout expired, so the freeze
+#     appeared to clear because they quit. The two events were
+#     coincidental — the timeout was always going to fire at 90s.
+#   - It is frequent, not exceptional: 12 occurrences over two days of
+#     play, across six distinct peers on both Steam and PlayStation. So it
+#     is not one player's ISP and not one bad client. Note that plain
+#     `Keep socket ... try to reconnect` lines *without* the `suspend TX`
+#     follow-up are ordinary clean disconnects that recover instantly; the
+#     pathological signature is the `suspend TX` → `ZRpc timeout detected`
+#     pair, which is exactly what the counters key on.
+#
+# Nothing here can fix it. The 90s timeout is a game constant, not a server
+# setting, and the container only wraps the binary — there is no way to
+# shorten the stall or evict a wedged peer sooner.
+#
+# `CROSSPLAY=false` is the only real fix, because it removes PlayFab from
+# the path entirely — and it is not on the table. There is a PlayStation
+# player in the group, and a non-Steam client cannot reach a Steam-backend
+# server at all. The section above presents crossplay as a deliberate
+# choice with a fallback; this is the concrete evidence that the fallback
+# costs a real person their access, so it is not something to reach for
+# casually when someone next complains about a freeze.
+#
+# What is left is visibility, so: `valheim_peer_relay_stall_total` and
+# `valheim_zrpc_timeout_total` in the valheim-metrics exporter below. The
+# frequency is the thing worth watching — a 90s stall is over before anyone
+# could act on a page, so these are for trending, not alerting, and there
+# is deliberately no vmalert rule. They are also the only way to tell
+# whether a future image or game update helped. hpp-1 publishes them too
+# and, running the Steam backend, should read flat zero on the stall
+# counter — the A/B control mentioned under "What the dev instance cannot
+# tell you" below.
+#
 # ## Crossplay exclusivity: one *crossplay* server per public IP
 #
 # The constraint learned the hard way on 2026-09-11 is not "one Valheim
@@ -337,6 +404,43 @@ _: {
       playerRoster = "${playerNotifyRuntimeDir}/roster";
       playerRosterReady = "${playerNotifyRuntimeDir}/ready";
 
+      # Persistent state for the journal-derived relay counters (#627).
+      # /var/lib rather than /run precisely because these are counters: the
+      # point is a total that outlives the timer, the journal window and a
+      # reboot.
+      #
+      # Which means it needs the preservation entry in the `config` block
+      # below. Both valheim hosts are impermanent — `preservation.enable`
+      # arrives via the `server` profile, not from anything in
+      # modules/hosts/<host>.nix, so grepping the host files says otherwise
+      # and is wrong. Without that entry `_rollback-root.nix` recreates
+      # @root from @root-blank on every boot, the exporter takes its
+      # first-run branch and re-seeds at the tail, and every event between
+      # the last run and the reboot is dropped silently — with /var/log/journal
+      # preserved, the evidence would still be on disk while the counter
+      # said zero. `expectedPreservedDirs` in ../profiles/server-apps.nix
+      # would not have caught it either; that assertion only derives from
+      # `myAppState`, so eval stays green.
+      #
+      # Preserve-only, deliberately not `myAppState`: same call as
+      # /var/lib/private/llama-cpp in ../apps/llm.nix. These are derived
+      # counters, not authored state — restoring a month-old total out of
+      # restic would be worse than starting from zero, because it would
+      # publish a number that silently disagrees with the journal.
+      metricsStateDir = "/var/lib/valheim-metrics";
+      relayCursorFile = "${metricsStateDir}/journal-cursor";
+      relayTotalsFile = "${metricsStateDir}/relay-totals";
+
+      # The two journal lines the counters are built from, verified against
+      # amos1's journal (30 and 25 occurrences respectively in the 14 days to
+      # 2026-09-19). Anchored strings, not loose ones: `ZRpc timeout` alone
+      # also matches `ZRpc timeout set to 90s`, which the server logs on every
+      # handshake — it is the constant being announced, not a fault, and
+      # grepping for it would swamp the signal with an order more matches.
+      relayStallMatch = "Failed to send, suspend TX";
+      relayTimeoutMatch = "ZRpc timeout detected";
+      relayJournalPattern = "${relayStallMatch}|${relayTimeoutMatch}";
+
       # Bump to reseed. WORLD_NAME is the basename of the world's .db/.fwl in
       # /config/worlds_local; the image generates a fresh map whenever that
       # basename has no save behind it. So incrementing this starts a brand
@@ -439,6 +543,11 @@ _: {
       };
 
       config = lib.mkIf cfg.enable {
+        # The relay counters' totals and cursor (#627). See the
+        # `metricsStateDir` note in the `let` block above for why this is
+        # preserved but deliberately kept out of restic.
+        preservation.preserveAt."/persist".directories = [ metricsStateDir ];
+
         sops = {
           # `optionalAttrs` rather than declaring all three unconditionally.
           # A secret with no consumer is still decrypted to /run on every
@@ -581,17 +690,30 @@ _: {
             # out of /run, not by depending on the unit: a stuck notifier
             # costs the gauge and nothing else. See the `playerRoster` notes
             # at the top of this file.
+            #
+            # So do the relay counters (#627), which read the journal rather
+            # than the container: journalctl talks to /var/log/journal, so a
+            # wedged or paused podman still can't stall this unit — the
+            # container's output has already been written by the time this
+            # reads it. See "PlayFab peer-relay stalls" at the top of this
+            # file for what they measure and why they are worth having.
             valheim-metrics = {
               description = "publish valheim server health to node_exporter textfile collector";
               serviceConfig = {
                 Type = "oneshot";
                 User = "root";
+                # Holds the relay counters' running totals and journal
+                # cursor (#627). Root unit, so this is ${metricsStateDir}
+                # rather than /var/lib/private.
+                StateDirectory = baseNameOf metricsStateDir;
                 Environment = [
                   "PATH=${
                     lib.makeBinPath [
                       pkgs.coreutils
                       pkgs.procps
                       pkgs.gawk
+                      # journalctl, for the relay counters below.
+                      pkgs.systemd
                     ]
                   }"
                 ];
@@ -664,6 +786,143 @@ _: {
                   players=$(awk 'END { print NR }' ${playerRoster} 2>/dev/null || true)
                 fi
 
+                # PlayFab peer-relay stalls (#627). Under crossplay a peer
+                # whose relay endpoint faults leaves its socket held open for
+                # the full 90s ZRpc timeout, and Valheim distributes
+                # simulation by ZDO ownership — so for those 90s every
+                # creature and object that peer was simulating is frozen for
+                # everyone else. Players read that as "the server died"; the
+                # host is idle and healthy throughout, and nothing else in
+                # the monitoring stack can see it. These two counters are
+                # what make the frequency trendable, and the only way to tell
+                # whether a future image or game update helped.
+                #
+                # Counted incrementally against a saved cursor rather than by
+                # rescanning, for two independent reasons:
+                #
+                #   - Honesty. journald is a *window*, not a ledger. amos1's
+                #     4G cap fell to 6.5 hours of retention during the #590
+                #     wedge, so a rescanned total would drop when the journal
+                #     vacuumed — which PromQL reads as a counter reset and
+                #     turns into a phantom increase, exactly inverting the
+                #     trend this is for.
+                #   - Cost. A --grep over amos1's retained journal for this
+                #     unit takes over two minutes; this timer fires every
+                #     two. Anchored to a cursor, each run reads one interval.
+                #
+                # Both counters are unlabelled on purpose. The natural label
+                # is the peer id, but those are per-connection and unbounded
+                # over time (six distinct peers in the two days #627 sampled),
+                # so labelling would grow the textfile series set without
+                # limit for a question — "is this getting worse?" — that is
+                # asked in aggregate anyway. The per-peer breakdown stays a
+                # journal grep.
+                stalls=0
+                timeouts=0
+                if [ -r ${relayTotalsFile} ]; then
+                  read -r stalls timeouts < ${relayTotalsFile} || true
+                fi
+                case "$stalls" in "" | *[!0-9]*) stalls=0 ;; esac
+                case "$timeouts" in "" | *[!0-9]*) timeouts=0 ;; esac
+
+                # The unit's newest cursor, read *before* counting. Used to
+                # seed the first run, and as a fallback position if the
+                # counting pass reports none.
+                #
+                # Reading it first is what makes that fallback safe: an entry
+                # written while the counting pass runs is necessarily *after*
+                # this cursor, so falling back to it can only ever re-read
+                # entries, never skip past unread ones. Cheap — journalctl
+                # seeks straight to the tail.
+                tailcursor=$(journalctl -u podman-valheim.service -n 1 -o cat --show-cursor 2>/dev/null \
+                  | awk '/^-- cursor: /{ print substr($0, 12) }' || true)
+
+                if [ -s ${relayCursorFile} ]; then
+                  # awk rather than grep for the tally because one pass has
+                  # to yield three things — two independent counts and the
+                  # trailing cursor — and grep gives one. (Not for the reason
+                  # it first looks like: `-o cat` does emit the container's
+                  # trailing newline as a blank line after every entry, which
+                  # doubles a `wc -l`, but a blank line matches neither
+                  # pattern so `grep -c` would have been fine on that count.)
+                  delta=$(journalctl -u podman-valheim.service -o cat --show-cursor \
+                    --after-cursor="$(cat ${relayCursorFile})" \
+                    --grep=${lib.escapeShellArg relayJournalPattern} 2>/dev/null \
+                    | awk '
+                        /${relayStallMatch}/   { s++ }
+                        /${relayTimeoutMatch}/ { t++ }
+                        /^-- cursor: /         { c = substr($0, 12) }
+                        END { printf "%d %d %s\n", s, t, c }
+                      ' || true)
+                  read -r dstalls dtimeouts dcursor <<<"$delta" || true
+                  case "$dstalls" in "" | *[!0-9]*) dstalls=0 ;; esac
+                  case "$dtimeouts" in "" | *[!0-9]*) dtimeouts=0 ;; esac
+                  stalls=$(( stalls + dstalls ))
+                  timeouts=$(( timeouts + dtimeouts ))
+                  # `--show-cursor` reports the position the scan *ended* at,
+                  # not the last matching entry — verified on amos1: a run
+                  # with an impossible --grep pattern still prints a cursor,
+                  # byte-identical to the unit's tail. So the cursor advances
+                  # to the tail every run, matches or not, and an idle server
+                  # never re-scans a growing span.
+                  #
+                  # The fallback covers the one case that prints nothing at
+                  # all: a unit with no journal entries yet. Kept rather than
+                  # relying on the above, since that behaviour is observed
+                  # rather than documented, and it costs one already-taken
+                  # variable.
+                  [ -n "$dcursor" ] || dcursor="$tailcursor"
+
+                  # Known limit, measured rather than assumed: a stored
+                  # cursor that journald has already vacuumed past does not
+                  # error. journalctl seeks to the *head* of what survives and
+                  # re-emits it, so that one pass re-counts the whole retained
+                  # window (verified on amos1 with a hand-rewound cursor: it
+                  # returned the full 30/25 rather than 0/0). The counter
+                  # steps up once and stays consistent after.
+                  #
+                  # Deliberately not guarded. The cursor is dragged to the
+                  # journal tail every two minutes, so falling behind
+                  # retention needs this unit absent for longer than the
+                  # journal keeps — which is not the #590 wedge (the timer
+                  # keeps advancing the cursor right through it) but a host
+                  # down or the unit stopped for days. Against a counter read
+                  # as a trend, a one-off step of at most one retention
+                  # window is not worth machinery to detect.
+                else
+                  # First run, or state lost. Seed at the tail and start
+                  # counting from now rather than backfilling the journal:
+                  # every historical event would otherwise land in one scrape
+                  # interval as a single false spike, dated to today instead
+                  # of to when it happened.
+                  dcursor="$tailcursor"
+                fi
+                # Both state files are written tempfile + rename, for the same
+                # reason the .prom below is: a torn write is silent here, and
+                # worse than a crash. A half-written cursor makes journalctl
+                # fail its seek ("Failed to seek to cursor: Invalid
+                # argument") — which prints no `-- cursor:` line at all, so
+                # the fallback above quietly jumps to the tail and every
+                # entry in between goes uncounted, with nothing in the log to
+                # say so. A torn totals file just reads back as garbage and
+                # is floored to 0 by the guards above, silently discarding
+                # the running total.
+                #
+                # `if` rather than `[ -n … ] && …`: the script runs under the
+                # `set -e` NixOS injects into `script =`, and a bare `&&` list
+                # whose left side is false returns non-zero, which would kill
+                # the unit on the perfectly ordinary "unit has no journal
+                # entries yet" path. Same class as the #640 fix in
+                # valheim-player-notify below.
+                if [ -n "$dcursor" ]; then
+                  ctmp=$(mktemp -p ${metricsStateDir} .journal-cursor.XXXXXX)
+                  printf '%s\n' "$dcursor" > "$ctmp"
+                  mv "$ctmp" ${relayCursorFile}
+                fi
+                ttmp=$(mktemp -p ${metricsStateDir} .relay-totals.XXXXXX)
+                printf '%s %s\n' "$stalls" "$timeouts" > "$ttmp"
+                mv "$ttmp" ${relayTotalsFile}
+
                 # Atomic write via tempfile + rename so a crashed run never
                 # leaves node_exporter reading a half-written .prom.
                 tmp=$(mktemp -p "$(dirname "$out")" .valheim.prom.XXXXXX)
@@ -680,6 +939,12 @@ _: {
                   echo "# HELP valheim_container_memory_bytes memory.current of the container payload cgroup. Total footprint including page cache, so it runs several GiB above RSS and is context rather than a leak signal."
                   echo "# TYPE valheim_container_memory_bytes gauge"
                   echo "valheim_container_memory_bytes $cgmem"
+                  echo "# HELP valheim_peer_relay_stall_total PlayFab relay faults that suspended TX to a peer ('Failed to send, suspend TX'). Each one freezes every ZDO that peer owned for up to the 90s ZRpc timeout. Counted incrementally from a saved journal cursor, so it survives journald vacuuming; resets only if ${metricsStateDir} is lost."
+                  echo "# TYPE valheim_peer_relay_stall_total counter"
+                  echo "valheim_peer_relay_stall_total $stalls"
+                  echo "# HELP valheim_zrpc_timeout_total Peers evicted by Valheim's 90s ZRpc timeout ('ZRpc timeout detected'), which is when the objects a stalled peer owned unfreeze. Trails valheim_peer_relay_stall_total, since a peer that reconnects in time never times out."
+                  echo "# TYPE valheim_zrpc_timeout_total counter"
+                  echo "valheim_zrpc_timeout_total $timeouts"
                   if [ -n "$players" ]; then
                     echo "# HELP valheim_players_online Players currently connected, from the valheim-player-notify roster. Absent rather than 0 whenever that roster is missing or mid-rebuild, so no-data and nobody-online stay distinguishable."
                     echo "# TYPE valheim_players_online gauge"

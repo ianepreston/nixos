@@ -161,7 +161,15 @@
       # directory — asserting it flat would fail eval on hpp-1. Keyed
       # off the forward-auth app because `services.unifi-os-server` only
       # exists where the upstream module is imported.
-      ++ lib.optional (config.myAuthentik.forwardAuthApps ? unifi) "/var/lib/unifi-os-server";
+      ++ lib.optional (config.myAuthentik.forwardAuthApps ? unifi) "/var/lib/unifi-os-server"
+      # Conditional again, and for the plainest version of the reason: the
+      # valheim module ships everywhere via `commonApps` but its whole
+      # `config` block is gated on `myValheim.enable`, so only the two hosts
+      # actually running a server create this directory. Preserve-only, not
+      # `myAppState` — these are derived counters (#627), so restoring a
+      # stale total from restic would be worse than starting from zero. See
+      # modules/apps/valheim.nix.
+      ++ lib.optional config.myValheim.enable "/var/lib/valheim-metrics";
 
       expectedPreservedDirs =
         map (a: a.stateDir) (lib.attrValues config.myAppState) ++ residualPreservedDirs;
