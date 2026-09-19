@@ -1,5 +1,33 @@
 # Working in this repo
 
+## PII never goes in git or GitHub
+
+This repo is public, and so are its issues, PRs, and commit history. Personal
+data about anyone — third parties above all — must never land in a commit, a
+commit message, an issue body, a PR description, or a review comment.
+
+Treat as PII: email addresses, real names, usernames or handles tied to a
+person, phone numbers, street addresses, and account identifiers that resolve
+to a person (a `tailscale whois` `User.Name` or machine ID, a Jellyfin account
+name, an OIDC subject, a sharee's node in the tailnet ACL).
+
+Not PII for this purpose: the operator's own identifiers, which this flake
+already declares in the open — `ianepreston`, host names, `*.ipreston.net`,
+the addresses in `hostSpecs/`.
+
+Redact at the point of writing, not afterwards. Evidence gathered off a live
+host routinely contains third-party identity; when writing it up, name the
+role rather than the person (`the sharee`, `the second sharee`, `<redacted>`)
+and keep the technical facts the argument actually rests on — timestamps,
+tailnet IPs, device models, versions. An issue that reads "`Cozy room TV`
+belongs to the sharee's Jellyfin account" loses nothing against one that names
+the account and its email.
+
+Cleanup after the fact is expensive and incomplete: a public issue is already
+fetchable and indexed, GitHub keeps the pre-edit revision in the issue's edit
+history (deletable only by hand in the web UI), and a committed value needs a
+history rewrite plus a force-push. Assume anything published stays published.
+
 ## Taskfile.yaml is the entry point
 
 Common operations are defined in `Taskfile.yaml` (with bootstrap / recovery /
