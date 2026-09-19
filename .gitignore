@@ -14,5 +14,9 @@ result-*
 # Just load latest plugins
 lazy-lock.json
 
-# Claude Code runtime state (scheduled-tasks lockfile, etc.)
-.claude/
+# Claude Code runtime state (scheduled-tasks lockfile, worktrees, local
+# settings). Listed as .claude/* rather than .claude/ so git still descends
+# into the directory and the negation below can take effect.
+.claude/*
+# ...except the skills, which are repo workflow and are checked in.
+!.claude/skills/
