@@ -119,11 +119,11 @@
         # it is replaced. The span deliberately stops short of `hash`, which
         # is regenerated in CI (scripts/regen-fetch-hashes.sh, #625).
         # renovate: datasource=github-releases depName=greghesp/ha-bambulab
-        version = "2.2.25";
+        version = "2.2.26";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "greghesp";
           repo = "ha-bambulab";
-          tag = "v2.2.25";
+          tag = "v2.2.26";
           hash = "sha256-tqa+pWsOWDtE4I61CvSYmMD74jwWkCsXwNUz7Hh/qyk=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
