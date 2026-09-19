@@ -118,7 +118,7 @@
           "unifi-os-server",
           "nixpkgs"
         ],
-        "systems": "systems_4"
+        "systems": "systems_5"
       },
       "locked": {
         "lastModified": 1776249299,
@@ -283,6 +283,24 @@
           "authentik-nix",
           "systems"
         ]
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_2": {
+      "inputs": {
+        "systems": "systems_2"
       },
       "locked": {
         "lastModified": 1731533236,
@@ -465,10 +483,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1789509968,
-        "narHash": "sha256-+DTMHn33L+JT8Sfm+45SnvqrCUw/GkILpf2zEkFYf14=",
+        "lastModified": 1789826874,
+        "narHash": "sha256-hVAv+29mr2ZQKHrE2MpfpgeXe4V7QDU2aW9U0sqySus=",
         "ref": "main",
-        "rev": "7e32fbf55dfa6b5392b364d4b31b8160dc7ea5db",
+        "rev": "2d5d17514d3aa0599e68d5ab8700001846a9565c",
         "shallow": true,
         "type": "git",
         "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
@@ -590,6 +608,22 @@
     },
     "nixpkgs_4": {
       "locked": {
+        "lastModified": 1781577229,
+        "narHash": "sha256-lrp67w8AulE9Ks53n27I45ADSzbOCn4H+CNW1Ck8B+8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_5": {
+      "locked": {
         "lastModified": 1785386831,
         "narHash": "sha256-sPS3CaXH8RAT3FZRuy4VcV47iuYIWMMfa0GbyJKC3o4=",
         "owner": "NixOS",
@@ -604,7 +638,7 @@
         "type": "github"
       }
     },
-    "nixpkgs_5": {
+    "nixpkgs_6": {
       "locked": {
         "lastModified": 1776169885,
         "narHash": "sha256-l/iNYDZ4bGOAFQY2q8y5OAfBBtrDAaPuRQqWaFHVRXM=",
@@ -729,8 +763,9 @@
         "nixpkgs-unstable": "nixpkgs-unstable",
         "preservation": "preservation",
         "sops-nix": "sops-nix",
+        "sparkyfitness": "sparkyfitness",
         "stylix": "stylix",
-        "systems": "systems_3",
+        "systems": "systems_4",
         "unifi-os-server": "unifi-os-server"
       }
     },
@@ -754,6 +789,26 @@
         "type": "github"
       }
     },
+    "sparkyfitness": {
+      "inputs": {
+        "flake-utils": "flake-utils_2",
+        "nixpkgs": "nixpkgs_4"
+      },
+      "locked": {
+        "lastModified": 1789402024,
+        "narHash": "sha256-RagBNDdZH3ZtWD3B9Fmj+U9VDWNMD5IHBQwN0FEjQYw=",
+        "owner": "CodeWithCJ",
+        "repo": "SparkyFitness",
+        "rev": "0aae7187fc23c5272f44d7491c9e9d20f9382d1a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "CodeWithCJ",
+        "ref": "v1.7.1",
+        "repo": "SparkyFitness",
+        "type": "github"
+      }
+    },
     "stylix": {
       "inputs": {
         "base16": "base16",
@@ -763,9 +818,9 @@
         "firefox-gnome-theme": "firefox-gnome-theme",
         "flake-parts": "flake-parts_3",
         "gnome-shell": "gnome-shell",
-        "nixpkgs": "nixpkgs_4",
+        "nixpkgs": "nixpkgs_5",
         "nur": "nur",
-        "systems": "systems_2",
+        "systems": "systems_3",
         "tinted-kitty": "tinted-kitty",
         "tinted-schemes": "tinted-schemes",
         "tinted-tmux": "tinted-tmux",
@@ -832,6 +887,21 @@
       }
     },
     "systems_4": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_5": {
       "locked": {
         "lastModified": 1681028828,
         "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
@@ -913,7 +983,7 @@
     "unifi-os-server": {
       "inputs": {
         "blueprint": "blueprint",
-        "nixpkgs": "nixpkgs_5"
+        "nixpkgs": "nixpkgs_6"
       },
       "locked": {
         "lastModified": 1789117972,

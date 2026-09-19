@@ -702,6 +702,27 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
+  sparkyfitness:
+    desc: Restore sparkyfitness (native + postgres)
+    requires: {vars: [HOST]}
+    cmds:
+      - task: _restore-pg
+        vars:
+          HOST: '{{.HOST}}'
+          APP: sparkyfitness
+          UNITS: 'sparkyfitness.service'
+          PATHS: '/var/lib/sparkyfitness'
+          DB: sparkyfitness
+          DEST: '{{.DEST}}'
+          SOURCE_HOST: '{{.SOURCE_HOST}}'
+          SSH_PORT: '{{.SSH_PORT}}'
+          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      # /api/health is one of the backend's public routes, so this
+      # needs no key. Backend-port rather than the caddy vhost: the
+      # restore only restarts sparkyfitness.service, and going through
+      # caddy would also be asserting the frontend static route.
+      - task: _health
+        vars: {HOST: '{{.HOST}}', APP: sparkyfitness, URL: 'http://127.0.0.1:3010/api/health', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
   tandoor:
     desc: Restore tandoor (native + postgres)
     requires: {vars: [HOST]}
@@ -786,6 +807,7 @@ tasks:
       - task: seerr
       - task: shelfmark
       - task: sonarr
+      - task: sparkyfitness
       - task: tandoor
       - task: unifi
       - task: valheim

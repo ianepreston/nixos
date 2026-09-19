@@ -168,6 +168,42 @@ originally skipped, then taken anyway because the apps weren't in production).
 If unstable is significantly closer than stable and you need it, wire a
 per-package overlay rather than flipping the whole flake to unstable.
 
+Before falling through to a container, check whether **upstream publishes its
+own flake with a NixOS module**. That is a third path, not a variant of the
+container one, and it is the right call when the app will never be in nixpkgs —
+sparkyfitness is source-available under a non-commercial licence, so there is no
+"wait for nixpkgs" to wait for (#655). It buys a real systemd unit, normal
+`services.<app>` options and no podman layer, at these costs:
+
+- **A flake input on someone else's nixpkgs.** Don't `inputs.follows` ours onto
+  it — same call as `authentik-nix`. Expect a second closure.
+- **Source builds** on every version bump, and a fat closure if upstream doesn't
+  prune (sparkyfitness's backend is a 765 MB `node_modules` tree).
+- **No renovate tracking.** `renovate.json` sets `"nix": {"enabled": false}`, so
+  the input is bumped by hand: move the pinned ref (a path segment for a
+  `github:` input — `github:owner/repo/v1.7.1`) *and* run
+  `nix flake update <input>`, because evaluation reads `flake.lock`, not the URL
+  — the same "the pin moved but the build didn't" class as #606/#625.
+- **Upstream may not test the nix path at all.** SparkyFitness says so outright
+  and has no CI job that builds the packages. Tolerable because the failure is a
+  loud build error at deploy time; if a release breaks it twice running, take
+  the container.
+
+Two traps this repo hit on that path, both worth checking in any upstream module
+before importing it:
+
+- **Plain assignments where you'd expect `mkDefault`.** SparkyFitness's
+  `database.createLocally` branch sets `services.postgresql.package` outright,
+  which is an eval conflict against our `postgresql_18` pin (and a cluster
+  downgrade if it won). Turn that branch off and use `myPostgresApp`, then
+  re-add by hand whatever the module's own init did — for sparkyfitness that was
+  `CREATEROLE` on the owner role and `ALTER SCHEMA public OWNER TO`.
+- **Prefer the bare module over a `packages.${pkgs.system}` convenience
+  wrapper.** `pkgs.system` is deprecated, so importing the wrapper prints a
+  rename warning on every eval of every host that imports it. Import
+  `nixosModules.default` and set the package options yourself off
+  `pkgs.stdenv.hostPlatform.system`.
+
 Stay on the container path when:
 
 - **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3, readmeabook,
