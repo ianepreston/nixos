@@ -11,13 +11,17 @@ we should fix it" costs that session a re-investigation you already did.
 
 Do not open the editor first. Evidence, then triage, then template.
 
+**Read `.claude/skills/_shared/host-access.md` first.** It carries the fleet
+roles, the permission boundary, and the ssh recipes for reaching a host and
+reading state off it — every command in Phase 2 depends on them, and several
+have a plausible form that hangs forever instead of failing.
+
 ## 1. Frame the observation
 
 From the user's ask (or from what this session just found), establish:
 
 - **What was observed** — the symptom, not yet the diagnosis.
-- **Which host.** `hpp-1` (dev server), `amos1` (prod server), `terra`/`luna`
-  (workstations), `behemoth` (pfSense), `laconia` (NAS). Everything downstream
+- **Which host** (see the fleet table in host-access). Everything downstream
   depends on this.
 - **Whether it is already filed.** `gh issue list --search "<keywords>"
   --state all`. Check closed issues too — a reopened or referenced issue beats
@@ -33,35 +37,22 @@ An unquantified claim is the single most common gap. "Steam spams pactl errors"
 is not the issue; **"313 occurrences in the last 7 days, and it fires
 repeatedly for as long as Steam is up, not once at startup"** is (#650).
 
-Reaching a server host needs the ssh master socket — auth uses a FIDO2 key and
-no tty here can answer its prompt:
+Reaching a server host needs an ssh master socket; check for one before you
+start, per host-access. Read-only inspection is free on any host, prod
+included — gathering evidence off amos1 needs no permission.
 
-```sh
-ssh -O check -o ControlPath="$HOME/.ssh/master-ipreston@<host>:22" ipreston@<host>
-```
+Use the journal, VictoriaLogs and VictoriaMetrics recipes from host-access
+rather than improvising: the PromQL-through-zsh and no-`python3` traps there
+each cost a round of debugging, and **15 day retention** is a hard bound on any
+window you propose.
 
-If that fails, ask the user to open one (`! ssh <host>`) before going further.
+What this skill adds on top of those recipes is the standard they have to meet:
 
-**Journal.** Bound the window, count, then excerpt:
-
-```sh
-ssh <host> 'journalctl -u <unit> --since "7 days ago" | grep -c "<pattern>"'
-ssh <host> 'journalctl -u <unit> --since "2026-09-18 16:40" --until "2026-09-18 17:00" -o short-iso'
-```
-
-**History older than the journal** lives in VictoriaLogs (`127.0.0.1:9428`),
-which is what makes "has this happened before?" answerable — it turned a one-off
-Valheim freeze into a 12-occurrence pattern in #627.
-
-**Metrics** are VictoriaMetrics (`127.0.0.1:8428`, **15 day retention**), also
-loopback-only. Two traps, each worth a wasted round otherwise:
-
-- `ssh host -- curl ... 'promql'` does not work. ssh joins argv into one string
-  and the remote zsh re-parses it, so `(`, `{mode="idle"}` and `[2m]` get
-  glob/brace-expanded. Pipe a script instead: `ssh host bash -s < script.sh`,
-  PromQL single-quoted inside and passed via `--data-urlencode "query=$q"`.
-- The server hosts have **no `python3`**. Fetch raw JSON over ssh, parse
-  locally.
+- **Count over a stated window on a named host**, before excerpting anything.
+- **Reach for VictoriaLogs whenever the question is "has this happened
+  before?"** — it is the only history outliving journald's ~4G cap, and it is
+  what turned a one-off Valheim freeze into a 12-occurrence pattern in #627.
+- **Trim excerpts to the lines that carry the argument**, and annotate them.
 
 Where several symptoms co-occur, **establish the ordering** and say what it
 rules out. #662's whole analysis turns on the relay error at 16:50:41 preceding
