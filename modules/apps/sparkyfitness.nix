@@ -79,16 +79,36 @@
 # set SPARKY_FITNESS_DISABLE_EMAIL_LOGIN=true) if that stops being
 # wanted.
 #
-# The one thing that ordering actually matters for: claim the
-# SPARKY_FITNESS_ADMIN_EMAIL address before anyone else can. Promotion
-# is an exact `findUserByEmail` lookup run on every startup
-# (SparkyFitnessServer.ts), `user.email` carries a unique index, and
-# the only other route to `role = 'admin'` is oidcGroupSync, which
-# returns immediately while SPARKY_FITNESS_OIDC_ADMIN_GROUP is unset
-# (it is). So once that account exists there is no escalation path out
-# of open signup — an account registered on any other address stays
-# `role = 'user'`, RLS-scoped to its own rows. Before it exists, a
-# squatter on that address would be promoted on the next restart.
+# Admin assignment is the part with a trap in it, so: there are three
+# routes to `role = 'admin'`, and the obvious one is the weakest.
+#
+#   1. A live BEFORE INSERT trigger on "user"
+#      (20260206132000_ensure_first_user_is_admin.sql) grants admin to
+#      whoever creates the *first row*, on any address. It is a
+#      trigger, not a one-time backfill, so it is armed on every fresh
+#      database — every new host. Since the blueprint binds this app to
+#      the Users group, that is a race among every member of it, plus
+#      anyone on the LAN who registers locally.
+#   2. SPARKY_FITNESS_ADMIN_EMAIL, an exact findUserByEmail lookup run
+#      on every startup. Note *what the IDP asserts* — see the
+#      hardcoded value below for why reading hostSpec.email.personal
+#      here matched nothing.
+#   3. oidcGroupSync, which promotes members of
+#      SPARKY_FITNESS_OIDC_ADMIN_GROUP and revokes admin from
+#      non-members on every login.
+#
+# (3) is what actually holds, because it is the only one that takes
+# admin *away*: whoever wins the trigger race in (1) is demoted at
+# their next login, rather than holding admin permanently until someone
+# edits the role by hand in postgres. It costs nothing in reach —
+# revocation governs the `role` column only, so self-registration and
+# SSO auto-register stay fully open.
+#
+# What it does not do is make the race harmless in the moment: a
+# trigger-granted admin holds the admin panel until they log in again.
+# Log in on a freshly-provisioned host promptly.
+#
+# Beyond admin, an ordinary account is RLS-scoped to its own rows.
 #
 # What open signup does leave, neither of which is escalation: anyone
 # who can reach the vhost can create an account (and consume uploads
@@ -316,11 +336,31 @@
           appUser = appDbUser;
         };
 
-        # Non-secret runtime config. ADMIN_EMAIL promotes the matching
-        # account to admin on startup, so the first SSO login lands as
-        # admin.
         extraEnvironment = {
-          SPARKY_FITNESS_ADMIN_EMAIL = hostSpec.email.personal;
+          # Admin is group-driven: oidcGroupSync promotes members of
+          # this group and *revokes* admin from everyone else, on every
+          # login (the `session.create.after` hook in auth.ts). That
+          # revocation is the point — see the header for what it
+          # defends against. The group name is matched as an exact
+          # string against the `groups` claim, which authentik's
+          # default `profile` scope mapping already emits, so no
+          # blueprint change is needed to supply it.
+          SPARKY_FITNESS_OIDC_ADMIN_GROUP = "authentik Admins";
+
+          # Backstop for the case where the groups claim stops arriving
+          # (a changed scope mapping, say): with no groups in the token
+          # the sync would demote every admin, and this re-promotes on
+          # the next service restart.
+          #
+          # Hardcoded rather than read from hostSpec.email.personal,
+          # which is what this used to be and was silently inert: that
+          # is the real mail address, and the address authentik asserts
+          # for this account is the @example.com placeholder on the
+          # authentik user. The promotion is an exact findUserByEmail
+          # lookup against what the IDP sent, so it has to be the
+          # latter. Same on every host, so it is not a hostSpec read.
+          SPARKY_FITNESS_ADMIN_EMAIL = "ian@example.com";
+
           SPARKY_FITNESS_FORCE_EMAIL_LOGIN = "true";
         };
       };
