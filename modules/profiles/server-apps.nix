@@ -55,6 +55,7 @@
         seerr
         shelfmark
         sonarr
+        sparkyfitness
         tandoor
         # Ships everywhere but is off unless a host sets
         # `myValheim.enable`, because the interesting question is not

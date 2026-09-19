@@ -75,6 +75,22 @@
     # here — the package is a self-contained image extraction that
     # doesn't share a closure with the host pkgs anyway.
     unifi-os-server.url = "github:rcambrj/unifi-os-server";
+    # SparkyFitness (nutrition / fitness tracker). Not in nixpkgs and
+    # never will be — the licence is a custom non-commercial,
+    # source-available grant — but upstream ships its own flake with a
+    # `services.sparkyfitness` NixOS module, so the native path is
+    # available anyway. Pinned to a release tag and bumped by hand:
+    # renovate.json disables the `nix` manager, so nothing tracks this
+    # automatically. Rewriting the tag WITHOUT running
+    # `nix flake update sparkyfitness` changes nothing — evaluation
+    # reads flake.lock, not the URL.
+    #
+    # Not `inputs.follows`-ed onto our nixpkgs: same call as
+    # authentik-nix. The packages are two pnpm builds against upstream's
+    # own pinned nixos-unstable (node 24 + pnpm 10), and repointing them
+    # at our stable channel is the kind of change only upstream can test
+    # — and upstream explicitly doesn't test the nix path at all.
+    sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.7.1";
     # Declarative state preservation across ephemeral root reboots.
     # See modules/system/preservation-server.nix and the server hosts'
     # disko configs (btrfs blank-snapshot rollback in initrd).
