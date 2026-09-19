@@ -36,6 +36,24 @@
 # which prints a line of the form
 #   Session "amos1-g2-valheim" with join code 123456 and IP a.b.c.d:2456 is active ...
 #
+# Grep for `is active` specifically, not for any line mentioning a join
+# code. The server logs the code in three different shapes and only that
+# one is authoritative:
+#
+#   Session "<name>" registered with join code <N>      the code *offered*
+#   Created new join code <N> for session "<name>"      a candidate
+#   Session "<name>" with join code <N> ... is active   confirmed live
+#
+# PlayFab can reject the offered code and mint a replacement, and a
+# candidate can fail the server's own `Retry join-code check`. Both
+# happened on 2026-09-18: re-registration echoed 496995, PlayFab issued
+# 809934 then 555295, and the session went live on 555295 while the
+# Discord watcher — then keyed on the `registered with` line — kept
+# advertising 496995. Remote players got "unable to resolve join code";
+# anyone holding the real code connected fine, so the server looked
+# healthy from the inside. Fixed in #661; the watcher below now reads
+# the same line this runbook does.
+#
 # ## Crossplay exclusivity: one *crossplay* server per public IP
 #
 # The constraint learned the hard way on 2026-09-11 is not "one Valheim
@@ -731,37 +749,87 @@ _: {
                 }
 
                 journalctl=${pkgs.systemd}/bin/journalctl
-                grep=${pkgs.gnugrep}/bin/grep
+                sed=${pkgs.gnused}/bin/sed
 
                 # Position first, read second — see the cursor note above.
                 # `--show-cursor` appends a `-- cursor: <id>` line after the
                 # last entry, which is what -n 1 is here to produce cheaply.
                 #
                 # `|| true` because NixOS generates this script with `set -e`
-                # in the wrapper, so with pipefail a failing substitution
-                # aborts the unit, and journalctl legitimately exits 1 when
-                # the container has logged nothing this boot yet. See the
-                # longer note on the replay guard in valheim-player-notify
-                # below (#640). An empty cursor is already handled: it
-                # selects the follow-from-now branch further down.
+                # in the wrapper, so with pipefail any stage of this pipeline
+                # exiting non-zero aborts the whole unit. See the longer note
+                # on the replay guard in valheim-player-notify below (#640).
+                # An empty cursor is already handled: it selects the
+                # follow-from-now branch further down.
+                #
+                # No stage here is currently known to exit non-zero at
+                # runtime. An earlier version of this comment blamed
+                # journalctl "legitimately exiting 1 when the container has
+                # logged nothing this boot yet"; that was never measured and
+                # is wrong — journalctl exits 0 for a unit with no entries,
+                # for an unknown unit, and when it cannot read the journal,
+                # and reaches 1 only on malformed arguments, which is a
+                # build-time bug rather than a runtime state. The real #640
+                # culprit was grep, in the backlog pass below. So treat this
+                # as deliberate insurance for a future edit that reintroduces
+                # a filter which does exit non-zero on no-match, not as a
+                # guard against something live.
                 cursor="$("$journalctl" -u podman-valheim.service -b -n 1 -o cat --show-cursor 2>/dev/null \
-                  | ${pkgs.gnused}/bin/sed -n 's/^-- cursor: //p')" || true
+                  | "$sed" -n 's/^-- cursor: //p')" || true
 
-                # Pass 1 — backlog. `-oE 'registered with join code [0-9]+'`
-                # yields exactly five whitespace-separated fields; the code is
-                # the last, so ''${line##* } is the code. Only the newest match
-                # is announced; earlier ones in this boot are already stale.
-                # `|| true` for the same reason as the cursor above: `grep`
-                # exits 1 until the first join code is logged, which under
-                # pipefail + the wrapper's `set -e` killed this unit on every
-                # boot — 4 failed starts on 2026-09-15, clearing only once a
-                # code appeared at 05:19:59 (#640). "No code yet" is exactly
-                # what the empty branch below is written to handle.
+                # Pass 1 — backlog. The pattern matches the *authoritative*
+                # line, which is
+                #
+                #   Session "<name>" with join code <N> and IP <ip>:<port> is active with <n> player(s)
+                #
+                # and not the `registered with join code <N>` line this used
+                # to key on. That one reports the code the server *offered* at
+                # re-registration, which PlayFab is free to reject and
+                # replace. On 2026-09-18 it did: re-registration echoed
+                # 496995, PlayFab minted 809934 and then 555295 a second
+                # later, the session went live on 555295 — and this watcher
+                # announced 496995, which no remote player could resolve
+                # (#661). Nothing in the unit's own output looked wrong,
+                # because the stale code matched the dedupe marker from that
+                # morning and was skipped as "already announced".
+                #
+                # The `is active` line cannot name a dead code: the server
+                # emits it only after its own `Retry join-code check`
+                # countdown confirms the code resolves. It is also the line
+                # the header comment tells an operator to grep by hand, so
+                # watcher and runbook now agree rather than disagreeing
+                # silently.
+                #
+                # Deliberately *not* also matching `Created new join code
+                # <N>`. It fires ~3s earlier, but it names every candidate
+                # including ones that go on to fail the retry check — 809934
+                # above is exactly such a code.
+                #
+                # `sed -n` capture rather than `grep -oE` plus a positional
+                # read: the IP field makes the match variable-length, so
+                # counting whitespace fields no longer finds the code. Only
+                # the newest match is announced; earlier ones in this boot are
+                # already stale.
+                #
+                # `|| true` for the same reason as the cursor above: under
+                # pipefail + the wrapper's `set -e`, a non-zero exit in this
+                # pipeline kills the unit — which is what 4 failed starts on
+                # 2026-09-15 were, clearing only once a code appeared at
+                # 05:19:59 (#640).
+                #
+                # That was `grep` exiting 1 on no-match, and this pass no
+                # longer runs grep: `sed -n ...p` exits 0 whether or not it
+                # printed. The guard is therefore no longer load-bearing, and
+                # is kept only so that swapping the filter back to something
+                # grep-like cannot silently re-arm #640. "No code yet" is
+                # exactly what the empty branch below is written to handle,
+                # and it is reached via sed's empty output, not via this
+                # guard.
                 backlog="$("$journalctl" -u podman-valheim.service -b --lines=all -o cat 2>/dev/null \
-                  | "$grep" -oE 'registered with join code [0-9]+' \
+                  | "$sed" -n -E 's/.*with join code ([0-9]+) and IP .* is active.*/\1/p' \
                   | tail -1)" || true
                 if [ -n "$backlog" ]; then
-                  notify "''${backlog##* }"
+                  notify "$backlog"
                 else
                   echo "no join code in the journal for this boot yet; following for one"
                 fi
@@ -778,9 +846,14 @@ _: {
                   set -- -b -f --lines=0
                 fi
 
+                # `-u` is what keeps this streaming: sed otherwise block-
+                # buffers into a pipe and the announcement waits on a full
+                # buffer's worth of journal, which on an idle server is
+                # unbounded. It is the counterpart of the `grep
+                # --line-buffered` this replaces.
                 "$journalctl" -u podman-valheim.service "$@" -o cat \
-                  | "$grep" --line-buffered -oE 'registered with join code [0-9]+' \
-                  | while read -r _ _ _ _ code; do
+                  | "$sed" -n -E -u 's/.*with join code ([0-9]+) and IP .* is active.*/\1/p' \
+                  | while read -r code; do
                       notify "$code"
                     done
               '';
