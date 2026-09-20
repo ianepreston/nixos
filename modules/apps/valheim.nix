@@ -54,6 +54,33 @@
 # healthy from the inside. Fixed in #661; the watcher below now reads
 # the same line this runbook does.
 #
+# **If that grep returns nothing for the current container run, the
+# server is broken — it is not that no code was issued.** The three
+# shapes above describe a confirmation that arrives; there is a fourth
+# state, where it never does. On 2026-09-20 the `registered with` line
+# was followed a second later by
+#
+#   NullReferenceException: Object reference not set to an instance of an object
+#     at ZPlayFabMatchmaking.OnCheckJoinCodeSuccess (…FindLobbiesResult result)
+#
+# which killed the confirmation state machine outright: no `Retry
+# join-code check` countdown, no `is active` line, ever. The registered
+# code did not resolve for any client, and because the runbook grep and
+# the watcher both key on `is active`, both went quiet rather than
+# wrong — and a quiet watcher is indistinguishable from an idle healthy
+# server. amos1 stayed that way for 3h32m until a player said so (#683).
+#
+# The remediation is a restart, which re-registers and confirms:
+#
+#   ssh amos1 -- sudo systemctl restart podman-valheim
+#
+# Note it may hand back the *same* digits — PlayFab keys the lobby on a
+# deterministic custom ID — so an unchanged code is not evidence the
+# restart did nothing. Check for the `is active` line, not for a new
+# number. valheim-joincode-watchdog below now announces this state to
+# Discord within ~3m, and ValheimJoinCodeUnconfirmed in
+# ../system/victoriametrics.nix alerts on it.
+#
 # ### PlayFab peer-relay stalls — what crossplay actually costs players (#627)
 #
 # The section above frames the crossplay tradeoff as "you lose
@@ -404,6 +431,111 @@ _: {
       playerRoster = "${playerNotifyRuntimeDir}/roster";
       playerRosterReady = "${playerNotifyRuntimeDir}/ready";
 
+      # valheim-joincode-notify's state, and the seam between it,
+      # valheim-joincode-watchdog and valheim-metrics (#683). Same shape as
+      # the roster pair above and for the same reason: three units read or
+      # write these paths, so they are named once here rather than three
+      # times in three scripts.
+      #
+      # All three live in the notifier's RuntimeDirectory, which is /run and
+      # therefore cleared on reboot. That is still the wanted semantics — a
+      # reboot restarts the server, which re-registers — but note it is no
+      # longer the *whole* story for `marker`; see the re-announce path in
+      # valheim-joincode-notify below.
+      #
+      #   marker    the code last announced to Discord. Suppresses a repeat
+      #             of an unchanged code.
+      #   pending   "<code> <epoch>" for a registration whose confirming
+      #             `is active` line has not arrived. Written by the
+      #             notifier, cleared by it on confirmation, and read by
+      #             both the watchdog (to alert) and valheim-metrics (to
+      #             publish the age as a gauge).
+      #   alerted   set by the watchdog once it has announced the current
+      #             pending as unconfirmed. Stops it re-posting every minute,
+      #             and is what tells the notifier that the eventual
+      #             confirmation is *news* even at unchanged digits.
+      joincodeRuntimeDir = "/run/valheim-joincode-notify";
+      joincodeMarker = "${joincodeRuntimeDir}/last";
+      joincodePending = "${joincodeRuntimeDir}/pending";
+      joincodeAlerted = "${joincodeRuntimeDir}/alerted";
+
+      # How long a registration may go unconfirmed before it is treated as
+      # broken (#683).
+      #
+      # Derived, not picked: the server's own `Retry join-code check`
+      # countdown starts at 99 and decrements once a second, so ~99s is the
+      # longest wait the server itself will tolerate before giving up on a
+      # code. Measured on amos1 — 2026-09-19 05:35:30/31/32 are checks
+      # 99/98/97, one per second, with the `is active` line at 05:35:33; 30
+      # retry lines across the 14 days to 2026-09-20, longest run 3. So every
+      # healthy confirmation lands 1-4s after registration and the worst case
+      # the protocol allows is ~99s. 120s clears that with margin.
+      #
+      # Do not re-derive this from a comment elsewhere in the file: it comes
+      # from those log timestamps.
+      joincodeGraceSeconds = 120;
+
+      # The join-code gauge's two halves, as bindings rather than inline
+      # `lib.optionalString` calls: an interpolation opening at column 0
+      # inside an indented string would reset Nix's indentation stripping for
+      # the whole script.
+      #
+      # Crossplay-gated so a Steam-backend host's exporter is byte-identical
+      # to before #683 — it has no join code, so there is nothing to measure
+      # and no reason to change hpp-1's closure for this.
+      #
+      # The `\n`-prefixed `*Line` wrappers are what make "byte-identical"
+      # literally true rather than nearly true. Interpolating on its own
+      # source line leaves that line's indentation behind when the string is
+      # empty, so a Steam-backend host got a script differing from
+      # origin/main by one line of trailing whitespace — no behaviour change,
+      # but enough to rebuild the closure and to make a diff-based claim
+      # false. Carrying the newline inside the optional string instead means
+      # the crossplay=false expansion is exactly the empty string.
+      joincodeGaugeReadLine = lib.optionalString cfg.crossplay "\n${joincodeGaugeRead}";
+      joincodeGaugeEmitLine = lib.optionalString cfg.crossplay "\n${joincodeGaugeEmit}";
+
+      joincodeGaugeRead = ''
+        # Age of an unconfirmed join-code registration (#683). Read from
+        # valheim-joincode-notify's pending file rather than from the
+        # journal: the notifier already parses those lines, and duplicating
+        # the parse here would be a second place to get the wording wrong.
+        #
+        # Opportunistic, exactly like the player roster above — an absent
+        # file means "confirmed, nothing pending" and publishes no series.
+        joincode_unconfirmed=
+        if [ -f ${joincodePending} ]; then
+          read -r _jccode _jcwhen _jcrest < ${joincodePending} || true
+          case "''${_jcwhen:-}" in
+            "" | *[!0-9]*) _jcwhen= ;;
+          esac
+          if [ -n "''${_jcwhen:-}" ]; then
+            joincode_unconfirmed=$(( $(date +%s) - _jcwhen ))
+            # A clock step backwards is the only way this goes negative,
+            # and a negative age would read as "confirmed" to the rule.
+            if [ "$joincode_unconfirmed" -lt 0 ]; then
+              joincode_unconfirmed=0
+            fi
+          fi
+        fi
+      '';
+
+      joincodeGaugeEmit = ''
+        # Absent rather than 0 when there is nothing pending, for the same
+        # reason valheim_players_online is: 0 is a meaningful value here
+        # ("registered this instant") and must not double as no-data.
+        #
+        # Note this legitimately reads 1-4 on an ordinary re-registration,
+        # since every confirmation is preceded by a brief pending window.
+        # The alert threshold is what distinguishes that from a fault; see
+        # ValheimJoinCodeUnconfirmed in ../system/victoriametrics.nix.
+        if [ -n "''${joincode_unconfirmed:-}" ]; then
+          echo "# HELP valheim_joincode_unconfirmed_seconds Seconds since the server registered a PlayFab join code without its confirming 'is active' line arriving. Absent while the live code is confirmed. A value past ${toString joincodeGraceSeconds} means the server's own join-code check never completed and the advertised code most likely does not resolve (#683)."
+          echo "# TYPE valheim_joincode_unconfirmed_seconds gauge"
+          echo "valheim_joincode_unconfirmed_seconds $joincode_unconfirmed"
+        fi
+      '';
+
       # Persistent state for the journal-derived relay counters (#627).
       # /var/lib rather than /run precisely because these are counters: the
       # point is a total that outlives the timer, the journal window and a
@@ -571,6 +703,12 @@ _: {
             # direct-consumption exception.
             "valheim/discord_webhook" = {
               inherit (hostSpec) sopsFile;
+              # Only the follower, deliberately. valheim-joincode-watchdog
+              # reads this same secret, but it is a oneshot fired by a 1m
+              # timer — it re-reads the file on every tick, so there is no
+              # long-lived process holding a stale value and nothing for a
+              # restart to fix. Adding it here would bounce a unit that is
+              # not running.
               restartUnits = [ "valheim-joincode-notify.service" ];
             };
           }
@@ -727,7 +865,7 @@ _: {
                 rss=0
                 uptime=0
                 cgmem=0
-                players=
+                players=${joincodeGaugeReadLine}
 
                 # `|| true` so `set -e` survives the no-match case: pgrep exits
                 # 1 when the server is down, which is a value we want to
@@ -949,7 +1087,7 @@ _: {
                     echo "# HELP valheim_players_online Players currently connected, from the valheim-player-notify roster. Absent rather than 0 whenever that roster is missing or mid-rebuild, so no-data and nobody-online stay distinguishable."
                     echo "# TYPE valheim_players_online gauge"
                     echo "valheim_players_online $players"
-                  fi
+                  fi${joincodeGaugeEmitLine}
                 } > "$tmp"
                 chmod 0644 "$tmp"
                 mv "$tmp" "$out"
@@ -1003,6 +1141,18 @@ _: {
             # code, so losing the marker exactly when it stops being true is
             # the correct behaviour — and it keeps this out of the
             # preservation/restic bookkeeping in server-apps.nix entirely.
+            #
+            # That rationale holds for reboots and is why it is still /run,
+            # but it is not the whole rule any more. A *container* restart
+            # also re-registers, and PlayFab will hand back the same digits
+            # off the deterministic custom ID — so "restarted" and "rotated"
+            # are not the same event, and the marker can outlive the code's
+            # validity without outliving its value. #683 is exactly that
+            # case: recovering from an unconfirmed code re-registered the
+            # identical number and the marker swallowed the announcement
+            # that it worked again. `handle_active` below drops the marker
+            # when the watchdog has flagged the episode, so liveness gets
+            # announced even when the digits do not change (#683).
             valheim-joincode-notify = {
               description = "Post the Valheim crossplay join code to Discord when it changes";
               # The sops edge is load-bearing, not decorative: without it this
@@ -1049,7 +1199,9 @@ _: {
               script = ''
                 set -uo pipefail
 
-                marker=/run/valheim-joincode-notify/last
+                marker=${joincodeMarker}
+                pending=${joincodePending}
+                alerted=${joincodeAlerted}
                 webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
                 server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
 
@@ -1077,6 +1229,86 @@ _: {
                   else
                     echo "failed to post join code $code to discord" >&2
                   fi
+                }
+
+                # A registration, i.e. a code the server has *offered*. Not
+                # announced — that is still the `is active` line's job, and
+                # #661 is what happens when this line is trusted instead.
+                # Recorded so that a confirmation which never arrives becomes
+                # observable: valheim-joincode-watchdog alerts on the age of
+                # this file and valheim-metrics publishes it as a gauge.
+                #
+                # An unchanged code already pending keeps its original
+                # timestamp. The server re-logs `registered with` on every
+                # lobby re-registration (3 times on 2026-09-12 alone), and
+                # rewriting the epoch each time would walk the deadline
+                # forward forever and the watchdog would never fire. Same
+                # code with no confirmation in between is one unconfirmed
+                # episode, not a new one.
+                handle_reg() {
+                  code="$1"
+                  when="$2"
+                  # `pcode` is pre-set because this script runs under
+                  # `set -u`: a torn or empty pending file makes `read`
+                  # return non-zero having assigned nothing, and an unbound
+                  # expansion below would take the whole unit down. Same
+                  # class of foot-gun as #640, different trigger.
+                  pcode=
+                  if [ -f "$pending" ]; then
+                    read -r pcode _rest < "$pending" || true
+                    if [ "$pcode" = "$code" ]; then
+                      return 0
+                    fi
+                  fi
+                  # Reaching here means a *different* code is now pending,
+                  # which is a new episode: drop the watchdog's
+                  # already-announced flag so this one can be announced on
+                  # its own merits. Without this, a restart that re-registers
+                  # under a fresh number and fails again inherits the old
+                  # flag and goes unreported.
+                  rm -f "$alerted"
+                  printf '%s %s\n' "$code" "$when" > "$pending"
+                }
+
+                # A confirmation. Clears the pending registration, then
+                # announces under the usual dedupe.
+                #
+                # The `alerted` branch is the one non-obvious part. A
+                # container restart does not necessarily rotate the code:
+                # PlayFab hands back the same digits via the deterministic
+                # custom ID, which is exactly what happened recovering from
+                # #683 — the fix-restart re-registered 496995 and the marker
+                # suppressed the announcement as "already announced". By the
+                # dedupe rule that is correct; in context it is wrong, because
+                # what changed was whether the code *resolves*, not what it
+                # is. So when the watchdog has told the channel this code is
+                # broken, drop the marker and let the confirmation through:
+                # the news is liveness, not novelty.
+                #
+                # Deliberately *not* dropping the marker on every `reg`. That
+                # would re-announce on each ordinary lobby re-registration —
+                # 1-3 unchanged-code messages a day, which is the stale-burst
+                # the dedupe exists to prevent.
+                handle_active() {
+                  code="$1"
+                  rm -f "$pending"
+                  if [ -e "$alerted" ]; then
+                    echo "join code $code confirmed after being announced unconfirmed; re-announcing"
+                    rm -f "$marker" "$alerted"
+                  fi
+                  notify "$code"
+                }
+
+                # Route one tagged event. Tags come from the sed programs
+                # below, which is the only place the journal's wording is
+                # known.
+                dispatch() {
+                  while read -r tag code when; do
+                    case "$tag" in
+                      reg) handle_reg "$code" "''${when:-$(date +%s)}" ;;
+                      active) handle_active "$code" ;;
+                    esac
+                  done
                 }
 
                 journalctl=${pkgs.systemd}/bin/journalctl
@@ -1131,6 +1363,15 @@ _: {
                 # watcher and runbook now agree rather than disagreeing
                 # silently.
                 #
+                # It can, however, fail to appear at all — the corollary
+                # #661 did not have to think about and #683 is. A line that
+                # cannot lie is still no use when it is never written, and
+                # keying on it alone made silence carry two meanings. Hence
+                # the `reg` shape below: not to announce from (that is still
+                # forbidden), but to know that a confirmation is *owed*, so
+                # its absence becomes a fact the watchdog can act on rather
+                # than the absence of a fact.
+                #
                 # Deliberately *not* also matching `Created new join code
                 # <N>`. It fires ~3s earlier, but it names every candidate
                 # including ones that go on to fail the retry check — 809934
@@ -1156,11 +1397,34 @@ _: {
                 # exactly what the empty branch below is written to handle,
                 # and it is reached via sed's empty output, not via this
                 # guard.
-                backlog="$("$journalctl" -u podman-valheim.service -b --lines=all -o cat 2>/dev/null \
-                  | "$sed" -n -E 's/.*with join code ([0-9]+) and IP .* is active.*/\1/p' \
+                # `-o short-unix` rather than `-o cat` for this pass only.
+                # The backlog can end on an *unconfirmed* registration, and
+                # seeding the watchdog's deadline from it needs that line's
+                # real timestamp — `date +%s` would restart the clock at unit
+                # start and a restart during an outage would postpone the
+                # alert indefinitely. The live pass below keeps `-o cat`,
+                # where the line has just arrived and now is its timestamp.
+                #
+                # Both sed programs stay anchored on `.*` prefixes, so the
+                # added `<epoch>.<usec> <host> <unit>:` prefix changes
+                # nothing about what they match. The two shapes cannot
+                # collide: the confirmation reads `" with join code"` and the
+                # registration `"registered with join code"`, and only the
+                # former carries `and IP … is active`. The image's third
+                # shape (`New session server … that has join code ,` — note
+                # the empty code) matches neither.
+                backlog="$("$journalctl" -u podman-valheim.service -b --lines=all -o short-unix 2>/dev/null \
+                  | "$sed" -n -E \
+                      -e 's/^([0-9]+)\.[0-9]+ .*with join code ([0-9]+) and IP .* is active.*/active \2 \1/p' \
+                      -e 's/^([0-9]+)\.[0-9]+ .*registered with join code ([0-9]+).*/reg \2 \1/p' \
                   | tail -1)" || true
                 if [ -n "$backlog" ]; then
-                  notify "$backlog"
+                  # Only the newest event matters. If that is a confirmation,
+                  # announce it; if it is a registration with no confirmation
+                  # after it, this boot is *currently* in the #683 state and
+                  # the watchdog takes it from the pending file. Any earlier
+                  # code in the backlog is stale either way.
+                  printf '%s\n' "$backlog" | dispatch
                 else
                   echo "no join code in the journal for this boot yet; following for one"
                 fi
@@ -1182,11 +1446,138 @@ _: {
                 # buffer's worth of journal, which on an idle server is
                 # unbounded. It is the counterpart of the `grep
                 # --line-buffered` this replaces.
+                # No timestamp field emitted here, unlike the backlog pass:
+                # `dispatch` fills a missing one with `date +%s`, which is
+                # right for a line that has this instant come off the
+                # journal.
                 "$journalctl" -u podman-valheim.service "$@" -o cat \
-                  | "$sed" -n -E -u 's/.*with join code ([0-9]+) and IP .* is active.*/\1/p' \
-                  | while read -r code; do
-                      notify "$code"
-                    done
+                  | "$sed" -n -E -u \
+                      -e 's/.*with join code ([0-9]+) and IP .* is active.*/active \1/p' \
+                      -e 's/.*registered with join code ([0-9]+).*/reg \1/p' \
+                  | dispatch
+              '';
+            };
+
+            # The other half of #683: announce the *absence* of a
+            # confirmation. valheim-joincode-notify is edge-triggered on the
+            # `is active` line, so when that line never comes it emits
+            # nothing — and nothing is also what a healthy idle server emits.
+            # On 2026-09-20 an upstream NullReferenceException in
+            # `ZPlayFabMatchmaking.OnCheckJoinCodeSuccess` killed the
+            # confirmation state machine a second after registration, and
+            # amos1 advertised an unresolvable code for 3h32m while every
+            # signal on the host read healthy. A player found it.
+            #
+            # A timer rather than a read timeout inside the notifier's follow
+            # loop: `read -t` only expires when the journal goes quiet, so on
+            # a busy server the deadline would keep being reset — silent
+            # exactly when the server is in use. Polling a timestamp is
+            # indifferent to journal volume.
+            #
+            # This deliberately does not restart anything. The remediation is
+            # mechanical (`systemctl restart podman-valheim`, verified during
+            # #683) and the temptation to automate it is real, but a log
+            # pattern that bounces a prod game server is a bigger commitment
+            # than one occurrence in 30 days of retained logs justifies.
+            # Revisit with a second data point.
+            valheim-joincode-watchdog = {
+              description = "Alert to Discord when a registered Valheim join code is never confirmed";
+              # Same sops edge as the notifier above — without it the first
+              # run after activation dies on a missing webhook file. A
+              # oneshot on a timer, so a failed run is not a failed deploy,
+              # but ordering it costs nothing and keeps the pair symmetric.
+              after = [
+                "sops-install-secrets.service"
+                "network-online.target"
+              ];
+              wants = [ "network-online.target" ];
+
+              serviceConfig = {
+                Type = "oneshot";
+                # Shares the notifier's RuntimeDirectory rather than owning
+                # one: these two units read and write the same three files,
+                # and that sharing is the interface. `Preserve` must match
+                # the notifier's, or a run of this oneshot would take the
+                # directory — dedupe marker included — down with it on exit.
+                RuntimeDirectory = baseNameOf joincodeRuntimeDir;
+                RuntimeDirectoryPreserve = "yes";
+                # Root: reads the sops secret. ProtectSystem=strict makes
+                # /run read-only except for RuntimeDirectory, which is
+                # exactly the one path this writes.
+                ProtectHome = true;
+                ProtectSystem = "strict";
+                PrivateTmp = true;
+                NoNewPrivileges = true;
+                RestrictAddressFamilies = [
+                  "AF_INET"
+                  "AF_INET6"
+                  "AF_UNIX"
+                ];
+              };
+
+              script = ''
+                set -uo pipefail
+
+                pending=${joincodePending}
+                alerted=${joincodeAlerted}
+
+                # Nothing registered, or the confirmation already landed and
+                # the notifier cleared it. The overwhelmingly common case.
+                if [ ! -f "$pending" ]; then
+                  exit 0
+                fi
+
+                # Already announced for this episode. Cleared by the notifier
+                # when a confirmation finally arrives, which is also what
+                # makes that confirmation re-announce.
+                if [ -e "$alerted" ]; then
+                  exit 0
+                fi
+
+                # `if` rather than `&&`/`||` chains throughout this unit:
+                # NixOS injects `set -e` into `script =`, so a bare test
+                # returning non-zero kills the run. That is #640, and the
+                # early-exit style above is what keeps it from coming back.
+                read -r code when _rest < "$pending" || exit 0
+                case "$when" in
+                  "" | *[!0-9]*) exit 0 ;;
+                esac
+
+                age=$(( $(date +%s) - when ))
+                if [ "$age" -lt ${toString joincodeGraceSeconds} ]; then
+                  exit 0
+                fi
+
+                webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
+                server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
+
+                # The wording matters more than it looks. #661 was a stale
+                # code presented as usable, and this message names a code
+                # too — so it has to say plainly that the code is *not*
+                # expected to work. Never reuse the healthy announcement's
+                # phrasing here.
+                payload="$(${pkgs.jq}/bin/jq -nc \
+                  --arg code "$code" \
+                  --arg server "$server" \
+                  --arg mins "$(( age / 60 ))" \
+                  '{content: ("⚠️ Valheim server **" + $server
+                              + "** registered join code **" + $code + "** " + $mins
+                              + "m ago, but PlayFab never confirmed it.\n"
+                              + "**That code most likely does not work** — do not share it.\n"
+                              + "_Fix: `sudo systemctl restart podman-valheim` on the host._")}')"
+
+                # Same `-K -` stdin trick as the notifier: the webhook must
+                # not reach the process cmdline. A failed POST leaves
+                # `alerted` unset so the next tick retries, which is the
+                # right direction to fail for an outage alert.
+                if printf 'url = "%s"\n' "$webhook" \
+                  | ${pkgs.curl}/bin/curl -fsS -K - \
+                      -X POST -H 'Content-Type: application/json' -d "$payload"; then
+                  echo "announced unconfirmed join code $code (pending ''${age}s)"
+                  touch "$alerted"
+                else
+                  echo "failed to post unconfirmed join code $code to discord" >&2
+                fi
               '';
             };
 
@@ -1393,10 +1784,12 @@ _: {
                 # ever posted. The replay pass hid it, because EOF flushes: the
                 # roster rebuilt correctly, which is exactly why the unit looked
                 # healthy while announcing nothing from 09-14 through 09-15.
-                # `valheim-joincode-notify` above dodges this with
-                # `grep --line-buffered`; this is the same flag on the other
-                # tool. Cost is nil — journalctl's --grep means sed only ever
-                # sees the handful of matching lines, not the raw journal.
+                # `valheim-joincode-notify` above dodges this with `sed -u`
+                # — the same flag on the same tool. (It used
+                # `grep --line-buffered` when this comment was written; #661
+                # moved it to sed and this cross-reference went stale.) Cost
+                # is nil — journalctl's --grep means sed only ever sees the
+                # handful of matching lines, not the raw journal.
                 normalize() {
                   "$sed" -u -nE \
                     -e 's/.*Got character ZDOID from (.+) : (-?[0-9]+):[0-9]+[[:space:]]*$/J\t\2\t\1/p' \
@@ -1482,12 +1875,39 @@ _: {
             };
           };
 
-          timers.valheim-metrics = {
-            wantedBy = [ "timers.target" ];
-            timerConfig = {
-              OnBootSec = "2m";
-              OnUnitActiveSec = "2m";
-              Unit = "valheim-metrics.service";
+          # `//` at the `timers` level, not at `systemd` — the operator is
+          # shallow, so unioning whole `timers` attrsets would drop
+          # valheim-metrics on the crossplay host rather than adding to it.
+          # Same shape as `services` above for the same reason.
+          timers = {
+            valheim-metrics = {
+              wantedBy = [ "timers.target" ];
+              timerConfig = {
+                OnBootSec = "2m";
+                OnUnitActiveSec = "2m";
+                Unit = "valheim-metrics.service";
+              };
+            };
+          }
+          // lib.optionalAttrs cfg.crossplay {
+            # Crossplay-only, like the unit it drives: a Steam-backend
+            # server has no join code and nothing to confirm (#683).
+            #
+            # 1m rather than the exporter's 2m. Total detection latency is
+            # the grace window plus one tick, so this puts the Discord
+            # message inside ~3m of a failed confirmation against a ~99s
+            # protocol worst case. Every tick but the broken one is two stat
+            # calls and an exit.
+            #
+            # OnBootSec deliberately past the grace window: at boot nothing
+            # has registered yet, so earlier ticks would only exit immediately.
+            valheim-joincode-watchdog = {
+              wantedBy = [ "timers.target" ];
+              timerConfig = {
+                OnBootSec = "3m";
+                OnUnitActiveSec = "1m";
+                Unit = "valheim-joincode-watchdog.service";
+              };
             };
           };
         };

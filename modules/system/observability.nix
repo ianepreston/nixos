@@ -11,7 +11,9 @@
 # Prometheus/Loki monoliths-in-microservice-clothing were paying
 # distributed-systems complexity without using any of the benefit):
 #   VictoriaMetrics — scrapes node/postgres/mysqld/redis/caddy/cadvisor/
-#                     vector/itself; ephemeral on-disk, 15d retention.
+#                     vector/itself; ephemeral on-disk, 45d retention
+#                     (raised from 15d for #458 — see `retentionPeriod`
+#                     in ./victoriametrics.nix, which is authoritative).
 #   vmalert         — evaluates the rule YAML against VM; emits to
 #                     alertmanager. PromQL-superset, so the existing
 #                     rule expressions move over unchanged.

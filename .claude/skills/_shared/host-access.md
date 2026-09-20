@@ -66,11 +66,17 @@ ssh <host> 'journalctl -u <unit> --since "7 days ago" | grep -c "<pattern>"'
 ssh <host> 'journalctl -u <unit> --since "2026-09-18 16:40" --until "2026-09-18 17:00" -o short-iso'
 ```
 
-Both server hosts run **VictoriaMetrics** on `127.0.0.1:8428` (**15 day
-retention**) and **VictoriaLogs** on `127.0.0.1:9428` — loopback only, so the
-query has to run *on* the host. VictoriaLogs is the only log history that
-outlives journald's ~4G cap, so it is what makes "has this happened before?"
-answerable.
+Both server hosts run **VictoriaMetrics** on `127.0.0.1:8428` (**45 day
+retention** — `retentionPeriod` in `modules/system/victoriametrics.nix`) and
+**VictoriaLogs** on `127.0.0.1:9428` (**30 day retention** — the
+`-retentionPeriod` extra option in `modules/system/victorialogs.nix`) —
+loopback only, so the query has to run *on* the host. VictoriaLogs is the only
+log history that outlives journald's ~4G cap, so it is what makes "has this
+happened before?" answerable.
+
+Take those two numbers from the modules, not from here, before resting an
+argument on a window: this file said 15 days for both until 2026-09-20, which
+understated what is actually answerable.
 
 Two traps, each worth a wasted round:
 

@@ -11,7 +11,8 @@
 #
 # Components:
 #   victoriametrics — scrapes node/postgres/mysqld/redis/caddy/cadvisor/
-#                     vector/itself; 15d retention, ephemeral on-disk.
+#                     vector/itself; 45d retention (see `retentionPeriod`
+#                     below, raised from 15d for #458), ephemeral on-disk.
 #                     The vector job exists so a silent pfSense syslog
 #                     feed is alertable — see PfsenseLogsAbsent.
 #   vmalert         — evaluates the rule YAML and emits to alertmanager.
@@ -546,7 +547,7 @@ _: {
                 };
               }
               {
-                # Valheim's four alerts below all read metrics published
+                # Valheim's five alerts below all read metrics published
                 # by the valheim-metrics oneshot in modules/apps/valheim.nix
                 # — nothing else on the host can see the game server. It is
                 # UDP-only (and STATUS_HTTP is off) so gatus has no endpoint
@@ -687,6 +688,44 @@ _: {
                 annotations = {
                   summary = "Valheim server baseline memory has risen on {{ $labels.instance }}";
                   description = "valheim_server RSS has not dropped below 2 GiB at any point in the last 12h on {{ $labels.instance }} (floor currently {{ $value | humanize1024 }}B), against a 430-850 MB steady state. A raised floor rather than a peak is the shape of the leak RESTART_CRON used to paper over, and the weekly cadence is what lets it accumulate — see the restart-cadence notes in modules/apps/valheim.nix (#458).";
+                };
+              }
+              {
+                # The server is up and healthy for this one — that is the
+                # whole point. On 2026-09-20 an upstream
+                # NullReferenceException killed amos1's join-code
+                # confirmation a second after registration, and the server
+                # advertised a code no client could resolve for 3h32m while
+                # valheim_server_up read 1 and uptime climbed normally. None
+                # of the process-liveness rules above can see it; a crossplay
+                # server with an unresolvable code is reachable by nobody,
+                # because there is no connect-by-address fallback (#683).
+                #
+                # The gauge is absent whenever the live code is confirmed, so
+                # this evaluates only during a pending registration — and on
+                # a Steam-backend host the series never exists at all, since
+                # valheim-metrics only publishes it under crossplay. Same
+                # host-blindness as the rules above, one layer deeper.
+                #
+                # 120 matches joincodeGraceSeconds in ../apps/valheim.nix:
+                # the server's own `Retry join-code check` counts down from
+                # 99 at 1/s, so anything past ~99s has missed the protocol's
+                # own worst case. Both numbers come from that measurement;
+                # change them together.
+                #
+                # `for` is 5m on top of that, against a 2m exporter write —
+                # so this needs the state to persist across at least two
+                # refreshes of the .prom file and cannot fire on a single
+                # stale sample. Discord gets the fast path (~3m via
+                # valheim-joincode-watchdog); this is the durable one, for
+                # when nobody is reading that channel.
+                alert = "ValheimJoinCodeUnconfirmed";
+                expr = "valheim_joincode_unconfirmed_seconds > 120";
+                for = "5m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim join code never confirmed on {{ $labels.instance }}";
+                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. Restart the container (`systemctl restart podman-valheim`) to re-register; see the join-code notes in modules/apps/valheim.nix (#683).";
                 };
               }
               {
@@ -1093,10 +1132,13 @@ _: {
             # threshold alone.
             #
             # The alternative — comparing against this host's own
-            # reading two weeks ago — was rejected because retention
-            # is 15 days (see the header), so `offset 14d` sits on the
-            # edge of the data and would silently evaluate to nothing
-            # after any gap.
+            # reading two weeks ago — was originally rejected because
+            # retention was 15 days, so `offset 14d` sat on the edge of
+            # the data and would silently evaluate to nothing after any
+            # gap. That reason expired when retention went to 45d (see the
+            # header): 14d is now well inside the window. The comparison is
+            # therefore viable again and simply hasn't been revisited —
+            # treat this as an open option, not a closed one.
             #
             # Own group with a 5m interval rather than the file-wide
             # 30s: a 24h mean cannot move meaningfully in half a
@@ -1426,6 +1468,30 @@ _: {
                 + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
                 + "|seerr|shelfmark|unifi-os-server"
                 + "|valheim)"
+                # The Valheim join-code chain (modules/apps/valheim.nix,
+                # crossplay host only — the tokens simply never match
+                # elsewhere).
+                #
+                # These are here because #683's whole detection path runs
+                # through them: the notifier is what writes the pending file
+                # that both the Discord fast path and
+                # ValheimJoinCodeUnconfirmed read. If it dies — a missing
+                # webhook after a rekey is enough, since `cat` of an absent
+                # secret fails under the injected `set -e` and
+                # `Restart=always` eventually gives up into `failed` — then
+                # no pending file is ever written, the gauge never appears,
+                # and the next unconfirmed code passes with every alert
+                # silent. An absent series cannot fire a threshold rule, so
+                # without this line the alert added for #683 has a hole
+                # shaped exactly like the bug it detects.
+                #
+                # Note this includes the watchdog oneshot, unlike
+                # valheim-metrics / llama-metrics / podman-image-metrics
+                # above, which are deliberately left out in favour of
+                # staleness rules on the data they publish. The watchdog
+                # publishes nothing to go stale, so a failed-unit alert is
+                # the only signal available for it.
+                + "|valheim-joincode-(notify|watchdog)"
                 # The daily image-store GC (modules/system/oci-containers.nix).
                 # Not a container: if it fails the store silently resumes
                 # growing, and PodmanImageStoreLarge would not notice for
