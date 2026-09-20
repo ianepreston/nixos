@@ -1419,6 +1419,50 @@ penguin is the exception to all of it. It is a standalone home-manager config
 with no sops, so it gets both agents with no local-inference providers rather
 than entries pointing at a key file that will never exist.
 
+### Tandoor's AI features
+
+The first app in the fleet pointed at these endpoints rather than a paid API.
+Tandoor uses AI for recipe import from an image or PDF, for sorting steps and
+assigning ingredients to them, and for extracting food and recipe properties —
+all of it through LiteLLM, so an OpenAI-compatible endpoint is all it wants.
+
+The split between what the flake owns and what it doesn't is unusually sharp
+here. The **provider** — model name, API key, base URL — is a database row
+created in the UI, not config, and a rebuild will not reproduce it. What
+`modules/apps/tandoor.nix` does own is `AI_ALLOWED_URLS`, an allowlist that
+defaults to empty and that every provider URL is checked against before the
+call is made. It is Tandoor's SSRF guard, since the URL is user-supplied, and
+without it the feature cannot run at all.
+
+Its value is derived from the host's own `myAuthentik.forwardAuthApps` entries
+— the ones carrying `upstreamBearerEnvVar = "LLAMA_API_KEY"`, which is what
+identifies a route as a llama-server one — so hpp-1 allows terra's route,
+amos1 allows its own and terra's, and a host with neither (tests-server) gets
+an empty string and no AI. Both the slashed and unslashed spelling of each
+base URL are listed, because the check is an exact string match against a
+field a human types and LiteLLM treats the two identically.
+
+Nothing else in the stack needed changing. Tandoor sends the provider's API key
+as a bearer token, so the request lands on the `@bypass_auth` branch of the
+route (`/v1/*` plus an `Authorization` header) and llama-server's own
+`--api-key` gates it. Caddy sets no response timeout and no body limit, and
+gunicorn already runs `--threads 2`, which puts it on the `gthread` worker whose
+arbiter heartbeat is not held up by a slow request — a synchronous AI call is
+therefore not on a 30-second clock.
+
+Two settings live in the UI and are easy to get wrong:
+
+- **Model name takes LiteLLM's provider prefix** — `openai/vision`, not
+  `vision`. LiteLLM strips it again on the wire, so the router still sees the
+  alias. Image and PDF import need a vision model; the other three features are
+  text-only and `openai/text` is cheaper for them.
+- **Turn "log credit cost" off.** Tandoor meters every call against a monthly
+  credit ceiling, priced from LiteLLM's estimate for the model — which it has no
+  price list for when the model is local. The flag gates the whole computation,
+  so switching it off retires the ceiling along with the accounting, and the
+  space's credit balance never binds. That is why none of the
+  `SPACE_AI_CREDITS_*` variables are set.
+
 ## Secrets Management
 
 Secrets are stored in a private `nix-secrets` repository pulled in as a flake

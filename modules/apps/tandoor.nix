@@ -58,6 +58,70 @@
 # buys only the loss of a password we already manage. Same call as
 # paperless-ngx.
 #
+# ## AI features, pointed at the fleet's own llama-server (#525)
+#
+# Tandoor's AI paths — recipe import from an image or PDF, sorting steps
+# and assigning ingredients to them, extracting food/recipe properties —
+# all go through LiteLLM, so any OpenAI-compatible endpoint serves them.
+# The provider itself is a **database row, not config**: `AiProvider`
+# (name, model name, API key, base URL) is created per space in the UI,
+# or globally by a superuser. None of that is in the flake and a rebuild
+# will not reproduce it. It lives in postgres, so it rides the existing
+# `myPostgresApp` backup path — but it is UI state, the same shape as
+# Home Assistant's `.storage`, and that is the price of the feature.
+#
+# The one piece that *is* declarative is the piece without which none of
+# it runs. `AI_ALLOWED_URLS` defaults to empty, and any `AiProvider.url`
+# absent from it raises before the request is made (cookbook/views/api.py
+# 1278, 2089, 2816, 2930). That is an SSRF guard — the URL is
+# user-supplied — so opting in is deliberate rather than a tuning knob.
+#
+# The value is derived from this host's own llama-server front doors
+# rather than spelled out, so hpp-1 (terra's route only) and amos1 (its
+# own, plus terra's) each allow exactly what they can reach and a third
+# route needs no edit here. The filter is
+# `upstreamBearerEnvVar == "LLAMA_API_KEY"`, which is precisely what
+# makes a forward-auth route a llama-server one — see
+# modules/apps/llm-caddy-auth.nix. A host with no such route (tests-server)
+# gets an empty string, which is upstream's default: AI stays off.
+#
+# Membership is an **exact string match** against whatever was typed into
+# the UI field, so both the slashed and unslashed spelling of each base
+# URL are listed. LiteLLM normalizes the two into the same request, but a
+# provider row that disagrees with this list by one character fails as a
+# 500 with a traceback rather than as anything that reads like config.
+#
+# No caddy or gunicorn change is needed for the synchronous AI call, which
+# upstream's docs warn about. Caddy sets neither a response timeout nor a
+# body limit here, and `--threads 2` in GUNICORN_CMD_ARGS already puts
+# gunicorn on the `gthread` worker (config.py:107 promotes `sync` when
+# threads > 1), whose accept loop keeps notifying the arbiter from outside
+# the request threads — so the 30 s `timeout` is an idle check, not a
+# request deadline. A single sync worker would have been one.
+#
+# Two things the operator still has to get right in the UI, neither of
+# them expressible here:
+#
+#   * **Model name needs LiteLLM's provider prefix** — `openai/vision`,
+#     not `vision`. That is what routes a custom `api_base` through
+#     LiteLLM's OpenAI-compatible path; it strips the prefix again on the
+#     wire, so llama.cpp's router sees the bare alias it expects. Vision
+#     is required for the image/PDF import path and text-only models will
+#     fail it; `openai/text` is the one to pick for the other three.
+#   * **"Log credit cost" off.** Tandoor meters each call against a
+#     monthly credit ceiling, and the cost it meters comes from LiteLLM's
+#     estimate for the model — which is meaningless for a local one it has
+#     no price list for. `log_credit_cost` gates the whole computation
+#     (cookbook/helper/ai_helper.py:60), so turning it off takes the
+#     ceiling with it and the space's `ai_credits_monthly` never binds.
+#     That is why none of the `SPACE_AI_CREDITS_*` env vars are set below.
+#     Usage still shows up in the AI Log either way, at zero cost.
+#
+# `llm.<serverDomain>` is the always-on endpoint; `llm-terra.<serverDomain>`
+# is the bigger model when that desktop happens to be up, and 502s when it
+# is not. Both are allowed, and which one a provider row names is a UI
+# choice, not a rebuild.
+#
 # Operator note: the module links a `tandoor-recipes-manage` wrapper
 # into the state dir, but it bakes in only the store-visible `env` —
 # not SECRET_KEY or POSTGRES_PASSWORD, so it cannot reach the database
@@ -82,6 +146,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
@@ -95,6 +160,22 @@ _: {
       mediaRoot = "${stateDir}/media";
 
       unit = "tandoor-recipes.service";
+
+      # Every llama-server front door this host carries, in both
+      # spellings Tandoor might be handed. See the header.
+      llmBaseUrls =
+        lib.concatMap
+          (host: [
+            "https://${host}/v1"
+            "https://${host}/v1/"
+          ])
+          (
+            lib.mapAttrsToList (_: app: app.host) (
+              lib.filterAttrs (
+                _: app: app.upstreamBearerEnvVar == "LLAMA_API_KEY"
+              ) config.myAuthentik.forwardAuthApps
+            )
+          );
     in
     {
       myPostgresApp.tandoor.consumerService = [ unit ];
@@ -159,6 +240,10 @@ _: {
           SOCIAL_DEFAULT_GROUP = "user";
           SOCIAL_DEFAULT_ACCESS = "1";
           ENABLE_SIGNUP = "0";
+
+          # AI provider allowlist; empty disables the feature entirely.
+          # Derived rather than written out, and exact-match — see the header.
+          AI_ALLOWED_URLS = lib.concatStringsSep "," llmBaseUrls;
         };
       };
 
