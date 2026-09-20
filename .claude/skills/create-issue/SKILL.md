@@ -43,8 +43,9 @@ included — gathering evidence off amos1 needs no permission.
 
 Use the journal, VictoriaLogs and VictoriaMetrics recipes from host-access
 rather than improvising: the PromQL-through-zsh and no-`python3` traps there
-each cost a round of debugging, and **15 day retention** is a hard bound on any
-window you propose.
+each cost a round of debugging, and **retention is a hard bound on any window
+you propose** — read the current numbers off the modules (host-access names
+them), rather than from any figure quoted in prose here or elsewhere.
 
 What this skill adds on top of those recipes is the standard they have to meet:
 
@@ -108,9 +109,12 @@ expensive to miss.
 1. **Quantify.** Occurrences over a stated window, on a named host.
 2. **Verify constants against source**, never from a comment (#649).
 3. **State retention and scrape interval** for anything querying metrics, and
-   confirm your window fits. #636 proposed comparing against two weeks ago; at
-   15d retention `offset 14d` silently evaluates to nothing — the same silent
-   no-op the issue was about.
+   confirm your window fits — reading both off the modules, not off a number
+   remembered from a previous issue. #636 proposed comparing against two weeks
+   ago and was rejected because retention was then 15d, which made `offset 14d`
+   silently evaluate to nothing — the same silent no-op the issue was about.
+   Retention has since moved to 45d, so that particular objection no longer
+   holds: which is the point. The rule is to check, not to memorise a figure.
 4. **Name the unverifiable.** Which checks need a human, a game client, a
    phone, physical access. #644 marked "a LAN Steam client can actually join"
    as *the load-bearing unknown*; it was still the one open item at PR time,

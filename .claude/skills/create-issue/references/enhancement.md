@@ -117,10 +117,13 @@ A checklist, with the **load-bearing unknown marked first**:
 Prefer absence checks that distinguish states: "joincode-notify is *absent* on
 hpp-1, not present-and-failing".
 
-For metrics work, state retention (VictoriaMetrics keeps **15 days**) and the
-scrape interval, and confirm your window fits. #636's "compare against two
-weeks ago" was rejected at PR time: `offset 14d` sits on the retention edge and
-silently evaluates to nothing.
+For metrics work, state retention and the scrape interval, and confirm your
+window fits — read both off `modules/system/victoriametrics.nix` at the time of
+writing rather than quoting a figure from here. #636's "compare against two
+weeks ago" was rejected at PR time because retention was then 15 days, putting
+`offset 14d` on the edge where it silently evaluates to nothing. Retention is
+45 days now, so that objection has expired — which is exactly why this says
+check rather than naming a number.
 
 ## Rollback, not-doing, open questions
 
