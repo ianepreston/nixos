@@ -1422,9 +1422,11 @@ than entries pointing at a key file that will never exist.
 ### Tandoor's AI features
 
 The first app in the fleet pointed at these endpoints rather than a paid API.
-Tandoor uses AI for recipe import from an image or PDF, for sorting steps and
+Tandoor uses AI for recipe import from an image, for sorting steps and
 assigning ingredients to them, and for extracting food and recipe properties —
 all of it through LiteLLM, so an OpenAI-compatible endpoint is all it wants.
+Upstream also offers PDF import; that one cannot work here, for a reason worth
+knowing about below.
 
 The split between what the flake owns and what it doesn't is unusually sharp
 here. The **provider** — model name, API key, base URL — is a database row
@@ -1454,8 +1456,15 @@ Two settings live in the UI and are easy to get wrong:
 
 - **Model name takes LiteLLM's provider prefix** — `openai/vision`, not
   `vision`. LiteLLM strips it again on the wire, so the router still sees the
-  alias. Image and PDF import need a vision model; the other three features are
+  alias. Image import needs the vision model; the other three features are
   text-only and `openai/text` is cheaper for them.
+- **PDF import doesn't work against llama-server, on any model.** Tandoor never
+  rasterizes: when PIL can't open the upload it posts the bytes as an
+  `image_url` part with a `data:application/pdf;base64,` URI, and llama.cpp's
+  multimodal path takes `data:image/` only. It comes back as
+  `InternalServerError: Invalid url format: data:application/pdf` — unhandled,
+  so the operator sees a 500 rather than Tandoor's provider-error message.
+  Photograph or screenshot the page and import that.
 - **Turn "log credit cost" off.** Tandoor meters every call against a monthly
   credit ceiling, priced from LiteLLM's estimate for the model — which it has no
   price list for when the model is local. The flag gates the whole computation,

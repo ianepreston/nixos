@@ -99,15 +99,35 @@
 # the request threads — so the 30 s `timeout` is an idle check, not a
 # request deadline. A single sync worker would have been one.
 #
+# Those threads do cost something, in one place worth knowing about.
+# Tandoor installs its usage-logging callback by assigning the *global*
+# `litellm.callbacks` per request, so two AI calls overlapping inside one
+# worker can have the second's handler in place before the first returns,
+# and the first call's `AiLog` row is then attributed to the other
+# request's space, user and function. That is an upstream defect, it costs
+# accuracy in a usage log rather than correctness of the import, and the
+# fix is not ours to make — but do not read a surprising AI Log row as
+# evidence of something wrong on this side.
+#
 # Two things the operator still has to get right in the UI, neither of
 # them expressible here:
 #
 #   * **Model name needs LiteLLM's provider prefix** — `openai/vision`,
 #     not `vision`. That is what routes a custom `api_base` through
 #     LiteLLM's OpenAI-compatible path; it strips the prefix again on the
-#     wire, so llama.cpp's router sees the bare alias it expects. Vision
-#     is required for the image/PDF import path and text-only models will
-#     fail it; `openai/text` is the one to pick for the other three.
+#     wire, so llama.cpp's router sees the bare alias it expects. Image
+#     import needs the vision model and a text-only one will fail it;
+#     `openai/text` is the pick for the other three features.
+#
+#     **PDF import cannot work against llama-server at all**, whatever
+#     model is chosen. Tandoor does not rasterize: when PIL fails to open
+#     the upload it sends the raw bytes as an `image_url` content part
+#     with a `data:application/pdf;base64,` URI, and llama.cpp's mtmd
+#     path accepts `data:image/` only. Measured on hpp-1, that surfaces
+#     as `InternalServerError: Invalid url format: data:application/pdf`
+#     — an unhandled exception, so the operator gets a 500 rather than
+#     the message Tandoor shows for a provider-side `BadRequestError`.
+#     Feed it a photo or a screenshot of the page instead.
 #   * **"Log credit cost" off.** Tandoor meters each call against a
 #     monthly credit ceiling, and the cost it meters comes from LiteLLM's
 #     estimate for the model — which is meaningless for a local one it has
