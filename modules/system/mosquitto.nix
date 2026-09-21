@@ -112,18 +112,13 @@ _: {
 
         # /var/lib/mosquitto/mosquitto.db is the broker's persistent
         # session/subscription/retained-message store (binary BTree, not
-        # sqlite — no quiesce hook needed). Preserve on impermanence;
-        # back up with the rest of the server state.
-        preservation.preserveAt."/persist".directories = [
-          {
-            directory = "/var/lib/mosquitto";
-            user = "mosquitto";
-            group = "mosquitto";
-            mode = "0700";
-          }
-        ];
-
-        services.restic.backups.server.paths = [ "/var/lib/mosquitto" ];
+        # sqlite — no quiesce hook needed). Preserve and back it up with the
+        # rest of the server state through the common app-state contract.
+        myAppState.mosquitto = {
+          stateDir = "/var/lib/mosquitto";
+          user = "mosquitto";
+          group = "mosquitto";
+        };
       };
     };
 }

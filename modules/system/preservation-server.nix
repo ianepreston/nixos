@@ -11,9 +11,9 @@
 #     machine-id, nixos uid/gid db, systemd state, tailscale,
 #     postgres + mariadb data dirs, the /var/backup dumps, caddy ACME
 #     state, observability state.
-#   - Per-app state: each app module adds its own
-#     `preservation.preserveAt."/persist".directories` entry alongside
-#     its restic path. Keeps app modules self-contained.
+#   - Per-app state: each owning module declares `myAppState.<app>`, which
+#     derives its preservation entry and (unless `backup = false`) its restic
+#     path. Keeps the app policy self-contained.
 #
 # Server-specific by design — workstations have a different persist
 # surface and aren't in scope here. Imported by modules/profiles/server.nix.

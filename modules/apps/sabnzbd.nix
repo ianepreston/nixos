@@ -203,18 +203,14 @@ _: {
       };
 
       # Incomplete dir: bind-mounted from /persist so partial downloads
-      # survive a reboot (sabnzbd resumes them on start). Kept as a
-      # preserve-only entry (deliberately NOT a myAppState app) — there's
-      # nothing worth a backup in a half-finished NZB unpack, so it must
-      # stay out of `restic.backups.server.paths`.
-      preservation.preserveAt."/persist".directories = [
-        {
-          directory = incompleteDir;
-          user = sabnzbdUser;
-          group = hostSpec.serverGroup;
-          mode = "0700";
-        }
-      ];
+      # survive a reboot (sabnzbd resumes them on start). It remains absent
+      # from restic: a half-finished NZB unpack is not useful to restore.
+      myAppState.sabnzbd-incomplete = {
+        stateDir = incompleteDir;
+        user = sabnzbdUser;
+        group = hostSpec.serverGroup;
+        backup = false;
+      };
 
       # Apprise notifications. sabnzbd's bundled apprise library posts
       # to our apprise-api container under the `sabnzbd` stateful key;
