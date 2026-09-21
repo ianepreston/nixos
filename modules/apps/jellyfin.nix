@@ -124,6 +124,22 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "jellyfin" ];
 
+      myRecovery.apps.jellyfin = {
+        kind = "sqlite";
+        order = 80;
+        units = [ "jellyfin.service" ];
+        paths = [
+          "/var/lib/jellyfin/data"
+          "/var/lib/jellyfin/config"
+          "/var/lib/jellyfin/plugins"
+          "/var/lib/jellyfin/root"
+        ];
+        health = {
+          url = "http://127.0.0.1:8096/health";
+          retries = 60;
+        };
+      };
+
       myAuthentik.ldap.enable = true;
 
       services.jellyfin = {

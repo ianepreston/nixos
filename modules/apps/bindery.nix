@@ -71,6 +71,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-bindery" ];
 
+      myRecovery.apps.bindery = {
+        kind = "sqlite";
+        order = 40;
+        units = [ "podman-bindery.service" ];
+        paths = [ "/var/lib/containers/bindery" ];
+        health.url = "http://127.0.0.1:8787/";
+      };
+
       myAuthentik.oidcApps.bindery = {
         blueprintsDir = ./bindery-blueprints;
         # Bindery keeps OIDC provider config (issuer, client id/secret, scopes)

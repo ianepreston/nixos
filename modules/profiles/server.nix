@@ -39,6 +39,7 @@
         oci-containers
         postgresql
         preservation-server
+        recovery
         runtime-credentials
         service-endpoints
         server-backups

@@ -84,6 +84,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "sabnzbd(-.+)?" ];
 
+      myRecovery.apps.sabnzbd = {
+        kind = "volume";
+        order = 240;
+        units = [ "sabnzbd.service" ];
+        paths = [ "/var/lib/sabnzbd" ];
+      };
+
       myObservability.metricRuleGroups.sabnzbd.groups = [
         {
           name = "sabnzbd";

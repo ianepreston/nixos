@@ -188,6 +188,15 @@
         grantsUnit
       ];
 
+      myRecovery.apps.sparkyfitness = {
+        kind = "postgres";
+        order = 280;
+        units = [ unit ];
+        paths = [ stateDir ];
+        database = dbName;
+        health.url = "http://127.0.0.1:${toString port}/api/health";
+      };
+
       # Three things myPostgresApp doesn't provision, all idempotent so
       # the unit is safe to re-run on every boot and every rotation:
       #

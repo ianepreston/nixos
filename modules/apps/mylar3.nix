@@ -30,6 +30,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-mylar3" ];
 
+      myRecovery.apps.mylar3 = {
+        kind = "volume";
+        order = 160;
+        units = [ "podman-mylar3.service" ];
+        paths = [ "/var/lib/containers/mylar3" ];
+      };
+
       myObservability.metricRuleGroups.mylar3.groups = [
         {
           name = "mylar3";

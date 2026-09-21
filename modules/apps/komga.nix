@@ -25,6 +25,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "komga" ];
 
+      myRecovery.apps.komga = {
+        kind = "sqlite";
+        order = 100;
+        units = [ "komga.service" ];
+        paths = [ "/var/lib/komga" ];
+      };
+
       myAuthentik.oidcApps.komga = {
         blueprintsDir = ./komga-blueprints;
         appRestartUnit = [ "komga.service" ];

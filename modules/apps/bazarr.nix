@@ -10,6 +10,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "bazarr" ];
 
+      myRecovery.apps.bazarr = {
+        kind = "sqlite";
+        order = 30;
+        units = [ "bazarr.service" ];
+        paths = [ "/var/lib/bazarr" ];
+        health.url = "http://127.0.0.1:6767/";
+      };
+
       myAuthentik.forwardAuthApps.bazarr = {
         port = 6767;
         displayName = "Bazarr";

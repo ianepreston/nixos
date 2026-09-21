@@ -14,6 +14,13 @@ in
     {
       myObservability.monitoredSystemdUnits = [ "radarr" ];
 
+      myRecovery.apps.radarr = {
+        kind = "sqlite";
+        order = 220;
+        units = [ "radarr.service" ];
+        paths = [ "/var/lib/radarr" ];
+      };
+
       myAuthentik.forwardAuthApps.radarr = {
         port = 7878;
         displayName = "Radarr";

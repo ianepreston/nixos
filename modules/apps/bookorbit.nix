@@ -47,6 +47,15 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-bookorbit" ];
 
+      myRecovery.apps.bookorbit = {
+        kind = "postgres";
+        order = 50;
+        units = [ "podman-bookorbit.service" ];
+        paths = [ "/var/lib/containers/bookorbit" ];
+        database = "bookorbit";
+        health.url = "http://127.0.0.1:3017/api/v1/health";
+      };
+
       myPostgresApp.bookorbit.consumerService = [ "podman-bookorbit.service" ];
 
       myAuthentik.oidcApps.bookorbit = {

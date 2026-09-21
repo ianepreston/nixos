@@ -26,6 +26,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "pinchflat" ];
 
+      myRecovery.apps.pinchflat = {
+        kind = "sqlite";
+        order = 190;
+        units = [ "pinchflat.service" ];
+        paths = [ "/var/lib/pinchflat" ];
+      };
+
       sops.secrets."pinchflat/secret_key_base" = {
         inherit (hostSpec) sopsFile;
         restartUnits = [ "pinchflat.service" ];

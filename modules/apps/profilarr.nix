@@ -17,6 +17,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-profilarr" ];
 
+      myRecovery.apps.profilarr = {
+        kind = "volume";
+        order = 200;
+        units = [ "podman-profilarr.service" ];
+        paths = [ "/var/lib/containers/profilarr" ];
+      };
+
       myAuthentik.forwardAuthApps.profilarr = {
         inherit port;
         displayName = "Profilarr";

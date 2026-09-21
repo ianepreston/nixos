@@ -200,6 +200,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "tandoor-recipes" ];
 
+      myRecovery.apps.tandoor = {
+        kind = "postgres";
+        order = 290;
+        units = [ "tandoor-recipes.service" ];
+        paths = [ "/var/lib/tandoor-recipes" ];
+        database = "tandoor";
+      };
+
       myPostgresApp.tandoor.consumerService = [ unit ];
 
       sops.secrets."tandoor/secret_key" = {

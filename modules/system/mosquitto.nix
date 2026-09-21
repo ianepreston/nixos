@@ -119,6 +119,13 @@ _: {
           user = "mosquitto";
           group = "mosquitto";
         };
+
+        myRecovery.apps.mosquitto = {
+          kind = "volume";
+          order = 150;
+          units = [ "mosquitto.service" ];
+          paths = [ "/var/lib/mosquitto" ];
+        };
       };
     };
 }

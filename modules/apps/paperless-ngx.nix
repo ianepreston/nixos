@@ -92,6 +92,19 @@
     {
       myObservability.monitoredSystemdUnits = [ "paperless(-.+)?" ];
 
+      myRecovery.apps.paperless-ngx = {
+        kind = "postgres";
+        order = 180;
+        units = [
+          "paperless-scheduler.service"
+          "paperless-task-queue.service"
+          "paperless-consumer.service"
+          "paperless-web.service"
+        ];
+        paths = [ "/var/lib/paperless-ngx" ];
+        database = "paperless_ngx";
+      };
+
       # The 3.x package needs the 3.x module (see the header comment).
       disabledModules = [ "services/misc/paperless.nix" ];
       imports = [ "${inputs.nixpkgs-unstable}/nixos/modules/services/misc/paperless.nix" ];

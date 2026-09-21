@@ -419,34 +419,35 @@ Don't invent ad-hoc key names — stick to `oidc_client_id`, `oidc_client_secret
 remain a copy-paste template. Reach for `task secrets:secret` only when the app
 genuinely needs something beyond those three.
 
-## Recovery tasks: keep the per-app list in sync
+## Recovery metadata: declare it beside the app
 
-`taskfiles/recovery.yaml` has a dispatcher per server-app. When you add a new
-app under `modules/apps/`, add a matching `recovery:<app>` task in the same PR
-and append it to `recovery:all`'s cmd list (the catastrophic-rebuild aggregate).
-Pick the template that matches the app's shape:
+`taskfiles/recovery.yaml` keeps the generic restore templates, while app
+modules contribute `myRecovery.apps.<app>` metadata. `task recovery:app
+APP=<app> HOST=<host>` evaluates that generated manifest, and `recovery:all`
+sorts its enabled entries by the app-owned `order`. When you add an app with
+restorable state, add its recovery metadata beside its service/state
+declaration; do not add a Taskfile registry entry or hand-maintain an aggregate
+list. Pick the metadata shape that matches the app:
 
-| Shape (how the module is built)                    | Template          | What to fill in                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Container, no postgres                             | `_restore-volume` | `UNITS=podman-<app>.service`, `PATHS` = every persistent volume (typically `/var/lib/containers/<app>` plus any out-of-tree mount)                                                                                                                                                                                                   |
-| Container + `myPostgresApp.<app>`                  | `_restore-pg`     | `UNITS=podman-<app>.service`, `DB=<app>` (or the `dbName` override — hyphens become underscores), `PATHS` = volumes outside `/var/backup/postgresql`                                                                                                                                                                                 |
-| Native + `myPostgresApp.<app>`                     | `_restore-pg`     | `UNITS` = every unit in `myPostgresApp.<app>.consumerService`, `DB=<role>`, `PATHS=/var/lib/<app>` (or `/var/lib/private/<app>` for DynamicUser modules) if the app has on-disk state                                                                                                                                                |
-| Native + `mySqliteQuiesce.apps.<app>`              | `_restore-sqlite` | `UNITS=<app>.service`, `PATHS=/var/lib/<app> /var/backup/sqlite/<app>`, `SWAPS` = one triple `<staged>:<live>:<owner>` per file in `mySqliteQuiesce.apps.<app>.databases`. Use `@env@` as the owner sentinel when the app runs as `server-${env}` — the template substitutes the live username from `/etc/passwd` at execution time. |
-| Native, no postgres or quiesce                     | `_restore-volume` | `UNITS=<app>.service`, `PATHS=/var/lib/<app>`                                                                                                                                                                                                                                                                                        |
-| Timer-driven oneshot container (e.g. spierscraper) | `_restore-volume` | `UNITS=''` (nothing to stop), `PATHS` = its state dir                                                                                                                                                                                                                                                                                |
+| Shape (how the module is built)                    | `kind`       | Metadata to declare                                                                                                                                                                                                                              |
+| -------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Container, no postgres                             | `"volume"`   | `units = [ "podman-<app>.service" ]; paths = [ ... ];`                                                                                                                                                                                         |
+| Container + `myPostgresApp.<app>`                  | `"postgres"` | Container unit, database name (respecting any override), and paths outside `/var/backup/postgresql`                                                                                                                                           |
+| Native + `myPostgresApp.<app>`                     | `"postgres"` | Every consumer service, database role/name, and any on-disk state path                                                                                                                                                                        |
+| Native + `mySqliteQuiesce.apps.<app>`              | `"sqlite"`   | Unit and state path. The manifest derives `/var/backup/sqlite/<app>` and every staged-to-live swap from `mySqliteQuiesce.apps.<app>.databases`; use `sqliteOwner = "@env@"` (the default) for `server-${env}`. |
+| Native, no postgres or quiesce                     | `"volume"`   | Unit and state path                                                                                                                                                                                                                             |
+| Timer-driven oneshot container (e.g. spierscraper) | `"volume"`   | Empty `units` and its state path                                                                                                                                                                                                                |
 
-For apps with an HTTP endpoint, append a `_health` task after the restore so the
-dispatcher exits non-zero on a botched restore. See `recovery:jellyfin`
-(60-retry, longer warm-up) or `recovery:miniflux` (`/healthcheck`) for the two
-main patterns.
+For apps with an HTTP endpoint, set `health.url` (and only override its default
+200/30-retry/2-second values when needed) so the dispatcher exits non-zero on a
+botched restore. Jellyfin is the 60-retry, longer-warm-up example.
 
 `myAppState.<app>` in the owning module is the structural analogue: it renders
 the preservation entry, the restic path (unless `backup = false`), and the
 `expectedPreservedDirs` guard in `modules/profiles/server-apps.nix` from one
-declaration, so there is no profile edit to forget. A recovery dispatcher is
-still a manual edit, and it should grow with that declaration — an app whose
-state is preserved and backed up but has no `recovery:<app>` task is restorable
-only by hand.
+declaration, so there is no profile edit to forget. Recovery metadata remains
+an intentional app-level declaration: an app whose state is preserved and
+backed up but has no `myRecovery.apps.<app>` entry is restorable only by hand.
 
 ### `restartUnits` goes on the template, not the secret
 

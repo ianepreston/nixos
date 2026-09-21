@@ -5,10 +5,14 @@
 #
 # ## Usage
 #
-#   task recovery:<app>                 # in-place restore on HOST
+#   task recovery:app APP=<app>         # in-place restore on HOST
 #       HOST=hpp-1
 #       [DEST=<ip-or-host>]              # default: same as HOST
 #       [SOURCE_HOST=<other-host>]       # default: same as HOST
+#       [MANIFEST_HOST=<flake-host>]     # default: HOST
+#
+# Set MANIFEST_HOST when HOST/DEST is an IP address or another non-flake
+# target name; it selects the configuration whose enabled app metadata is used.
 #
 # Each per-app task dispatches to one of three internal templates
 # (`_restore-volume`, `_restore-pg`, `_restore-sqlite`) and then runs
@@ -16,9 +20,9 @@
 # runs every app's dispatcher in sequence — use it for catastrophic
 # rebuilds.
 #
-# When you add a new server-app, add a dispatcher here and append it
-# to `all`. The shape table in AGENTS.md ("Recovery tasks: keep the
-# per-app list in sync") describes which template applies.
+# App modules own recovery metadata. The generated manifest drives both
+# `recovery:app` and `recovery:all`; this file only owns the reusable restore
+# mechanics.
 #
 # ## Verification drill (recovery:test:full)
 #
@@ -243,579 +247,71 @@ tasks:
           exit 1
         "
   # ---------------------------------------------------------------------------
-  # Per-app dispatchers
+  # Manifest-driven dispatch
   # ---------------------------------------------------------------------------
-  # Keep this list in sync with modules/profiles/server-apps.nix and
-  # the `all` aggregate below. See AGENTS.md "Recovery tasks" for the
-  # shape → template mapping.
-  actualbudget:
-    desc: Restore actualbudget (container volume)
-    requires: {vars: [HOST]}
+  # App modules expose the facts each existing restore template needs through
+  # `myRecovery.manifest`. There is deliberately no per-app Task registry:
+  # invoke one app with `task recovery:app APP=<name> HOST=<host>`.
+  app:
+    desc: Restore APP on HOST using the Nix-generated recovery manifest
+    requires: {vars: [HOST, APP]}
+    vars:
+      MANIFEST_HOST: "{{.MANIFEST_HOST | default .HOST}}"
     cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: actualbudget
-          UNITS: 'podman-actualbudget.service'
-          PATHS: '/var/lib/containers/actualbudget'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  audiobookshelf:
-    desc: Restore audiobookshelf (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: audiobookshelf
-          UNITS: 'audiobookshelf.service'
-          PATHS: '/var/lib/audiobookshelf /var/backup/sqlite/audiobookshelf'
-          SWAPS: '/var/backup/sqlite/audiobookshelf/absdatabase.sqlite:/var/lib/audiobookshelf/config/absdatabase.sqlite:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: audiobookshelf, URL: 'http://127.0.0.1:13378/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  authentik:
-    desc: Restore authentik (native + postgres, peer auth)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: authentik
-          UNITS: 'authentik.service authentik-worker.service authentik-migrate.service'
-          PATHS: '/var/lib/private/authentik'
-          DB: authentik
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  bambuddy:
-    desc: Restore bambuddy (container + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: bambuddy
-          UNITS: 'podman-bambuddy.service'
-          PATHS: '/var/lib/containers/bambuddy /var/backup/sqlite/bambuddy'
-          SWAPS: '/var/backup/sqlite/bambuddy/bambuddy.db:/var/lib/containers/bambuddy/data/bambuddy.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: bambuddy, URL: 'http://127.0.0.1:8008/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  bazarr:
-    desc: Restore bazarr (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: bazarr
-          UNITS: 'bazarr.service'
-          PATHS: '/var/lib/bazarr /var/backup/sqlite/bazarr'
-          SWAPS: '/var/backup/sqlite/bazarr/bazarr.db:/var/lib/bazarr/db/bazarr.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: bazarr, URL: 'http://127.0.0.1:6767/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  bindery:
-    desc: Restore bindery (container + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: bindery
-          UNITS: 'podman-bindery.service'
-          PATHS: '/var/lib/containers/bindery /var/backup/sqlite/bindery'
-          SWAPS: '/var/backup/sqlite/bindery/bindery.db:/var/lib/containers/bindery/config/bindery.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: bindery, URL: 'http://127.0.0.1:8787/', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  bookorbit:
-    desc: Restore bookorbit (containerized + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: bookorbit
-          UNITS: 'podman-bookorbit.service'
-          PATHS: '/var/lib/containers/bookorbit'
-          DB: bookorbit
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: bookorbit, URL: 'http://127.0.0.1:3017/api/v1/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  gatus:
-    desc: Restore gatus (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: gatus
-          UNITS: 'gatus.service'
-          PATHS: '/var/lib/gatus /var/backup/sqlite/gatus'
-          SWAPS: '/var/backup/sqlite/gatus/data.db:/var/lib/gatus/data.db:gatus'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  homeassistant:
-    desc: Restore home-assistant (native + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: homeassistant
-          UNITS: 'home-assistant.service'
-          DB: hass
-          PATHS: '/var/lib/hass'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: homeassistant, URL: 'http://127.0.0.1:8123/manifest.json', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  jellyfin:
-    # PATHS enumerates jellyfin's state subdirs rather than the whole of
-    # /var/lib/jellyfin, because metadata/ is excluded from the backup
-    # (#569 — ~11 GB of provider artwork a library scan re-downloads).
-    # This is load-bearing, not cosmetic: `_restore-sqlite` restores
-    # with `--delete`, which removes anything under an included path
-    # that the snapshot lacks, so including the parent would wipe the
-    # live artwork on every partial restore.
-    #
-    # The tidier-looking fix — keep the parent include and add
-    # `--exclude /var/lib/jellyfin/metadata` — does not work: restic
-    # 0.18 rejects it with "exclude and include patterns are mutually
-    # exclusive". Enumerating is the only option that keeps --delete.
-    #
-    # Deliberately NOT restored, all non-critical and self-healing:
-    # log/ (logs), .jellyfin-data (zero-byte marker jellyfin rewrites
-    # on start), and `Subtitle Edit/` (plugin dictionaries the plugin
-    # re-fetches — its space would not survive the space-split PATHS
-    # loop anyway).
-    #
-    # On a from-scratch rebuild metadata/ is simply absent: jellyfin
-    # comes up with no posters or headshots and repopulates them from
-    # the providers on the first library scan. The health check below
-    # passes either way — it only asserts the server is serving.
-    desc: Restore jellyfin (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: jellyfin
-          UNITS: 'jellyfin.service'
-          PATHS: '/var/lib/jellyfin/data /var/lib/jellyfin/config /var/lib/jellyfin/plugins /var/lib/jellyfin/root /var/backup/sqlite/jellyfin'
-          SWAPS: '/var/backup/sqlite/jellyfin/jellyfin.db:/var/lib/jellyfin/data/jellyfin.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: jellyfin, URL: 'http://127.0.0.1:8096/health', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  kapowarr:
-    desc: Restore kapowarr (container volume)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: kapowarr
-          UNITS: 'podman-kapowarr.service'
-          PATHS: '/var/lib/containers/kapowarr'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  komga:
-    desc: Restore komga (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: komga
-          UNITS: 'komga.service'
-          PATHS: '/var/lib/komga /var/backup/sqlite/komga'
-          SWAPS: '/var/backup/sqlite/komga/database.sqlite:/var/lib/komga/database.sqlite:@env@ /var/backup/sqlite/komga/tasks.sqlite:/var/lib/komga/tasks.sqlite:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  lidarr:
-    desc: Restore lidarr (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: lidarr
-          UNITS: 'lidarr.service'
-          PATHS: '/var/lib/lidarr /var/backup/sqlite/lidarr'
-          SWAPS: '/var/backup/sqlite/lidarr/lidarr.db:/var/lib/lidarr/.config/Lidarr/lidarr.db:@env@ /var/backup/sqlite/lidarr/logs.db:/var/lib/lidarr/.config/Lidarr/logs.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  matter-server:
-    desc: Restore matter-server (native, DynamicUser state under /var/lib/private)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: matter-server
-          UNITS: 'matter-server.service'
-          PATHS: '/var/lib/private/matter-server'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  mosquitto:
-    desc: Restore mosquitto (native MQTT broker)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: mosquitto
-          UNITS: 'mosquitto.service'
-          PATHS: '/var/lib/mosquitto'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  manyfold:
-    desc: Restore manyfold (containerized + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: manyfold
-          UNITS: 'podman-manyfold.service'
-          PATHS: '/var/lib/containers/manyfold'
-          DB: manyfold
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  miniflux:
-    desc: Restore miniflux (native + postgres only, no on-disk state)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: miniflux
-          UNITS: 'miniflux.service'
-          DB: miniflux
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: miniflux, URL: 'http://127.0.0.1:8089/healthcheck', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  mylar3:
-    desc: Restore mylar3 (container volume)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: mylar3
-          UNITS: 'podman-mylar3.service'
-          PATHS: '/var/lib/containers/mylar3'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  omada:
-    desc: Restore omada controller (container volume — data + logs)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: omada
-          UNITS: 'podman-omada.service'
-          PATHS: '/var/lib/containers/omada'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      # 8043 is the controller's own HTTPS listener with a self-signed
-      # cert, which `_health`'s curl has no -k for. 8088 is the plain-HTTP
-      # port Omada serves purely to bounce clients to 8043, so a 302 there
-      # is a real "Spring Boot is up and serving" signal. Long retry: the
-      # embedded MongoDB plus the JVM take ~60s to reach a listening
-      # socket from a cold container.
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: omada, URL: 'http://127.0.0.1:8088/', EXPECT: '302', RETRIES: '60', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  paperless-ngx:
-    desc: Restore paperless-ngx (native + postgres, four units)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: paperless-ngx
-          UNITS: 'paperless-scheduler.service paperless-task-queue.service paperless-consumer.service paperless-web.service'
-          PATHS: '/var/lib/paperless-ngx'
-          DB: paperless_ngx
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  pinchflat:
-    desc: Restore pinchflat (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: pinchflat
-          UNITS: 'pinchflat.service'
-          PATHS: '/var/lib/pinchflat /var/backup/sqlite/pinchflat'
-          SWAPS: '/var/backup/sqlite/pinchflat/pinchflat.db:/var/lib/pinchflat/db/pinchflat.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  profilarr:
-    desc: Restore profilarr (container volume)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: profilarr
-          UNITS: 'podman-profilarr.service'
-          PATHS: '/var/lib/containers/profilarr'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  prowlarr:
-    desc: Restore prowlarr (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: prowlarr
-          UNITS: 'prowlarr.service'
-          PATHS: '/var/lib/prowlarr /var/backup/sqlite/prowlarr'
-          SWAPS: '/var/backup/sqlite/prowlarr/prowlarr.db:/var/lib/prowlarr/prowlarr.db:prowlarr /var/backup/sqlite/prowlarr/logs.db:/var/lib/prowlarr/logs.db:prowlarr'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  radarr:
-    desc: Restore radarr (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: radarr
-          UNITS: 'radarr.service'
-          PATHS: '/var/lib/radarr /var/backup/sqlite/radarr'
-          SWAPS: '/var/backup/sqlite/radarr/radarr.db:/var/lib/radarr/.config/Radarr/radarr.db:@env@ /var/backup/sqlite/radarr/logs.db:/var/lib/radarr/.config/Radarr/logs.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  readeck:
-    desc: Restore readeck (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: readeck
-          UNITS: 'readeck.service'
-          PATHS: '/var/lib/readeck /var/backup/sqlite/readeck'
-          SWAPS: '/var/backup/sqlite/readeck/db.sqlite3:/var/lib/readeck/data/db.sqlite3:readeck'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  sabnzbd:
-    desc: Restore sabnzbd (native, volume only)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: sabnzbd
-          UNITS: 'sabnzbd.service'
-          PATHS: '/var/lib/sabnzbd'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  seerr:
-    desc: Restore seerr (container volume)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: seerr
-          UNITS: 'podman-seerr.service'
-          PATHS: '/var/lib/containers/seerr'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  shelfmark:
-    desc: Restore shelfmark (container + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: shelfmark
-          UNITS: 'podman-shelfmark.service'
-          PATHS: '/var/lib/containers/shelfmark /var/backup/sqlite/shelfmark'
-          SWAPS: '/var/backup/sqlite/shelfmark/users.db:/var/lib/containers/shelfmark/config/users.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: shelfmark, URL: 'http://127.0.0.1:8085/api/health', EXPECT: '200', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  sonarr:
-    desc: Restore sonarr (native + sqlite-quiesce)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-sqlite
-        vars:
-          HOST: '{{.HOST}}'
-          APP: sonarr
-          UNITS: 'sonarr.service'
-          PATHS: '/var/lib/sonarr /var/backup/sqlite/sonarr'
-          SWAPS: '/var/backup/sqlite/sonarr/sonarr.db:/var/lib/sonarr/.config/NzbDrone/sonarr.db:@env@ /var/backup/sqlite/sonarr/logs.db:/var/lib/sonarr/.config/NzbDrone/logs.db:@env@'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  sparkyfitness:
-    desc: Restore sparkyfitness (native + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: sparkyfitness
-          UNITS: 'sparkyfitness.service'
-          PATHS: '/var/lib/sparkyfitness'
-          DB: sparkyfitness
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-      # /api/health is one of the backend's public routes, so this
-      # needs no key. Backend-port rather than the caddy vhost: the
-      # restore only restarts sparkyfitness.service, and going through
-      # caddy would also be asserting the frontend static route.
-      - task: _health
-        vars: {HOST: '{{.HOST}}', APP: sparkyfitness, URL: 'http://127.0.0.1:3010/api/health', DEST: '{{.DEST}}', SSH_PORT: '{{.SSH_PORT}}'}
-  tandoor:
-    desc: Restore tandoor (native + postgres)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-pg
-        vars:
-          HOST: '{{.HOST}}'
-          APP: tandoor
-          UNITS: 'tandoor-recipes.service'
-          PATHS: '/var/lib/tandoor-recipes'
-          DB: tandoor
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
-  valheim:
-    desc: Restore valheim (container volume — config + cache)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: valheim
-          UNITS: 'podman-valheim.service'
-          PATHS: '/var/lib/containers/valheim'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
+      - |
+        set -euo pipefail
+        if [ -n "{{.MANIFEST_FILE}}" ]; then
+          manifest="$(cat "{{.MANIFEST_FILE}}")"
+        else
+          manifest="$(nix eval --json ".#nixosConfigurations.{{.MANIFEST_HOST}}.config.myRecovery.manifest")"
+        fi
+        app="$(printf "%s" "$manifest" | jq -ce --arg app "{{.APP}}" '.[$app] // error("unknown recovery app: \($app)")')"
+        kind="$(printf "%s" "$app" | jq -r .kind)"
+        units="$(printf "%s" "$app" | jq -r ".units | join(\" \")")"
+        paths="$(printf "%s" "$app" | jq -r ".paths | join(\" \")")"
+
+        case "$kind" in
+          volume)
+            task recovery:_restore-volume HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
+            ;;
+          postgres)
+            database="$(printf "%s" "$app" | jq -r .database)"
+            task recovery:_restore-pg HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" DB="$database" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
+            ;;
+          sqlite)
+            swaps="$(printf "%s" "$app" | jq -r ".swaps | map([.staged, .live, .owner] | join(\":\")) | join(\" \")")"
+            task recovery:_restore-sqlite HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" SWAPS="$swaps" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
+            ;;
+          *)
+            echo "unknown recovery kind: $kind" >&2
+            exit 1
+            ;;
+        esac
+
+        if [ "$(printf "%s" "$app" | jq -r ".health != null")" = true ]; then
+          health="$(printf "%s" "$app" | jq -c .health)"
+          task recovery:_health HOST="{{.HOST}}" APP="{{.APP}}" URL="$(printf "%s" "$health" | jq -r .url)" EXPECT="$(printf "%s" "$health" | jq -r .expect)" RETRIES="$(printf "%s" "$health" | jq -r .retries)" SLEEP="$(printf "%s" "$health" | jq -r .sleep)" DEST="{{.DEST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}"
+        fi
   # ---------------------------------------------------------------------------
-  # Catastrophic restore — every app
+  # Catastrophic restore - every enabled app on this flake host
   # ---------------------------------------------------------------------------
-  # Order matters where there are explicit dependencies (authentik
-  # first, since most apps' OIDC integrations want it reachable),
-  # otherwise the rest are per-app independent.
+  # `order` is declared beside each app and preserves the prior sequence:
+  # authentik first, followed by the independent apps in their existing order.
   all:
-    desc: Catastrophic restore — every app on HOST from SOURCE_HOST (default same host)
+    desc: Catastrophic restore - every enabled app on HOST from SOURCE_HOST (default same host)
     requires: {vars: [HOST]}
+    vars:
+      MANIFEST_HOST: "{{.MANIFEST_HOST | default .HOST}}"
     cmds:
-      - task: authentik
-      - task: actualbudget
-      - task: audiobookshelf
-      # bambuddy disabled pending upstream OrcaSlicer fix — see #298.
-      # Re-enable when the server-apps profile re-adds it.
-      # - task: bambuddy
-      - task: bazarr
-      - task: bindery
-      - task: bookorbit
-      - task: gatus
-      - task: homeassistant
-      - task: jellyfin
-      - task: kapowarr
-      - task: komga
-      - task: lidarr
-      - task: manyfold
-      - task: matter-server
-      - task: miniflux
-      - task: mosquitto
-      - task: mylar3
-      - task: omada
-      - task: paperless-ngx
-      - task: pinchflat
-      - task: profilarr
-      - task: prowlarr
-      - task: radarr
-      - task: readeck
-      - task: sabnzbd
-      - task: seerr
-      - task: shelfmark
-      - task: sonarr
-      - task: sparkyfitness
-      - task: tandoor
-      - task: valheim
+      - |
+        set -euo pipefail
+        manifest_file="$(mktemp)"
+        trap "rm -f $manifest_file" EXIT
+        nix eval --json ".#nixosConfigurations.{{.MANIFEST_HOST}}.config.myRecovery.manifest" >"$manifest_file"
+        jq -r "to_entries | sort_by(.value.order) | .[].key" "$manifest_file" |
+          while IFS= read -r app; do
+            task recovery:app APP="$app" HOST="{{.HOST}}" MANIFEST_HOST="{{.MANIFEST_HOST}}" MANIFEST_FILE="$manifest_file" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
+          done
   # ---------------------------------------------------------------------------
   # End-to-end drill: VM up → install → restore three shapes → teardown
   # ---------------------------------------------------------------------------
@@ -890,12 +386,12 @@ tasks:
         touch /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel
         echo "[+] sentinels placed"
         EOF
-      - task: bookorbit
-        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
-      - task: miniflux
-        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
-      - task: jellyfin
-        vars: {HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+      - task: app
+        vars: {APP: bookorbit, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+      - task: app
+        vars: {APP: miniflux, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+      - task: app
+        vars: {APP: jellyfin, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Asserting sentinels were removed by --delete\x1B[0m"
