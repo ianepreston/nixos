@@ -69,12 +69,6 @@
     # python deps in the lockfile are pinned together; let it use its
     # own locked nixpkgs.
     authentik-nix.url = "github:nix-community/authentik-nix";
-    # UniFi OS Server packaged as an extracted OCI image + NixOS module
-    # that runs it under podman. Upstream pins its own nixpkgs (pulls
-    # nixos-unstable for the blueprint framework); we don't follow it
-    # here — the package is a self-contained image extraction that
-    # doesn't share a closure with the host pkgs anyway.
-    unifi-os-server.url = "github:rcambrj/unifi-os-server";
     # SparkyFitness (nutrition / fitness tracker). Not in nixpkgs and
     # never will be — the licence is a custom non-commercial,
     # source-available grant — but upstream ships its own flake with a

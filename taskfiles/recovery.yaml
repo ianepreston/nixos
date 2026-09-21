@@ -758,20 +758,6 @@ tasks:
           SOURCE_HOST: '{{.SOURCE_HOST}}'
           SSH_PORT: '{{.SSH_PORT}}'
           REPO_MOUNT: '{{.REPO_MOUNT}}'
-  unifi:
-    desc: Restore unifi-os-server (container, state outside /var/lib/containers)
-    requires: {vars: [HOST]}
-    cmds:
-      - task: _restore-volume
-        vars:
-          HOST: '{{.HOST}}'
-          APP: unifi
-          UNITS: 'podman-unifi-os-server.service'
-          PATHS: '/var/lib/unifi-os-server'
-          DEST: '{{.DEST}}'
-          SOURCE_HOST: '{{.SOURCE_HOST}}'
-          SSH_PORT: '{{.SSH_PORT}}'
-          REPO_MOUNT: '{{.REPO_MOUNT}}'
   valheim:
     desc: Restore valheim (container volume — config + cache)
     requires: {vars: [HOST]}
@@ -829,7 +815,6 @@ tasks:
       - task: sonarr
       - task: sparkyfitness
       - task: tandoor
-      - task: unifi
       - task: valheim
   # ---------------------------------------------------------------------------
   # End-to-end drill: VM up → install → restore three shapes → teardown

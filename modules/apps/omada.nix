@@ -1,22 +1,10 @@
 # Omada Controller - TP-Link SDN controller (switches + APs).
 #
-# Standing up alongside the UniFi controller (modules/apps/unifi.nix)
-# for the UniFi -> Omada hardware swap: both controllers run in
-# parallel so TP-Link gear can be adopted and configured before the
-# cutover, and UniFi keeps managing the live network until it's done.
-# Retire this module's UniFi counterpart, not this one, when the swap
-# lands.
-#
-# In `prodOnlyApps`, so amos1 runs the only instance — as does UniFi,
-# which moved there in the same change. It started out in `commonApps`
-# alongside UniFi, but a dev controller has no subject: there is one
-# network and amos1 manages it, so hpp-1's instance went months without
-# adopting a device while holding ~1.1 GB of JVM. It also actively got
-# in the way, because two controllers of the same brand on one
-# broadcast domain both answer device discovery: a factory-default
-# switch or AP showed up as pending adoption in *both* UIs, and a
-# device can only be adopted once, so taking it in the wrong controller
-# meant a factory reset to get it back.
+# Omada is the permanent network controller. It is in `prodOnlyApps`, so
+# amos1 runs the sole instance: there is one physical network and a dev
+# controller has no subject. A second controller on the same broadcast domain
+# would also answer device discovery, making a factory-default switch or AP
+# appear in both UIs and risking adoption into the wrong controller.
 #
 # If a second instance is ever wanted for testing, put it somewhere
 # that cannot see the LAN's discovery broadcasts — the collision above
@@ -57,8 +45,8 @@
 #     (8043), which is where adopted devices fetch firmware images
 #     from. It is scoped to the infra VLAN and the trusted LAN — the
 #     two places adopted devices sit; see the firewall block for why
-#     the scope has to be both. So unlike UniFi, Caddy on loopback is
-#     not the sole browser path to the UI: a LAN client can reach the
+#     the scope has to be both. Caddy on loopback is not the sole browser
+#     path to the UI: a LAN client can reach the
 #     login page directly, which costs the authentik layer in front of
 #     omada.<serverDomain>. Omada's own admin login still applies.
 #   * vlan30 can't reach any of it. iot-network.nix installs a deny
@@ -66,29 +54,22 @@
 #     ahead of every accept here — the `allowedTCPPorts` ones and the
 #     appended 8043 rule alike.
 #
-# ## Port collision with UniFi
+# ## Portal configuration migration
 #
-# UniFi OS Server already holds 0.0.0.0:8843 (its guest portal HTTPS)
-# on amos1, the one host that now runs either controller, and 8843 is
-# also Omada's default
-# `PORTAL_HTTPS_PORT` — so with host networking the two cannot both
-# take the default. Omada's portal moves to 8844. Everything else
-# Omada wants (8043/8044/8088, 19810+27001+29810 UDP, 29811-29817 TCP)
-# is unclaimed, so those keep upstream defaults.
-#
-# Note that Omada persists its ports into its own config on first
-# start; changing `PORTAL_HTTPS_PORT` after that needs
-# `WEB_CONFIG_OVERRIDE=true` for one boot to make it re-read the env.
+# The portal uses its upstream default, 8843. Omada persists its ports in its
+# data directory, so the first start after restoring that default needs
+# `WEB_CONFIG_OVERRIDE=true` to make it re-read the environment. Remove that
+# one-boot override only after confirming the persisted setting and listener.
 #
 # ## Auth
 #
-# Forward-auth (Infrastructure group), the same treatment as UniFi.
-# That gates the door: Authentik decides who reaches the controller at
+# Forward-auth (Infrastructure group) gates the browser door: Authentik
+# decides who reaches the controller at
 # all, but Omada's own local admin login still sits behind it, so it is
 # two logins rather than true SSO.
 #
 # That is a deliberate stopping point, NOT a limitation of the app.
-# Unlike UniFi, Omada does support real SSO — over SAML, not OIDC, and
+# Omada does support real SSO — over SAML, not OIDC, and
 # authentik documents the integration
 # (https://integrations.goauthentik.io/networking/omada-controller/).
 # The endpoint is present on this build: `POST /sso/saml/login` on the
@@ -172,25 +153,12 @@ _: {
       # the infra VLAN and the trusted LAN in the extraCommands rule
       # below, which is where the exposure is argued.
       manageHttpsPort = 8043;
-      # Guest/user portal HTTPS. Moved off upstream's 8843 because the
-      # UniFi container holds that port (see header). Not firewalled
-      # open — no guest portal is in use yet; opening it is a separate
-      # decision when one is.
-      portalHttpsPort = 8844;
+      # Guest/user portal HTTPS. Not firewalled open — no guest portal is in
+      # use yet; opening it is a separate decision when one is.
+      portalHttpsPort = 8843;
       # Device-facing TCP range. 29811-29813 serve v4 firmware, 29814
       # v5, 29815/29816 v5.9+, 29817 v6.0+.
       deviceTcpPorts = lib.range 29811 29817;
-      # Every TCP port the container binds on the host under
-      # `--network=host`. Feeds the UniFi collision guard below;
-      # 8088 is management+portal HTTP (Omada shares one port for
-      # both) and 8044 is the v6.3+ upgrade-ES listener.
-      hostTcpPorts = [
-        8044
-        8088
-        manageHttpsPort
-        portalHttpsPort
-      ]
-      ++ deviceTcpPorts;
     in
     {
       myContainerApp.omada = {
@@ -223,6 +191,9 @@ _: {
         environment = {
           MANAGE_HTTPS_PORT = toString manageHttpsPort;
           PORTAL_HTTPS_PORT = toString portalHttpsPort;
+          # Remove after the first start with PORTAL_HTTPS_PORT=8843 has
+          # confirmed both the persisted setting and listener.
+          WEB_CONFIG_OVERRIDE = "true";
           # Cap the JVM. With `--network=host` there is no container
           # memory limit for the JVM to size against, so it falls back to
           # a fraction of the host's 31 GB — far more than a homelab site
@@ -319,7 +290,7 @@ _: {
         '';
       };
 
-      # Device-facing ports. 8044/8088 and the portal (8844) are
+      # Device-facing ports. 8044/8088 and the portal (8843) are
       # deliberately absent — Caddy reaches the UI over loopback. Also
       # absent: the controller-discovery ports the Omada phone app uses
       # to find a controller (19810/27001 UDP). Those stay closed
@@ -400,11 +371,8 @@ _: {
         # otherwise ALPN-negotiate HTTP/2 upstream, where WS upgrade
         # doesn't exist.
         #
-        # Unlike UniFi, no Host/Origin rewriting is needed here. UniFi's
-        # bundled nginx rejects a request whose Origin hostname doesn't
-        # match its Host; Omada has no such check — verified on hpp-1,
-        # where `curl -k -H 'Host: omada.<domain>' https://127.0.0.1:8043/`
-        # and `/login` both answer 200 against a foreign Host.
+        # The controller accepts Caddy's upstream Host and Origin headers, so
+        # this route needs no header rewriting.
         proxyConfig = ''
           transport http {
             tls
@@ -419,36 +387,5 @@ _: {
         };
       };
 
-      # Structural guard on the coexistence, for as long as it lasts.
-      # Both controllers bind on 0.0.0.0 (UniFi publishes from a bridge,
-      # Omada via host networking), so a shared port is a container that
-      # silently fails to bind at runtime — not an eval error. Check the
-      # two port sets against each other instead. `services.unifi-os-server`
-      # only exists where modules/apps/unifi.nix is imported, so guard the
-      # lookup; this module has no dependency on UniFi being present and
-      # this assertion evaporates once UniFi is retired.
-      assertions =
-        let
-          unifiPorts = lib.filter (p: p != null) (
-            lib.attrValues (config.services.unifi-os-server.ports or { })
-          );
-          collisions = lib.intersectLists hostTcpPorts (unifiPorts ++ [ 11443 ]);
-        in
-        [
-          {
-            assertion = collisions == [ ];
-            message = ''
-              modules/apps/omada.nix: these ports are claimed by both the Omada
-              container and unifi-os-server (which binds 0.0.0.0 for its service
-              ports and 127.0.0.1:11443 for its Caddy-facing UI):
-
-                ${lib.concatMapStringsSep ", " toString collisions}
-
-              Remap the Omada side — the port env vars are in this module — or
-              retire UniFi. Two binds on one port is a runtime failure, not an
-              eval one, so this guard is the only thing that catches it.
-            '';
-          }
-        ];
     };
 }

@@ -46,18 +46,18 @@
 #
 # The UI is loopback-only and deliberately not registered in
 # `myAuthentik.forwardAuthApps` (unlike vmalert-main). A second rules
-# UI is worth little over `curl 127.0.0.1:8882/api/v1/rules` through
+# UI is worth little over a loopback `curl .../api/v1/rules` through
 # an SSH forward, and the security rules here make this the module
 # where extra reachable surface is the thing being argued against.
 # Flip it to a forward-auth app if the rule state ever needs to be
 # checked from a phone.
 _: {
   flake.modules.nixos.log-alerts =
-    _:
+    { hostSpec, ... }:
     let
-      # 8880 is vmalert's default (taken by the UniFi controller),
-      # 8881 is vmalert-main; this is the next one along.
-      vmalertLogsPort = 8882;
+      # Reclaim 8881 on production now that vmalert-main returns to 8880.
+      # hpp-1 keeps its existing loopback endpoint unchanged (#714).
+      vmalertLogsPort = if hostSpec.serverEnvironment == "prod" then 8881 else 8882;
       victorialogsPort = 9428;
       victoriametricsPort = 8428;
       alertmanagerPort = 9093;

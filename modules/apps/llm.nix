@@ -14,8 +14,8 @@
 # (#518) that have no equivalent on an 8 GB card.
 #
 # The upstream port is read from `myLlamaCpp.port` rather than repeated,
-# because it genuinely varies per host — 8080 is taken by unifi-os-server
-# on amos1, so the daemon there listens elsewhere.
+# because it genuinely varies per host — amos1 reserves 8080 for SABnzbd, so
+# the daemon there listens elsewhere.
 #
 # ## Model cache under impermanence
 #

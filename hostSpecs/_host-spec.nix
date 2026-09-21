@@ -106,7 +106,7 @@
             serverLanIp = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
               default = null;
-              description = "Static LAN IPv4 address for this server. Used by apps that need to advertise an L3 address other clients on the same subnet can reach (e.g. UniFi OS Server's inform URL). null on non-server hosts.";
+              description = "Static LAN IPv4 address for this server. Used by local consumers that need the server's L3 address (e.g. Caddy's Gatus probe-log filter). null on non-server hosts.";
             };
             iotTrunkInterface = lib.mkOption {
               type = lib.types.nullOr lib.types.str;

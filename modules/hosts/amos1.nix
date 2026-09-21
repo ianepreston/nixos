@@ -176,7 +176,7 @@
               };
             };
 
-            # 8080 is unifi-os-server's on this host. Loopback-only: caddy
+            # 8080 is SABnzbd's on this host. Loopback-only: caddy
             # is the sole client, so no allowedClients and no firewall hole.
             port = 8091;
             # Shorter than terra's 600s: the GPU has a second job here, and

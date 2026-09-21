@@ -20,11 +20,6 @@
 # `host.containers.internal` is whitelisted alongside the public FQDN
 # for the same reason.
 #
-# Port is 18080, not the sabnzbd default 8080, because UniFi's
-# adoption inform endpoint owns :8080 on amos1. Kept uniform across
-# servers rather than made per-host — UniFi is prod-only now, so :8080
-# is free on a dev server, but one port for one app everywhere is worth
-# more than reclaiming it. See modules/apps/unifi.nix.
 _: {
   flake.modules.nixos.sabnzbd =
     {
@@ -34,7 +29,11 @@ _: {
       ...
     }:
     let
-      port = 18080;
+      # hpp-1's endpoint stays at 18080: it never ran the controller and #714
+      # requires its effective configuration to remain unchanged. amos1 can
+      # reclaim SABnzbd's upstream default now that the former occupant is
+      # retired. Consumers below derive their URL from this same setting.
+      port = if hostSpec.serverEnvironment == "prod" then 8080 else 18080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = hostSpec.serverUser;
       inherit (hostSpec) serverUid serverGid;

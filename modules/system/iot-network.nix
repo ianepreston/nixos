@@ -75,9 +75,9 @@ _: {
           # NixOS firewall's allowlist is global, not per-interface: every
           # `allowedTCPPorts` entry becomes an accept rule with no `-i`
           # match, so once the host holds a lease here the *whole* server
-          # allowlist (22/80/443 + the UniFi ports) answers on vlan30. That
-          # hands a compromised IoT device hypervisor SSH and the UniFi
-          # controller admin UI on the same broadcast domain, bypassing the
+          # allowlist (22/80/443 plus service-specific ports) answers on
+          # vlan30. That hands a compromised IoT device hypervisor SSH and
+          # administrative UIs on the same broadcast domain, bypassing the
           # pfSense jail entirely (#476).
           #
           # `networking.firewall.interfaces.iot.*` does not fix this — a
