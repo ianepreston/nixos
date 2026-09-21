@@ -11,6 +11,11 @@ source-controlled content. Runner-specific discovery adapters may point at
 them, but must not duplicate their bodies. Local runner state (settings,
 caches, scheduled-task state, and worktrees) remains untracked.
 
+The checked-in discovery adapters are deliberately thin: Claude Code imports
+each workflow from `.claude/skills/`, while Codex discovers directory symlinks
+under `.agents/skills/`. When adding a canonical workflow, add or update both
+adapters; neither is a second source of workflow instructions.
+
 ## PII never goes in git or GitHub
 
 This repo is public, and so are its issues, PRs, and commit history. Personal
