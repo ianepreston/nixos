@@ -20,6 +20,16 @@
 # `host.containers.internal` is whitelisted alongside the public FQDN
 # for the same reason.
 #
+# Port is 18080, not the sabnzbd default 8080. It moved here because the
+# network controller retired in #714 held 8080 on amos1, and it stays
+# here now that 8080 is free: this port is mirrored into app state
+# nothing in this repo manages. The sonarr/radarr/lidarr/prowlarr
+# download-client rows and mylar3's `sab_host` are UI-authored, and
+# shelfmark persists its own copy of SABNZBD_URL next to the env var, so
+# returning to the default would mean a hand-edit in five apps on a live
+# host and buy nothing. One port for one app on every server is worth
+# more than reclaiming a default. The in-repo consumers below derive
+# their URL from this setting rather than repeating it.
 _: {
   flake.modules.nixos.sabnzbd =
     {
@@ -29,11 +39,8 @@ _: {
       ...
     }:
     let
-      # hpp-1's endpoint stays at 18080: it never ran the controller and #714
-      # requires its effective configuration to remain unchanged. amos1 can
-      # reclaim SABnzbd's upstream default now that the former occupant is
-      # retired. Consumers below derive their URL from this same setting.
-      port = if hostSpec.serverEnvironment == "prod" then 8080 else 18080;
+      # Uniform across servers; see the header for why it is not 8080.
+      port = 18080;
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = hostSpec.serverUser;
       inherit (hostSpec) serverUid serverGid;

@@ -176,8 +176,11 @@
               };
             };
 
-            # 8080 is SABnzbd's on this host. Loopback-only: caddy
-            # is the sole client, so no allowedClients and no firewall hole.
+            # Off the 8080 default: the daemon was moved here when another
+            # service on this host held 8080, and #714 deliberately left it
+            # rather than churn a working endpoint for a cosmetic default.
+            # Loopback-only: caddy is the sole client, so no allowedClients
+            # and no firewall hole.
             port = 8091;
             # Shorter than terra's 600s: the GPU has a second job here, and
             # handing VRAM back to transcoding promptly matters more than
