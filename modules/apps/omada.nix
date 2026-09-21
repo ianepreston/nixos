@@ -54,12 +54,29 @@
 #     ahead of every accept here — the `allowedTCPPorts` ones and the
 #     appended 8043 rule alike.
 #
-# ## Portal configuration migration
+# ## Web ports are declared here, not in the controller
 #
-# The portal uses its upstream default, 8843. Omada persists its ports in its
-# data directory, so the first start after restoring that default needs
-# `WEB_CONFIG_OVERRIDE=true` to make it re-read the environment. Remove that
-# one-boot override only after confirming the persisted setting and listener.
+# The portal uses its upstream default, 8843. Getting it to stay there needs
+# `WEB_CONFIG_OVERRIDE=true` **permanently**, which is not what the variable's
+# name suggests, so it is worth spelling out.
+#
+# The `*_PORT` environment variables only reach `omada.properties`, which the
+# entrypoint rewrites on every start. That file is inside the container (only
+# `data` and `logs` are volumes), and its own header says the values "will be
+# overwritten" once the controller is initialized — by the controller's own
+# copy in mongo, `systemsetting.web_port_setting`, which is what it actually
+# binds from. `web.config.override` is the switch that makes properties win
+# over that stored copy.
+#
+# It is not a one-boot migration flag, because the controller never writes the
+# resolved value back: mongo keeps reading the old port forever. Measured on
+# amos1 while retiring the other controller (#714) — with the override set the
+# listener moved 8844 -> 8843 while mongo still read 8844, and with it removed
+# properties still read 8843 but the listener came back up on 8844.
+#
+# The consequence to know about: a web port changed in the Omada UI is reverted
+# on the next container start. That is the right direction for a port this
+# module declares, but it does mean the UI is not where to change one.
 #
 # ## Auth
 #
@@ -191,6 +208,10 @@ _: {
         environment = {
           MANAGE_HTTPS_PORT = toString manageHttpsPort;
           PORTAL_HTTPS_PORT = toString portalHttpsPort;
+          # Permanent, not a migration flag — without it the controller binds
+          # the web ports from its own mongo copy and ignores the two above.
+          # See the header.
+          WEB_CONFIG_OVERRIDE = "true";
           # Cap the JVM. With `--network=host` there is no container
           # memory limit for the JVM to size against, so it falls back to
           # a fraction of the host's 31 GB — far more than a homelab site
