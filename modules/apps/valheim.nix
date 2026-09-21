@@ -1351,11 +1351,22 @@ _: {
                   # under a fresh number and fails again inherits the old
                   # flag and goes unreported.
                   #
-                  # `retried` goes with it, for the same reason and one
-                  # more: a new episode restarts the retry clock, so the
-                  # first probe of it lands promptly rather than up to 15
-                  # minutes after the old episode's last one.
-                  rm -f "$alerted" "$retried"
+                  # `retried` deliberately does *not* go with it, though it
+                  # is tempting: a new code looks like a new episode, so
+                  # restarting its clock looks right. It is the one thing
+                  # that must not happen here. `retried` is the only pacing
+                  # the watchdog's restart loop has, and this branch is
+                  # reachable *from that loop* — a probe whose
+                  # re-registration comes back with different digits (#661
+                  # saw PlayFab mint two codes seconds apart). Clearing it
+                  # there would drop the spacing to grace + one tick and
+                  # bounce the container every ~3 minutes, which is exactly
+                  # what joincodeRetryInterval and ValheimServerRestartLoop
+                  # exist to prevent. Spacing means "when did I last
+                  # restart", and nothing a restart can itself cause may
+                  # reset it; the episode genuinely ending is
+                  # handle_active's job, and it clears `retried` there.
+                  rm -f "$alerted"
                   printf '%s %s\n' "$code" "$when" > "$pending"
                 }
 
@@ -1703,16 +1714,32 @@ _: {
                                 + "m ago, but PlayFab never confirmed it.\n"
                                 + "**That code most likely does not work** — do not share it.\n"
                                 + "_These come in episodes lasting 1-3.5h in which every "
-                                + "registration fails. The host is re-registering itself every "
-                                + $every + "m and will announce the code again when one takes; "
-                                + "no action needed (#701)._")}')"
+                                + "registration fails. While nobody is connected the host "
+                                + "re-registers itself every " + $every + "m and will announce "
+                                + "the code again when one takes, so normally there is nothing "
+                                + "to do. It holds off while anyone is on rather than kicking "
+                                + "them — if players are connected, restart by hand once they "
+                                + "log off (#701)._")}')"
 
                   # Same `-K -` stdin trick as the notifier: the webhook must
                   # not reach the process cmdline. A failed POST leaves
                   # `alerted` unset so the next tick retries, which is the
                   # right direction to fail for an outage alert.
+                  #
+                  # `--max-time` is not decoration, and this is the one
+                  # place in the file that needs it: the announce runs
+                  # *before* the retry below, so a webhook that blackholes
+                  # rather than refuses would hang this oneshot until
+                  # TimeoutStartSec killed it — unit failed, no restart
+                  # issued, and the same hang on every tick for the length
+                  # of the episode. A host-side network fault is one of the
+                  # things that makes PlayFab registration fail in the
+                  # first place, so that correlation is real rather than
+                  # theoretical. A fast failure was always fine: curl exits
+                  # non-zero, the `else` branch logs it, and the retry below
+                  # still runs.
                   if printf 'url = "%s"\n' "$webhook" \
-                    | ${pkgs.curl}/bin/curl -fsS -K - \
+                    | ${pkgs.curl}/bin/curl -fsS --max-time 15 -K - \
                         -X POST -H 'Content-Type: application/json' -d "$payload"; then
                     echo "announced unconfirmed join code $code (pending ''${age}s)"
                     touch "$alerted"
@@ -1726,6 +1753,39 @@ _: {
                 # Everything below is independent of the block above: the
                 # first tick of an episode does both, every later tick does
                 # only this.
+
+                # Two state guards before the roster one, both asking the
+                # same question: can this probe possibly accomplish
+                # anything? A restart that cannot is not a neutral retry,
+                # it is an unwanted container bounce.
+                #
+                # The container must already be running. `pending` is a
+                # file, so it outlives a deliberate `systemctl stop
+                # podman-valheim` — and stopping the container is exactly
+                # what an operator does while poking at a stuck code. The
+                # roster guard does not cover this: the shutdown logs
+                # `OnApplicationQuit`, which empties the roster, so a
+                # stopped server looks maximally safe to restart. Without
+                # this the watchdog resurrects a deliberately stopped
+                # service within 15 minutes, possibly mid-image-pull.
+                # `is-active` is also false while the unit is activating,
+                # which costs at most one skipped tick during our own
+                # restart.
+                if ! "$systemctl" is-active --quiet podman-valheim.service; then
+                  exit 0
+                fi
+
+                # And the notifier must be running, because it is the only
+                # thing that can ever clear `pending` and end the loop. If
+                # it is dead or crash-looping, no confirmation will ever be
+                # observed however many times the container re-registers,
+                # so the loop would bounce a healthy server every 15
+                # minutes indefinitely. That is the uncapped design's one
+                # genuinely bad case, and it is cheap to exclude: no
+                # observer, no probe.
+                if ! "$systemctl" is-active --quiet valheim-joincode-notify.service; then
+                  exit 0
+                fi
 
                 # Roster guard. #694's argument that an episode is a
                 # zero-player server by construction is a strong one — under

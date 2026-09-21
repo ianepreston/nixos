@@ -599,6 +599,17 @@ _: {
                 # tripping it: a healthy server passes uptime 600 ten
                 # minutes in, which falsifies the expression well before
                 # the clock expires.
+                #
+                # One more thing restarts the server now, and it is the
+                # only one that restarts *repeatedly*: the join-code retry
+                # loop in ../apps/valheim.nix (#701) bounces the container
+                # every joincodeRetryInterval for as long as PlayFab leaves
+                # a code unconfirmed. 900s is set where it is precisely so
+                # uptime reaches ~900 between probes and this expression
+                # stays false throughout an episode — at 600s spacing it
+                # would fire on every one. The two numbers are coupled:
+                # change either the 600 here or joincodeRetryInterval
+                # there, and check the other.
                 alert = "ValheimServerRestartLoop";
                 expr = "max_over_time(valheim_server_uptime_seconds[30m]) < 600 and valheim_server_up == 1";
                 for = "15m";
