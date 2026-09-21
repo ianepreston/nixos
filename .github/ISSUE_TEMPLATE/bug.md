@@ -8,7 +8,7 @@ assignees: ''
 
 <!--
 Sections marked OPTIONAL can be dropped when they don't apply. The rest carry
-their weight on almost every defect here — see .claude/skills/create-issue for
+their weight on almost every defect here — see skills/create-issue for
 what belongs in each and why.
 -->
 

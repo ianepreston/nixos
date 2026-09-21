@@ -8,7 +8,7 @@
 # the compose shape is *two*
 # containers (nginx-serving-SPA in front of the node backend) plus
 # inter-container plumbing, which is a worse trade than one flake input
-# against CLAUDE.md's "containers are the fallback, not the baseline".
+# against AGENTS.md's "containers are the fallback, not the baseline".
 #
 # Upstream calls the nix integration community-provided and untested,
 # and no CI job builds the packages — so a release can ship with the nix
@@ -280,7 +280,7 @@
           # grants oneshot above. The template carries the app's own
           # restart, but the oneshot has no template to bind to, so its
           # rotation trigger has to live on the secret — the documented
-          # exception to CLAUDE.md's template-only rule.
+          # exception to AGENTS.md's template-only rule.
           "sparkyfitness/app_db_password" = {
             inherit (hostSpec) sopsFile;
             owner = "postgres";

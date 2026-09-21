@@ -9,7 +9,7 @@ assignees: ''
 <!--
 Sections marked OPTIONAL can be dropped when they don't apply. The rest exist
 to stop the implementing session re-deriving ground you already covered — see
-.claude/skills/create-issue.
+skills/create-issue.
 -->
 
 ## Summary

@@ -9,7 +9,7 @@ assignees: ''
 <!--
 Use this when you have evidence but not a diagnosis. Closing this as
 "explained, not a defect" is a success, not a failure — the write-up is the
-deliverable. See .claude/skills/create-issue.
+deliverable. See skills/create-issue.
 -->
 
 ## Summary

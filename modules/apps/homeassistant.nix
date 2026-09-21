@@ -12,7 +12,7 @@
 #   * recorder    — native postgres over the unix socket (peer auth).
 #
 # Version currency: HA ships ~monthly and the stable channel freezes its
-# snapshot for a year (e.g. 2026.5.x on nixos-26.05). Per CLAUDE.md
+# snapshot for a year (e.g. 2026.5.x on nixos-26.05). Per AGENTS.md
 # ("prefer nixpkgs services" + "wire a per-package overlay rather than
 # flipping the whole flake to unstable"), the HA package and its custom
 # component are pinned to nixpkgs-unstable so integrations stay current;
@@ -346,7 +346,7 @@
 
       # Recorder role: peer auth on the unix socket, role == system user
       # `hass` == db name, so there's no password to plumb (mirrors mealie's
-      # createLocally pattern per CLAUDE.md). Merges into the shared cluster
+      # createLocally pattern per AGENTS.md). Merges into the shared cluster
       # from modules/system/postgresql.nix.
       services.postgresql = {
         ensureDatabases = [ "hass" ];

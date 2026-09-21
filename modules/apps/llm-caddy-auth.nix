@@ -16,7 +16,7 @@
 # own template: this belongs to the llm modules, and `EnvironmentFile` is
 # a list, so an app can contribute one without caddy.nix growing an
 # option surface for it. restartUnits goes on the template only (see
-# CLAUDE.md) — sops-nix re-renders it whenever the secret rotates.
+# AGENTS.md) — sops-nix re-renders it whenever the secret rotates.
 { inputs, ... }:
 {
   # `key` makes the module system dedupe this when both llm.nix and

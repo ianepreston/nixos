@@ -782,7 +782,7 @@ _: {
             # Consumed directly (the notifier reads the path in its script)
             # rather than through a template, so the restart trigger has to
             # live on the secret — there's no template to bind it to. See
-            # CLAUDE.md "restartUnits goes on the template, not the secret",
+            # AGENTS.md "restartUnits goes on the template, not the secret",
             # direct-consumption exception.
             "valheim/discord_webhook" = {
               inherit (hostSpec) sopsFile;
@@ -816,7 +816,7 @@ _: {
           # consumes the rendered template via environmentFiles, and sops-nix
           # writes secrets and re-renders templates in separate phases. Binding
           # the restart to the template guarantees it fires after the re-render
-          # flushes the rotated credential. See CLAUDE.md "restartUnits goes on
+          # flushes the rotated credential. See AGENTS.md "restartUnits goes on
           # the template, not the secret".
           templates."valheim.env" = {
             content = ''
