@@ -9,6 +9,8 @@ _: {
       port = 5656;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-kapowarr" ];
+
       myAuthentik.forwardAuthApps.kapowarr = {
         inherit port;
         displayName = "Kapowarr";

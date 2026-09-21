@@ -169,6 +169,8 @@
       };
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-homeassistant" ];
+
       # MQTT broker user. ACL grants HA full access — HA bridges every
       # publisher's topic via its own auto-discovery prefix and re-emits
       # state on the entity-level topics, so a narrower ACL would just mean

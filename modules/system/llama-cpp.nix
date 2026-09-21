@@ -361,6 +361,10 @@
       };
 
       config = lib.mkIf cfg.enable {
+        # Child model processes are not units; their state is collected by
+        # llm-metrics. The router itself is a normal service worth monitoring.
+        myObservability.monitoredSystemdUnits = [ "llama-cpp" ];
+
         assertions = [
           {
             assertion = cfg.models != { };

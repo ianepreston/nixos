@@ -8,6 +8,8 @@ _: {
   flake.modules.nixos.bazarr =
     { hostSpec, ... }:
     {
+      myObservability.monitoredSystemdUnits = [ "bazarr" ];
+
       myAuthentik.forwardAuthApps.bazarr = {
         port = 6767;
         displayName = "Bazarr";

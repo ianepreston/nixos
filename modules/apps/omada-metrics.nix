@@ -543,6 +543,54 @@ _: {
           '';
     in
     {
+      myObservability.metricRuleGroups.omada.groups = [
+        {
+          name = "omada";
+          rules = [
+            {
+              alert = "OmadaDeviceDown";
+              expr = "omada_device_up == 0";
+              for = "5m";
+              labels.severity = "critical";
+              annotations = {
+                summary = "Omada device {{ $labels.name }} is not connected";
+                description = "The Omada controller on {{ $labels.instance }} has not had {{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) in the Connected state for 5m. Check omada_device_status for which state it is in — 2 Pending, 3 Heartbeat Missed, 4 Isolated — and omada_device_detail_status for the cause.";
+              };
+            }
+            {
+              alert = "OmadaFirmwareUpgradeAvailable";
+              expr = "omada_device_firmware_upgrade_available == 1";
+              for = "48h";
+              labels.severity = "warning";
+              annotations = {
+                summary = "Omada device {{ $labels.name }} has a pending firmware upgrade";
+                description = "{{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) has had a newer firmware build available for 48h, which is two missed runs of the controller's daily auto-upgrade. omada_device_firmware_info carries the running and available versions. Adopted devices fetch images from the controller on 8043, so start there — see the firewall block in modules/apps/omada.nix, and check OmadaFirmwareUpgradeFailed.";
+              };
+            }
+            {
+              alert = "OmadaScrapeFailing";
+              expr = "omada_scrape_error == 1";
+              for = "15m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "Omada exporter cannot read {{ $labels.endpoint }} on {{ $labels.instance }}";
+                description = "omada-metrics.service has been failing to read the {{ $labels.endpoint }} Open API endpoint for 15m, so the metrics it feeds are missing rather than stale. If endpoint is \"token\", the Open API client has been revoked or rotated — remint it under Global View → Settings → Platform Integration and update sops. Otherwise check `journalctl -u omada-metrics` for the errorCode; -1007 is a role change. See modules/apps/omada-metrics.nix.";
+              };
+            }
+            {
+              alert = "OmadaMetricsStale";
+              expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/omada.prom"} > 900'';
+              for = "10m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "Omada metrics are stale on {{ $labels.instance }}";
+                description = "omada.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so OmadaDeviceDown and OmadaFirmwareUpgradeAvailable are evaluating frozen data. Check omada-metrics.service and its timer.";
+              };
+            }
+          ];
+        }
+      ];
+
       sops.secrets = {
         "omada/openapi_client_id".sopsFile = hostSpec.sopsFile;
         "omada/openapi_client_secret".sopsFile = hostSpec.sopsFile;

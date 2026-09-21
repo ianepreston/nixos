@@ -15,6 +15,8 @@ _: {
       port = 6868;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-profilarr" ];
+
       myAuthentik.forwardAuthApps.profilarr = {
         inherit port;
         displayName = "Profilarr";

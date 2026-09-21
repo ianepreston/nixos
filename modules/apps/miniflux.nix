@@ -27,6 +27,8 @@ _: {
       authentikHost = "authentik.${hostSpec.serverDomain}";
     in
     {
+      myObservability.monitoredSystemdUnits = [ "miniflux" ];
+
       myAuthentik.oidcApps.miniflux = {
         blueprintsDir = ./miniflux-blueprints;
         appRestartUnit = [ "miniflux.service" ];

@@ -23,6 +23,8 @@ _: {
       port = 25600;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "komga" ];
+
       myAuthentik.oidcApps.komga = {
         blueprintsDir = ./komga-blueprints;
         appRestartUnit = [ "komga.service" ];

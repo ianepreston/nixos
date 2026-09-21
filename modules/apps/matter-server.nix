@@ -27,6 +27,8 @@
 # hardware is on hand.
 _: {
   flake.modules.nixos.matter-server = _: {
+    myObservability.monitoredSystemdUnits = [ "matter-server" ];
+
     services.matter-server = {
       enable = true;
     };

@@ -178,6 +178,35 @@ _: {
       deviceTcpPorts = lib.range 29811 29817;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-omada" ];
+
+      myObservability.logRuleGroups.omada.groups = [
+        {
+          name = "omada-firmware";
+          type = "vlogs";
+          interval = "5m";
+          rules = [
+            {
+              # The terminal controller WARN carries both the failed device
+              # and the stage; the audit log does not record unattended
+              # upgrades, so this is deliberately log-derived.
+              alert = "OmadaFirmwareUpgradeFailed";
+              expr = ''
+                unit:="podman-omada.service" "status sent to frontend is DEVICE_FILE_DOWNLOAD_FAIL"
+                  | extract "mac:<omada_mac> source status is"
+                  | extract "finished upgrade process in <omada_stage>,"
+                  | stats by (host, omada_mac, omada_stage) count() as failures
+              '';
+              labels.severity = "warning";
+              annotations = {
+                summary = "Omada firmware upgrade failed for {{ $labels.omada_mac }} ({{ $labels.omada_stage }})";
+                description = "The Omada controller on {{ $labels.host }} gave up upgrading {{ $labels.omada_mac }} {{ $value }} time(s) in 5 minutes, in stage {{ $labels.omada_stage }}. Adopted devices fetch the image from the controller over 8043, so start with whether this one can still reach it — see the firewall block in modules/apps/omada.nix. Do not expect the controller's audit log to corroborate: it records nothing for scheduled upgrades.";
+              };
+            }
+          ];
+        }
+      ];
+
       myContainerApp.omada = {
         # No `port`: `--network=host` means there is nothing to publish,
         # and the UI reaches Caddy over loopback on manageHttpsPort.

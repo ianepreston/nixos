@@ -28,6 +28,29 @@ _: {
       textfileDir = "/var/lib/node-exporter-textfile-collector";
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-mylar3" ];
+
+      myObservability.metricRuleGroups.mylar3.groups = [
+        {
+          name = "mylar3";
+          rules = [
+            {
+              # The textfile timer below publishes the oldest Snatched item.
+              # Its SQL covers both issues and annuals; see that unit for the
+              # manual recovery paths.
+              alert = "MylarSnatchedStuck";
+              expr = "mylar3_snatched_oldest_seconds > 21600";
+              for = "30m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "Mylar has a stuck Snatched issue on {{ $labels.instance }}";
+                description = "A Mylar issue has been Snatched for >6h ({{ $value | humanizeDuration }}) without importing — completed-download-handling likely lost the SAB nzo_id, or the release is unavailable. See the manual post_process runbook in modules/apps/mylar3.nix.";
+              };
+            }
+          ];
+        }
+      ];
+
       myAuthentik.forwardAuthApps.mylar = {
         inherit port;
         displayName = "Mylar";

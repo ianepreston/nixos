@@ -12,6 +12,8 @@ in
   flake.modules.nixos.radarr =
     { hostSpec, ... }:
     {
+      myObservability.monitoredSystemdUnits = [ "radarr" ];
+
       myAuthentik.forwardAuthApps.radarr = {
         port = 7878;
         displayName = "Radarr";

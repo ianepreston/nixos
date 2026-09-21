@@ -198,6 +198,8 @@ _: {
           );
     in
     {
+      myObservability.monitoredSystemdUnits = [ "tandoor-recipes" ];
+
       myPostgresApp.tandoor.consumerService = [ unit ];
 
       sops.secrets."tandoor/secret_key" = {

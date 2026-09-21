@@ -122,6 +122,8 @@ _: {
           '';
     in
     {
+      myObservability.monitoredSystemdUnits = [ "jellyfin" ];
+
       myAuthentik.ldap.enable = true;
 
       services.jellyfin = {

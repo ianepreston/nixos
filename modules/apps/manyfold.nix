@@ -45,6 +45,8 @@ _: {
       redisPort = 6380;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-manyfold" ];
+
       myPostgresApp.manyfold.consumerService = [ "podman-manyfold.service" ];
 
       # SECRET_KEY_BASE signs browser cookies; the upstream docs ask

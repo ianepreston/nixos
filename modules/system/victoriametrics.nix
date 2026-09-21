@@ -93,6 +93,10 @@ _: {
       # instead needs a baseline this host has no history for yet.
       cpuFanRpm = ''max by (instance) (node_hwmon_fan_rpm{chip=~"platform_it87.*",sensor="fan1"})'';
 
+      metricRuleGroups = lib.concatMap (contribution: contribution.groups) (
+        lib.attrValues config.myObservability.metricRuleGroups
+      );
+
       # Same alert content as the prior prometheus.ruleFiles; vmalert
       # accepts the Prometheus rule YAML verbatim. Watchdog stays in
       # its own group so the route in alertmanager.nix
@@ -480,309 +484,6 @@ _: {
                 };
               }
               {
-                # Stale file under sabnzbd's incomplete dir (#276).
-                # Metric is published by the sabnzbd-incomplete-metrics
-                # oneshot in modules/apps/sabnzbd.nix every 5m. >24h
-                # means a download is stalled (missing articles across
-                # all configured providers, post-processing wedged, or
-                # the queue is paused and forgotten). Absent on hosts
-                # that don't run sabnzbd — `for: 30m` debounces the gap
-                # between the oneshot's first write and node_exporter's
-                # next scrape.
-                alert = "SabnzbdIncompleteStale";
-                expr = "sabnzbd_incomplete_oldest_seconds > 86400";
-                for = "30m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "sabnzbd has a stale file in incomplete/ on {{ $labels.instance }}";
-                  description = "A file under sabnzbd's incomplete dir has been there for >24h ({{ $value | humanizeDuration }}). Stalled download, wedged post-processing, or forgotten paused queue.";
-                };
-              }
-              {
-                # Incomplete dir filling up (#276). The dir lives under
-                # /persist, sharing the root filesystem — the existing
-                # FilesystemAlmostFull rule (above) covers truly-full
-                # /persist, but a stuck unrar can chew through 100s of
-                # GB inside a healthy-looking root. 200 GiB is well
-                # above any single in-flight release (~100 GB for a 4K
-                # blu-ray rip) and flags accumulation.
-                alert = "SabnzbdIncompleteLarge";
-                expr = "sabnzbd_incomplete_dir_bytes > 200 * 1024 * 1024 * 1024";
-                for = "30m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "sabnzbd incomplete dir over 200 GiB on {{ $labels.instance }}";
-                  description = "sabnzbd_incomplete_dir_bytes = {{ $value | humanize1024 }}B for 30m. Either a release got stuck in post-processing or multiple downloads are piling up faster than they're finishing.";
-                };
-              }
-              {
-                # Stuck Mylar grab (#299 follow-up). Metric published by
-                # the mylar3-snatched-metrics oneshot in
-                # modules/apps/mylar3.nix every 5m; absent on hosts not
-                # running mylar3. Mylar's SAB completed-download-handling
-                # tracks each grab by the SAB nzo_id and never recovers
-                # when that id vanishes (SAB retry/re-add, or a failed
-                # slot purged by sab_remove_failed) — the issue sits in
-                # Snatched, the historycheck loops "Cannot find nzb …"
-                # forever, and nothing imports even though the file is
-                # usually complete on disk. Also catches genuinely
-                # unavailable releases (out of retention) that need a
-                # manual re-search, and mis-matched grabs (a search that
-                # fetched the wrong issue number). The metric unions the
-                # `issues` and `annuals` tables, so annual-only stucks —
-                # which live in a separate table and would otherwise
-                # never surface — are covered too. 6h is well past any
-                # real comic download (tens of MB) yet tolerates a long
-                # SAB queue; `for: 30m` debounces the publish/scrape gap.
-                # Recover with the manual post_process runbook in
-                # mylar3.nix (annuals-table stucks take the markissues
-                # Retry path documented there instead), then
-                # `podman restart mylar3`.
-                alert = "MylarSnatchedStuck";
-                expr = "mylar3_snatched_oldest_seconds > 21600";
-                for = "30m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Mylar has a stuck Snatched issue on {{ $labels.instance }}";
-                  description = "A Mylar issue has been Snatched for >6h ({{ $value | humanizeDuration }}) without importing — completed-download-handling likely lost the SAB nzo_id, or the release is unavailable. See the manual post_process runbook in modules/apps/mylar3.nix.";
-                };
-              }
-              {
-                # Valheim's five alerts below all read metrics published
-                # by the valheim-metrics oneshot in modules/apps/valheim.nix
-                # — nothing else on the host can see the game server. It is
-                # UDP-only (and STATUS_HTTP is off) so gatus has no endpoint
-                # to poll, and supervisord restarts it *inside* the
-                # container, so SystemdUnitFailed sees podman-valheim.service
-                # sitting `active` throughout a crash loop.
-                #
-                # These are host-blind: the exporter only exists where
-                # `myValheim.enable` is set (amos1 and hpp-1), so on every
-                # other server the series are simply absent and nothing
-                # evaluates. Known noise on the dev host: stopping the
-                # container to swap mod DLLs trips ValheimServerDown after
-                # 15m. Left unscoped until that actually becomes annoying —
-                # an environment filter has no precedent elsewhere in this
-                # file.
-                #
-                # 15m rather than the usual 5m: a nixos-upgrade that pulls a
-                # new image takes the container down for several minutes
-                # (measured at ~6m on amos1 across the 2026-08-18 reboot),
-                # and a deploy is not an outage worth paging for.
-                alert = "ValheimServerDown";
-                expr = "valheim_server_up == 0";
-                for = "15m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim server process is down on {{ $labels.instance }}";
-                  description = "valheim_server.x86_64 has not been running for 15m on {{ $labels.instance }}. supervisord restarts it automatically, so this means the restart is failing — check `podman logs valheim`.";
-                };
-              }
-              {
-                # Uptime that stays low is the crash-loop signal: the gauge
-                # resets to 0 on every supervisord restart, so if it never
-                # climbs past 10m the server is dying and being restarted
-                # repeatedly. ValheimServerDown can't catch this — each
-                # individual restart succeeds, so valheim_server_up reads 1
-                # nearly every scrape.
-                #
-                # max_over_time rather than a bare `< 600` with a long
-                # `for`: the exporter publishes uptime 0 while the process
-                # is down, so in a fast crash loop any sample that lands in
-                # a restart gap would reset a `for` clock and the alert
-                # would never mature. Asking whether uptime *ever* exceeded
-                # 10m in the window has no such gap sensitivity.
-                #
-                # `and valheim_server_up == 1` keeps this off a server that
-                # is simply down — that is ValheimServerDown's job, and
-                # uptime reads 0 in both cases. The 15m `for` is what stops
-                # an ordinary restart (deploy, update, RESTART_CRON) from
-                # tripping it: a healthy server passes uptime 600 ten
-                # minutes in, which falsifies the expression well before
-                # the clock expires.
-                #
-                # One more thing restarts the server now, and it is the
-                # only one that restarts *repeatedly*: the join-code retry
-                # loop in ../apps/valheim.nix (#701) bounces the container
-                # every joincodeRetryInterval for as long as PlayFab leaves
-                # a code unconfirmed. 900s is set where it is precisely so
-                # uptime reaches ~900 between probes and this expression
-                # stays false throughout an episode — at 600s spacing it
-                # would fire on every one. The two numbers are coupled:
-                # change either the 600 here or joincodeRetryInterval
-                # there, and check the other.
-                alert = "ValheimServerRestartLoop";
-                expr = "max_over_time(valheim_server_uptime_seconds[30m]) < 600 and valheim_server_up == 1";
-                for = "15m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim server restart-looping on {{ $labels.instance }}";
-                  description = "valheim_server has not stayed up longer than 10m at any point in the last 30m (currently {{ $value | humanizeDuration }}). supervisord is restarting it repeatedly — check `podman logs valheim` for the crash.";
-                };
-              }
-              {
-                # The leak detector, and the reason the metrics exist at
-                # all. RSS rather than the cgroup total: memory.current
-                # includes page cache from steamcmd and world saves and
-                # sits several GiB above the process, which would make any
-                # threshold meaningless.
-                #
-                # 4 GiB against a ~1.1 GiB idle baseline (measured on both
-                # hpp-1 and amos1, 2026-08-22) — high enough that ordinary
-                # growth under a full server won't trip it, low enough to
-                # leave days of warning on a 32 GiB host. The failure mode
-                # this front-runs is HostHighMemory, which needs valheim to
-                # reach ~19 GiB before firing and then blames the host
-                # rather than naming the app.
-                #
-                # Re-checked under real player load on 2026-09-14, which
-                # was #458's own gate on the number: 3 concurrent players
-                # at ZDOS ~114,500 held 763-796 MB, and the peak across
-                # 7 days / 8 restart cycles on amos1 was 1.52 GB. 4 GiB
-                # keeps ~2.6x headroom over that and stands unchanged;
-                # the ~1.1 GiB idle figure in the description below is
-                # the 2026-08-22 baseline, now the low end of the range
-                # rather than the whole of it.
-                #
-                # This is a ceiling, not a trend line. The slow-leak
-                # detector that the weekly restart cadence needs is
-                # ValheimMemoryBaselineHigh, immediately below.
-                alert = "ValheimMemoryHigh";
-                expr = "valheim_server_rss_bytes > 4 * 1024 * 1024 * 1024";
-                for = "30m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim server memory high on {{ $labels.instance }}";
-                  description = "valheim_server RSS has been above 4 GiB for 30m on {{ $labels.instance }} (currently {{ $value | humanize1024 }}B), against a ~1.1 GiB idle baseline. Suspect the upstream memory leak that RESTART_CRON exists to paper over; restart the container and see modules/apps/valheim.nix.";
-                };
-              }
-              {
-                # The leak detector for week-long uptimes, added with the
-                # #458 Phase 1 move to a weekly RESTART_CRON. The 4 GiB
-                # ceiling above is a survival threshold — it front-runs
-                # HostHighMemory and nothing finer. Against the 430-850 MB
-                # steady state measured across 8 cycles on amos1 it sits
-                # ~5x away, so a leak carrying RSS from 600 MB to 2 GB
-                # over a week would clear an entire weekly cycle without
-                # a page. That was tolerable while the daily bounce reset
-                # the process every 24h. It is not, when detecting such a
-                # leak is the whole point of running weekly uptimes.
-                #
-                # `min_over_time` is what makes a threshold this low safe:
-                # it watches the floor, not the peak, and both known
-                # transients are peaks — the 1.48-1.52 GB startup spike,
-                # and the ~+170 MB a populated world adds while players
-                # are on. A leak is not a peak; it never gives the memory
-                # back, so it is the one thing that lifts a floor.
-                #
-                # 12h and not 6h, which was the first guess and is wrong:
-                # the startup spike is not a spike but a ~9h plateau that
-                # steps down sharply (09-10: ~1482 MB held 06:00-14:00,
-                # 682 MB at 15:00), so a 6h window fits entirely inside
-                # it. Measured against 7d of amos1 data, the worst-case
-                # floor by window width is 1.479 GB at 6h, 1.476 GB at 8h,
-                # and 1.130 GB from 10h out — and that last figure is
-                # itself an edge-of-retention artifact, with real cycles
-                # flooring at 430-850 MB. So 12h clears the plateau and
-                # leaves 2 GiB at ~2.4x the realistic floor.
-                #
-                # Cost of the wide window is latency: this cannot fire
-                # within 12h of a restart and lags a threshold crossing
-                # by up to 12h. Irrelevant for a week-scale leak.
-                #
-                # The exporter publishes rss 0 while the server is down,
-                # which drops the minimum to 0 and silences this. That is
-                # the safe direction, and ValheimServerDown owns that case.
-                alert = "ValheimMemoryBaselineHigh";
-                expr = "min_over_time(valheim_server_rss_bytes[12h]) > 2 * 1024 * 1024 * 1024";
-                for = "30m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim server baseline memory has risen on {{ $labels.instance }}";
-                  description = "valheim_server RSS has not dropped below 2 GiB at any point in the last 12h on {{ $labels.instance }} (floor currently {{ $value | humanize1024 }}B), against a 430-850 MB steady state. A raised floor rather than a peak is the shape of the leak RESTART_CRON used to paper over, and the weekly cadence is what lets it accumulate — see the restart-cadence notes in modules/apps/valheim.nix (#458).";
-                };
-              }
-              {
-                # The server is up and healthy for this one — that is the
-                # whole point. On 2026-09-20 an upstream
-                # NullReferenceException killed amos1's join-code
-                # confirmation a second after registration, and the server
-                # advertised a code no client could resolve for 3h32m while
-                # valheim_server_up read 1 and uptime climbed normally. None
-                # of the process-liveness rules above can see it; a crossplay
-                # server with an unresolvable code is reachable by nobody,
-                # because there is no connect-by-address fallback (#683).
-                #
-                # The gauge is absent whenever the live code is confirmed, so
-                # this evaluates only during a pending registration — and on
-                # a Steam-backend host the series never exists at all, since
-                # valheim-metrics only publishes it under crossplay. Same
-                # host-blindness as the rules above, one layer deeper.
-                #
-                # 120 matches joincodeGraceSeconds in ../apps/valheim.nix:
-                # the server's own `Retry join-code check` counts down from
-                # 99 at 1/s, so anything past ~99s has missed the protocol's
-                # own worst case. Both numbers come from that measurement;
-                # change them together.
-                #
-                # `for` is 5m on top of that, against a 2m exporter write —
-                # so this needs the state to persist across at least two
-                # refreshes of the .prom file and cannot fire on a single
-                # stale sample. Discord gets the fast path (~3m via
-                # valheim-joincode-watchdog); this is the durable one, for
-                # when nobody is reading that channel.
-                alert = "ValheimJoinCodeUnconfirmed";
-                expr = "valheim_joincode_unconfirmed_seconds > 120";
-                for = "5m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim join code never confirmed on {{ $labels.instance }}";
-                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record. See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
-                };
-              }
-              {
-                # Everything above trusts a .prom file on disk, which
-                # fails silently in the worst possible way: if the
-                # valheim-metrics timer stops running, the last-written
-                # values persist and `valheim_server_up` reads a
-                # reassuring 1 forever. This is the liveness check on the
-                # checker.
-                #
-                # Watching mtime rather than the unit covers every way the
-                # pipeline can stall — unit failed, timer not firing, disk
-                # full, exporter wedged mid-write — in one rule, which is
-                # why valheim-metrics.service is deliberately *not* added
-                # to the systemd unit-include regex above. 15m is roughly
-                # seven missed runs of the 2m timer.
-                alert = "ValheimMetricsStale";
-                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/valheim.prom"} > 900'';
-                for = "10m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Valheim metrics are stale on {{ $labels.instance }}";
-                  description = "valheim.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so every Valheim alert is now evaluating stale data and cannot be trusted. Check valheim-metrics.service and its timer.";
-                };
-              }
-              {
-                # Same liveness-check-on-the-checker shape as
-                # ValheimMetricsStale above, and llama-metrics.service is
-                # left out of the unit-include regex for the same reason.
-                # No alert is worth firing on the llama metrics
-                # themselves — a model sitting unloaded is the normal
-                # state and terra is a desktop that gets powered off — so
-                # this rule is the only one guarding them, and it fires
-                # only when the exporter itself has stopped publishing.
-                # 15m is roughly fifteen missed runs of the 1m timer.
-                alert = "LlamaMetricsStale";
-                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/llama.prom"} > 900'';
-                for = "10m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "llama-server metrics are stale on {{ $labels.instance }}";
-                  description = "llama.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so the LLM dashboard is showing frozen per-model usage. Check llama-metrics.service and its timer.";
-                };
-              }
-              {
                 # Podman's image store grew unbounded until #570 (92 GB on
                 # hpp-1, 88% of it unreferenced) because nothing pruned
                 # it. FilesystemAlmostFull does eventually catch that, but
@@ -820,103 +521,6 @@ _: {
                 annotations = {
                   summary = "Podman image store metrics are stale on {{ $labels.instance }}";
                   description = "podman-images.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so PodmanImageStoreLarge is evaluating a frozen value. Check podman-image-metrics.service and its timer.";
-                };
-              }
-              {
-                # Omada's adopted devices, from the omada-metrics oneshot
-                # in ../apps/omada-metrics.nix. Everything below the
-                # controller was unmonitored until #586: container
-                # liveness, UI reachability and the application log were
-                # all covered, but not a single metric described the
-                # switches themselves. The module is prod-only, so these
-                # series are absent on hpp-1 and the rules simply never
-                # evaluate there.
-                #
-                # Critical rather than warning: there are two switches and
-                # they *are* the network. Anything downstream losing one
-                # will also trip GatusEndpointDown and friends; this rule
-                # is what names the cause instead of leaving a wall of
-                # symptom alerts. 5m rides out a reboot triggered by a
-                # config push or a firmware upgrade.
-                alert = "OmadaDeviceDown";
-                expr = "omada_device_up == 0";
-                for = "5m";
-                labels.severity = "critical";
-                annotations = {
-                  summary = "Omada device {{ $labels.name }} is not connected";
-                  description = "The Omada controller on {{ $labels.instance }} has not had {{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) in the Connected state for 5m. Check omada_device_status for which state it is in — 2 Pending, 3 Heartbeat Missed, 4 Isolated — and omada_device_detail_status for the cause.";
-                };
-              }
-              {
-                # The rule #584 needed and nothing had: a firmware upgrade
-                # failed nightly for four days, the controller's audit log
-                # recorded none of it (#585), and the UI showed only a
-                # device that was not upgraded.
-                #
-                # 48h, not the 7d the issue originally proposed, for two
-                # measured reasons. The controller's own auto-upgrade
-                # schedules are *daily* (`execute_cron` "0 0 12 * * ?" and
-                # "0 0 23 * * ?", one per model, in its `autocheckupgrade`
-                # collection), so 48h already means two full unattended
-                # cycles failed to land it. And a `for:` clock restarts
-                # whenever the series goes absent — amos1 reboots on kernel
-                # updates every 2-8 days, so a 7d window would usually have
-                # been reset before it matured, i.e. would rarely have
-                # fired at all.
-                #
-                # Warning, not critical: a pending upgrade is a thing to
-                # get to, not a thing to wake up for. Pair it with
-                # OmadaFirmwareUpgradeFailed in ./log-alerts.nix, which
-                # catches the attempt as it fails rather than the state it
-                # leaves behind.
-                alert = "OmadaFirmwareUpgradeAvailable";
-                expr = "omada_device_firmware_upgrade_available == 1";
-                for = "48h";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Omada device {{ $labels.name }} has a pending firmware upgrade";
-                  description = "{{ $labels.name }} ({{ $labels.model }}, {{ $labels.mac }}) has had a newer firmware build available for 48h, which is two missed runs of the controller's daily auto-upgrade. omada_device_firmware_info carries the running and available versions. Adopted devices fetch images from the controller on 8043, so start there — see the firewall block in modules/apps/omada.nix, and check OmadaFirmwareUpgradeFailed.";
-                };
-              }
-              {
-                # The exporter's own failure that nothing else can see. A
-                # revoked Open API client, a role change, or an endpoint
-                # renamed by a controller upgrade all leave the oneshot
-                # exiting 0 and rewriting omada.prom on time — so
-                # OmadaMetricsStale below stays quiet — while every device
-                # series quietly disappears. 15m is roughly seven missed
-                # runs of the 2m timer, which is enough to ride out a
-                # controller restart without firing.
-                #
-                # A controller that is down entirely is deliberately out of
-                # scope: the exporter publishes omada_controller_up 0 and
-                # no omada_scrape_error at all in that case, because
-                # SystemdUnitFailed and GatusEndpointDown already carry it.
-                # See the `errors` block in ../apps/omada-metrics.nix.
-                alert = "OmadaScrapeFailing";
-                expr = "omada_scrape_error == 1";
-                for = "15m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Omada exporter cannot read {{ $labels.endpoint }} on {{ $labels.instance }}";
-                  description = "omada-metrics.service has been failing to read the {{ $labels.endpoint }} Open API endpoint for 15m, so the metrics it feeds are missing rather than stale. If endpoint is \"token\", the Open API client has been revoked or rotated — remint it under Global View → Settings → Platform Integration and update sops. Otherwise check `journalctl -u omada-metrics` for the errorCode; -1007 is a role change. See modules/apps/omada-metrics.nix.";
-                };
-              }
-              {
-                # Same liveness-check-on-the-checker shape as
-                # ValheimMetricsStale / LlamaMetricsStale /
-                # PodmanImageMetricsStale above, and omada-metrics.service
-                # is left out of the unit-include regex for the same
-                # reason: watching mtime covers every way the pipeline can
-                # stall, not just a failed unit. 15m is roughly seven
-                # missed runs of the 2m timer.
-                alert = "OmadaMetricsStale";
-                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/omada.prom"} > 900'';
-                for = "10m";
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Omada metrics are stale on {{ $labels.instance }}";
-                  description = "omada.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so OmadaDeviceDown and OmadaFirmwareUpgradeAvailable are evaluating frozen data. Check omada-metrics.service and its timer.";
                 };
               }
               {
@@ -1347,6 +951,7 @@ _: {
       };
     in
     {
+
       # Textfile collector directory. World-readable so node_exporter's
       # DynamicUser can traverse it; root-writable for the oneshots that
       # publish `.prom` files into it (currently just server-backups).
@@ -1412,9 +1017,10 @@ _: {
             # podman-internal helpers — which blows up TSDB cardinality
             # for no observability gain.
             #
-            # Per #157: re-evaluate this regex when adding a new app
-            # module. Anything not matched here is invisible to
-            # SystemdUnitFailed alerting.
+            # The platform owns only the core-unit alternatives here. App
+            # modules add their own service names through
+            # myObservability.monitoredSystemdUnits, so a new app cannot be
+            # healthy-looking solely because this central list was missed.
             extraFlags = [
               "--collector.textfile.directory=${textfileDir}"
               # Publishes node_systemd_service_restart_total (systemd's own
@@ -1453,55 +1059,12 @@ _: {
                 + "|prometheus-(node|postgres|mysqld|redis|snmp|nvidia-gpu)-exporter"
                 # NUT client + per-master exporters (issue #82).
                 + "|upsmon|nut-exporter-(router|nas)"
-                # Native NixOS app services (modules/apps/*.nix using
-                # services.<app>): audiobookshelf, bazarr, flaresolverr,
-                # jellyfin, komga, lidarr, matter-server, miniflux,
-                # paperless (multi-unit: web/scheduler/task-queue/consumer),
-                # pinchflat, prowlarr, radarr, readeck, sabnzbd, sonarr,
-                # spierscraper, tandoor-recipes.
-                + "|audiobookshelf|bazarr|flaresolverr|jellyfin|komga"
-                # llama-server (modules/system/llama-cpp.nix, amos1 only).
-                # Its own child model processes are not units and don't
-                # appear here; per-model state comes from
-                # modules/apps/llm-metrics.nix instead.
-                + "|llama-cpp"
-                + "|lidarr|matter-server|miniflux|paperless(-.+)?|pinchflat"
-                + "|prowlarr|radarr|readeck|sabnzbd(-.+)?|sonarr"
-                + "|tandoor-recipes"
-                # Container-based apps (modules/apps/*.nix using
-                # virtualisation.oci-containers): each registers a
-                # podman-<name>.service unit. The list is environment-blind on
-                # purpose: bookorbit is dev-only and omada is prod-only, so
-                # those tokens simply never match on the other environment's
-                # hosts.
-                + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
-                + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
-                + "|seerr|shelfmark"
-                + "|valheim)"
-                # The Valheim join-code chain (modules/apps/valheim.nix,
-                # crossplay host only — the tokens simply never match
-                # elsewhere).
-                #
-                # These are here because #683's whole detection path runs
-                # through them: the notifier is what writes the pending file
-                # that both the Discord fast path and
-                # ValheimJoinCodeUnconfirmed read. If it dies — a missing
-                # webhook after a rekey is enough, since `cat` of an absent
-                # secret fails under the injected `set -e` and
-                # `Restart=always` eventually gives up into `failed` — then
-                # no pending file is ever written, the gauge never appears,
-                # and the next unconfirmed code passes with every alert
-                # silent. An absent series cannot fire a threshold rule, so
-                # without this line the alert added for #683 has a hole
-                # shaped exactly like the bug it detects.
-                #
-                # Note this includes the watchdog oneshot, unlike
-                # valheim-metrics / llama-metrics / podman-image-metrics
-                # above, which are deliberately left out in favour of
-                # staleness rules on the data they publish. The watchdog
-                # publishes nothing to go stale, so a failed-unit alert is
-                # the only signal available for it.
-                + "|valheim-joincode-(notify|watchdog)"
+                # App modules contribute their own alternatives. Keep the
+                # literal `|` prefix here so an empty contribution list does
+                # not perturb the core-only configuration.
+                + lib.optionalString (config.myObservability.monitoredSystemdUnits != [ ]) (
+                  "|" + lib.concatStringsSep "|" config.myObservability.monitoredSystemdUnits
+                )
                 # The daily image-store GC (modules/system/oci-containers.nix).
                 # Not a container: if it fails the store silently resumes
                 # growing, and PodmanImageStoreLarge would not notice for
@@ -1819,7 +1382,9 @@ _: {
         # over verbatim.
         vmalert.instances.main = {
           enable = true;
-          rules = ruleGroups;
+          rules = ruleGroups // {
+            groups = ruleGroups.groups ++ metricRuleGroups;
+          };
           settings = {
             "datasource.url" = "http://127.0.0.1:${toString vmPort}";
             "notifier.url" = [ "http://127.0.0.1:${toString alertmanagerPort}" ];

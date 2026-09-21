@@ -69,6 +69,8 @@ _: {
       completeDir = "/mnt/content/Downloads/complete";
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-bindery" ];
+
       myAuthentik.oidcApps.bindery = {
         blueprintsDir = ./bindery-blueprints;
         # Bindery keeps OIDC provider config (issuer, client id/secret, scopes)

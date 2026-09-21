@@ -758,6 +758,79 @@ _: {
       };
 
       config = lib.mkIf cfg.enable {
+        myObservability.monitoredSystemdUnits = [
+          "podman-valheim"
+          "valheim-joincode-(notify|watchdog)"
+        ];
+
+        myObservability.metricRuleGroups.valheim.groups = [
+          {
+            name = "valheim";
+            rules = [
+              {
+                alert = "ValheimServerDown";
+                expr = "valheim_server_up == 0";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server process is down on {{ $labels.instance }}";
+                  description = "valheim_server.x86_64 has not been running for 15m on {{ $labels.instance }}. supervisord restarts it automatically, so this means the restart is failing — check `podman logs valheim`.";
+                };
+              }
+              {
+                alert = "ValheimServerRestartLoop";
+                expr = "max_over_time(valheim_server_uptime_seconds[30m]) < 600 and valheim_server_up == 1";
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server restart-looping on {{ $labels.instance }}";
+                  description = "valheim_server has not stayed up longer than 10m at any point in the last 30m (currently {{ $value | humanizeDuration }}). supervisord is restarting it repeatedly — check `podman logs valheim` for the crash.";
+                };
+              }
+              {
+                alert = "ValheimMemoryHigh";
+                expr = "valheim_server_rss_bytes > 4 * 1024 * 1024 * 1024";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server memory high on {{ $labels.instance }}";
+                  description = "valheim_server RSS has been above 4 GiB for 30m on {{ $labels.instance }} (currently {{ $value | humanize1024 }}B), against a ~1.1 GiB idle baseline. Suspect the upstream memory leak that RESTART_CRON exists to paper over; restart the container and see modules/apps/valheim.nix.";
+                };
+              }
+              {
+                alert = "ValheimMemoryBaselineHigh";
+                expr = "min_over_time(valheim_server_rss_bytes[12h]) > 2 * 1024 * 1024 * 1024";
+                for = "30m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim server baseline memory has risen on {{ $labels.instance }}";
+                  description = "valheim_server RSS has not dropped below 2 GiB at any point in the last 12h on {{ $labels.instance }} (floor currently {{ $value | humanize1024 }}B), against a 430-850 MB steady state. A raised floor rather than a peak is the shape of the leak RESTART_CRON used to paper over, and the weekly cadence is what lets it accumulate — see the restart-cadence notes in modules/apps/valheim.nix (#458).";
+                };
+              }
+              {
+                alert = "ValheimJoinCodeUnconfirmed";
+                expr = "valheim_joincode_unconfirmed_seconds > 120";
+                for = "5m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim join code never confirmed on {{ $labels.instance }}";
+                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record. See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
+                };
+              }
+              {
+                alert = "ValheimMetricsStale";
+                expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/valheim.prom"} > 900'';
+                for = "10m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "Valheim metrics are stale on {{ $labels.instance }}";
+                  description = "valheim.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so every Valheim alert is now evaluating stale data and cannot be trusted. Check valheim-metrics.service and its timer.";
+                };
+              }
+            ];
+          }
+        ];
+
         # The relay counters' totals and cursor (#627). See the
         # `metricsStateDir` note in the `let` block above for why this is
         # preserved but deliberately kept out of restic.
