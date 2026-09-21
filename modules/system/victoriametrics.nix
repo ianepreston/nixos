@@ -599,6 +599,17 @@ _: {
                 # tripping it: a healthy server passes uptime 600 ten
                 # minutes in, which falsifies the expression well before
                 # the clock expires.
+                #
+                # One more thing restarts the server now, and it is the
+                # only one that restarts *repeatedly*: the join-code retry
+                # loop in ../apps/valheim.nix (#701) bounces the container
+                # every joincodeRetryInterval for as long as PlayFab leaves
+                # a code unconfirmed. 900s is set where it is precisely so
+                # uptime reaches ~900 between probes and this expression
+                # stays false throughout an episode — at 600s spacing it
+                # would fire on every one. The two numbers are coupled:
+                # change either the 600 here or joincodeRetryInterval
+                # there, and check the other.
                 alert = "ValheimServerRestartLoop";
                 expr = "max_over_time(valheim_server_uptime_seconds[30m]) < 600 and valheim_server_up == 1";
                 for = "15m";
@@ -725,7 +736,7 @@ _: {
                 labels.severity = "warning";
                 annotations = {
                   summary = "Valheim join code never confirmed on {{ $labels.instance }}";
-                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended: run `systemctl restart podman-valheim`, and if the code comes back unconfirmed, repeat about every 15 minutes. See the join-code notes in modules/apps/valheim.nix (#683, #694).";
+                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record. See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
                 };
               }
               {
