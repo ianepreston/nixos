@@ -223,6 +223,14 @@ _: {
         linuxServer = true;
       };
 
+      # The intentionally small local contract for controller consumers.
+      # Keep container details private so they can change without requiring
+      # consumers to inspect virtualisation.oci-containers directly.
+      myServiceEndpoints.omada = {
+        url = "https://127.0.0.1:${toString manageHttpsPort}";
+        unit = "podman-omada.service";
+      };
+
       virtualisation.oci-containers.containers.omada = {
         # renovate: datasource=docker depName=mbentley/omada-controller
         image = "mbentley/omada-controller:6.3.0.44-openj9";

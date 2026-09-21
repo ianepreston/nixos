@@ -102,11 +102,17 @@ _: {
       # in llm-metrics.nix, mylar3.nix and valheim.nix.
       textfileDir = "/var/lib/node-exporter-textfile-collector";
 
-      # The controller's management port, over loopback. Same
-      # self-signed cert Caddy already skips verification on — see the
-      # `proxyConfig` in ./omada.nix. Kept in sync with `manageHttpsPort`
-      # there by hand; it is upstream's default and has never moved.
-      controllerUrl = "https://127.0.0.1:8043";
+      hasController = config.myServiceEndpoints ? omada;
+      # The empty fallback keeps the assertion below responsible for the
+      # diagnostic when this module is imported without its producer. The
+      # service remains unconditional, as it was before this contract, so
+      # endpoint presence is not used while the module system is finding its
+      # configuration fixpoint.
+      controller =
+        config.myServiceEndpoints.omada or {
+          url = "";
+          unit = "";
+        };
 
       exporter =
         pkgs.writers.writePython3 "omada-metrics"
@@ -543,6 +549,20 @@ _: {
           '';
     in
     {
+      assertions = [
+        {
+          # This module is only meaningful next to the controller it polls.
+          # The public endpoint contract is the guard instead of an
+          # implementation-specific read of the Omada container config.
+          assertion = hasController;
+          message = ''
+            modules/apps/omada-metrics.nix requires
+            myServiceEndpoints.omada. Import modules/apps/omada.nix alongside
+            it, or drop omada-metrics from prodOnlyApps in
+            modules/profiles/server-apps.nix.
+          '';
+        }
+      ];
       myObservability.metricRuleGroups.omada.groups = [
         {
           name = "omada";
@@ -601,13 +621,13 @@ _: {
         # The controller is a JVM that takes minutes to answer after a
         # boot; without this the first run after every reboot fails on a
         # connection refused and publishes controller_up=0 for one cycle.
-        after = [ "podman-omada.service" ];
+        after = [ controller.unit ];
         serviceConfig = {
           Type = "oneshot";
           User = "root";
           ExecStart = exporter;
           Environment = [
-            "OMADA_URL=${controllerUrl}"
+            "OMADA_URL=${controller.url}"
             "TEXTFILE_OUT=${textfileDir}/omada.prom"
             "CLIENT_ID_FILE=${config.sops.secrets."omada/openapi_client_id".path}"
             "CLIENT_SECRET_FILE=${config.sops.secrets."omada/openapi_client_secret".path}"
@@ -631,22 +651,5 @@ _: {
         };
       };
 
-      assertions = [
-        {
-          # This module is only meaningful next to the controller it
-          # polls over loopback. It is imported through `prodOnlyApps`
-          # while omada.nix is in `commonApps`, so they can only drift
-          # apart by an edit to that profile — this is the guard on that
-          # edit.
-          assertion = config.virtualisation.oci-containers.containers ? omada;
-          message = ''
-            modules/apps/omada-metrics.nix polls the Omada controller over
-            loopback (${controllerUrl}), but this host does not run the
-            omada container. Import modules/apps/omada.nix alongside it, or
-            drop omada-metrics from `prodOnlyApps` in
-            modules/profiles/server-apps.nix.
-          '';
-        }
-      ];
     };
 }

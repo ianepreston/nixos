@@ -40,6 +40,7 @@
         postgresql
         preservation-server
         runtime-credentials
+        service-endpoints
         server-backups
         server-users
         sops
