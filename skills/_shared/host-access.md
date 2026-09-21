@@ -141,13 +141,32 @@ GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
   git fetch https://github.com/ianepreston/nixos +refs/heads/main:refs/remotes/origin/main
 ```
 
+### Creating commits with a suppressed global config
+
+Usually a plain `git commit` needs no identity flags: the flake installs the
+correct public Git identity in `~/.gitconfig`. If a command must create a
+commit with `GIT_CONFIG_GLOBAL=/dev/null`, capture that identity *before*
+suppressing the global config and pass it to `git commit`:
+
+```sh
+git_user_name="$(git config user.name)"
+git_user_email="$(git config user.email)"
+
+GIT_CONFIG_GLOBAL=/dev/null \
+  git -c user.name="$git_user_name" -c user.email="$git_user_email" commit -m "<message>"
+```
+
+Do not add identity flags to `git push`: it transmits commits already created
+and does not use them. A remote rejection saying `push declined due to email
+privacy restrictions` means the commit's identity was wrong; amend or recreate
+the commit with the configured identity before pushing.
+
 Push — suppress the global config and let `gh` answer the credential prompt, so
 no token ever lands in argv:
 
 ```sh
 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
   git -c credential.helper='!gh auth git-credential' \
-      -c user.name="Ian Preston" -c user.email="ian.e.preston@gmail.com" \
       push https://github.com/ianepreston/nixos HEAD:refs/heads/<branch>
 ```
 

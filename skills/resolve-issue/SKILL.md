@@ -64,9 +64,13 @@ new behaviour, `chore/` for maintenance.
 
 Two worktree gotchas:
 
-- No `.pre-commit-config.yaml` (git-hooks.nix generates it in the devshell), so
-  commits need `PRE_COMMIT_ALLOW_NO_CONFIG=1`. No lint coverage is lost —
-  `task check` runs the same nixfmt/statix/deadnix through `nix flake check`.
+- A fresh worktree lacks the ignored `.pre-commit-config.yaml` that
+  `git-hooks.nix` generates. Before its first commit, run `nix develop -c true`
+  (or enter `nix develop`) in the worktree. On Darwin this materializes the
+  config for the managed global hook; on Linux it installs the project hook.
+  Commit normally once that succeeds. Do **not** set
+  `PRE_COMMIT_ALLOW_NO_CONFIG=1`: it papers over the missing config and can
+  make the local hook a no-op. `task check` remains the full pre-push gate.
 - `task deploy:*` / `task rebuild` hardcode a relative
   `--override-input nix-secrets path:../nix-secrets`, which resolves to nothing
   from a worktree path. Use the absolute-path invocation.
@@ -143,9 +147,9 @@ you rejected and why.
 
 ## 8. Commit, PR, teardown
 
-Commit in the worktree with `PRE_COMMIT_ALLOW_NO_CONFIG=1`, subject in the house
-style (`<area>: <imperative>`, e.g. `valheim: publish a player-count gauge from
-the notifier roster`), and the session's attribution footer.
+Commit in the worktree normally, after the dev-shell setup above, with a subject
+in the house style (`<area>: <imperative>`, e.g. `valheim: publish a player-count
+gauge from the notifier roster`) and the session's attribution footer.
 
 Push with the `gh`-credential-helper invocation from host-access (plain `git
 push` hangs, and the https URL is rewritten back to ssh). Then `gh pr create`.
