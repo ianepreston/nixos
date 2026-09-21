@@ -440,9 +440,13 @@ dispatcher exits non-zero on a botched restore. See `recovery:jellyfin`
 (60-retry, longer warm-up) or `recovery:miniflux` (`/healthcheck`) for the two
 main patterns.
 
-The `expectedPreservedDirs` list in `modules/profiles/server-apps.nix` is the
-structural analogue — forcing a manual edit when adding state to a native app.
-Recovery dispatchers and that list should grow together.
+`myAppState.<app>` in the owning module is the structural analogue: it renders
+the preservation entry, the restic path (unless `backup = false`), and the
+`expectedPreservedDirs` guard in `modules/profiles/server-apps.nix` from one
+declaration, so there is no profile edit to forget. A recovery dispatcher is
+still a manual edit, and it should grow with that declaration — an app whose
+state is preserved and backed up but has no `recovery:<app>` task is restorable
+only by hand.
 
 ### `restartUnits` goes on the template, not the secret
 

@@ -120,10 +120,16 @@
       # entries; only the lack of a reboot between deploy and the audit
       # kept it from silently wiping arr history. `myAppState` now makes
       # the preserve policy structural and carries the backup policy with
-      # it, so neither can drift from the app that owns the path;
-      # this assertion stays as the belt-and-suspenders that every
-      # expected dir is actually present in `preservation.preserveAt` on
-      # impermanence hosts.
+      # it, so neither can drift from the app that owns the path.
+      #
+      # Both sides of this assertion derive from `config.myAppState`, so
+      # it cannot fire on a forgotten entry the way it did while the
+      # profile still carried hand-written paths — an app that declares
+      # nothing is invisible to it. What it still catches is the other
+      # direction: anything that drops a declared dir back out of
+      # `preservation.preserveAt` (a host-level `mkForce` on the list, a
+      # future filter in app-state.nix) turns a silent wipe-on-reboot
+      # into an eval failure.
       expectedPreservedDirs = map (a: a.stateDir) (lib.attrValues config.myAppState);
 
       preservedDirs = map (d: d.directory) (config.preservation.preserveAt."/persist".directories or [ ]);
@@ -151,8 +157,9 @@
 
             Declare `myAppState.<app>` in the owning app module (see
             e.g. modules/apps/bazarr.nix for the pattern) — that single
-            source emits both the preservation entry and the restic path,
-            and feeds the derived guard here. No profile edit needed.
+            source emits the preservation entry, the restic path (unless
+            `backup = false`), and the derived guard here. No profile
+            edit needed.
           '';
         }
       ];
