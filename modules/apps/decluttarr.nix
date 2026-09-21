@@ -124,7 +124,7 @@ _: {
 
           download_clients:
             sabnzbd:
-              - base_url: "http://host.containers.internal:18080"
+              - base_url: "http://host.containers.internal:${toString config.services.sabnzbd.settings.misc.port}"
                 api_key: "$sabnzbd_key"
                 name: "SABnzbd"
           EOF

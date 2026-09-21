@@ -47,8 +47,9 @@ _: {
       textfileDir = "/var/lib/node-exporter-textfile-collector";
 
       vmPort = 8428;
-      # 8880 is vmalert's default but UniFi controller binds it; bump by 1.
-      vmalertPort = 8881;
+      # The retired controller only displaced this default on amos1. Keep the
+      # dev host's existing loopback endpoint unchanged (#714).
+      vmalertPort = if hostSpec.serverEnvironment == "prod" then 8880 else 8881;
       alertmanagerPort = 9093;
       caddyMetricsPort = 2019;
       cadvisorPort = 8081;
@@ -1469,15 +1470,13 @@ _: {
                 + "|tandoor-recipes"
                 # Container-based apps (modules/apps/*.nix using
                 # virtualisation.oci-containers): each registers a
-                # podman-<name>.service unit. Includes unifi-os-server —
-                # it runs as an OCI container (podman-unifi-os-server),
-                # not a native service. The list is environment-blind on
-                # purpose: bookorbit is dev-only and omada/unifi-os-server
-                # are prod-only, so those tokens simply never match on the
-                # other environment's hosts.
+                # podman-<name>.service unit. The list is environment-blind on
+                # purpose: bookorbit is dev-only and omada is prod-only, so
+                # those tokens simply never match on the other environment's
+                # hosts.
                 + "|podman-(actualbudget|bindery|bookorbit|decluttarr"
                 + "|homeassistant|kapowarr|manyfold|mylar3|omada|profilarr"
-                + "|seerr|shelfmark|unifi-os-server"
+                + "|seerr|shelfmark"
                 + "|valheim)"
                 # The Valheim join-code chain (modules/apps/valheim.nix,
                 # crossplay host only — the tokens simply never match

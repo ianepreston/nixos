@@ -419,7 +419,7 @@
       # matter-server initiating to devices, with conntrack letting the
       # answers home. It is emphatically not a decision to answer on vlan30:
       # the NixOS allowlist is global, so holding a lease here silently put
-      # the whole server allowlist (SSH, the UniFi admin ports) on the IoT
+      # the whole server allowlist (SSH and administrative service ports) on the IoT
       # segment until #476. iot-network.nix now gates the interface at the
       # head of nixos-fw; keep that gate in mind before assuming a port
       # opened elsewhere is reachable from a device.

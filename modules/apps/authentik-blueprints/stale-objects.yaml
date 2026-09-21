@@ -24,10 +24,10 @@
 # `myAuthentik.oidcApps` on hpp-1 and amos1 alike. That matters because
 # this blueprint applies everywhere: a name that is retired on one host
 # but live on the other must NOT be listed, or the deletion would break
-# the host where it still runs. Three names are in that state today —
-# readeck is dev-only and so orphaned on amos1; omada and unifi went
-# prod-only and so are orphaned on hpp-1, where the dev authentik still
-# holds the proxy provider and application tile for each. Those orphans
+# the host where it still runs. Two names are in that state today —
+# readeck is dev-only and so orphaned on amos1; omada is prod-only and
+# so orphaned on hpp-1, where the dev authentik still holds its proxy
+# provider and application tile. Those orphans
 # are the tolerable half of the tradeoff described above: they only
 # become a hazard if the same name is later reclaimed by an *OIDC*
 # provider on that host, and a forward-auth app coming back re-upserts
@@ -111,3 +111,12 @@ entries:
     state: absent
     identifiers:
       name: shelfarr
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: unifi
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: unifi

@@ -56,7 +56,7 @@
       authentikHost = "authentik.${hostSpec.serverDomain}";
       # Native host services, reached over the podman bridge.
       prowlarrUrl = "http://host.containers.internal:9696";
-      sabnzbdUrl = "http://host.containers.internal:18080";
+      sabnzbdUrl = "http://host.containers.internal:${toString config.services.sabnzbd.settings.misc.port}";
       # gatus already owns 127.0.0.1:8084 on the host, so publish on a
       # distinct host port and leave the container on the image default
       # (which is also what its built-in HEALTHCHECK probes).
