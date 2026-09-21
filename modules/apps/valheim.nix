@@ -96,12 +96,18 @@
 # re-checks on its own: the NRE kills the join-code state machine
 # permanently while the lobby-refresh loop keeps going, so waiting
 # passively recovers nothing (episode 1 sat 3h32m proving it). Restart,
-# and if it comes back unconfirmed, restart again in ~15 minutes:
+# and if it comes back unconfirmed, restart again in ~15 minutes.
+#
+# valheim-joincode-watchdog now runs exactly that loop by itself (#701),
+# uncapped, for as long as the code stays unconfirmed and the player
+# roster stays empty — so the operator woken by the Discord message has
+# nothing to do. Both episodes above would have ended within 15 minutes.
+# By hand it is still:
 #
 #   ssh amos1 -- sudo systemctl restart podman-valheim
 #
 # 15 minutes rather than faster because ValheimServerRestartLoop trips
-# below ~10m spacing. #701 proposes automating exactly this loop.
+# below ~10m spacing; see joincodeRetryInterval below for the derivation.
 #
 # Note the restart hands back the *same* digits, so an unchanged code is
 # not evidence it did nothing. That is not the deterministic custom ID —
@@ -467,7 +473,7 @@ _: {
       # write these paths, so they are named once here rather than three
       # times in three scripts.
       #
-      # All three live in the notifier's RuntimeDirectory, which is /run and
+      # All four live in the notifier's RuntimeDirectory, which is /run and
       # therefore cleared on reboot. That is still the wanted semantics — a
       # reboot restarts the server, which re-registers — but note it is no
       # longer the *whole* story for `marker`; see the re-announce path in
@@ -484,10 +490,19 @@ _: {
       #             pending as unconfirmed. Stops it re-posting every minute,
       #             and is what tells the notifier that the eventual
       #             confirmation is *news* even at unchanged digits.
+      #   retried   "<epoch> <count>" for the watchdog's automatic
+      #             re-registration loop (#701): when it last restarted the
+      #             container for this episode, and how many times. Paces
+      #             the retries and drives the loud line past
+      #             joincodeRetryLoudAfter. Deliberately *not* the same file
+      #             as `alerted` — one Discord message per episode, many
+      #             restarts — and cleared alongside `pending` so a
+      #             confirmation resets the counter.
       joincodeRuntimeDir = "/run/valheim-joincode-notify";
       joincodeMarker = "${joincodeRuntimeDir}/last";
       joincodePending = "${joincodeRuntimeDir}/pending";
       joincodeAlerted = "${joincodeRuntimeDir}/alerted";
+      joincodeRetried = "${joincodeRuntimeDir}/retried";
 
       # How long a registration may go unconfirmed before it is treated as
       # broken (#683).
@@ -504,6 +519,44 @@ _: {
       # Do not re-derive this from a comment elsewhere in the file: it comes
       # from those log timestamps.
       joincodeGraceSeconds = 120;
+
+      # How often the watchdog re-registers while a code stays unconfirmed,
+      # by restarting the container (#701).
+      #
+      # 900 is a floor imposed by an existing alert, not a tuning choice.
+      # ValheimServerRestartLoop in ../system/victoriametrics.nix is
+      # `max_over_time(valheim_server_uptime_seconds[30m]) < 600 and
+      # valheim_server_up == 1`, for 15m. At 15-minute spacing the server
+      # reaches ~900s of uptime between restarts, which falsifies it. At 10
+      # minutes uptime peaks right at the 600s threshold and every episode
+      # would risk a spurious restart-loop page. Do not lower this without
+      # changing that rule too.
+      #
+      # Constant rather than exponential, which would be actively wrong
+      # here: detection lag *is* the retry interval, so backoff grows the
+      # lag precisely when the wait has been longest. From a 2m base,
+      # probes land at 2, 6, 14, 30, 62, 126, 254m — episode 1 ended at
+      # 3h32m, between the 126m and 254m probes, so the next one would have
+      # been 42 minutes late. A constant interval has a flat worst case.
+      #
+      # Uncapped on purpose. #694 established that within an episode every
+      # registration fails however it is triggered, so a restart is a probe
+      # of whether the outage has lifted, not a remediation — a cap of 2-3
+      # is spent in the first minutes of a multi-hour episode and the unit
+      # then goes quiet for the remaining three hours.
+      joincodeRetryInterval = 900;
+
+      # Retries past which the watchdog starts logging at error level
+      # (#701). Not a cap — nothing stops at this number; it exists so a
+      # genuinely permanent failure is distinguishable in the journal from
+      # a long-but-ordinary episode.
+      #
+      # 16 * 900s = 4h, which clears the longest episode on record
+      # (2026-09-20, <= 3h32m, ~14 retries at this spacing). So the loud
+      # line means "this episode is already longer than anything observed",
+      # which is a claim worth making; a smaller number would fire inside
+      # the normal range and mean nothing.
+      joincodeRetryLoudAfter = 16;
 
       # The join-code gauge's two halves, as bindings rather than inline
       # `lib.optionalString` calls: an interpolation opening at column 0
@@ -1232,6 +1285,7 @@ _: {
                 marker=${joincodeMarker}
                 pending=${joincodePending}
                 alerted=${joincodeAlerted}
+                retried=${joincodeRetried}
                 webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
                 server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
 
@@ -1296,7 +1350,12 @@ _: {
                   # its own merits. Without this, a restart that re-registers
                   # under a fresh number and fails again inherits the old
                   # flag and goes unreported.
-                  rm -f "$alerted"
+                  #
+                  # `retried` goes with it, for the same reason and one
+                  # more: a new episode restarts the retry clock, so the
+                  # first probe of it lands promptly rather than up to 15
+                  # minutes after the old episode's last one.
+                  rm -f "$alerted" "$retried"
                   printf '%s %s\n' "$code" "$when" > "$pending"
                 }
 
@@ -1321,7 +1380,10 @@ _: {
                 # the dedupe exists to prevent.
                 handle_active() {
                   code="$1"
-                  rm -f "$pending"
+                  # `retried` clears with `pending`: the episode is over, so
+                  # the watchdog's attempt counter and spacing clock are
+                  # both spent state. The next episode starts from zero.
+                  rm -f "$pending" "$retried"
                   if [ -e "$alerted" ]; then
                     echo "join code $code confirmed after being announced unconfirmed; re-announcing"
                     rm -f "$marker" "$alerted"
@@ -1504,14 +1566,35 @@ _: {
             # exactly when the server is in use. Polling a timestamp is
             # indifferent to journal volume.
             #
-            # This deliberately does not restart anything. The remediation is
-            # mechanical (`systemctl restart podman-valheim`, verified during
-            # #683) and the temptation to automate it is real, but a log
-            # pattern that bounces a prod game server is a bigger commitment
-            # than one occurrence in 30 days of retained logs justifies.
-            # Revisit with a second data point.
+            # It also re-registers, by restarting the container every
+            # joincodeRetryInterval for as long as the code stays
+            # unconfirmed (#701). An earlier version of this comment
+            # declined to automate that on one data point; the second data
+            # point arrived (#694) and changed the shape of the answer as
+            # well as the answer.
+            #
+            # What changed is what a restart *is*. Within an episode every
+            # registration fails — container restart, in-container
+            # `supervisorctl restart`, a fresh PlayFab identity and a
+            # reverted one all failed inside episode 2 — and outside one
+            # every registration confirms in 1-2s. So a restart does not
+            # fix anything; it asks whether the outage has ended, and the
+            # server will never ask on its own (the NRE kills the join-code
+            # state machine permanently while the lobby-refresh loop keeps
+            # running). Asking repeatedly is therefore the only recovery
+            # there is, and asking slowly forever beats asking hard and
+            # giving up: both observed episodes would have shrunk from
+            # 1h19m/3h32m to <= 15 minutes.
+            #
+            # "Bounces a prod game server" is also a smaller claim than it
+            # was. Under crossplay there is no connect-by-address fallback,
+            # so an unresolvable code admits nobody and an episode is a
+            # zero-player server by construction — confirmed across all 5
+            # failed registrations in #694. The roster guard below is a
+            # safety net against that argument being wrong, not the
+            # argument.
             valheim-joincode-watchdog = {
-              description = "Alert to Discord when a registered Valheim join code is never confirmed";
+              description = "Alert to Discord and re-register when a Valheim join code is never confirmed";
               # Same sops edge as the notifier above — without it the first
               # run after activation dies on a missing webhook file. A
               # oneshot on a timer, so a failed run is not a failed deploy,
@@ -1525,7 +1608,7 @@ _: {
               serviceConfig = {
                 Type = "oneshot";
                 # Shares the notifier's RuntimeDirectory rather than owning
-                # one: these two units read and write the same three files,
+                # one: these two units read and write the same four files,
                 # and that sharing is the interface. `Preserve` must match
                 # the notifier's, or a run of this oneshot would take the
                 # directory — dedupe marker included — down with it on exit.
@@ -1534,6 +1617,14 @@ _: {
                 # Root: reads the sops secret. ProtectSystem=strict makes
                 # /run read-only except for RuntimeDirectory, which is
                 # exactly the one path this writes.
+                #
+                # None of this blocks the `systemctl restart` in the retry
+                # branch. That is a D-Bus call to PID 1, so it needs
+                # AF_UNIX (already here, for the webhook's resolver) and
+                # writes nothing ProtectSystem covers; NoNewPrivileges is
+                # irrelevant to a unit already running as root. Verified on
+                # hpp-1 2026-09-21 with a systemd-run carrying this exact
+                # property set: the restart went through, exit 0.
                 ProtectHome = true;
                 ProtectSystem = "strict";
                 PrivateTmp = true;
@@ -1550,17 +1641,16 @@ _: {
 
                 pending=${joincodePending}
                 alerted=${joincodeAlerted}
+                retried=${joincodeRetried}
+                roster=${playerRoster}
+                rosterReady=${playerRosterReady}
+
+                awk=${pkgs.gawk}/bin/awk
+                systemctl=${pkgs.systemd}/bin/systemctl
 
                 # Nothing registered, or the confirmation already landed and
                 # the notifier cleared it. The overwhelmingly common case.
                 if [ ! -f "$pending" ]; then
-                  exit 0
-                fi
-
-                # Already announced for this episode. Cleared by the notifier
-                # when a confirmation finally arrives, which is also what
-                # makes that confirmation re-announce.
-                if [ -e "$alerted" ]; then
                   exit 0
                 fi
 
@@ -1573,50 +1663,151 @@ _: {
                   "" | *[!0-9]*) exit 0 ;;
                 esac
 
-                age=$(( $(date +%s) - when ))
+                now=$(date +%s)
+                age=$(( now - when ))
                 if [ "$age" -lt ${toString joincodeGraceSeconds} ]; then
                   exit 0
                 fi
 
-                webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
-                server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
-
-                # The wording matters more than it looks. #661 was a stale
-                # code presented as usable, and this message names a code
-                # too — so it has to say plainly that the code is *not*
-                # expected to work. Never reuse the healthy announcement's
-                # phrasing here.
+                # ## Announce — once per episode
                 #
-                # It also has to say that *one* restart may not be enough.
-                # #694 established these arrive in multi-hour episodes in
-                # which every registration fails, so the operator reading
-                # this at 05:00 needs to know a failed restart is expected
-                # and that retrying later is the action — otherwise the
-                # message reads as "already tried that, nothing works".
-                payload="$(${pkgs.jq}/bin/jq -nc \
-                  --arg code "$code" \
-                  --arg server "$server" \
-                  --arg mins "$(( age / 60 ))" \
-                  '{content: ("⚠️ Valheim server **" + $server
-                              + "** registered join code **" + $code + "** " + $mins
-                              + "m ago, but PlayFab never confirmed it.\n"
-                              + "**That code most likely does not work** — do not share it.\n"
-                              + "_These come in episodes lasting 1-3.5h. Restart with "
-                              + "`sudo systemctl restart podman-valheim`; if the code is still "
-                              + "unconfirmed, restart again in ~15m until it takes (#694)._")}')"
+                # `alerted` used to short-circuit the whole unit. It now
+                # guards only the Discord half, and that narrowing is the
+                # point of #701: one message per episode, many restarts.
+                # Leaving the retry behind this flag would fire exactly one
+                # restart per episode, which is the capped design the
+                # episode model rules out.
+                if [ ! -e "$alerted" ]; then
+                  webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
+                  server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
 
-                # Same `-K -` stdin trick as the notifier: the webhook must
-                # not reach the process cmdline. A failed POST leaves
-                # `alerted` unset so the next tick retries, which is the
-                # right direction to fail for an outage alert.
-                if printf 'url = "%s"\n' "$webhook" \
-                  | ${pkgs.curl}/bin/curl -fsS -K - \
-                      -X POST -H 'Content-Type: application/json' -d "$payload"; then
-                  echo "announced unconfirmed join code $code (pending ''${age}s)"
-                  touch "$alerted"
-                else
-                  echo "failed to post unconfirmed join code $code to discord" >&2
+                  # The wording matters more than it looks. #661 was a stale
+                  # code presented as usable, and this message names a code
+                  # too — so it has to say plainly that the code is *not*
+                  # expected to work. Never reuse the healthy announcement's
+                  # phrasing here.
+                  #
+                  # It no longer asks for a restart. #694 established these
+                  # arrive in multi-hour episodes in which every
+                  # registration fails, so the operator woken at 05:00 would
+                  # be hand-running a probe the host is already running on a
+                  # timer. Saying so is what stops the channel reading the
+                  # silence as "nobody is doing anything".
+                  payload="$(${pkgs.jq}/bin/jq -nc \
+                    --arg code "$code" \
+                    --arg server "$server" \
+                    --arg mins "$(( age / 60 ))" \
+                    --arg every "$(( ${toString joincodeRetryInterval} / 60 ))" \
+                    '{content: ("⚠️ Valheim server **" + $server
+                                + "** registered join code **" + $code + "** " + $mins
+                                + "m ago, but PlayFab never confirmed it.\n"
+                                + "**That code most likely does not work** — do not share it.\n"
+                                + "_These come in episodes lasting 1-3.5h in which every "
+                                + "registration fails. The host is re-registering itself every "
+                                + $every + "m and will announce the code again when one takes; "
+                                + "no action needed (#701)._")}')"
+
+                  # Same `-K -` stdin trick as the notifier: the webhook must
+                  # not reach the process cmdline. A failed POST leaves
+                  # `alerted` unset so the next tick retries, which is the
+                  # right direction to fail for an outage alert.
+                  if printf 'url = "%s"\n' "$webhook" \
+                    | ${pkgs.curl}/bin/curl -fsS -K - \
+                        -X POST -H 'Content-Type: application/json' -d "$payload"; then
+                    echo "announced unconfirmed join code $code (pending ''${age}s)"
+                    touch "$alerted"
+                  else
+                    echo "failed to post unconfirmed join code $code to discord" >&2
+                  fi
                 fi
+
+                # ## Re-register — repeatedly, for as long as it takes (#701)
+                #
+                # Everything below is independent of the block above: the
+                # first tick of an episode does both, every later tick does
+                # only this.
+
+                # Roster guard. #694's argument that an episode is a
+                # zero-player server by construction is a strong one — under
+                # crossplay there is no connect-by-address fallback, so an
+                # unresolvable code admits nobody — but it is an argument,
+                # and #590 is a reminder that log lines can go missing. So
+                # check, and fail towards not restarting.
+                #
+                # `ready` is what makes the roster answerable at all: the
+                # notifier rebuilds it from scratch on every start and only
+                # writes the marker afterwards, so during a rebuild the file
+                # is an authoritative-looking lie (see the playerRoster
+                # notes above). Missing marker, unreadable file, non-numeric
+                # count and a non-zero count all land in the same `*` arm,
+                # because "cannot tell" and "someone is on" call for the
+                # same thing: do not bounce the server. The standing cost is
+                # that a crossplay host with playerNotify = false would get
+                # detection and never recovery; amos1 is the only crossplay
+                # host and runs it true.
+                if [ ! -e "$rosterReady" ]; then
+                  exit 0
+                fi
+                players=$("$awk" 'END { print NR }' "$roster" 2>/dev/null || true)
+                case "$players" in
+                  0) ;;
+                  *) exit 0 ;;
+                esac
+
+                # "<epoch> <count>": when the last re-registration went out,
+                # and how many this episode has had. Both pre-set because
+                # this runs under `set -u` and a torn or empty file makes
+                # `read` return non-zero having assigned nothing — the same
+                # foot-gun handle_reg's `pcode` guards against.
+                last=0
+                count=0
+                if [ -f "$retried" ]; then
+                  read -r last count _rest < "$retried" || true
+                  case "$last" in
+                    "" | *[!0-9]*) last=0 ;;
+                  esac
+                  case "$count" in
+                    "" | *[!0-9]*) count=0 ;;
+                  esac
+                fi
+
+                # Spacing. `last=0` means nothing has been tried yet this
+                # episode, and that probes immediately rather than waiting
+                # out a first full interval: detection has already cost the
+                # grace window plus a tick, and the episode may have ended
+                # in between.
+                if [ "$last" -gt 0 ] && [ $(( now - last )) -lt ${toString joincodeRetryInterval} ]; then
+                  exit 0
+                fi
+
+                count=$(( count + 1 ))
+
+                # Stamped before the restart rather than after. Nothing
+                # should be able to leave this unit having bounced the
+                # container without recording that it did — that is the one
+                # way a 15-minute loop turns into a 60-second one.
+                printf '%s %s\n' "$now" "$count" > "$retried"
+
+                # Not a cap: the loop does not stop here. Past this many
+                # attempts the episode is longer than any on record, so the
+                # transient explanation is wearing thin and the journal
+                # should say so in a way `journalctl -p err` can find.
+                if [ "$count" -ge ${toString joincodeRetryLoudAfter} ]; then
+                  echo "join code $code still unconfirmed after $count re-registrations over $(( age / 60 ))m; that is longer than any observed episode, so this may be a permanent PlayFab failure rather than a transient one (#701)" >&2
+                fi
+
+                echo "re-registering join code $code: restarting podman-valheim (attempt $count, pending ''${age}s)"
+
+                # --no-block so this oneshot returns at once. A blocking
+                # restart holds the unit open for the container's stop —
+                # 8-9s measured on amos1, but bounded only by podman's own
+                # stop timeout — and a run past DefaultTimeoutStartSec would
+                # be killed and leave the watchdog `failed`, which the
+                # systemd collector scrapes and alerts on. The exit status
+                # is worth nothing here anyway: whether the re-registration
+                # took is decided by the `is active` line the notifier
+                # watches, not by whether the unit started.
+                "$systemctl" restart --no-block podman-valheim.service
               '';
             };
 

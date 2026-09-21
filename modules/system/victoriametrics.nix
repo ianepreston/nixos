@@ -725,7 +725,7 @@ _: {
                 labels.severity = "warning";
                 annotations = {
                   summary = "Valheim join code never confirmed on {{ $labels.instance }}";
-                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended: run `systemctl restart podman-valheim`, and if the code comes back unconfirmed, repeat about every 15 minutes. See the join-code notes in modules/apps/valheim.nix (#683, #694).";
+                  description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record. See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
                 };
               }
               {
