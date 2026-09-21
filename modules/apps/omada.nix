@@ -191,9 +191,6 @@ _: {
         environment = {
           MANAGE_HTTPS_PORT = toString manageHttpsPort;
           PORTAL_HTTPS_PORT = toString portalHttpsPort;
-          # Remove after the first start with PORTAL_HTTPS_PORT=8843 has
-          # confirmed both the persisted setting and listener.
-          WEB_CONFIG_OVERRIDE = "true";
           # Cap the JVM. With `--network=host` there is no container
           # memory limit for the JVM to size against, so it falls back to
           # a fraction of the host's 31 GB — far more than a homelab site
