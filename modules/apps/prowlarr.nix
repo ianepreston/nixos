@@ -18,6 +18,8 @@ _: {
       uid = 891;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "prowlarr" ];
+
       myAuthentik.forwardAuthApps.prowlarr = {
         inherit port;
         displayName = "Prowlarr";

@@ -22,6 +22,8 @@
 # (iptables); the LAN is v4, so no ip6tables rule is needed.
 _: {
   flake.modules.nixos.flaresolverr = {
+    myObservability.monitoredSystemdUnits = [ "flaresolverr" ];
+
     services.flaresolverr.enable = true;
 
     networking.firewall.extraCommands = ''

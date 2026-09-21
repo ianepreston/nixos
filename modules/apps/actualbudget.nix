@@ -16,6 +16,8 @@ _: {
       port = 5006;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-actualbudget" ];
+
       myAuthentik.oidcApps.actualbudget = {
         blueprintsDir = ./actualbudget-blueprints;
         appRestartUnit = [ "podman-actualbudget.service" ];

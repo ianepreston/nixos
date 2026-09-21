@@ -335,6 +335,26 @@
           };
 
           config = lib.mkIf (cfg.endpoints != { }) {
+            myObservability.metricRuleGroups.llm.groups = [
+              {
+                name = "llm";
+                rules = [
+                  {
+                    # A sleeping model and a powered-off terra are normal;
+                    # this checks the textfile publisher itself instead.
+                    alert = "LlamaMetricsStale";
+                    expr = ''time() - node_textfile_mtime_seconds{file="${textfileDir}/llama.prom"} > 900'';
+                    for = "10m";
+                    labels.severity = "warning";
+                    annotations = {
+                      summary = "llama-server metrics are stale on {{ $labels.instance }}";
+                      description = "llama.prom has not been rewritten for {{ $value | humanizeDuration }} on {{ $labels.instance }}, so the LLM dashboard is showing frozen per-model usage. Check llama-metrics.service and its timer.";
+                    };
+                  }
+                ];
+              }
+            ];
+
             # Same key the routers enforce, from shared.yaml — see
             # modules/system/llama-cpp.nix for why one key covers the
             # fleet. Read directly by the oneshot (which runs as root)

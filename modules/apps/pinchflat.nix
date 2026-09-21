@@ -24,6 +24,8 @@ _: {
       port = 8945;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "pinchflat" ];
+
       sops.secrets."pinchflat/secret_key_base" = {
         inherit (hostSpec) sopsFile;
         restartUnits = [ "pinchflat.service" ];

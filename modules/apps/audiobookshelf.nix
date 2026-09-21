@@ -13,6 +13,8 @@ _: {
       port = 13378;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "audiobookshelf" ];
+
       myAuthentik.oidcApps.audiobookshelf = {
         blueprintsDir = ./audiobookshelf-blueprints;
         clientCredsInAppEnv = false;

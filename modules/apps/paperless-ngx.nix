@@ -90,6 +90,8 @@
       ];
     in
     {
+      myObservability.monitoredSystemdUnits = [ "paperless(-.+)?" ];
+
       # The 3.x package needs the 3.x module (see the header comment).
       disabledModules = [ "services/misc/paperless.nix" ];
       imports = [ "${inputs.nixpkgs-unstable}/nixos/modules/services/misc/paperless.nix" ];

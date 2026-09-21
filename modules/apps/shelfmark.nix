@@ -64,6 +64,8 @@
       containerPort = 8084;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-shelfmark" ];
+
       myAuthentik.oidcApps.shelfmark = {
         blueprintsDir = ./shelfmark-blueprints;
         appRestartUnit = [ "podman-shelfmark.service" ];

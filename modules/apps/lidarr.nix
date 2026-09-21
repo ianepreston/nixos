@@ -23,6 +23,8 @@ in
       musicDir = "/mnt/content/taylor-music";
     in
     {
+      myObservability.monitoredSystemdUnits = [ "lidarr" ];
+
       myAuthentik.forwardAuthApps.lidarr = {
         port = 8686;
         displayName = "Lidarr";

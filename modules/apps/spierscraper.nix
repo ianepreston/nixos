@@ -46,6 +46,8 @@ _: {
       '';
     in
     {
+      myObservability.monitoredSystemdUnits = [ "spierscraper" ];
+
       sops.secrets."discord/spierscraper_webhook" = {
         inherit (hostSpec) sopsFile;
       };

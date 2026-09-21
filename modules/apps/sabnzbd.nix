@@ -82,6 +82,38 @@ _: {
       });
     in
     {
+      myObservability.monitoredSystemdUnits = [ "sabnzbd(-.+)?" ];
+
+      myObservability.metricRuleGroups.sabnzbd.groups = [
+        {
+          name = "sabnzbd";
+          rules = [
+            {
+              # The timer below refreshes this every five minutes. The 30m
+              # window tolerates a first-write/scrape gap on a new host.
+              alert = "SabnzbdIncompleteStale";
+              expr = "sabnzbd_incomplete_oldest_seconds > 86400";
+              for = "30m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "sabnzbd has a stale file in incomplete/ on {{ $labels.instance }}";
+                description = "A file under sabnzbd's incomplete dir has been there for >24h ({{ $value | humanizeDuration }}). Stalled download, wedged post-processing, or forgotten paused queue.";
+              };
+            }
+            {
+              alert = "SabnzbdIncompleteLarge";
+              expr = "sabnzbd_incomplete_dir_bytes > 200 * 1024 * 1024 * 1024";
+              for = "30m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "sabnzbd incomplete dir over 200 GiB on {{ $labels.instance }}";
+                description = "sabnzbd_incomplete_dir_bytes = {{ $value | humanize1024 }}B for 30m. Either a release got stuck in post-processing or multiple downloads are piling up faster than they're finishing.";
+              };
+            }
+          ];
+        }
+      ];
+
       myAuthentik.forwardAuthApps.sabnzbd = {
         inherit port;
         displayName = "Sabnzbd";

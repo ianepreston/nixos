@@ -53,7 +53,12 @@
 # checked from a phone.
 _: {
   flake.modules.nixos.log-alerts =
-    { hostSpec, ... }:
+    {
+      config,
+      hostSpec,
+      lib,
+      ...
+    }:
     let
       # Reclaim 8881 on production now that vmalert-main returns to 8880.
       # hpp-1 keeps its existing loopback endpoint unchanged (#714).
@@ -261,61 +266,10 @@ _: {
               }
             ];
           }
-          {
-            name = "omada-firmware";
-            type = "vlogs";
-            interval = "5m";
-            rules = [
-              {
-                # The only detector a failed Omada firmware upgrade
-                # has. The controller's own audit log does not record
-                # unattended upgrades at all (#585), and the UI shows
-                # the device as simply not upgraded, so #584 failed
-                # nightly for four days with nothing anywhere to
-                # notice.
-                #
-                # Keyed on the terminal WARN the controller emits
-                # when it gives up on a device:
-                #   ... v2 device mac:A8-29-48-FD-37-47 source status
-                #   is UPGRADE_FINISHED, finished upgrade process in
-                #   STAGE_DOWNVAL_TIMEOUT, status sent to frontend is
-                #   DEVICE_FILE_DOWNLOAD_FAIL
-                # A successful upgrade emits no "sent to frontend"
-                # line at all, so filtering on the failure status
-                # rather than on the phrase is what keeps this from
-                # firing on every upgrade. Both observed stages come
-                # through as a label: `STAGE_DOWNVAL_TIMEOUT` (the
-                # device went quiet) and `FIRMWARE_DOWNLOAD_FAILED`
-                # (the device reported the failure itself)
-                # distinguish "could not reach the controller" from
-                # "fetched a bad image".
-                #
-                # Deliberately NOT keyed on the `Audit Log send
-                # failed Error` WARN that #586 originally proposed:
-                # that fires on successful unattended upgrades too
-                # (verified against the 2026-09-09 upgrade of
-                # 10-5A-95-61-96-FF, which completed and warned
-                # anyway), so it marks "an unattended upgrade ran",
-                # not "one failed".
-                #
-                # No threshold: an upgrade that reaches this state
-                # has already exhausted the controller's own retries.
-                alert = "OmadaFirmwareUpgradeFailed";
-                expr = ''
-                  unit:="podman-omada.service" "status sent to frontend is DEVICE_FILE_DOWNLOAD_FAIL"
-                    | extract "mac:<omada_mac> source status is"
-                    | extract "finished upgrade process in <omada_stage>,"
-                    | stats by (host, omada_mac, omada_stage) count() as failures
-                '';
-                labels.severity = "warning";
-                annotations = {
-                  summary = "Omada firmware upgrade failed for {{ $labels.omada_mac }} ({{ $labels.omada_stage }})";
-                  description = "The Omada controller on {{ $labels.host }} gave up upgrading {{ $labels.omada_mac }} {{ $value }} time(s) in 5 minutes, in stage {{ $labels.omada_stage }}. Adopted devices fetch the image from the controller over 8043, so start with whether this one can still reach it — see the firewall block in modules/apps/omada.nix. Do not expect the controller's audit log to corroborate: it records nothing for scheduled upgrades.";
-                };
-              }
-            ];
-          }
-        ];
+        ]
+        ++ lib.concatMap (contribution: contribution.groups) (
+          lib.attrValues config.myObservability.logRuleGroups
+        );
       };
     };
 }

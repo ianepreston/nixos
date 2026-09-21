@@ -45,6 +45,8 @@ _: {
       port = 3017;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-bookorbit" ];
+
       myPostgresApp.bookorbit.consumerService = [ "podman-bookorbit.service" ];
 
       myAuthentik.oidcApps.bookorbit = {

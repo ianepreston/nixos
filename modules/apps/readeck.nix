@@ -35,6 +35,8 @@ _: {
       uid = 893;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "readeck" ];
+
       sops.secrets."readeck/secret_key" = {
         inherit (hostSpec) sopsFile;
         restartUnits = [ "readeck.service" ];

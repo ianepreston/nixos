@@ -12,6 +12,8 @@ in
   flake.modules.nixos.sonarr =
     { hostSpec, ... }:
     {
+      myObservability.monitoredSystemdUnits = [ "sonarr" ];
+
       myAuthentik.forwardAuthApps.sonarr = {
         port = 8989;
         displayName = "Sonarr";

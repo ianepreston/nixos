@@ -33,6 +33,8 @@ _: {
       configFile = "${configDir}/config.yaml";
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-decluttarr" ];
+
       # Render config.yaml as part of podman-decluttarr's own start
       # cycle rather than via a separate oneshot — a previous split
       # design hit a race where /run/decluttarr got cleared between

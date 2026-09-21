@@ -18,6 +18,8 @@ _: {
       port = 5055;
     in
     {
+      myObservability.monitoredSystemdUnits = [ "podman-seerr" ];
+
       myAuthentik.oidcApps.seerr = {
         blueprintsDir = ./seerr-blueprints;
         clientCredsInAppEnv = false;

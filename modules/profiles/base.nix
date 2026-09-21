@@ -25,6 +25,7 @@ in
       imports = [
         inputs.home-manager.nixosModules.home-manager
         inputs.sops-nix.nixosModules.sops
+        ../system/observability-options.nix
       ];
 
       # ========== Core System ==========
