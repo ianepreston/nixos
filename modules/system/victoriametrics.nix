@@ -1699,8 +1699,8 @@ _: {
                 ];
               }
               # Omada switches and APs (SNMPv3 — see
-              # modules/system/snmp-exporter.nix for why there are two
-              # auths and why the APs get the weaker one). SNMP is a
+              # modules/system/snmp-exporter.nix for the single
+              # authPriv/SHA/AES auth both jobs use). SNMP is a
               # site-level setting in the controller, pushed to every
               # managed device; the controller itself is not an agent
               # and has nothing to scrape.
@@ -1753,9 +1753,16 @@ _: {
               # `clientCount` — per-AP associated clients, which is the
               # number the coverage/band-steering work keeps needing.
               # `system` supplies sysName/sysUpTime so the two APs are
-              # distinguishable in a dashboard. if_mib is deliberately
-              # absent: EAPs are thinner on standard mib-2 than the
-              # switches, so add it only if a walk shows it returns.
+              # distinguishable in a dashboard. Those two modules walk
+              # in tens of milliseconds, so the 10s default
+              # scrape_timeout is ample here — no #629-style bump
+              # needed. if_mib stays absent, but no longer because the
+              # APs can't serve it: it was to be added only if a walk
+              # showed it returns, and on firmware 1.4.3 it does.
+              # Taking it is #693's call — it carries a cardinality
+              # question (5 radio BSSID interfaces per AP × counters)
+              # and would likely want the #629 scrape_timeout bump
+              # along with it.
               {
                 job_name = "snmp_omada_aps";
                 metrics_path = "/snmp";
@@ -1764,7 +1771,7 @@ _: {
                     "eap"
                     "system"
                   ];
-                  auth = [ "omada_v3_ap" ];
+                  auth = [ "omada_v3" ];
                 };
                 static_configs = [
                   {
