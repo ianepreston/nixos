@@ -42,7 +42,7 @@ _: {
 
       virtualisation.oci-containers.containers.kapowarr = {
         # renovate: datasource=docker depName=mrcas/kapowarr
-        image = "mrcas/kapowarr:v1.3.1";
+        image = "mrcas/kapowarr:v1.3.2";
         volumes = [
           "/var/lib/containers/kapowarr/db:/app/db"
           "/var/lib/containers/kapowarr/logs:/app/logs"
