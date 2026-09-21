@@ -70,16 +70,46 @@
 # wrong — and a quiet watcher is indistinguishable from an idle healthy
 # server. amos1 stayed that way for 3h32m until a player said so (#683).
 #
-# The remediation is a restart, which re-registers and confirms:
+# valheim-joincode-watchdog below announces this state to Discord within
+# ~3m, and ValheimJoinCodeUnconfirmed in ../system/victoriametrics.nix
+# alerts on it.
+#
+# ### A restart is a probe, not a remediation (#694)
+#
+# The obvious response is `systemctl restart podman-valheim`, and an
+# earlier version of this comment called it "the remediation". It is not.
+# These failures arrive in *episodes*: a window in which every
+# registration fails, however it is triggered, ending on PlayFab's
+# schedule and nobody else's.
+#
+#   episode 1  2026-09-20 07:23:57 -> 10:56:16   <= 3h32m, 1 failed registration
+#   episode 2  2026-09-21 05:10:39 -> 06:54:58   1h19m-1h44m, 3 failed
+#
+# Inside episode 2 a container restart, an in-container `supervisorctl
+# restart valheim-server`, a fresh PlayFab identity (SERVER_NAME changed)
+# and a reverted identity all failed. Outside an episode every
+# registration confirms in 1-2s. The only variable that tracks the
+# outcome is *when*, so a restart succeeds if and only if the episode has
+# already ended — it tests the outage, it does not end it.
+#
+# That still makes it the right thing to run, because the server never
+# re-checks on its own: the NRE kills the join-code state machine
+# permanently while the lobby-refresh loop keeps going, so waiting
+# passively recovers nothing (episode 1 sat 3h32m proving it). Restart,
+# and if it comes back unconfirmed, restart again in ~15 minutes:
 #
 #   ssh amos1 -- sudo systemctl restart podman-valheim
 #
-# Note it may hand back the *same* digits — PlayFab keys the lobby on a
-# deterministic custom ID — so an unchanged code is not evidence the
-# restart did nothing. Check for the `is active` line, not for a new
-# number. valheim-joincode-watchdog below now announces this state to
-# Discord within ~3m, and ValheimJoinCodeUnconfirmed in
-# ../system/victoriametrics.nix alerts on it.
+# 15 minutes rather than faster because ValheimServerRestartLoop trips
+# below ~10m spacing. #701 proposes automating exactly this loop.
+#
+# Note the restart hands back the *same* digits, so an unchanged code is
+# not evidence it did nothing. That is not the deterministic custom ID —
+# it is because a join code resolves to the network endpoint
+# (`<public-ip>:2456`), per the crossplay-exclusivity section below.
+# Changing SERVER_NAME mints a new custom ID and a new entity ID and the
+# code stays put; verified on 2026-09-21. Check for the `is active` line,
+# not for a new number.
 #
 # ### PlayFab peer-relay stalls — what crossplay actually costs players (#627)
 #
@@ -1556,6 +1586,13 @@ _: {
                 # too — so it has to say plainly that the code is *not*
                 # expected to work. Never reuse the healthy announcement's
                 # phrasing here.
+                #
+                # It also has to say that *one* restart may not be enough.
+                # #694 established these arrive in multi-hour episodes in
+                # which every registration fails, so the operator reading
+                # this at 05:00 needs to know a failed restart is expected
+                # and that retrying later is the action — otherwise the
+                # message reads as "already tried that, nothing works".
                 payload="$(${pkgs.jq}/bin/jq -nc \
                   --arg code "$code" \
                   --arg server "$server" \
@@ -1564,7 +1601,9 @@ _: {
                               + "** registered join code **" + $code + "** " + $mins
                               + "m ago, but PlayFab never confirmed it.\n"
                               + "**That code most likely does not work** — do not share it.\n"
-                              + "_Fix: `sudo systemctl restart podman-valheim` on the host._")}')"
+                              + "_These come in episodes lasting 1-3.5h. Restart with "
+                              + "`sudo systemctl restart podman-valheim`; if the code is still "
+                              + "unconfirmed, restart again in ~15m until it takes (#694)._")}')"
 
                 # Same `-K -` stdin trick as the notifier: the webhook must
                 # not reach the process cmdline. A failed POST leaves
