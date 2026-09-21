@@ -33,24 +33,25 @@
 #
 # Omada gear is SNMPv3, not v2c. The controller pushes one
 # site-wide SNMP config to every device it manages and v3 is the only
-# version it offers, so the switches and APs need their own auth
-# entries. Those land as a *second* --config.file rather than another
-# substitution into upstream's snmp.yml: snmp_exporter accepts the
-# flag repeatedly and merges the files, and an auths-only file is
-# valid on its own (verified against 0.30.1 with --dry-run). Nothing
-# to sed here anyway — these credentials are ours, not an upstream
-# default.
+# version it offers, so the Omada credentials land as a *second*
+# --config.file rather than another substitution into upstream's
+# snmp.yml: snmp_exporter accepts the flag repeatedly and merges the
+# files, and an auths-only file is valid on its own (verified against
+# 0.30.1 with --dry-run). Keeping them out of upstream's snmp.yml also
+# leaves them readable YAML rather than a replaceStrings target.
+# Nothing to sed here anyway — these credentials are ours, not an
+# upstream default.
 #
-# Two Omada auths, not one, because EAP770/EAP772 firmware does not
-# implement AuthPriv. Saving an AuthPriv site config makes the
-# controller warn and silently apply AuthNoPriv + MD5 to the APs
-# alone. So the switches keep SHA + AES and the APs get a weaker
-# entry with the same username and password (v3 derives the localized
-# key from the protocol, so one password serves both). The APs are on
-# TRUST and what travels in the clear is clientCount / sysName /
-# uptime; the shared password is not exposed by it. Re-test the APs
-# against `omada_v3` after any AP firmware bump and delete
-# `omada_v3_ap` when it answers.
+# One Omada auth covers both switches and APs. There were two until
+# 2026-09-21: EAP770/EAP772 firmware 1.3.x did not implement AuthPriv,
+# so saving an AuthPriv site config made the controller warn and
+# silently apply AuthNoPriv + MD5 to the APs alone, and they needed
+# their own weaker `omada_v3_ap` entry. Firmware 1.4.3 Build 20260818
+# implements it: the APs began honouring the site's real
+# authPriv/SHA/AES setting and rejected the weaker requests outright
+# (`incoming packet is not authentic`), which broke the AP job until
+# it was pointed at `omada_v3` (#686). A firmware rollback would be a
+# deliberate act, and the deleted entry is recoverable from history.
 #
 # Listener is loopback-only; VictoriaMetrics scrapes locally via the
 # multi-target relabel pattern in modules/system/victoriametrics.nix.
@@ -97,10 +98,11 @@ _: {
           "snmp-omada.yml" = {
             content = ''
               auths:
-                # Switches (192.168.15.x) — full AuthPriv. The controller's
-                # Privacy Mode must be AES to match: a DES/AES mismatch
-                # is silently dropped by the switch and reads as a
-                # plain request timeout (#629).
+                # Switches (192.168.15.x) and APs — full AuthPriv, the
+                # site-wide setting. The controller's Privacy Mode must
+                # be AES to match: a DES/AES mismatch is silently
+                # dropped by the switch and reads as a plain request
+                # timeout (#629).
                 omada_v3:
                   version: 3
                   username: ${omadaSnmpUser}
@@ -109,13 +111,6 @@ _: {
                   password: ${config.sops.placeholder."snmp/v3_auth_password"}
                   priv_protocol: AES
                   priv_password: ${config.sops.placeholder."snmp/v3_priv_password"}
-                # APs — firmware-forced AuthNoPriv + MD5, same credentials.
-                omada_v3_ap:
-                  version: 3
-                  username: ${omadaSnmpUser}
-                  security_level: authNoPriv
-                  auth_protocol: MD5
-                  password: ${config.sops.placeholder."snmp/v3_auth_password"}
             '';
             owner = "snmp-exporter";
             group = "snmp-exporter";
