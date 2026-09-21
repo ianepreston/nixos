@@ -17,7 +17,7 @@
 # rebuilds.
 #
 # When you add a new server-app, add a dispatcher here and append it
-# to `all`. The shape table in CLAUDE.md ("Recovery tasks: keep the
+# to `all`. The shape table in AGENTS.md ("Recovery tasks: keep the
 # per-app list in sync") describes which template applies.
 #
 # ## Verification drill (recovery:test:full)
@@ -246,7 +246,7 @@ tasks:
   # Per-app dispatchers
   # ---------------------------------------------------------------------------
   # Keep this list in sync with modules/profiles/server-apps.nix and
-  # the `all` aggregate below. See CLAUDE.md "Recovery tasks" for the
+  # the `all` aggregate below. See AGENTS.md "Recovery tasks" for the
   # shape → template mapping.
   actualbudget:
     desc: Restore actualbudget (container volume)

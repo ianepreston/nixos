@@ -14,9 +14,8 @@ result-*
 # Just load latest plugins
 lazy-lock.json
 
-# Claude Code runtime state (scheduled-tasks lockfile, worktrees, local
-# settings). Listed as .claude/* rather than .claude/ so git still descends
-# into the directory and the negation below can take effect.
+# Ignore local Claude Code runtime state (scheduled-task lockfiles, worktrees,
+# local settings). The sole exception is the thin checked-in skill adapter;
+# canonical agent-neutral workflow content lives under skills/.
 .claude/*
-# ...except the skills, which are repo workflow and are checked in.
 !.claude/skills/

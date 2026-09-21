@@ -110,8 +110,8 @@ NIX_SSHOPTS="-o ControlPath=$HOME/.ssh/master-ipreston@<host>:22 -o ControlMaste
 ```
 
 The `--override-input` must be absolute: `task deploy` hardcodes
-`path:../nix-secrets`, which resolves to nothing from a worktree under
-`.claude/worktrees/`.
+`path:../nix-secrets`, which resolves to nothing from an arbitrary worktree
+location.
 
 The failure mode is misleading if you skip the master check — the closure copy
 shows a live `ESTAB` socket and transfers ~0 bytes. Confirm from the target:

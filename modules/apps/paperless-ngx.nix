@@ -28,7 +28,7 @@
 # ordering edge against sops — see the systemd.services block below.
 #
 # Version currency: nixos-26.05 pins 2.20.15, the tail of the old
-# major, while upstream is on 3.x. Per CLAUDE.md ("wire a per-package
+# major, while upstream is on 3.x. Per AGENTS.md ("wire a per-package
 # overlay rather than flipping the whole flake to unstable") the
 # package comes from nixpkgs-unstable. The 2.x -> 3.x module changed
 # in lockstep with the package (Whoosh → Tantivy index with its own
