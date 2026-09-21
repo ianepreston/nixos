@@ -1729,15 +1729,33 @@ _: {
                   # `--max-time` is not decoration, and this is the one
                   # place in the file that needs it: the announce runs
                   # *before* the retry below, so a webhook that blackholes
-                  # rather than refuses would hang this oneshot until
-                  # TimeoutStartSec killed it — unit failed, no restart
-                  # issued, and the same hang on every tick for the length
-                  # of the episode. A host-side network fault is one of the
-                  # things that makes PlayFab registration fail in the
-                  # first place, so that correlation is real rather than
-                  # theoretical. A fast failure was always fine: curl exits
-                  # non-zero, the `else` branch logs it, and the retry below
-                  # still runs.
+                  # rather than refuses would hang this unit with the retry
+                  # still unreached.
+                  #
+                  # Nothing would end that hang. `Type=oneshot` defaults to
+                  # `TimeoutStartUSec=infinity` — not the manager's 1min30s
+                  # `DefaultTimeoutStartUSec`, which is the easy thing to
+                  # assume; read off amos1, both this unit and
+                  # authentik-ldap-token-fetcher report infinity. And curl
+                  # bounds only the *connect* phase by default
+                  # (CURLOPT_CONNECTTIMEOUT 300s); CURLOPT_TIMEOUT defaults
+                  # to 0, "never times out during transfer", so a peer that
+                  # completes the handshake and then stops answering is
+                  # waited on forever. The timer cannot rescue it either: a
+                  # trigger on an already-running unit merges into the
+                  # existing job rather than starting a second run. So one
+                  # hung POST disables the whole watchdog until someone
+                  # intervenes — not for an episode, indefinitely.
+                  #
+                  # A host-side network fault is one of the things that
+                  # makes PlayFab registration fail in the first place, so
+                  # that correlation is real rather than theoretical. A
+                  # fast failure was always fine: curl exits non-zero, the
+                  # `else` branch logs it, and the retry below still runs.
+                  #
+                  # The notifier's two identical POSTs are unfixed (#705);
+                  # they sit in a follow loop, not a oneshot, so the hang
+                  # stalls journal routing instead.
                   if printf 'url = "%s"\n' "$webhook" \
                     | ${pkgs.curl}/bin/curl -fsS --max-time 15 -K - \
                         -X POST -H 'Content-Type: application/json' -d "$payload"; then
@@ -1861,10 +1879,12 @@ _: {
                 # --no-block so this oneshot returns at once. A blocking
                 # restart holds the unit open for the container's stop —
                 # 8-9s measured on amos1, but bounded only by podman's own
-                # stop timeout — and a run past DefaultTimeoutStartSec would
-                # be killed and leave the watchdog `failed`, which the
-                # systemd collector scrapes and alerts on. The exit status
-                # is worth nothing here anyway: whether the re-registration
+                # stop timeout, and `Type=oneshot` means this unit has no
+                # start timeout to fall back on (`TimeoutStartUSec=infinity`
+                # on amos1, not the manager's 1min30s default). So a stop
+                # that wedged would wedge the watchdog with it, and the
+                # timer could not start a second run. The exit status is
+                # worth nothing here anyway: whether the re-registration
                 # took is decided by the `is active` line the notifier
                 # watches, not by whether the unit started.
                 "$systemctl" restart --no-block podman-valheim.service
