@@ -633,15 +633,11 @@ _: {
       # first-run branch and re-seeds at the tail, and every event between
       # the last run and the reboot is dropped silently — with /var/log/journal
       # preserved, the evidence would still be on disk while the counter
-      # said zero. `expectedPreservedDirs` in ../profiles/server-apps.nix
-      # would not have caught it either; that assertion only derives from
-      # `myAppState`, so eval stays green.
-      #
-      # Preserve-only, deliberately not `myAppState`: same call as
-      # /var/lib/private/llama-cpp in ../apps/llm.nix. These are derived
-      # counters, not authored state — restoring a month-old total out of
-      # restic would be worse than starting from zero, because it would
-      # publish a number that silently disagrees with the journal.
+      # said zero. These are derived counters, not authored state — restoring
+      # a month-old total out of restic would be worse than starting from zero,
+      # because it would publish a number that silently disagrees with the
+      # journal. The app-state declaration below preserves them without
+      # backing them up.
       metricsStateDir = "/var/lib/valheim-metrics";
       relayCursorFile = "${metricsStateDir}/journal-cursor";
       relayTotalsFile = "${metricsStateDir}/relay-totals";
@@ -833,8 +829,15 @@ _: {
 
         # The relay counters' totals and cursor (#627). See the
         # `metricsStateDir` note in the `let` block above for why this is
-        # preserved but deliberately kept out of restic.
-        preservation.preserveAt."/persist".directories = [ metricsStateDir ];
+        # preserved but deliberately kept out of restic. Keep the root
+        # ownership and mode inherited by the former bare preservation entry.
+        myAppState.valheim-metrics = {
+          stateDir = metricsStateDir;
+          user = "root";
+          group = "root";
+          mode = "0755";
+          backup = false;
+        };
 
         sops = {
           # `optionalAttrs` rather than declaring all three unconditionally.

@@ -22,15 +22,10 @@
 # llama-server downloads GGUFs into its StateDirectory, which on an
 # impermanence host is wiped on reboot unless preserved. Several GB of
 # re-download on every boot is worth avoiding, so there's a preservation
-# entry below.
-#
-# It is deliberately **not** a `myAppState` app. `myAppState` derives the
-# preservation entry *and* a restic path from one declaration, and a GGUF
-# has no business in a nightly snapshot: it's a few gigabytes of bytes
-# that huggingface will hand back on demand, not state anyone authored.
-# Same reasoning as sabnzbd's incomplete dir — preserve-only, listed in
-# `residualPreservedDirs` in modules/profiles/server-apps.nix so the
-# structural guard still asserts it stays preserved.
+# entry below. A GGUF has no business in a nightly snapshot: it is a few
+# gigabytes of bytes that huggingface will hand back on demand, not state
+# anyone authored. `myAppState` represents that preserve-only policy with
+# `backup = false` while keeping the state declaration here with its owner.
 #
 # That also means no `recovery:` dispatcher: there is nothing in restic to
 # restore. After a catastrophic rebuild the model re-downloads on first
@@ -73,8 +68,9 @@
       };
 
       # DynamicUser + StateDirectory, so the real storage is the private
-      # path — same shape as authentik's entry, and a bare string for the
-      # same reason: ownership is systemd's to manage, not ours.
+      # path — same shape as authentik's entry. Keep the explicit root
+      # ownership and mode inherited by the previous bare preservation entry;
+      # systemd changes it to its id-mapped sentinel before startup.
       #
       # A preservation bindmount hands the unit a root:root 0700 directory
       # on a fresh boot, which looks alarming for a DynamicUser service.
@@ -85,6 +81,12 @@
       # dir. No ExecStartPre chown is needed here — authentik's is healing
       # a different hazard (stale files literally owned by the dynamic uid,
       # written before idmapped mounts existed).
-      preservation.preserveAt."/persist".directories = [ "/var/lib/private/llama-cpp" ];
+      myAppState.llama-cpp = {
+        stateDir = "/var/lib/private/llama-cpp";
+        user = "root";
+        group = "root";
+        mode = "0755";
+        backup = false;
+      };
     };
 }

@@ -109,55 +109,28 @@
 
       # State dirs the impermanence guard expects to be preserved. The
       # app tier is derived from `config.myAppState` — the single source
-      # of truth for native-app on-disk state (see
-      # modules/system/app-state.nix, which emits the preservation and
-      # restic entries from the same declaration). Adding a native app is
-      # therefore one `myAppState.<app>` block in the app module and no
-      # edit here.
+      # of truth for server-owned on-disk state (see
+      # modules/system/app-state.nix, which emits the preservation entry
+      # and, by default, the restic path from the same declaration).
+      # Adding an app-owned path is therefore one `myAppState.<app>` block
+      # in the owning module and no edit here.
       #
       # Issue #136 was exactly this class of bug: native arrs / readeck
       # shipped on hpp-1 with impermanence enabled and no preservation
       # entries; only the lack of a reboot between deploy and the audit
       # kept it from silently wiping arr history. `myAppState` now makes
-      # the preserve+restic pair structural (they can't drift apart);
-      # this assertion stays as the belt-and-suspenders that every
-      # expected dir is actually present in `preservation.preserveAt` on
-      # impermanence hosts.
+      # the preserve policy structural and carries the backup policy with
+      # it, so neither can drift from the app that owns the path.
       #
-      # `residualPreservedDirs` covers preserved state NOT modeled as a
-      # myAppState app, so it isn't in the derived set:
-      #   /var/lib/mosquitto          - system MQTT broker (modules/system/mosquitto.nix)
-      #   /var/lib/private/authentik  - DynamicUser SSO, bare-string preserve entry (modules/apps/authentik.nix)
-      #   /var/lib/sabnzbd-incomplete - preserve-only bind mount, deliberately not backed up (modules/apps/sabnzbd.nix)
-      residualPreservedDirs = [
-        "/var/lib/mosquitto"
-        "/var/lib/private/authentik"
-        "/var/lib/sabnzbd-incomplete"
-      ]
-      # Conditional, unlike the rest: the GGUF model cache only exists on a
-      # server actually running llama-server, which needs a GPU — hpp-1
-      # doesn't have one and doesn't import modules/apps/llm.nix, so
-      # asserting it unconditionally would demand a directory that host
-      # never creates. Keyed off the forward-auth app rather than
-      # `myLlamaCpp` because that option only exists where
-      # modules/system/llama-cpp.nix is imported, and referencing it here
-      # would fail to evaluate on every other server.
-      #
-      # Preserve-only (not `myAppState`): a GGUF is re-downloadable bytes,
-      # not authored state, so it must stay out of restic. See
-      # modules/apps/llm.nix.
-      ++ lib.optional (config.myAuthentik.forwardAuthApps ? llm) "/var/lib/private/llama-cpp"
-      # Conditional again, and for the plainest version of the reason: the
-      # valheim module ships everywhere via `commonApps` but its whole
-      # `config` block is gated on `myValheim.enable`, so only the two hosts
-      # actually running a server create this directory. Preserve-only, not
-      # `myAppState` — these are derived counters (#627), so restoring a
-      # stale total from restic would be worse than starting from zero. See
-      # modules/apps/valheim.nix.
-      ++ lib.optional config.myValheim.enable "/var/lib/valheim-metrics";
-
-      expectedPreservedDirs =
-        map (a: a.stateDir) (lib.attrValues config.myAppState) ++ residualPreservedDirs;
+      # Both sides of this assertion derive from `config.myAppState`, so
+      # it cannot fire on a forgotten entry the way it did while the
+      # profile still carried hand-written paths — an app that declares
+      # nothing is invisible to it. What it still catches is the other
+      # direction: anything that drops a declared dir back out of
+      # `preservation.preserveAt` (a host-level `mkForce` on the list, a
+      # future filter in app-state.nix) turns a silent wipe-on-reboot
+      # into an eval failure.
+      expectedPreservedDirs = map (a: a.stateDir) (lib.attrValues config.myAppState);
 
       preservedDirs = map (d: d.directory) (config.preservation.preserveAt."/persist".directories or [ ]);
 
@@ -184,8 +157,9 @@
 
             Declare `myAppState.<app>` in the owning app module (see
             e.g. modules/apps/bazarr.nix for the pattern) — that single
-            source emits both the preservation entry and the restic path,
-            and feeds the derived guard here. No profile edit needed.
+            source emits the preservation entry, the restic path (unless
+            `backup = false`), and the derived guard here. No profile
+            edit needed.
           '';
         }
       ];

@@ -1260,12 +1260,13 @@ unloads the sleeper outright rather than waiting for it to wake.
 
 Servers run impermanence, so llama-server's downloaded GGUFs would be wiped on
 every reboot without a preservation entry — several GB of re-download per boot.
-`modules/apps/llm.nix` preserves `/var/lib/private/llama-cpp`, but deliberately
-**not** via `myAppState`: that derives a restic path from the same declaration,
-and a GGUF has no business in a nightly snapshot. It is re-downloadable bytes,
-not state anyone authored. Same reasoning as sabnzbd's incomplete dir —
-preserve-only, listed conditionally in `residualPreservedDirs` so the structural
-guard still asserts it stays preserved on hosts that run the daemon.
+`modules/apps/llm.nix` preserves `/var/lib/private/llama-cpp` through
+`myAppState` with `backup = false`: the declaration renders the preservation
+entry but contributes no restic path, because a GGUF has no business in a
+nightly snapshot. It is re-downloadable bytes, not state anyone authored. Same
+reasoning as sabnzbd's incomplete dir — preserve-only, declared in the module
+that owns the path, so the structural guard still asserts it stays preserved on
+hosts that run the daemon.
 
 That also means there is no `recovery:` dispatcher for it: nothing of it is in
 restic to restore. After a catastrophic rebuild the model re-downloads on first
