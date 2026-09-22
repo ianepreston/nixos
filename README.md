@@ -1342,6 +1342,13 @@ the thing to fix when the sops files get split more finely.
 
 ### Driving it from a coding agent
 
+#### macOS coding sandboxes
+
+`work` carries a macOS-only Lima launcher for isolated coding and demo
+worktrees. Its documented workflow, safety boundary, network modes, multiple
+VM lifecycle, cache behaviour, and current limits are in the
+[macOS coding sandbox guide](docs/coding-sandbox.md).
+
 The workstation side of the same endpoints. `modules/programs/vibes.nix` (the
 home-manager aspect that carries Claude Code) also installs
 [pi](https://github.com/earendil-works/pi) and

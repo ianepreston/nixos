@@ -24,6 +24,7 @@ in
         system.primaryUser = hostSpec.username;
 
         home-manager.sharedModules = [
+          inputs.self.modules.homeManager.coding-sandbox
           inputs.self.modules.homeManager.hammerspoon
           inputs.self.modules.homeManager.ghostty
           inputs.nix-secrets.homeManagerModules.work
