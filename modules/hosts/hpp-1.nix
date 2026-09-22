@@ -43,11 +43,13 @@
         # Valheim dev instance — a place to test BepInEx mods, image
         # bumps and config changes before they reach amos1 (#644).
         #
-        # `crossplay = false` is what makes it independent rather than a
-        # second claimant on amos1's PlayFab endpoint: the Steam backend
-        # registers no relay session, so there is no join code here and no
-        # way to wander into this world by accident. Join deliberately, by
-        # typing 192.168.10.10:2456 into Join Game -> Add server. Steam
+        # `crossplay = false` keeps this off amos1's PlayFab endpoint two
+        # ways. It issues no join code, so there is no way to wander into
+        # this world by accident — and it moves the game port to 2466,
+        # which is what actually stops the lobby this server registers
+        # anyway from answering amos1's code (2026-09-21; see "Crossplay
+        # exclusivity" in ../apps/valheim.nix). Join deliberately, by
+        # typing 192.168.10.10:2466 into Join Game -> Add server. Steam
         # clients only — console players cannot reach a Steam-backend
         # server at all.
         #

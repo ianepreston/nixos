@@ -92,6 +92,11 @@
 # outcome is *when*, so a restart succeeds if and only if the episode has
 # already ended — it tests the outage, it does not end it.
 #
+# One caveat on "the only variable": both episodes also fall inside a
+# window where hpp-1 held a PlayFab lobby on the same public endpoint.
+# See "Crossplay exclusivity" below — that is a second variable that
+# tracks the outcome, and 2466 below is the test of it.
+#
 # That still makes it the right thing to run, because the server never
 # re-checks on its own: the NRE kills the join-code state machine
 # permanently while the lobby-refresh loop keeps going, so waiting
@@ -203,24 +208,58 @@
 # makes it visible. The app was made prod-only in 0b3c56b to stop that.
 #
 # An earlier version of this comment concluded a dev instance would need
-# a distinct *game port*. That was the wrong lever. With
-# `crossplay = false` the dev server never registers with PlayFab at all,
-# so there is no endpoint to collide on and no port to keep in sync:
+# a distinct *game port*. A later one called that the wrong lever,
+# because with `crossplay = false` "the dev server never registers with
+# PlayFab at all, so there is no endpoint to collide on". That second
+# claim is false, and it cost a play session on 2026-09-21. A
+# Steam-backend server still logs into PlayFab and still registers a
+# lobby for its own `<public-ip>:<port>` — hpp-1, with `CROSSPLAY=false`:
 #
-#   - Nothing to collide. The Steam backend publishes no relay session,
-#     and `SERVER_PUBLIC=false` keeps it out of the community browser
-#     too, so it has no public identity whatsoever. amos1's PlayFab
-#     session is untouched.
+#   14:55:05  Sending PlayFab login request (attempt 1)
+#   14:55:23  Registering lobby
+#   18:37:49  ZPlayFabMatchmaking::UnregisterServer ... State: Uninitialized
+#
+# What it does not do is obtain a join code — that is what
+# `State: Uninitialized` means, against the `State: Active` the same line
+# printed while hpp-1 was still on crossplay — so it issues nothing the
+# greps above can see and looks, from amos1, exactly like the absence the
+# old comment assumed. The endpoint is registered all the same. Both
+# hosts run `--network=host` on the image's default port behind one NAT,
+# so the collision is the 2026-09-11 one unchanged: players using amos1's
+# published code reached hpp-1's empty g2 map, and saw a join code that
+# was not the one in Discord.
+#
+# So the port is the lever after all, and `gamePort` in the `let` block
+# below moves the Steam-backend instance to 2466 (query 2467). What a
+# lobby advertises is the server's *configured* port, not a NAT-observed
+# mapping — amos1 logs `IP <public-ip>:2456`, which is its SERVER_PORT —
+# so a distinct SERVER_PORT is a distinct endpoint, and the two lobbies
+# stop answering for each other.
+#
+# Two things the `crossplay = false` argument got right, and which the
+# port change keeps:
+#
 #   - No join code on dev, which removes the *mechanism* of the original
 #     incident rather than just the collision: nobody can follow a dev
 #     join code into a dev world, because there is no dev join code.
 #     Players reach dev only by deliberately typing its LAN address into
-#     Join Game -> Add server.
+#     Join Game -> Add server — now `<host-lan-ip>:2466`.
 #   - Reachability is fine for the intended audience. LAN clients connect
 #     direct; tailnet clients arrive over behemoth's subnet route as
 #     ordinary LAN traffic, so the one host-firewall rule below covers
 #     both. No port-forward, no WAN exposure — the NAT stays the
 #     boundary.
+#
+# Suspected, not proven: the "PlayFab episodes" above may be this
+# collision rather than PlayFab-side weather. Every failed registration
+# in the journal falls inside a window where hpp-1 held a lobby (the
+# 2026-09-18 mismatch and both episodes); the five days hpp-1 ran no
+# server at all were clean across eight registrations; and the NRE is
+# thrown from `OnCheckJoinCodeSuccess(FindLobbiesResult)` — the callback
+# that reads a lobby lookup for its own endpoint. It is not sufficient on
+# its own, since plenty of registrations confirmed fine inside those
+# windows. If the episodes stop after this change, that was the cause;
+# the watchdog and ValheimJoinCodeUnconfirmed earn their keep either way.
 #
 # ### What the dev instance cannot tell you
 #
@@ -442,6 +481,19 @@ _: {
     }:
     let
       cfg = config.myValheim;
+
+      # UDP game port. The query port is always this + 1 — the image
+      # derives `SERVER_QUERY_PORT=$((SERVER_PORT + 1))` and offers no
+      # separate knob.
+      #
+      # The Steam-backend instance moves off the image's default 2456 so
+      # that the PlayFab lobby it registers (it does register one, even
+      # with `CROSSPLAY=false`) advertises a distinct
+      # `<public-ip>:<port>` and stops overwriting the crossplay host's.
+      # See "Crossplay exclusivity" in the header for the 2026-09-21
+      # collision this fixes and why `crossplay = false` alone was not
+      # enough.
+      gamePort = if cfg.crossplay then 2456 else 2466;
 
       # node_exporter textfile collector drop dir — defined in
       # modules/system/victoriametrics.nix's node exporter config. Kept in
@@ -704,18 +756,23 @@ _: {
 
             **At most one host behind a given public IP may set this.** A
             PlayFab join code resolves to a network endpoint, and this
-            container runs `--network=host` on UDP 2456, so two crossplay
-            hosts behind one NAT register the identical
-            `<public-ip>:2456` and silently answer each other's codes —
-            the 2026-09-11 incident. Defaulting to `false` (the image's
-            own default) keeps the host that needs the relay the one that
-            has to ask for it.
+            container runs `--network=host`, so two crossplay hosts behind
+            one NAT register the identical `<public-ip>:2456` and silently
+            answer each other's codes — the 2026-09-11 incident.
+            Defaulting to `false` (the image's own default) keeps the host
+            that needs the relay the one that has to ask for it.
+
+            It does not, on its own, keep the hosts apart: a Steam-backend
+            server registers a PlayFab lobby too, just without a join code
+            (2026-09-21). So this option also picks the game port via
+            `gamePort` — 2456 with the relay, 2466 without — and that is
+            what makes the two endpoints distinct.
 
             `true` gets non-Steam clients (console, Microsoft Store) and
             needs no inbound port-forward, at the cost of losing
             connect-by-address entirely. `false` opens the game UDP ports
             on the host firewall and players join by typing
-            `<host-lan-ip>:2456`, Steam clients only.
+            `<host-lan-ip>:2466`, Steam clients only.
           '';
         };
 
@@ -2308,11 +2365,13 @@ _: {
         # opening them is exposure that buys nothing — hence the gate
         # rather than an unconditional block.
         #
-        # 2456 is the game port and 2457 its query port. Upstream
-        # documents 2456-2458 and the image's own compose files open all
+        # `gamePort` is the game port and `gamePort + 1` its query port —
+        # 2466/2467 on the Steam backend, since that instance is the one
+        # moved off the image's default (see `gamePort` above). Upstream
+        # documents three ports and the image's own compose files open all
         # three, but the third is the PlayFab one, so a Steam-backend
         # server never binds it — verified with `ss -ulnp` on hpp-1, where
-        # valheim_server.x86_64 holds 2456 and 2457 only. Opening exactly
+        # valheim_server.x86_64 held 2456 and 2457 only. Opening exactly
         # what is bound rather than copying upstream's range.
         #
         # Deliberately not interface-scoped. The audience is LAN clients
@@ -2322,8 +2381,8 @@ _: {
         # the boundary against the internet. Nothing is port-forwarded.
         networking.firewall.allowedUDPPortRanges = lib.optionals (!cfg.crossplay) [
           {
-            from = 2456;
-            to = 2457;
+            from = gamePort;
+            to = gamePort + 1;
           }
         ];
 
@@ -2383,6 +2442,10 @@ _: {
             # block at the top of this file for the LAN-join tradeoff, and
             # `myValheim.crossplay` for why at most one host may set it.
             CROSSPLAY = lib.boolToString cfg.crossplay;
+            # 2456 under crossplay, 2466 on the Steam backend, so the two
+            # hosts' PlayFab lobbies carry different endpoints. See
+            # `gamePort` in the `let` block above.
+            SERVER_PORT = toString gamePort;
 
             # Weekly rather than upstream's daily default — every restart
             # rotates the join code, and the metrics say the daily clean
