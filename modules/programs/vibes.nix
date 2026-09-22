@@ -20,8 +20,9 @@
 # models) are thin wrappers over writing files into the agent dir, which
 # is what this module already does for Claude Code. Taking it would cost
 # three transitive flake inputs (its own nixpkgs pin at unstable, bun2nix,
-# jail.nix) and a second update cadence. Revisit if the sandbox becomes
-# the point.
+# jail.nix) and a second update cadence. Lima is now the VM-grade sandbox
+# boundary (#539); this module deliberately remains host-only, so a guest
+# demo does not inherit these agents or their local-model configuration.
 #
 # opencode comes from `pkgsUnstable` for the same lag reason (1.18.25
 # against stable's 1.15.10). It needs no equivalent decision — there is no
