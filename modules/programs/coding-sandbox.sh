@@ -440,7 +440,7 @@ append_profile_provision() {
     cp -a /mnt/sandbox-profile/. "$agent_home/.local/share/coding-sandbox/profile/"
     # The source is a read-only Nix-store mount. Nix writes the initial lock
     # file beside the guest's private copy, never into that source.
-    chown -R agent:agent "$agent_home/.local/share/coding-sandbox"
+    chown -R agent:agent "$agent_home/.local"
     chmod -R u+w "$agent_home/.local/share/coding-sandbox/profile"
 YAML
   if [[ "$use_proxy" == true ]]; then
