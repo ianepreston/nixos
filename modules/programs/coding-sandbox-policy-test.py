@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import ipaddress
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,6 +65,66 @@ class PolicyTest(unittest.TestCase):
         POLICY.resolve = lambda domain: [ipaddress.ip_address("203.0.113.10")]
         policy = POLICY.render_policy(root, "restricted")
         self.assertIn("registry.npmjs.org", [entry["name"] for entry in policy["strict_domains"]])
+
+    def test_non_git_mount_defaults_read_only_and_resolves_from_spec(self) -> None:
+        root = self.config("")
+        source = root / "shared"
+        source.mkdir()
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\n'
+            'path = "shared"\n'
+            'mount_point = "/workspace"\n'
+        )
+        mount = POLICY.render_policy(root, None)["mounts"][0]
+        self.assertEqual(mount["source"], str(source.resolve()))
+        self.assertEqual(mount["kind"], "path")
+        self.assertEqual(mount["access"], "ro")
+        self.assertIsNone(mount["branch"])
+
+    def test_git_mount_requires_branch_and_defaults_read_write(self) -> None:
+        root = self.config("")
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "tracked").write_text("x")
+        subprocess.run(["git", "-C", str(root), "add", "tracked"], check=True)
+        subprocess.run(
+            [
+                "git", "-C", str(root), "-c", "core.hooksPath=/dev/null", "-c", "user.name=test",
+                "-c", "user.email=test@example.invalid", "commit", "-qm", "initial",
+            ],
+            check=True,
+        )
+
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\n'
+            'path = "."\n'
+            'mount_point = "/workspace"\n'
+            'branch = "sandbox/test"\n'
+        )
+        mount = POLICY.render_policy(root, None)["mounts"][0]
+        self.assertEqual(mount["kind"], "git")
+        self.assertEqual(mount["access"], "rw")
+        self.assertEqual(mount["branch"], "sandbox/test")
+
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\npath = "."\nmount_point = "/workspace"\n'
+        )
+        with self.assertRaises(POLICY.PolicyError):
+            POLICY.render_policy(root, None)
+
+    def test_mounts_reject_unsafe_shape(self) -> None:
+        root = self.config("")
+        source = root / "shared"
+        source.mkdir()
+        for text in (
+            '[[mounts]]\npath = "shared"\nmount_point = "workspace"\n',
+            '[[mounts]]\npath = "shared"\nmount_point = "/workspace"\nbranch = "main"\n',
+            '[[mounts]]\npath = "shared"\nmount_point = "/workspace"\naccess = "write"\n',
+            '[[mounts]]\npath = "shared"\nmount_point = "/sandbox-spec/data"\n',
+        ):
+            with self.subTest(text=text):
+                (root / ".sandbox.toml").write_text(text)
+                with self.assertRaises(POLICY.PolicyError):
+                    POLICY.render_policy(root, None)
 
 
 if __name__ == "__main__":

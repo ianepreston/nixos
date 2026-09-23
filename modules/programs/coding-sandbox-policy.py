@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Parse and render the network portion of a coding-sandbox policy.
+"""Parse and render a coding-sandbox project policy.
 
 This runs on the macOS host.  It intentionally uses only the Python standard
-library: a worktree-owned TOML file is data, never shell input.
+library plus Git: a project-owned TOML file is data, never shell input.
 """
 
 from __future__ import annotations
@@ -12,9 +12,10 @@ import ipaddress
 import json
 import re
 import socket
+import subprocess
 import sys
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -37,6 +38,7 @@ BASE_RESTRICTED_DOMAINS = (
     "api.github.com",
     "codeload.github.com",
 )
+RESERVED_MOUNT_POINTS = (PurePosixPath("/sandbox-spec"), PurePosixPath("/mnt/sandbox-profile"))
 DOMAIN_RE = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}\Z")
 
 
@@ -90,10 +92,114 @@ def resolve(domain: str) -> list[ipaddress._BaseAddress]:
     return sorted(addresses, key=lambda address: (address.version, int(address)))
 
 
-def parse_config(worktree: Path) -> dict[str, Any]:
-    config_path = worktree / ".sandbox.toml"
-    if not config_path.exists():
-        return {"version": 1, "network": {}}
+def find_config_path(project: Path) -> Path | None:
+    """Find the visible project specification from the selected directory."""
+    for candidate in (project, *project.parents):
+        config_path = candidate / ".sandbox.toml"
+        if config_path.is_file():
+            return config_path
+    return None
+
+
+def mount_error(index: int, message: str) -> None:
+    fail(f"mounts[{index}]: {message}")
+
+
+def git_root(path: Path) -> Path | None:
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
+def parse_mounts(value: Any, config_root: Path) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        fail("mounts must be an array of tables")
+
+    mounts: list[dict[str, Any]] = []
+    mount_points: list[PurePosixPath] = []
+    for index, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            mount_error(index, "must be a table")
+        unknown = set(entry) - {"path", "mount_point", "access", "branch"}
+        if unknown:
+            mount_error(index, f"unknown key(s): {', '.join(sorted(unknown))}")
+
+        path_value = entry.get("path")
+        if not isinstance(path_value, str) or not path_value:
+            mount_error(index, "path must be a non-empty string")
+        source = Path(path_value)
+        if not source.is_absolute():
+            source = config_root / source
+        try:
+            source = source.resolve(strict=True)
+        except OSError as error:
+            mount_error(index, f"cannot resolve path {path_value!r}: {error}")
+        if not source.is_dir():
+            mount_error(index, f"path {path_value!r} must name a directory")
+
+        mount_point = entry.get("mount_point")
+        if not isinstance(mount_point, str) or not mount_point:
+            mount_error(index, "mount_point must be a non-empty absolute guest path")
+        guest_path = PurePosixPath(mount_point)
+        if (
+            not guest_path.is_absolute()
+            or str(guest_path) != mount_point
+            or mount_point == "/"
+            or ".." in guest_path.parts
+        ):
+            mount_error(index, "mount_point must be a normalized absolute guest path other than /")
+        if any(existing == guest_path or existing in guest_path.parents or guest_path in existing.parents for existing in mount_points):
+            mount_error(index, f"mount_point {mount_point!r} overlaps another mount")
+        if any(
+            reserved == guest_path or reserved in guest_path.parents or guest_path in reserved.parents
+            for reserved in RESERVED_MOUNT_POINTS
+        ):
+            mount_error(index, f"mount_point {mount_point!r} overlaps a launcher-reserved path")
+        mount_points.append(guest_path)
+
+        repository_root = git_root(source)
+        is_git = repository_root == source
+        branch = entry.get("branch")
+        if is_git:
+            if not isinstance(branch, str) or not branch:
+                mount_error(index, "branch is required when path names a Git repository")
+            check_branch = subprocess.run(
+                ["git", "check-ref-format", "--branch", branch], capture_output=True, check=False, text=True
+            )
+            if check_branch.returncode != 0:
+                mount_error(index, f"branch {branch!r} is not a valid Git branch name")
+        elif branch is not None:
+            mount_error(index, "branch is valid only when path names a Git repository root")
+
+        access = entry.get("access", "rw" if is_git else "ro")
+        if access not in {"ro", "rw"}:
+            mount_error(index, 'access must be "ro" or "rw"')
+        mounts.append(
+            {
+                "source": str(source),
+                "source_path": path_value,
+                "mount_point": mount_point,
+                "access": access,
+                "access_source": "explicit" if "access" in entry else "default",
+                "kind": "git" if is_git else "path",
+                "branch": branch if is_git else None,
+            }
+        )
+    return mounts
+
+
+def parse_config(project: Path) -> dict[str, Any]:
+    config_path = find_config_path(project)
+    if config_path is None:
+        return {"version": 1, "network": {}, "mounts": [], "config_path": None, "config_root": project}
     try:
         with config_path.open("rb") as config_file:
             config = tomllib.load(config_file)
@@ -101,7 +207,7 @@ def parse_config(worktree: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network"}
+    unknown = set(config) - {"version", "network", "mounts"}
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -112,11 +218,17 @@ def parse_config(worktree: Path) -> dict[str, Any]:
     unknown = set(network) - {"mode", "internal_domains", "internal_cidrs", "public_domains"}
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
-    return {"version": 1, "network": network}
+    return {
+        "version": 1,
+        "network": network,
+        "mounts": parse_mounts(config.get("mounts"), config_path.parent),
+        "config_path": config_path,
+        "config_root": config_path.parent,
+    }
 
 
-def render_policy(worktree: Path, override_mode: str | None) -> dict[str, Any]:
-    config = parse_config(worktree)
+def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
+    config = parse_config(project)
     network = config["network"]
     requested_mode = network.get("mode", "public")
     if requested_mode not in {"public", "restricted", "open"}:
@@ -192,7 +304,9 @@ def render_policy(worktree: Path, override_mode: str | None) -> dict[str, Any]:
         "version": 1,
         "mode": mode,
         "mode_source": "command line" if override_mode else (".sandbox.toml" if "mode" in network else "default"),
-        "config_path": str(worktree / ".sandbox.toml") if (worktree / ".sandbox.toml").exists() else None,
+        "config_path": str(config["config_path"]) if config["config_path"] else None,
+        "config_root": str(config["config_root"]),
+        "mounts": config["mounts"],
         "protected_v4": [str(network) for network in PROTECTED_V4],
         "protected_v6": [str(network) for network in PROTECTED_V6],
         "internal_domains": resolved_internal_domains,
@@ -207,11 +321,11 @@ def render_policy(worktree: Path, override_mode: str | None) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("worktree", type=Path)
+    parser.add_argument("project", type=Path)
     parser.add_argument("--network", choices=("public", "restricted", "open"))
     arguments = parser.parse_args()
     try:
-        policy = render_policy(arguments.worktree.resolve(), arguments.network)
+        policy = render_policy(arguments.project.resolve(), arguments.network)
     except PolicyError as error:
         print(f"sandbox policy: {error}", file=sys.stderr)
         raise SystemExit(1) from error

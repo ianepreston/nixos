@@ -18,18 +18,19 @@ usage() {
 Usage:
   sandbox doctor
   sandbox list
-  sandbox plan [--network public|restricted|open] [WORKTREE]
-  sandbox template [--network public|restricted|open] [WORKTREE]
-  sandbox validate [--network public|restricted|open] [WORKTREE]
-  sandbox start [--network public|restricted|open] [--yes] [WORKTREE]
-  sandbox shell [--network public|restricted|open] [WORKTREE]
-  sandbox exec [--network public|restricted|open] [WORKTREE] -- COMMAND [ARG...]
-  sandbox status [--network public|restricted|open] [WORKTREE]
-  sandbox stop [--network public|restricted|open] [WORKTREE]
-  sandbox destroy [--network public|restricted|open] [--yes] [WORKTREE]
+  sandbox plan [--network public|restricted|open] [PROJECT]
+  sandbox template [--network public|restricted|open] [PROJECT]
+  sandbox validate [--network public|restricted|open] [PROJECT]
+  sandbox start [--network public|restricted|open] [--yes] [PROJECT]
+  sandbox shell [--network public|restricted|open] [PROJECT]
+  sandbox exec [--network public|restricted|open] [PROJECT] -- COMMAND [ARG...]
+  sandbox status [--network public|restricted|open] [PROJECT]
+  sandbox stop [--network public|restricted|open] [PROJECT]
+  sandbox destroy [--network public|restricted|open] [--yes] [PROJECT]
   sandbox delete [--yes] INSTANCE
 
-The default worktree is the current directory's Git worktree.
+The default project is the current directory. The launcher searches upward for
+its visible .sandbox.toml project specification.
 
 Network modes:
   public      Default. Public internet is available, but an IP-layer policy
@@ -40,8 +41,10 @@ Network modes:
   open        No guest egress firewall or proxy. It removes the lateral
               boundary too; use only for deliberate troubleshooting.
 
-The selected worktree is the only mutable host path, mounted read-write at
-/workspace. The fixed, store-built guest profile is separately mounted
+Only paths declared in .sandbox.toml are mounted. Git repository paths are
+checked out into launcher-owned temporary worktrees; direct paths are mounted
+read-only unless their declaration explicitly requests read-write. The fixed,
+store-built guest profile and the project specification are separately mounted
 read-only; SSH keys, credential agents, and the rest of HOME are never
 forwarded or mounted.
 EOF
@@ -87,7 +90,7 @@ parse_target() {
         die "unknown option: $1"
         ;;
       *)
-        [[ -z "$target" ]] || die "only one worktree can be selected (got $1)"
+        [[ -z "$target" ]] || die "only one project can be selected (got $1)"
         target="$1"
         shift
         ;;
@@ -100,26 +103,39 @@ parse_target() {
   esac
 
   target="${target:-$PWD}"
-  worktree=$(git -C "$target" rev-parse --show-toplevel 2>/dev/null) \
-    || die "$target is not inside a Git worktree"
-
-  primary_worktree=$(git -C "$worktree" worktree list --porcelain | awk '$1 == "worktree" { print $2; exit }')
-  [[ "$worktree" != "$primary_worktree" ]] || die \
-    "$worktree is the primary checkout; create/select a per-work-item worktree first"
-
+  project=$(cd "$target" && pwd -P) || die "cannot access project $target"
   load_policy
-  instance_id=$(printf '%s' "$worktree:$network_mode" | sha256sum | cut -c1-12)
+  project=$(jq -r '.config_root' <<<"$policy_json")
+  if [[ $(jq '.mounts | length' <<<"$policy_json") -eq 0 ]]; then
+    # Compatibility for projects without a spec: retain the original safe
+    # secondary-worktree behaviour until they add an explicit mount table.
+    worktree=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) \
+      || die "$project has no .sandbox.toml; select a Git worktree or add a project specification"
+    primary_worktree=$(git -C "$worktree" worktree list --porcelain | awk '$1 == "worktree" { print $2; exit }')
+    [[ "$worktree" != "$primary_worktree" ]] || die \
+      "$worktree is the primary checkout; add .sandbox.toml with [[mounts]] to use it directly"
+    policy_json=$(jq --arg source "$worktree" \
+      '.mounts = [{ source: $source, source_path: $source, mount_point: "/workspace", access: "rw", access_source: "legacy", kind: "path", branch: null }]' \
+      <<<"$policy_json")
+  elif ! jq -e '.mounts | any(.mount_point == "/workspace")' <<<"$policy_json" >/dev/null; then
+    die '.sandbox.toml must declare one mount at /workspace'
+  fi
+  instance_id=$(printf '%s' "$project:$network_mode" | sha256sum | cut -c1-12)
   # Lima's per-instance Unix sockets live beneath its state directory. Keep
   # the readable part short enough for macOS's 104-byte socket-path limit;
   # the hash still makes the full instance identity collision-resistant.
-  worktree_label=$(basename "$worktree" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-*//; s/-*$//' | cut -c1-16)
-  worktree_label="${worktree_label:-worktree}"
-  instance="coding-sandbox-$worktree_label-$instance_id"
+  project_label=$(basename "$project" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-*//; s/-*$//' | cut -c1-16)
+  project_label="${project_label:-project}"
+  instance="coding-sandbox-$project_label-$instance_id"
   policy_record="$HOME/.local/state/coding-sandbox/$instance.policy.json"
+  temporary_root="${TMPDIR:-/tmp}"
+  temporary_root="${temporary_root%/}"
+  mount_root="$temporary_root/coding-sandbox-worktrees/$instance"
+  spec_mount_root="$temporary_root/coding-sandbox-specs/$instance"
 }
 
 load_policy() {
-  local -a args=("$worktree")
+  local -a args=("$project")
   if [[ -n "$network_mode_override" ]]; then
     args+=(--network "$network_mode_override")
   fi
@@ -168,7 +184,7 @@ EOF
   fi
 
   cat <<'EOF'
-Ready. Next safe gate: `sandbox plan /path/to/worktree`.
+Ready. Next safe gate: `sandbox plan /path/to/project`.
 EOF
 }
 
@@ -187,7 +203,7 @@ list_instances() {
   printf '%s\n' "$instances"
   cat <<'EOF'
 
-Use `sandbox destroy [WORKTREE]` while the worktree still exists, or
+Use `sandbox destroy [PROJECT]` while the project still exists, or
 `sandbox delete INSTANCE` to remove a listed orphan. Both ask for confirmation.
 EOF
 }
@@ -198,13 +214,25 @@ Coding sandbox plan
 
   Instance:     $instance
   VM:           Ubuntu aarch64 under Apple Virtualization (VZ)
-  Worktree:     $worktree
-  Guest mount:  /workspace (read-write)
+  Project:      $project
+  Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
   Profile mount: fixed store-built profile (read-only)
-  Other paths:  none
   SSH agent:    not forwarded
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
+
+  printf '\n  Declared mounts:\n'
+  jq -r --arg mount_root "$mount_root" '
+    .mounts | to_entries[] |
+    if .value.kind == "git" then
+      "    \(.value.source_path) (Git branch \(.value.branch)) -> \($mount_root)/mount-\(.key) -> \(.value.mount_point) [\(.value.access)]"
+    else
+      "    \(.value.source_path) (direct path) -> \(.value.mount_point) [\(.value.access)]"
+    end
+  ' <<<"$policy_json"
+  if [[ -n $(jq -r '.config_path // empty' <<<"$policy_json") ]]; then
+    printf '%s\n' '    project specification -> /sandbox-spec/.sandbox.toml [ro]'
+  fi
 
   case "$network_mode" in
     public)
@@ -255,9 +283,83 @@ EOF
 
   cat <<'EOF'
 
-No host credentials, SSH agent, or directories outside this worktree are
-available in the VM.
+No host credentials, SSH agent, or directories outside the declared mounts are
+available in the VM. Git mount worktrees are retained under the temporary
+directory after VM deletion so uncommitted guest work is never discarded.
 EOF
+}
+
+prepare_git_worktree() {
+  local index="$1" source="$2" branch="$3" destination actual_root actual_branch
+  destination="$mount_root/mount-$index"
+
+  if [[ -e "$destination" ]]; then
+    actual_root=$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null) \
+      || die "temporary mount $destination exists but is not a Git worktree; remove it manually"
+    [[ "$actual_root" == "$destination" ]] || die \
+      "temporary mount $destination is not a worktree root; remove it manually"
+    actual_branch=$(git -C "$destination" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+    [[ "$actual_branch" == "$branch" ]] || die \
+      "temporary mount $destination has branch ${actual_branch:-detached}, expected $branch"
+  else
+    mkdir -p "$mount_root"
+    if git -C "$source" show-ref --verify --quiet "refs/heads/$branch"; then
+      git -C "$source" worktree add "$destination" "$branch" >&2
+    else
+      git -C "$source" worktree add -b "$branch" "$destination" HEAD >&2
+    fi
+  fi
+  printf '%s\n' "$destination"
+}
+
+prepare_declared_mounts() {
+  local count index source kind branch location mount_point access
+  mount_locations=()
+  mount_points=()
+  mount_accesses=()
+  count=$(jq '.mounts | length' <<<"$policy_json")
+  for ((index = 0; index < count; index++)); do
+    source=$(jq -r ".mounts[$index].source" <<<"$policy_json")
+    kind=$(jq -r ".mounts[$index].kind" <<<"$policy_json")
+    mount_point=$(jq -r ".mounts[$index].mount_point" <<<"$policy_json")
+    access=$(jq -r ".mounts[$index].access" <<<"$policy_json")
+    if [[ "$kind" == git ]]; then
+      branch=$(jq -r ".mounts[$index].branch" <<<"$policy_json")
+      location=$(prepare_git_worktree "$index" "$source" "$branch")
+    else
+      location="$source"
+    fi
+    mount_locations+=("$location")
+    mount_points+=("$mount_point")
+    mount_accesses+=("$access")
+  done
+}
+
+prepare_spec_mount() {
+  local config_path temporary
+  config_path=$(jq -r '.config_path // empty' <<<"$policy_json")
+  [[ -n "$config_path" ]] || return
+  mkdir -p "$spec_mount_root"
+  temporary=$(mktemp "$spec_mount_root/.sandbox.toml.XXXXXX")
+  cp "$config_path" "$temporary"
+  chmod 444 "$temporary"
+  mv "$temporary" "$spec_mount_root/.sandbox.toml"
+}
+
+append_declared_mounts() {
+  local index writable
+  prepare_declared_mounts
+  prepare_spec_mount
+  for ((index = 0; index < ${#mount_locations[@]}; index++)); do
+    [[ "${mount_accesses[$index]}" == rw ]] && writable=true || writable=false
+    printf '%s\n' "- location: $(json_string "${mount_locations[$index]}")"
+    printf '%s\n' "  mountPoint: ${mount_points[$index]}" "  writable: $writable"
+  done
+  if [[ -n $(jq -r '.config_path // empty' <<<"$policy_json") ]]; then
+    printf '%s\n' '  # Visible project specification, independently read-only.'
+    printf '%s\n' "- location: $(json_string "$spec_mount_root")"
+    printf '%s\n' '  mountPoint: /sandbox-spec' '  writable: false'
+  fi
 }
 
 append_common_template() {
@@ -302,9 +404,7 @@ portForwards:
 
 mounts:
 YAML
-    printf '%s\n' '  # The selected worktree is the only mutable host path.'
-    printf '%s\n' "- location: $(json_string "$worktree")"
-    printf '%s\n' '  mountPoint: /workspace' '  writable: true'
+    append_declared_mounts
     printf '%s\n' '  # Fixed, store-built guest profile; read-only and not a host secret.'
     printf '%s\n' "- location: $(json_string "$SANDBOX_GUEST_PROFILE")"
     printf '%s\n' '  mountPoint: /mnt/sandbox-profile' '  writable: false'
@@ -637,7 +737,7 @@ start() {
 
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
     limactl start "$instance"
-    note "ready. Run: sandbox shell --network $network_mode $worktree"
+    note "ready. Run: sandbox shell --network $network_mode $project"
     return
   fi
   make_template
@@ -646,7 +746,7 @@ start() {
   note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the fixed guest profile"
   limactl start --tty=false --name="$instance" "$template"
   record_policy
-  note "ready. Run: sandbox shell --network $network_mode $worktree"
+  note "ready. Run: sandbox shell --network $network_mode $project"
 }
 
 instance_action() {
@@ -710,7 +810,7 @@ destroy() {
   fi
   limactl delete --force "$instance"
   rm -f "$policy_record"
-  note 'deleted. The host worktree was not changed.'
+  note 'deleted. Declared host paths and generated Git worktrees were retained.'
 }
 
 delete_instance() {
@@ -751,7 +851,7 @@ delete_instance() {
     [[ "$response" == "delete $instance_to_delete" ]] || die 'not deleted'
   fi
   limactl delete --force "$instance_to_delete"
-  note 'deleted. No host worktree was changed.'
+  note 'deleted. No declared host path was changed.'
 }
 
 main() {

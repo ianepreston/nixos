@@ -8,7 +8,10 @@ _: {
       checks.coding-sandbox-policy =
         pkgs.runCommand "coding-sandbox-policy"
           {
-            nativeBuildInputs = [ pkgs.python3 ];
+            nativeBuildInputs = [
+              pkgs.git
+              pkgs.python3
+            ];
           }
           ''
             ${pkgs.python3}/bin/python ${../programs/coding-sandbox-policy-test.py} \
