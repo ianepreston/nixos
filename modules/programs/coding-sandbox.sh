@@ -45,10 +45,11 @@ Only paths declared in .sandbox.toml are mounted. Git repository paths are
 checked out into launcher-owned temporary worktrees; direct paths are mounted
 read-only unless their declaration explicitly requests read-write. The fixed,
 store-built guest profile and the project specification are separately mounted
-read-only. Sandbox commands run as the unprivileged `agent` account; the Lima
-transport account retains passwordless sudo only to bootstrap the guest and
-switch to that account. SSH keys, credential agents, and the rest of HOME are
-never forwarded or mounted.
+read-only. [profile].modules and [[startup]] sources must be files under one of
+those declared mounts; they are activated and run as the unprivileged `agent`
+account. The Lima transport account retains passwordless sudo only to bootstrap
+the guest and switch to that account. SSH keys, credential agents, and the
+rest of HOME are never forwarded or mounted.
 EOF
 }
 
@@ -231,7 +232,7 @@ Coding sandbox plan
   VM:           Ubuntu aarch64 under Apple Virtualization (VZ)
   Project:      $project
   Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
-  Profile mount: fixed store-built profile (read-only)
+  Base profile: fixed store-built profile (read-only)
   Guest commands: unprivileged agent account (no sudo)
   Guest working directory: $guest_workdir
   SSH agent:    not forwarded
@@ -249,6 +250,20 @@ EOF
   ' <<<"$policy_json"
   if [[ -n $(jq -r '.config_path // empty' <<<"$policy_json") ]]; then
     printf '%s\n' '    project specification -> /sandbox-spec/.sandbox.toml [ro]'
+  fi
+
+  printf '\n  Selected profile: sha256:%s\n' "$(jq -r '.profile.digest | sub("sha256:"; "")' <<<"$policy_json")"
+  if [[ $(jq '.profile.modules | length' <<<"$policy_json") -eq 0 ]]; then
+    printf '%s\n' '    modules: none'
+  else
+    jq -r '.profile.modules[] | "    module: \(.guest_path) <- \(.source) [\(.mount_access), \(.digest)]"' \
+      <<<"$policy_json"
+  fi
+  if [[ $(jq '.startup | length' <<<"$policy_json") -eq 0 ]]; then
+    printf '%s\n' '    startup: none'
+  else
+    jq -r '.startup[] | "    startup: \(.name): \(.guest_path) <- \(.source) args=\(.args | @json) [\(.mount_access), \(.digest)]"' \
+      <<<"$policy_json"
   fi
 
   case "$network_mode" in
@@ -436,8 +451,10 @@ policy_nft_set() {
 }
 
 append_profile_provision() {
-  local use_proxy="$1"
-  cat >>"$template" <<'YAML'
+  local use_proxy="$1" profile_state
+  profile_state=$(jq -c '{ profile, startup }' <<<"$policy_json")
+  {
+    cat <<'YAML'
 - mode: system
   script: |
     #!/bin/bash
@@ -447,9 +464,10 @@ append_profile_provision() {
     if test -e "$marker"; then
       exit 0
     fi
+    state_dir="$agent_home/.local/state/coding-sandbox"
     install -d -m 0700 -o agent -g agent \
       "$agent_home/.local/share/coding-sandbox/profile" \
-      "$(dirname "$marker")" \
+      "$state_dir" \
       "$agent_home/.local/state/nix/profiles"
     cp -a /mnt/sandbox-profile/. "$agent_home/.local/share/coding-sandbox/profile/"
     # The source is a read-only Nix-store mount. Nix writes the initial lock
@@ -457,26 +475,76 @@ append_profile_provision() {
     chown -R agent:agent "$agent_home/.local"
     chmod -R u+w "$agent_home/.local/share/coding-sandbox/profile"
 YAML
+    cat <<YAML
+    cat >"\$state_dir/profile.json" <<'PROFILE_STATE'
+    $profile_state
+    PROFILE_STATE
+    cat >"\$agent_home/.local/share/coding-sandbox/profile/sandbox-profile.nix" <<'PROFILE_MODULE'
+    { ... }: {
+      imports = [
+YAML
+    jq -r '.profile.modules[] | "        (builtins.toPath \(.guest_path | @json))"' <<<"$policy_json"
+    cat <<'YAML'
+      ];
+    }
+    PROFILE_MODULE
+    chown agent:agent "$state_dir/profile.json" \
+      "$agent_home/.local/share/coding-sandbox/profile/sandbox-profile.nix"
+
+    verify_source() {
+      local guest_path="$1" expected_digest="$2" actual_digest
+      actual_digest="sha256:$(sha256sum "$guest_path" | awk '{ print $1 }')"
+      test "$actual_digest" = "$expected_digest"
+    }
+
+    module_count=$(jq '.profile.modules | length' "$state_dir/profile.json")
+    for ((module_index = 0; module_index < module_count; module_index++)); do
+      verify_source \
+        "$(jq -r ".profile.modules[$module_index].guest_path" "$state_dir/profile.json")" \
+        "$(jq -r ".profile.modules[$module_index].digest" "$state_dir/profile.json")"
+    done
+YAML
   if [[ "$use_proxy" == true ]]; then
-    cat >>"$template" <<'YAML'
+    cat <<'YAML'
     proxy_environment=(
       http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
       HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
     )
 YAML
   else
-    cat >>"$template" <<'YAML'
+    cat <<'YAML'
     proxy_environment=()
 YAML
   fi
-  cat >>"$template" <<'YAML'
+  cat <<'YAML'
     runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" bash -lc '
       source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#agent"
-    '
+      nix run github:nix-community/home-manager/release-26.05 -- switch --impure --flake "$HOME/.local/share/coding-sandbox/profile#agent"
+    ' >"$state_dir/home-manager.log" 2>&1
+    chown agent:agent "$state_dir/home-manager.log"
+
+    startup_count=$(jq '.startup | length' "$state_dir/profile.json")
+    agent_profile_path="$agent_home/.nix-profile/bin:$PATH"
+    for ((startup_index = 0; startup_index < startup_count; startup_index++)); do
+      startup_name=$(jq -r ".startup[$startup_index].name" "$state_dir/profile.json")
+      startup_path=$(jq -r ".startup[$startup_index].guest_path" "$state_dir/profile.json")
+      startup_digest=$(jq -r ".startup[$startup_index].digest" "$state_dir/profile.json")
+      startup_log="$state_dir/startup-$startup_name.log"
+      verify_source "$startup_path" "$startup_digest"
+      mapfile -d '' -t startup_args < <(jq -j ".startup[$startup_index].args[] | ., \"\\u0000\"" "$state_dir/profile.json")
+      if ! runuser -u agent -- env HOME="$agent_home" PATH="$agent_profile_path" "${proxy_environment[@]}" \
+        bash "$startup_path" "${startup_args[@]}" >"$startup_log" 2>&1; then
+        chown agent:agent "$startup_log"
+        printf '%s\n' "$startup_name" >"$state_dir/failed-startup"
+        chown agent:agent "$state_dir/failed-startup"
+        exit 1
+      fi
+      chown agent:agent "$startup_log"
+    done
     touch "$marker"
     chown agent:agent "$marker"
 YAML
+  } >>"$template"
 }
 
 append_protected_provision() {
@@ -618,6 +686,11 @@ YAML
       chain output {
         type filter hook output priority filter; policy drop;
         oifname "lo" accept
+        # Replies to a connection initiated by Lima (notably its SSH
+        # transport) must remain possible after a VM restart.  This precedes
+        # the protected-destination drop because the peer is on Lima's
+        # private NAT subnet; it never authorizes a new guest connection.
+        ct state established,related accept
         # Lima infrastructure only: DHCP and DNS to the one discovered NAT
         # gateway. It is not a general private-gateway exception.
         ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
@@ -643,7 +716,6 @@ YAML
 YAML
   else
     cat >>"$template" <<'YAML'
-        ct state established,related accept
         accept
 YAML
   fi
@@ -745,6 +817,12 @@ EOF
       ;;
   esac
 
+  cat <<'EOF'
+
+The selected Home Manager modules activate as the unprivileged agent account.
+After activation, every selected startup script executes as that same account.
+EOF
+
   "$assume_yes" && return
   printf 'Type %s to create this VM: ' "$confirmation"
   read -r response
@@ -795,7 +873,7 @@ start() {
   make_template
   trap 'rm -f "$template"' EXIT
 
-  note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the fixed guest profile"
+  note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the selected guest profile"
   limactl start --tty=false --name="$instance" "$template"
   record_policy
   note "ready. Run: sandbox shell --network $network_mode $project"

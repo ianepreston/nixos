@@ -10,12 +10,18 @@ _: {
           {
             nativeBuildInputs = [
               pkgs.git
+              pkgs.bash
+              pkgs.coreutils
+              pkgs.gawk
+              pkgs.gnused
+              pkgs.jq
               pkgs.python3
             ];
           }
           ''
             ${pkgs.python3}/bin/python ${../programs/coding-sandbox-policy-test.py} \
-              ${../programs/coding-sandbox-policy.py}
+              ${../programs/coding-sandbox-policy.py} \
+              ${../programs/coding-sandbox.sh}
             touch "$out"
           '';
     };

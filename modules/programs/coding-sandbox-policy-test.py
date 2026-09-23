@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import ipaddress
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from pathlib import Path
 
 
 POLICY_PATH = Path(sys.argv.pop(1)).resolve()
+SANDBOX_PATH = Path(sys.argv.pop(1)).resolve()
 SPEC = importlib.util.spec_from_file_location("coding_sandbox_policy", POLICY_PATH)
 assert SPEC and SPEC.loader
 POLICY = importlib.util.module_from_spec(SPEC)
@@ -131,6 +133,97 @@ class PolicyTest(unittest.TestCase):
                 (root / ".sandbox.toml").write_text(text)
                 with self.assertRaises(POLICY.PolicyError):
                     POLICY.render_policy(root, None)
+
+    def test_profile_files_must_be_under_mounts_and_are_digested(self) -> None:
+        root = self.config("")
+        source = root / "sandbox"
+        source.mkdir()
+        module = source / "profile.nix"
+        startup = source / "bootstrap.sh"
+        module.write_text("{ pkgs, ... }: { home.packages = [ pkgs.hello ]; }\n")
+        startup.write_text("#!/usr/bin/env bash\nprintf ready\\n\n")
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\npath = "sandbox"\nmount_point = "/sandbox"\n\n'
+            '[profile]\nmodules = ["sandbox/profile.nix"]\n\n'
+            '[[startup]]\nname = "bootstrap"\npath = "sandbox/bootstrap.sh"\nargs = ["--quiet"]\n'
+        )
+
+        policy = POLICY.render_policy(root, None)
+        self.assertEqual(policy["profile"]["modules"][0]["guest_path"], "/sandbox/profile.nix")
+        self.assertEqual(policy["startup"][0]["guest_path"], "/sandbox/bootstrap.sh")
+        self.assertEqual(policy["startup"][0]["args"], ["--quiet"])
+        self.assertTrue(policy["profile"]["digest"].startswith("sha256:"))
+        original_digest = policy["profile"]["digest"]
+        startup.write_text("#!/usr/bin/env bash\nprintf changed\\n\n")
+        self.assertNotEqual(POLICY.render_policy(root, None)["profile"]["digest"], original_digest)
+
+        (root / ".sandbox.toml").write_text('[profile]\nmodules = ["sandbox/profile.nix"]\n')
+        with self.assertRaises(POLICY.PolicyError):
+            POLICY.render_policy(root, None)
+
+    def test_profile_and_startup_schema_rejects_unsafe_entries(self) -> None:
+        root = self.config("")
+        source = root / "sandbox"
+        source.mkdir()
+        (source / "profile.nix").write_text("{ ... }: { }\n")
+        (source / "bootstrap.sh").write_text("true\n")
+        mount = '[[mounts]]\npath = "sandbox"\nmount_point = "/sandbox"\n\n'
+        for text in (
+            mount + '[profile]\nunknown = []\n',
+            mount + '[profile]\nmodules = "sandbox/profile.nix"\n',
+            mount + '[[startup]]\nname = "bad name"\npath = "sandbox/bootstrap.sh"\n',
+            mount
+            + '[[startup]]\nname = "same"\npath = "sandbox/bootstrap.sh"\n\n'
+            + '[[startup]]\nname = "same"\npath = "sandbox/bootstrap.sh"\n',
+            mount + '[[startup]]\nname = "bootstrap"\npath = "sandbox/bootstrap.sh"\nargs = [1]\n',
+        ):
+            with self.subTest(text=text):
+                (root / ".sandbox.toml").write_text(text)
+                with self.assertRaises(POLICY.PolicyError):
+                    POLICY.render_policy(root, None)
+
+    def test_template_composes_and_verifies_selected_profile_sources(self) -> None:
+        root = self.config("")
+        source = root / "sandbox"
+        source.mkdir()
+        (source / "profile.nix").write_text("{ pkgs, ... }: { home.packages = [ pkgs.hello ]; }\n")
+        (source / "bootstrap.sh").write_text("#!/usr/bin/env bash\nprintf ready\\n")
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\npath = "sandbox"\nmount_point = "/sandbox"\n\n'
+            '[profile]\nmodules = ["sandbox/profile.nix"]\n\n'
+            '[[startup]]\nname = "bootstrap"\npath = "sandbox/bootstrap.sh"\nargs = ["--quiet"]\n'
+        )
+        environment = {
+            **os.environ,
+            "HOME": str(root),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+        }
+        template = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "template", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        plan = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        self.assertIn('(builtins.toPath "/sandbox/profile.nix")', template)
+        self.assertIn('verify_source "$startup_path" "$startup_digest"', template)
+        self.assertIn('startup-$startup_name.log', template)
+        self.assertIn('switch --impure --flake', template)
+        self.assertIn('PATH="$agent_profile_path"', template)
+        self.assertLess(
+            template.index('ct state established,related accept'),
+            template.index('ip daddr @protected_v4 drop'),
+        )
+        self.assertIn("Selected profile: sha256:", plan)
+        self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
 
 
 if __name__ == "__main__":

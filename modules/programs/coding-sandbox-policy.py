@@ -8,6 +8,7 @@ library plus Git: a project-owned TOML file is data, never shell input.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import re
@@ -40,6 +41,7 @@ BASE_RESTRICTED_DOMAINS = (
 )
 RESERVED_MOUNT_POINTS = (PurePosixPath("/sandbox-spec"), PurePosixPath("/mnt/sandbox-profile"))
 DOMAIN_RE = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}\Z")
+STARTUP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 class PolicyError(Exception):
@@ -196,10 +198,109 @@ def parse_mounts(value: Any, config_root: Path) -> list[dict[str, Any]]:
     return mounts
 
 
+def file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def profile_path(value: Any, field: str, config_root: Path, mounts: list[dict[str, Any]]) -> dict[str, str]:
+    if not isinstance(value, str) or not value:
+        fail(f"{field} must be a non-empty string")
+    source = Path(value)
+    if not source.is_absolute():
+        source = config_root / source
+    try:
+        source = source.resolve(strict=True)
+    except OSError as error:
+        fail(f"{field} cannot resolve path {value!r}: {error}")
+    if not source.is_file():
+        fail(f"{field} path {value!r} must name a regular file")
+
+    for mount in mounts:
+        mount_source = Path(mount["source"])
+        try:
+            relative_source = source.relative_to(mount_source)
+        except ValueError:
+            continue
+        return {
+            "source": str(source),
+            "guest_path": str(PurePosixPath(mount["mount_point"]) / relative_source.as_posix()),
+            "mount_point": mount["mount_point"],
+            "mount_access": mount["access"],
+            "digest": file_digest(source),
+        }
+    fail(f"{field} path {value!r} must be beneath a declared mount")
+
+
+def parse_profile(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -> dict[str, Any]:
+    if value is None:
+        return {"modules": [], "digest": file_digest_data([])}
+    if not isinstance(value, dict):
+        fail("profile must be a table")
+    unknown = set(value) - {"modules"}
+    if unknown:
+        fail(f"unknown profile key(s): {', '.join(sorted(unknown))}")
+    modules = value.get("modules", [])
+    if not isinstance(modules, list):
+        fail("profile.modules must be an array")
+    resolved_modules = [
+        profile_path(module, f"profile.modules[{index}]", config_root, mounts)
+        for index, module in enumerate(modules)
+    ]
+    return {
+        "modules": resolved_modules,
+        "digest": file_digest_data(resolved_modules),
+    }
+
+
+def file_digest_data(value: Any) -> str:
+    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+def parse_startup(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        fail("startup must be an array of tables")
+    entries: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for index, entry in enumerate(value):
+        prefix = f"startup[{index}]"
+        if not isinstance(entry, dict):
+            fail(f"{prefix} must be a table")
+        unknown = set(entry) - {"name", "path", "args"}
+        if unknown:
+            fail(f"{prefix} unknown key(s): {', '.join(sorted(unknown))}")
+        name = entry.get("name")
+        if not isinstance(name, str) or not STARTUP_NAME_RE.fullmatch(name):
+            fail(f"{prefix}.name must contain only letters, digits, '.', '_' or '-', and cannot begin with punctuation")
+        if name in names:
+            fail(f"{prefix}.name {name!r} duplicates another startup entry")
+        names.add(name)
+        args = entry.get("args", [])
+        if not isinstance(args, list) or not all(isinstance(argument, str) for argument in args):
+            fail(f"{prefix}.args must be an array of strings")
+        resolved = profile_path(entry.get("path"), f"{prefix}.path", config_root, mounts)
+        entries.append({"name": name, "args": args, **resolved})
+    return entries
+
+
 def parse_config(project: Path) -> dict[str, Any]:
     config_path = find_config_path(project)
     if config_path is None:
-        return {"version": 1, "network": {}, "mounts": [], "config_path": None, "config_root": project}
+        return {
+            "version": 1,
+            "network": {},
+            "mounts": [],
+            "profile": {"modules": [], "digest": file_digest_data({"modules": [], "startup": []})},
+            "startup": [],
+            "config_path": None,
+            "config_root": project,
+        }
     try:
         with config_path.open("rb") as config_file:
             config = tomllib.load(config_file)
@@ -207,7 +308,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network", "mounts"}
+    unknown = set(config) - {"version", "network", "mounts", "profile", "startup"}
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -218,10 +319,16 @@ def parse_config(project: Path) -> dict[str, Any]:
     unknown = set(network) - {"mode", "internal_domains", "internal_cidrs", "public_domains"}
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
+    mounts = parse_mounts(config.get("mounts"), config_path.parent)
+    profile = parse_profile(config.get("profile"), config_path.parent, mounts)
+    startup = parse_startup(config.get("startup"), config_path.parent, mounts)
+    profile["digest"] = file_digest_data({"modules": profile["modules"], "startup": startup})
     return {
         "version": 1,
         "network": network,
-        "mounts": parse_mounts(config.get("mounts"), config_path.parent),
+        "mounts": mounts,
+        "profile": profile,
+        "startup": startup,
         "config_path": config_path,
         "config_root": config_path.parent,
     }
@@ -307,6 +414,8 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "config_path": str(config["config_path"]) if config["config_path"] else None,
         "config_root": str(config["config_root"]),
         "mounts": config["mounts"],
+        "profile": config["profile"],
+        "startup": config["startup"],
         "protected_v4": [str(network) for network in PROTECTED_V4],
         "protected_v6": [str(network) for network in PROTECTED_V6],
         "internal_domains": resolved_internal_domains,
