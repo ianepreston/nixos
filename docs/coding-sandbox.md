@@ -60,6 +60,21 @@ local-model configuration, or model credentials. Use a project `nix develop`
 for declared project tools, or install a demo's agent inside the guest and
 configure it to use that demo's AI gateway.
 
+### Guest privilege boundary
+
+The launcher uses Lima's `lima` account only as a privileged transport and
+bootstrap account. System provisioning installs the firewall, proxy, Nix, and
+the fixed profile before any project command runs. `sandbox shell` and
+`sandbox exec` then switch to an `agent` account with no sudo or administrative
+group membership. This prevents agent code from replacing the guest firewall,
+changing routes, or changing proxy configuration.
+
+The agent can still use `nix develop`, `nix profile`, project-local language
+environments, and writable declared mounts. It cannot install system packages
+with `apt`; add a trusted bootstrap package or use a user/project-level tool
+instead. This is a guest privilege boundary, not a defence against a guest
+kernel or Nix-daemon vulnerability.
+
 ### Mount declarations
 
 Each `[[mounts]]` entry has a source `path` and an absolute guest

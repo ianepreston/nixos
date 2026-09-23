@@ -45,8 +45,10 @@ Only paths declared in .sandbox.toml are mounted. Git repository paths are
 checked out into launcher-owned temporary worktrees; direct paths are mounted
 read-only unless their declaration explicitly requests read-write. The fixed,
 store-built guest profile and the project specification are separately mounted
-read-only; SSH keys, credential agents, and the rest of HOME are never
-forwarded or mounted.
+read-only. Sandbox commands run as the unprivileged `agent` account; the Lima
+transport account retains passwordless sudo only to bootstrap the guest and
+switch to that account. SSH keys, credential agents, and the rest of HOME are
+never forwarded or mounted.
 EOF
 }
 
@@ -217,6 +219,7 @@ Coding sandbox plan
   Project:      $project
   Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
   Profile mount: fixed store-built profile (read-only)
+  Guest commands: unprivileged agent account (no sudo)
   SSH agent:    not forwarded
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
@@ -421,30 +424,44 @@ policy_nft_set() {
 append_profile_provision() {
   local use_proxy="$1"
   cat >>"$template" <<'YAML'
-- mode: user
+- mode: system
   script: |
     #!/bin/bash
     set -euxo pipefail
-    marker="$HOME/.local/state/coding-sandbox/profile-ready"
+    agent_home=/home/agent
+    marker="$agent_home/.local/state/coding-sandbox/profile-ready"
     if test -e "$marker"; then
       exit 0
     fi
-    mkdir -p "$HOME/.local/share/coding-sandbox/profile" "$(dirname "$marker")"
-    cp -a /mnt/sandbox-profile/. "$HOME/.local/share/coding-sandbox/profile/"
+    install -d -m 0700 -o agent -g agent \
+      "$agent_home/.local/share/coding-sandbox/profile" \
+      "$(dirname "$marker")" \
+      "$agent_home/.local/state/nix/profiles"
+    cp -a /mnt/sandbox-profile/. "$agent_home/.local/share/coding-sandbox/profile/"
     # The source is a read-only Nix-store mount. Nix writes the initial lock
     # file beside the guest's private copy, never into that source.
-    chmod -R u+w "$HOME/.local/share/coding-sandbox/profile"
-    source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+    chown -R agent:agent "$agent_home/.local/share/coding-sandbox"
+    chmod -R u+w "$agent_home/.local/share/coding-sandbox/profile"
 YAML
   if [[ "$use_proxy" == true ]]; then
     cat >>"$template" <<'YAML'
-    export http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
-    export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
+    proxy_environment=(
+      http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
+      HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
+    )
+YAML
+  else
+    cat >>"$template" <<'YAML'
+    proxy_environment=()
 YAML
   fi
   cat >>"$template" <<'YAML'
-    nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#lima"
+    runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" bash -lc '
+      source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+      nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#agent"
+    '
     touch "$marker"
+    chown agent:agent "$marker"
 YAML
 }
 
@@ -472,6 +489,16 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y $packages
+
+    # Lima is the privileged transport/bootstrap account. Untrusted commands
+    # run only as agent, which has no sudo or administrative group membership.
+    if ! id -u agent >/dev/null 2>&1; then
+      useradd --create-home --user-group --shell /bin/bash agent
+    fi
+    gpasswd -d agent sudo 2>/dev/null || true
+    ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
+    install -d -m 0700 -o lima -g lima /home/lima
+    install -d -m 0700 -o agent -g agent /home/agent
 
     # Bootstrap is trusted launcher code; no worktree command has run and no
     # host credential is mounted. The firewall below is active before the
@@ -622,27 +649,19 @@ provision:
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y ca-certificates curl git jq
+    if ! id -u agent >/dev/null 2>&1; then
+      useradd --create-home --user-group --shell /bin/bash agent
+    fi
+    gpasswd -d agent sudo 2>/dev/null || true
+    ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
+    install -d -m 0700 -o lima -g lima /home/lima
+    install -d -m 0700 -o agent -g agent /home/agent
     if ! test -x /nix/var/nix/profiles/default/bin/nix; then
       curl --proto '=https' --tlsv1.2 -fsSL https://install.determinate.systems/nix \
         | sh -s -- install --no-confirm
     fi
-- mode: user
-  script: |
-    #!/bin/bash
-    set -euxo pipefail
-    marker="$HOME/.local/state/coding-sandbox/profile-ready"
-    if test -e "$marker"; then
-      exit 0
-    fi
-    mkdir -p "$HOME/.local/share/coding-sandbox/profile" "$(dirname "$marker")"
-    cp -a /mnt/sandbox-profile/. "$HOME/.local/share/coding-sandbox/profile/"
-    # The source is a read-only Nix-store mount. Nix writes the initial lock
-    # file beside the guest's private copy, never into that source.
-    chmod -R u+w "$HOME/.local/share/coding-sandbox/profile"
-    source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-    nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#lima"
-    touch "$marker"
 YAML
+  append_profile_provision false
 }
 
 make_template() {
@@ -762,10 +781,11 @@ instance_action() {
       if [[ "$network_mode" == restricted ]]; then
         # /etc/profile.d supplies the loopback proxy for the normal interactive
         # path.  Use a login shell explicitly: Lima's raw SSH shell need not
-        # source the system profile.
-        limactl shell --workdir /workspace "$instance" bash --login
+        # source the system profile. Lima is only the transport account; the
+        # interactive agent process has no administrative privilege.
+        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- bash --login
       else
-        limactl shell --workdir /workspace "$instance"
+        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- bash --login
       fi
       ;;
     exec)
@@ -775,7 +795,7 @@ instance_action() {
         # /etc/profile.d.  Inject only the guest-local proxy endpoints, never
         # a host proxy or credential, so `sandbox exec -- curl …` has the
         # documented allowlisted path while direct connections stay default-drop.
-        limactl shell --workdir /workspace "$instance" env \
+        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- env \
           HTTP_PROXY=http://127.0.0.1:3128 \
           HTTPS_PROXY=http://127.0.0.1:3128 \
           ALL_PROXY=http://127.0.0.1:3128 \
@@ -784,7 +804,7 @@ instance_action() {
           https_proxy=http://127.0.0.1:3128 \
           "${command[@]}"
       else
-        limactl shell --workdir /workspace "$instance" "${command[@]}"
+        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- "${command[@]}"
       fi
       ;;
     status)

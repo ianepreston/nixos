@@ -29,13 +29,13 @@ _: {
           };
 
           outputs = { nixpkgs, home-manager, ... }: {
-            homeConfigurations.lima = home-manager.lib.homeManagerConfiguration {
+            homeConfigurations.agent = home-manager.lib.homeManagerConfiguration {
               pkgs = nixpkgs.legacyPackages.aarch64-linux;
               modules = [
                 {
                   home = {
-                    username = "lima";
-                    homeDirectory = "/home/lima";
+                    username = "agent";
+                    homeDirectory = "/home/agent";
                     stateVersion = "26.05";
                     packages = with nixpkgs.legacyPackages.aarch64-linux; [
                       bashInteractive
