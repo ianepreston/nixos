@@ -1345,8 +1345,9 @@ the thing to fix when the sops files get split more finely.
 #### macOS coding sandboxes
 
 `work` carries a macOS-only Lima launcher for isolated coding and demo
-worktrees. Its documented workflow, safety boundary, network modes, multiple
-VM lifecycle, cache behaviour, and current limits are in the
+projects. Its visible per-project mount specification, network grants and
+lateral boundary, hardened/open modes, VM lifecycle, cache behaviour, and
+current limits are in the
 [macOS coding sandbox guide](docs/coding-sandbox.md).
 
 The workstation side of the same endpoints. `modules/programs/vibes.nix` (the

@@ -12,10 +12,10 @@ _: {
       # This is the deliberately small, fixed first profile. It contains no
       # coding agent, model endpoint, or model credential: work demos often
       # need a separately installed agent pointed at their own AI gateway.
-      # Project tools are supplied by the worktree's devShell after entering
-      # /workspace. Later work adds explicit per-worktree profiles; keeping
-      # this source separate from the worktree means an untrusted checkout
-      # cannot alter its own bootstrap.
+      # Project tools are supplied by a declared project's devShell when one
+      # is mounted. A sandbox may also deliberately have no host mounts, so
+      # this source remains separate from project code and cannot be altered
+      # by an untrusted checkout.
       guestProfile = pkgs.writeTextDir "flake.nix" ''
         {
           description = "Coding sandbox guest profile";
@@ -29,13 +29,13 @@ _: {
           };
 
           outputs = { nixpkgs, home-manager, ... }: {
-            homeConfigurations.lima = home-manager.lib.homeManagerConfiguration {
+            homeConfigurations.agent = home-manager.lib.homeManagerConfiguration {
               pkgs = nixpkgs.legacyPackages.aarch64-linux;
               modules = [
                 {
                   home = {
-                    username = "lima";
-                    homeDirectory = "/home/lima";
+                    username = "agent";
+                    homeDirectory = "/home/agent";
                     stateVersion = "26.05";
                     packages = with nixpkgs.legacyPackages.aarch64-linux; [
                       bashInteractive
@@ -69,9 +69,11 @@ _: {
           gnused
           jq
           lima
+          python3
         ];
         text = ''
           export SANDBOX_GUEST_PROFILE=${guestProfile}
+          export SANDBOX_POLICY_HELPER=${./coding-sandbox-policy.py}
           ${builtins.readFile ./coding-sandbox.sh}
         '';
       };
