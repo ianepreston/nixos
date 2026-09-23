@@ -11,6 +11,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-kapowarr" ];
 
+      myRecovery.apps.kapowarr = {
+        kind = "volume";
+        order = 90;
+        units = [ "podman-kapowarr.service" ];
+        paths = [ "/var/lib/containers/kapowarr" ];
+      };
+
       myAuthentik.forwardAuthApps.kapowarr = {
         inherit port;
         displayName = "Kapowarr";

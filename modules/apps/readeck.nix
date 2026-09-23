@@ -37,6 +37,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "readeck" ];
 
+      myRecovery.apps.readeck = {
+        kind = "sqlite";
+        order = 230;
+        units = [ "readeck.service" ];
+        paths = [ "/var/lib/readeck" ];
+        sqliteOwner = "readeck";
+      };
+
       sops.secrets."readeck/secret_key" = {
         inherit (hostSpec) sopsFile;
         restartUnits = [ "readeck.service" ];

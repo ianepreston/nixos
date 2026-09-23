@@ -575,6 +575,19 @@
 
       config = lib.mkMerge [
         {
+          myRecovery.apps.authentik = {
+            kind = "postgres";
+            order = 0;
+            units = [
+              "authentik.service"
+              "authentik-worker.service"
+              "authentik-migrate.service"
+            ];
+            paths = [ "/var/lib/private/authentik" ];
+            database = "authentik";
+          };
+        }
+        {
           sops.secrets = builtins.listToAttrs (
             map (n: {
               name = "authentik/${n}";

@@ -227,6 +227,14 @@ _: {
         group = "gatus";
       };
 
+      myRecovery.apps.gatus = {
+        kind = "sqlite";
+        order = 60;
+        units = [ "gatus.service" ];
+        paths = [ "/var/lib/gatus" ];
+        sqliteOwner = "gatus";
+      };
+
       # Quiesce the sqlite file before restic snapshots — matches the
       # pattern in 9886a1d for all other sqlite-backed apps.
       mySqliteQuiesce.apps.gatus.databases = [

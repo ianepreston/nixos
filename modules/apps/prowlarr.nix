@@ -20,6 +20,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "prowlarr" ];
 
+      myRecovery.apps.prowlarr = {
+        kind = "sqlite";
+        order = 210;
+        units = [ "prowlarr.service" ];
+        paths = [ "/var/lib/prowlarr" ];
+        sqliteOwner = "prowlarr";
+      };
+
       myAuthentik.forwardAuthApps.prowlarr = {
         inherit port;
         displayName = "Prowlarr";

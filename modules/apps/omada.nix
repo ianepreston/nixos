@@ -180,6 +180,18 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-omada" ];
 
+      myRecovery.apps.omada = {
+        kind = "volume";
+        order = 170;
+        units = [ "podman-omada.service" ];
+        paths = [ "/var/lib/containers/omada" ];
+        health = {
+          url = "http://127.0.0.1:8088/";
+          expect = "302";
+          retries = 60;
+        };
+      };
+
       myObservability.logRuleGroups.omada.groups = [
         {
           name = "omada-firmware";

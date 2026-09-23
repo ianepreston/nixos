@@ -66,6 +66,14 @@
     {
       myObservability.monitoredSystemdUnits = [ "podman-shelfmark" ];
 
+      myRecovery.apps.shelfmark = {
+        kind = "sqlite";
+        order = 260;
+        units = [ "podman-shelfmark.service" ];
+        paths = [ "/var/lib/containers/shelfmark" ];
+        health.url = "http://127.0.0.1:8085/api/health";
+      };
+
       myAuthentik.oidcApps.shelfmark = {
         blueprintsDir = ./shelfmark-blueprints;
         appRestartUnit = [ "podman-shelfmark.service" ];

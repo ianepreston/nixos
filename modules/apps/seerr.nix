@@ -20,6 +20,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-seerr" ];
 
+      myRecovery.apps.seerr = {
+        kind = "volume";
+        order = 250;
+        units = [ "podman-seerr.service" ];
+        paths = [ "/var/lib/containers/seerr" ];
+      };
+
       myAuthentik.oidcApps.seerr = {
         blueprintsDir = ./seerr-blueprints;
         clientCredsInAppEnv = false;

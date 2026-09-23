@@ -29,6 +29,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "miniflux" ];
 
+      myRecovery.apps.miniflux = {
+        kind = "postgres";
+        order = 140;
+        units = [ "miniflux.service" ];
+        database = "miniflux";
+        health.url = "http://127.0.0.1:8089/healthcheck";
+      };
+
       myAuthentik.oidcApps.miniflux = {
         blueprintsDir = ./miniflux-blueprints;
         appRestartUnit = [ "miniflux.service" ];

@@ -29,6 +29,13 @@ _: {
   flake.modules.nixos.matter-server = _: {
     myObservability.monitoredSystemdUnits = [ "matter-server" ];
 
+    myRecovery.apps.matter-server = {
+      kind = "volume";
+      order = 130;
+      units = [ "matter-server.service" ];
+      paths = [ "/var/lib/private/matter-server" ];
+    };
+
     services.matter-server = {
       enable = true;
     };

@@ -15,6 +15,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "audiobookshelf" ];
 
+      myRecovery.apps.audiobookshelf = {
+        kind = "sqlite";
+        order = 20;
+        units = [ "audiobookshelf.service" ];
+        paths = [ "/var/lib/audiobookshelf" ];
+        health.url = "http://127.0.0.1:13378/healthcheck";
+      };
+
       myAuthentik.oidcApps.audiobookshelf = {
         blueprintsDir = ./audiobookshelf-blueprints;
         clientCredsInAppEnv = false;

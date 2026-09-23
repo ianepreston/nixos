@@ -14,6 +14,13 @@ in
     {
       myObservability.monitoredSystemdUnits = [ "sonarr" ];
 
+      myRecovery.apps.sonarr = {
+        kind = "sqlite";
+        order = 270;
+        units = [ "sonarr.service" ];
+        paths = [ "/var/lib/sonarr" ];
+      };
+
       myAuthentik.forwardAuthApps.sonarr = {
         port = 8989;
         displayName = "Sonarr";

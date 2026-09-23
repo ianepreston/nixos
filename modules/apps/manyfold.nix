@@ -47,6 +47,14 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-manyfold" ];
 
+      myRecovery.apps.manyfold = {
+        kind = "postgres";
+        order = 120;
+        units = [ "podman-manyfold.service" ];
+        paths = [ "/var/lib/containers/manyfold" ];
+        database = "manyfold";
+      };
+
       myPostgresApp.manyfold.consumerService = [ "podman-manyfold.service" ];
 
       # SECRET_KEY_BASE signs browser cookies; the upstream docs ask

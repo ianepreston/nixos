@@ -816,6 +816,13 @@ _: {
           "valheim-joincode-(notify|watchdog)"
         ];
 
+        myRecovery.apps.valheim = {
+          kind = "volume";
+          order = 300;
+          units = [ "podman-valheim.service" ];
+          paths = [ "/var/lib/containers/valheim" ];
+        };
+
         myObservability.metricRuleGroups.valheim.groups = [
           {
             name = "valheim";

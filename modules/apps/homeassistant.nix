@@ -171,6 +171,15 @@
     {
       myObservability.monitoredSystemdUnits = [ "podman-homeassistant" ];
 
+      myRecovery.apps.homeassistant = {
+        kind = "postgres";
+        order = 70;
+        units = [ "home-assistant.service" ];
+        paths = [ "/var/lib/hass" ];
+        database = "hass";
+        health.url = "http://127.0.0.1:8123/manifest.json";
+      };
+
       # MQTT broker user. ACL grants HA full access — HA bridges every
       # publisher's topic via its own auto-discovery prefix and re-emits
       # state on the entity-level topics, so a narrower ACL would just mean

@@ -25,6 +25,13 @@ in
     {
       myObservability.monitoredSystemdUnits = [ "lidarr" ];
 
+      myRecovery.apps.lidarr = {
+        kind = "sqlite";
+        order = 110;
+        units = [ "lidarr.service" ];
+        paths = [ "/var/lib/lidarr" ];
+      };
+
       myAuthentik.forwardAuthApps.lidarr = {
         port = 8686;
         displayName = "Lidarr";

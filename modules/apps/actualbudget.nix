@@ -18,6 +18,13 @@ _: {
     {
       myObservability.monitoredSystemdUnits = [ "podman-actualbudget" ];
 
+      myRecovery.apps.actualbudget = {
+        kind = "volume";
+        order = 10;
+        units = [ "podman-actualbudget.service" ];
+        paths = [ "/var/lib/containers/actualbudget" ];
+      };
+
       myAuthentik.oidcApps.actualbudget = {
         blueprintsDir = ./actualbudget-blueprints;
         appRestartUnit = [ "podman-actualbudget.service" ];
