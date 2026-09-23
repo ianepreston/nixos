@@ -524,6 +524,7 @@ YAML
     chown agent:agent "$state_dir/home-manager.log"
 
     startup_count=$(jq '.startup | length' "$state_dir/profile.json")
+    agent_profile_path="$agent_home/.nix-profile/bin:$PATH"
     for ((startup_index = 0; startup_index < startup_count; startup_index++)); do
       startup_name=$(jq -r ".startup[$startup_index].name" "$state_dir/profile.json")
       startup_path=$(jq -r ".startup[$startup_index].guest_path" "$state_dir/profile.json")
@@ -531,7 +532,7 @@ YAML
       startup_log="$state_dir/startup-$startup_name.log"
       verify_source "$startup_path" "$startup_digest"
       mapfile -d '' -t startup_args < <(jq -j ".startup[$startup_index].args[] | ., \"\\u0000\"" "$state_dir/profile.json")
-      if ! runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" \
+      if ! runuser -u agent -- env HOME="$agent_home" PATH="$agent_profile_path" "${proxy_environment[@]}" \
         bash "$startup_path" "${startup_args[@]}" >"$startup_log" 2>&1; then
         chown agent:agent "$startup_log"
         printf '%s\n' "$startup_name" >"$state_dir/failed-startup"
