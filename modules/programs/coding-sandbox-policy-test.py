@@ -218,6 +218,10 @@ class PolicyTest(unittest.TestCase):
         self.assertIn('startup-$startup_name.log', template)
         self.assertIn('switch --impure --flake', template)
         self.assertIn('PATH="$agent_profile_path"', template)
+        self.assertLess(
+            template.index('ct state established,related accept'),
+            template.index('ip daddr @protected_v4 drop'),
+        )
         self.assertIn("Selected profile: sha256:", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
 

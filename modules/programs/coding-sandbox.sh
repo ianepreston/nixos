@@ -686,6 +686,11 @@ YAML
       chain output {
         type filter hook output priority filter; policy drop;
         oifname "lo" accept
+        # Replies to a connection initiated by Lima (notably its SSH
+        # transport) must remain possible after a VM restart.  This precedes
+        # the protected-destination drop because the peer is on Lima's
+        # private NAT subnet; it never authorizes a new guest connection.
+        ct state established,related accept
         # Lima infrastructure only: DHCP and DNS to the one discovered NAT
         # gateway. It is not a general private-gateway exception.
         ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
@@ -711,7 +716,6 @@ YAML
 YAML
   else
     cat >>"$template" <<'YAML'
-        ct state established,related accept
         accept
 YAML
   fi
