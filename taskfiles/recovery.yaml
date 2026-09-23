@@ -366,34 +366,68 @@ tasks:
         echo -e "\x1B[32m[+] Waiting for tests-server to reboot into installed system\x1B[0m"
         ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
         ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
-        for i in $(seq 1 120); do
+        # Readiness is `multi-user.target` being active, NOT
+        # `systemctl is-system-running` returning running|degraded. That
+        # state is effectively unreachable on a freshly installed
+        # tests-server: radarr cannot start without the NFS content paths a
+        # VM does not have, decluttarr's pre-start polls radarr and fails,
+        # and its Restart= loop keeps a start job queued every ~30s.
+        # `is-system-running` reports `starting` until the job queue goes
+        # idle *for the first time*, so it only flips during the brief gap
+        # between one decluttarr attempt exiting and the next being queued —
+        # a gap a 3s poll routinely steps over. Measured on 2026-09-23:
+        # multi-user.target active at 2min36 and stable thereafter, while
+        # the old loop polled for a full 12 min without once catching an
+        # idle window. The 6 min version before it never caught one either;
+        # it simply had no failure branch and fell through silently, which
+        # is how this step has always "passed".
+        #
+        # running|degraded is still accepted as an early exit for hosts
+        # whose units all settle — it just isn't required.
+        #
+        # 240 iterations * 3s = 12 min, matching vm:install. tests-server's
+        # first boot (server-apps stack) takes 4-8 min, so 6 min was too
+        # short regardless.
+        for i in $(seq 1 240); do
           state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
                       -o StrictHostKeyChecking=accept-new \
                       -o UpdateHostKeys=no \
-                      ipreston@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
+                      ipreston@127.0.0.1 \
+                      'systemctl is-active multi-user.target || true;
+                       systemctl is-system-running || true' \
+                      2>/dev/null | paste -sd, - || echo connecting)
           case "$state" in
-            running|degraded)
-              echo -e "\x1B[32m[+] Target reachable (systemd: $state)\x1B[0m"
-              break
+            active,*|*,running|*,degraded)
+              echo -e "\x1B[32m[+] Target reachable (multi-user.target + systemd: $state)\x1B[0m"
+              exit 0
               ;;
             *)
               sleep 3
               ;;
           esac
         done
+        echo -e "\x1B[31m[!] tests-server did not come up within 12 minutes after install\x1B[0m"
+        exit 1
       - |
         set -euo pipefail
         # Seed sentinel files inside the paths the upcoming restores
         # will --include. If the snapshot doesn't contain these names
         # (and it won't — they're random), --delete should remove them,
         # locking in clean-restore semantics. See issue #217.
+        #
+        # The jellyfin sentinel must sit in one of the enumerated state
+        # subdirs, not in /var/lib/jellyfin itself: #569 narrowed that
+        # app's includes to data/config/plugins/root so a partial
+        # restore can't wipe the unbacked-up metadata/ tree, and
+        # --delete only reaches inside an included path. A sentinel on
+        # the parent therefore always survives and asserts nothing.
         echo -e "\x1B[32m[+] Seeding sentinel files to verify clean-restore semantics\x1B[0m"
         ssh -p {{.SSH_PORT}} -o StrictHostKeyChecking=accept-new ipreston@127.0.0.1 \
           'sudo bash -se' <<'EOF'
         set -euo pipefail
-        mkdir -p /var/lib/containers/bookorbit /var/lib/jellyfin /var/backup/sqlite/jellyfin
+        mkdir -p /var/lib/containers/bookorbit /var/lib/jellyfin/data /var/backup/sqlite/jellyfin
         touch /var/lib/containers/bookorbit/.recovery-overlay-sentinel
-        touch /var/lib/jellyfin/.recovery-overlay-sentinel
+        touch /var/lib/jellyfin/data/.recovery-overlay-sentinel
         touch /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel
         echo "[+] sentinels placed"
         EOF
@@ -411,7 +445,7 @@ tasks:
         failed=0
         for f in \
           /var/lib/containers/bookorbit/.recovery-overlay-sentinel \
-          /var/lib/jellyfin/.recovery-overlay-sentinel \
+          /var/lib/jellyfin/data/.recovery-overlay-sentinel \
           /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel; do
           if [ -e "$f" ]; then
             echo "[!] OVERLAY REGRESSION: $f survived restore"
