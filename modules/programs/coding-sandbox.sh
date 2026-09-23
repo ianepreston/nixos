@@ -933,7 +933,16 @@ main() {
     plan|template|validate|start|shell|exec|status|stop|destroy)
       parse_target "$@"
       case "$subcommand" in
-        plan) show_plan ;;
+        plan)
+          # For an existing VM, report the address set it actually enforces,
+          # rather than a fresh CDN lookup that would only apply after
+          # recreation.  A plan remains usable without Lima for a new project.
+          if command -v limactl >/dev/null \
+            && limactl list --format '{{.Name}}' 2>/dev/null | grep -Fxq "$instance"; then
+            policy_matches_instance
+          fi
+          show_plan
+          ;;
         template) show_template ;;
         validate) validate_template ;;
         start) start ;;
