@@ -128,6 +128,29 @@ _: {
         kind = "sqlite";
         order = 80;
         units = [ "jellyfin.service" ];
+        # `paths` enumerates jellyfin's state subdirs rather than the whole of
+        # /var/lib/jellyfin, because metadata/ is excluded from the backup
+        # (#569 — ~11 GB of provider artwork a library scan re-downloads).
+        # This is load-bearing, not cosmetic: `_restore-sqlite` restores with
+        # `--delete`, which removes anything under an included path that the
+        # snapshot lacks, so including the parent would wipe the live artwork
+        # on every partial restore.
+        #
+        # The tidier-looking fix — keep the parent include and add
+        # `--exclude /var/lib/jellyfin/metadata` — does not work: restic 0.18
+        # rejects it with "exclude and include patterns are mutually
+        # exclusive". Enumerating is the only option that keeps --delete.
+        #
+        # Deliberately NOT restored, all non-critical and self-healing: log/
+        # (logs), .jellyfin-data (zero-byte marker jellyfin rewrites on
+        # start), and `Subtitle Edit/` (plugin dictionaries the plugin
+        # re-fetches — its space would not survive the space-split PATHS loop
+        # in the template anyway).
+        #
+        # On a from-scratch rebuild metadata/ is simply absent: jellyfin comes
+        # up with no posters or headshots and repopulates them from the
+        # providers on the first library scan. The health check below passes
+        # either way — it only asserts the server is serving.
         paths = [
           "/var/lib/jellyfin/data"
           "/var/lib/jellyfin/config"

@@ -14,11 +14,11 @@
 # Set MANIFEST_HOST when HOST/DEST is an IP address or another non-flake
 # target name; it selects the configuration whose enabled app metadata is used.
 #
-# Each per-app task dispatches to one of three internal templates
+# `recovery:app` dispatches to one of three restore templates
 # (`_restore-volume`, `_restore-pg`, `_restore-sqlite`) and then runs
 # an HTTP health check via `_health` where applicable. `recovery:all`
-# runs every app's dispatcher in sequence — use it for catastrophic
-# rebuilds.
+# runs every enabled app through it in manifest order — use it for
+# catastrophic rebuilds.
 #
 # App modules own recovery metadata. The generated manifest drives both
 # `recovery:app` and `recovery:all`; this file only owns the reusable restore
@@ -39,9 +39,13 @@ tasks:
   # ---------------------------------------------------------------------------
   #
   # These do the actual restic + systemd + (postgres|sqlite) dance.
-  # Per-app dispatchers below populate UNITS / PATHS / DB / SWAPS and
-  # call the matching template. Marked `internal: true` so they don't
-  # appear in `task --list`.
+  # `recovery:app` below picks one per manifest entry and populates
+  # UNITS / PATHS / DB / SWAPS. Carrying no `desc:` is what keeps them
+  # out of `task --list`; they deliberately do NOT set `internal: true`.
+  # The dispatcher chooses the template at runtime from the manifest's
+  # `kind`, which YAML `- task:` references can't express, so it shells
+  # out to `task recovery:_restore-*` — and Go Task refuses a CLI
+  # invocation of an internal task with exit 202.
   #
   # All three run `restic unlock` and then pass `--retry-lock 10m`.
   # `restic restore` takes a read lock, and the nightly `forget --prune`
@@ -60,7 +64,6 @@ tasks:
   # unlock` before the nightly prune for this reason; these templates
   # need their own.
   _restore-volume:
-    internal: true
     requires:
       vars: [HOST, APP, UNITS, PATHS]
     vars:
@@ -106,7 +109,6 @@ tasks:
         done
         EOF
   _restore-pg:
-    internal: true
     requires:
       vars: [HOST, APP, UNITS, DB]
     vars:
@@ -167,7 +169,6 @@ tasks:
         done
         EOF
   _restore-sqlite:
-    internal: true
     requires:
       vars: [HOST, APP, UNITS, PATHS, SWAPS]
     vars:
@@ -222,7 +223,6 @@ tasks:
         done
         EOF
   _health:
-    internal: true
     requires:
       vars: [HOST, APP, URL]
     vars:
@@ -236,7 +236,10 @@ tasks:
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Asserting HTTP {{.EXPECT}} on {{.APP}} ({{.URL}})\x1B[0m"
-        ssh -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} "
+        # -n: this is the one template ssh with no heredoc on stdin. Under
+        # `recovery:all` it would otherwise inherit the caller's app-list
+        # pipe and swallow it — see the comment on that loop.
+        ssh -n -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} "
           set -euo pipefail
           for i in \$(seq 1 {{.RETRIES}}); do
             code=\$(curl -s -o /dev/null -w '%{http_code}' '{{.URL}}' || true)
@@ -308,9 +311,17 @@ tasks:
         manifest_file="$(mktemp)"
         trap "rm -f $manifest_file" EXIT
         nix eval --json ".#nixosConfigurations.{{.MANIFEST_HOST}}.config.myRecovery.manifest" >"$manifest_file"
+        # `</dev/null` on the dispatcher is load-bearing, not tidiness. The
+        # loop reads its app list from the jq pipe, and every `ssh` under
+        # `recovery:app` that is not fed a heredoc (the `_health` probe)
+        # inherits that pipe as its own stdin and drains the remaining app
+        # names. Without this the chain restores up to the first app with a
+        # health probe, then the loop ends — and exits 0, reporting a
+        # catastrophic restore as successful. `_health` also passes `ssh -n`;
+        # both halves stay.
         jq -r "to_entries | sort_by(.value.order) | .[].key" "$manifest_file" |
           while IFS= read -r app; do
-            task recovery:app APP="$app" HOST="{{.HOST}}" MANIFEST_HOST="{{.MANIFEST_HOST}}" MANIFEST_FILE="$manifest_file" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
+            task recovery:app APP="$app" HOST="{{.HOST}}" MANIFEST_HOST="{{.MANIFEST_HOST}}" MANIFEST_FILE="$manifest_file" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}" </dev/null
           done
   # ---------------------------------------------------------------------------
   # End-to-end drill: VM up → install → restore three shapes → teardown
