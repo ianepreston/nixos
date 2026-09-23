@@ -216,7 +216,7 @@ class PolicyTest(unittest.TestCase):
         self.assertIn('(builtins.toPath "/sandbox/profile.nix")', template)
         self.assertIn('verify_source "$startup_path" "$startup_digest"', template)
         self.assertIn('startup-$startup_name.log', template)
-        self.assertIn('nix run --impure', template)
+        self.assertIn('switch --impure --flake', template)
         self.assertIn("Selected profile: sha256:", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
 

@@ -519,7 +519,7 @@ YAML
   cat <<'YAML'
     runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" bash -lc '
       source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      nix run --impure github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#agent"
+      nix run github:nix-community/home-manager/release-26.05 -- switch --impure --flake "$HOME/.local/share/coding-sandbox/profile#agent"
     ' >"$state_dir/home-manager.log" 2>&1
     chown agent:agent "$state_dir/home-manager.log"
 
