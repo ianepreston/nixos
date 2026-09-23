@@ -53,6 +53,11 @@ _: {
                     };
                   };
                 }
+                # `coding-sandbox.sh` creates this ordinary Home Manager
+                # module from the reviewed per-worktree profile before the
+                # guest evaluates the flake. It imports only guest paths that
+                # the host policy resolved beneath declared mounts.
+                ./sandbox-profile.nix
               ];
             };
           };

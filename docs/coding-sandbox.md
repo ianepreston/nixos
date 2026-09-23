@@ -1,9 +1,9 @@
 # macOS coding sandboxes
 
 The `work` Darwin host provides `sandbox`, a Lima launcher for a disposable
-Ubuntu VM with an explicit, project-owned mount specification. This is the first
-macOS-only slice of the broader [coding-sandbox issue](https://github.com/ianepreston/nixos/issues/539).
-NixOS support and per-project profiles are intentionally not implemented yet.
+Ubuntu VM with an explicit, project-owned mount and profile specification. This
+is the first macOS-only slice of the broader [coding-sandbox issue](https://github.com/ianepreston/nixos/issues/539).
+NixOS support remains intentionally unimplemented.
 
 ## Install and define a project
 
@@ -51,14 +51,14 @@ Lima template before creating the VM. `sandbox template` prints that YAML when
 more detail is useful.
 
 The guest is an `aarch64` Ubuntu VM under Apple Virtualization.framework. It
-has only the declared mounts, a fixed store-built Home Manager profile, and a
-read-only copy of the active specification at `/sandbox-spec/.sandbox.toml`.
-The remainder of the host home directory, host credentials, and SSH agent are
-absent. The minimal profile supplies Nix, Bash, direnv/nix-direnv, curl, git,
-and jq; it deliberately does not install Pi, OpenCode, Claude Code,
-local-model configuration, or model credentials. Use a project `nix develop`
-for declared project tools, or install a demo's agent inside the guest and
-configure it to use that demo's AI gateway.
+has only the declared mounts, a fixed store-built Home Manager base profile,
+and a read-only copy of the active specification at
+`/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
+credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
+direnv/nix-direnv, curl, git, and jq; it deliberately does not install Pi,
+OpenCode, Claude Code, local-model configuration, or model credentials. A
+project may compose extra portable HM modules and unprivileged startup scripts
+as described below, or use a project `nix develop` for its declared tools.
 
 A project may intentionally expose no host paths at all. Omit `[[mounts]]`
 from the visible specification; the agent then starts in its private
@@ -135,6 +135,52 @@ The configuration is deliberately not hidden. It remains visible in a source
 mount when that source contains it, and is always mounted read-only at
 `/sandbox-spec/.sandbox.toml`. Treat it as reviewable project policy; changing
 it requires destroying and recreating the affected VM.
+
+### Per-worktree profile and startup
+
+`[profile].modules` accepts ordinary, portable Home Manager module files.
+`[[startup]]` entries are ordered Bash scripts, each with a stable name and
+optional string arguments. Every selected file must resolve beneath an existing
+declared mount; a module that merely registers itself through flake-parts, or
+expects the workstation flake's `inputs`, is not a portable module. This keeps
+the guest from evaluating the host configuration or gaining its credentials.
+
+```toml
+[[mounts]]
+path = "."
+branch = "sandbox/unity-gateway"
+mount_point = "/workspace"
+
+[profile]
+modules = ["sandbox/wcb-home.nix"]
+
+[[startup]]
+name = "unity-gateway"
+path = "sandbox/install-unity-gateway.sh"
+args = []
+```
+
+The plan prints each guest path, host source, mount access, individual source
+digest, and combined profile digest. At first creation, the launcher generates
+a private guest flake which combines the fixed base profile with precisely
+those module paths, verifies every selected digest, and runs `home-manager
+switch` as `agent`. It then verifies and invokes startup scripts in their
+declared order as `agent`, using `bash <path> [args...]`. No selected code gets
+sudo, the Lima transport identity, forwarded SSH state, or a broader mount.
+
+Home Manager needs impure evaluation solely to import the reviewed absolute
+guest mount paths; it never evaluates the workstation flake. A profile module
+can add user packages such as `uv`, but its Linux closure is built inside the
+guest—there is no Darwin or NixOS rebuild. In `restricted` mode, declare every
+additional public hostname required by a module or startup script.
+
+Activation output is recorded in
+`~/.local/state/coding-sandbox/home-manager.log`; each startup entry gets
+`startup-<name>.log` there, and `profile.json` records the sources/digests used
+for the VM. An unchanged VM does not rerun setup after stop/start. Any change
+to a selected module, startup script, source location, or profile declaration
+changes the effective policy: inspect `sandbox plan`, then destroy and recreate
+the VM before it can run.
 
 ## Network modes
 
@@ -306,8 +352,9 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 ## Current limits
 
 - The implementation is Apple-Silicon macOS only.
-- `.sandbox.toml` currently covers mount and network policy only. Packages,
-  agent/profile selection, credentials, and UI settings remain out of scope.
+- `.sandbox.toml` covers mount/network policy plus portable Home Manager
+  modules and agent-only startup scripts. Credentials, agent selection, and UI
+  settings remain out of scope.
 - No GitHub token/deploy key, host SSH forwarding, or web UI/port forwarding is
   available. Lima guest port forwarding is denied by default.
 - Public mode is the default for ordinary registries and external gateways;
