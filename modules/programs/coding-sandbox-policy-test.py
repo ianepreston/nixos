@@ -37,6 +37,12 @@ class PolicyTest(unittest.TestCase):
         self.assertIn("100.64.0.0/10", policy["protected_v4"])
         self.assertIn("fe80::/10", policy["protected_v6"])
 
+    def test_visible_spec_can_deliberately_have_no_host_mounts(self) -> None:
+        root = self.config('version = 1\n\n[network]\nmode = "public"\n')
+        policy = POLICY.render_policy(root, None)
+        self.assertEqual(policy["mounts"], [])
+        self.assertEqual(policy["config_path"], str(root / ".sandbox.toml"))
+
     def test_exact_internal_domain_becomes_literal_grant(self) -> None:
         root = self.config('[network]\ninternal_domains = ["dev.example.internal"]\n')
         original_resolve = POLICY.resolve

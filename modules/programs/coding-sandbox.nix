@@ -12,10 +12,10 @@ _: {
       # This is the deliberately small, fixed first profile. It contains no
       # coding agent, model endpoint, or model credential: work demos often
       # need a separately installed agent pointed at their own AI gateway.
-      # Project tools are supplied by the worktree's devShell after entering
-      # /workspace. Later work adds explicit per-worktree profiles; keeping
-      # this source separate from the worktree means an untrusted checkout
-      # cannot alter its own bootstrap.
+      # Project tools are supplied by a declared project's devShell when one
+      # is mounted. A sandbox may also deliberately have no host mounts, so
+      # this source remains separate from project code and cannot be altered
+      # by an untrusted checkout.
       guestProfile = pkgs.writeTextDir "flake.nix" ''
         {
           description = "Coding sandbox guest profile";

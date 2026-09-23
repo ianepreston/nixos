@@ -60,6 +60,22 @@ local-model configuration, or model credentials. Use a project `nix develop`
 for declared project tools, or install a demo's agent inside the guest and
 configure it to use that demo's AI gateway.
 
+A project may intentionally expose no host paths at all. Omit `[[mounts]]`
+from the visible specification; the agent then starts in its private
+`/home/agent` directory, with only the read-only specification mounted:
+
+```toml
+version = 1
+
+[network]
+mode = "public"
+```
+
+This is useful for an agent whose entire working state should remain in the
+disposable guest. `sandbox plan` prints `/home/agent` as its working directory.
+Projects with no `.sandbox.toml` continue to use the legacy secondary-Git-
+worktree `/workspace` behaviour.
+
 ### Guest privilege boundary
 
 The launcher uses Lima's `lima` account only as a privileged transport and
@@ -193,6 +209,12 @@ The fixed bootstrap domains for Nix, Determinate Nix, and GitHub remain
 available. `public_domains` contains exact public FQDNs and is valid only in
 this mode. Internal endpoints are never implicit baseline grants.
 
+At VM creation, the launcher resolves each allowed name, prints the literal
+addresses in the plan, and pins Squid to those exact answers. nftables permits
+the proxy to connect only to that same finite set. This prevents a separate
+CDN/DNS answer from silently widening the allowlist; destroy and recreate the
+VM when an allowed service changes addresses.
+
 ```sh
 sandbox start --network restricted
 # Type: START RESTRICTED
@@ -235,9 +257,12 @@ sandbox exec -- bash -lc \
 sandbox exec -- curl --connect-timeout 10 -I http://dev.example.internal/
 ```
 
-For a stricter policy inspection, run `sandbox exec -- sudo nft list ruleset`
-inside the guest and compare the address sets with `sandbox plan`. The sandbox
-has no host credentials or forwarded SSH agent, and this iteration does not add
+The agent account cannot inspect or replace firewall rules with `sudo`; prove
+that with `sandbox exec -- sudo -n nft list ruleset` (it must fail). The Mac
+operator may inspect the VM's rendered rules through Lima's privileged
+transport account when diagnosing a policy: `limactl shell INSTANCE sudo nft
+list ruleset`, where `INSTANCE` comes from `sandbox plan`. The sandbox has no
+host credentials or forwarded SSH agent, and this iteration does not add
 GitHub credentials, SSH forwarding, or a web UI.
 
 ## Multiple VMs and cleanup

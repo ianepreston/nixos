@@ -108,7 +108,7 @@ parse_target() {
   project=$(cd "$target" && pwd -P) || die "cannot access project $target"
   load_policy
   project=$(jq -r '.config_root' <<<"$policy_json")
-  if [[ $(jq '.mounts | length' <<<"$policy_json") -eq 0 ]]; then
+  if [[ $(jq -r '.config_path == null' <<<"$policy_json") == true ]]; then
     # Compatibility for projects without a spec: retain the original safe
     # secondary-worktree behaviour until they add an explicit mount table.
     worktree=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) \
@@ -119,8 +119,21 @@ parse_target() {
     policy_json=$(jq --arg source "$worktree" \
       '.mounts = [{ source: $source, source_path: $source, mount_point: "/workspace", access: "rw", access_source: "legacy", kind: "path", branch: null }]' \
       <<<"$policy_json")
-  elif ! jq -e '.mounts | any(.mount_point == "/workspace")' <<<"$policy_json" >/dev/null; then
-    die '.sandbox.toml must declare one mount at /workspace'
+  fi
+  # A visible policy may deliberately declare no host mounts.  In that case
+  # the agent starts in its private guest home; the read-only policy copy is
+  # still available at /sandbox-spec/.sandbox.toml.  Legacy projects without
+  # a spec retain the compatibility worktree synthesized above.
+  guest_workdir=/home/agent
+  if jq -e '.mounts | any(.mount_point == "/workspace")' <<<"$policy_json" >/dev/null; then
+    guest_workdir=/workspace
+  fi
+  # Lima performs --workdir before sudo switches from its transport account to
+  # agent.  agent's private home is deliberately 0700, so use lima's home for
+  # that handoff and change directory only after the privilege drop.
+  transport_workdir="$guest_workdir"
+  if [[ "$guest_workdir" == /home/agent ]]; then
+    transport_workdir=/home/lima
   fi
   instance_id=$(printf '%s' "$project:$network_mode" | sha256sum | cut -c1-12)
   # Lima's per-instance Unix sockets live beneath its state directory. Keep
@@ -220,6 +233,7 @@ Coding sandbox plan
   Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
   Profile mount: fixed store-built profile (read-only)
   Guest commands: unprivileged agent account (no sudo)
+  Guest working directory: $guest_workdir
   SSH agent:    not forwarded
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
@@ -466,7 +480,7 @@ YAML
 }
 
 append_protected_provision() {
-  local mode="$1" packages strict_domains granted_v4 granted_v6 strict_v4 strict_v6 use_proxy=false
+  local mode="$1" packages strict_domains strict_hosts granted_v4 granted_v6 strict_v4 strict_v6 use_proxy=false
   granted_v4=$(policy_nft_set grants_v4)
   granted_v6=$(policy_nft_set grants_v6)
   strict_v4=$(policy_nft_set strict_v4)
@@ -475,9 +489,14 @@ append_protected_provision() {
   if [[ "$mode" == restricted ]]; then
     packages+=' squid'
     strict_domains=$(jq -r '.strict_domains | map(.name) | join(" ")' <<<"$policy_json")
+    # Squid must use the exact addresses reviewed into strict_v4/strict_v6,
+    # rather than independently selecting another address from a CDN-backed
+    # name.  Otherwise nftables correctly drops that unreviewed connection.
+    strict_hosts=$(jq -r '.strict_domains[] | .name as $name | .addresses[] | "\(.) \($name)"' <<<"$policy_json" | sed 's/^/    /')
     use_proxy=true
   else
     strict_domains=''
+    strict_hosts=''
   fi
 
   cat >>"$template" <<YAML
@@ -522,9 +541,14 @@ YAML
   if [[ "$mode" == restricted ]]; then
     cat >>"$template" <<YAML
     # Squid checks exact requested names; nftables below additionally confines
-    # its resolved connections to this inspectable address set.
+    # its connections to this inspectable, plan-time address set.  Squid's
+    # hosts_file prevents a separate CDN DNS answer from escaping that set.
+    cat >/etc/squid/coding-sandbox.hosts <<HOSTS
+    $strict_hosts
+    HOSTS
     cat >/etc/squid/squid.conf <<SQUID
     dns_nameservers \$gateway
+    hosts_file /etc/squid/coding-sandbox.hosts
     http_port 127.0.0.1:3128
     acl allowed_domains dstdomain $strict_domains
     http_access allow allowed_domains
@@ -533,6 +557,7 @@ YAML
     forwarded_for delete
     via off
     SQUID
+    squid -k parse
     systemctl restart squid
 
     install -d /etc/systemd/system/nix-daemon.service.d
@@ -727,13 +752,21 @@ EOF
 }
 
 policy_matches_instance() {
-  local recorded
+  local recorded current_contract recorded_contract
   [[ -r "$policy_record" ]] || die \
     "existing $instance has no recorded policy; destroy it before using this network-policy version"
-  recorded=$(jq -ceS '.policy' "$policy_record") \
+  recorded=$(jq -ce '.policy' "$policy_record") \
     || die "cannot read recorded policy for $instance; destroy it before continuing"
-  [[ "$recorded" == "$(jq -cS . <<<"$policy_json")" ]] || die \
+  # The strict bootstrap names are pinned into the VM at creation.  Public
+  # CDN answers may legitimately rotate afterwards, so compare the policy
+  # contract without those derived addresses and retain the recorded policy
+  # for all actions and plan output against this existing VM.  Internal grants
+  # remain in the compared contract and still require recreation on change.
+  current_contract=$(jq -cS 'del(.strict_domains, .strict_v4, .strict_v6)' <<<"$policy_json")
+  recorded_contract=$(jq -cS 'del(.strict_domains, .strict_v4, .strict_v6)' <<<"$recorded")
+  [[ "$recorded_contract" == "$current_contract" ]] || die \
     "effective policy changed for $instance; inspect sandbox plan, then destroy and recreate the VM"
+  policy_json="$recorded"
 }
 
 record_policy() {
@@ -748,10 +781,10 @@ record_policy() {
 
 start() {
   check_host
-  show_plan
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
     policy_matches_instance
   fi
+  show_plan
   confirm_start
 
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
@@ -783,9 +816,11 @@ instance_action() {
         # path.  Use a login shell explicitly: Lima's raw SSH shell need not
         # source the system profile. Lima is only the transport account; the
         # interactive agent process has no administrative privilege.
-        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- bash --login
+        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
+          bash -c "cd \"\$1\"; exec bash --login" sandbox-agent-shell "$guest_workdir"
       else
-        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- bash --login
+        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
+          bash -c "cd \"\$1\"; exec bash --login" sandbox-agent-shell "$guest_workdir"
       fi
       ;;
     exec)
@@ -795,16 +830,17 @@ instance_action() {
         # /etc/profile.d.  Inject only the guest-local proxy endpoints, never
         # a host proxy or credential, so `sandbox exec -- curl …` has the
         # documented allowlisted path while direct connections stay default-drop.
-        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- env \
+        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- env \
           HTTP_PROXY=http://127.0.0.1:3128 \
           HTTPS_PROXY=http://127.0.0.1:3128 \
           ALL_PROXY=http://127.0.0.1:3128 \
           NO_PROXY=127.0.0.1,localhost \
           http_proxy=http://127.0.0.1:3128 \
           https_proxy=http://127.0.0.1:3128 \
-          "${command[@]}"
+          bash -c "cd \"\$1\"; shift; exec \"\$@\"" sandbox-agent-exec "$guest_workdir" "${command[@]}"
       else
-        limactl shell --workdir /workspace "$instance" sudo -H -u agent -- "${command[@]}"
+        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
+          bash -c "cd \"\$1\"; shift; exec \"\$@\"" sandbox-agent-exec "$guest_workdir" "${command[@]}"
       fi
       ;;
     status)
