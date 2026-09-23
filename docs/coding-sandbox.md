@@ -45,28 +45,89 @@ agent inside the guest and configure it to use that demo's AI gateway.
 
 ## Network modes
 
-The default `restricted` mode is the safe path:
+The default `public` mode is the normal safe path:
 
 ```sh
 sandbox start
 sandbox shell
 ```
 
-Guest egress is default-drop in nftables. A local Squid proxy permits HTTPS to
-the configured LLM endpoints, Nix caches, Determinate Nix, and GitHub. The
-launcher supplies that guest-local proxy automatically to restricted shells
-and `sandbox exec` commands. A direct connection, including a client that
-ignores proxy variables, remains blocked.
+Public internet is available without maintaining a registry-by-registry
+allowlist. Its security boundary is lateral movement: nftables denies RFC1918
+IPv4, CGNAT/Tailscale, IPv4 link-local, IPv6 unique-local, and IPv6 link-local
+destinations unless the selected worktree explicitly grants them. The policy is
+IP based, so DNS rebinding or a client connecting directly by IP cannot bypass
+it.
+
+The only automatic private-network exception is narrowly infrastructure-only:
+DHCP plus DNS on TCP/UDP port 53 to Lima's discovered NAT resolver. It is not a
+general permit for the gateway or its subnet. `sandbox plan` prints this
+boundary and every resolved grant before a VM is created.
+
+### Per-worktree grants
+
+Place an optional `.sandbox.toml` at the root of the secondary worktree:
+
+```toml
+version = 1
+
+[network]
+# public is the default; restricted and open are described below.
+mode = "public"
+
+# Exact FQDNs only: no wildcards and no suffix matching.
+internal_domains = ["dev.example.internal"]
+
+# Each CIDR must be wholly inside a protected range.
+internal_cidrs = ["100.64.12.34/32", "fd00:1234::42/128"]
+```
+
+An internal domain must resolve to protected addresses at launch. The launcher
+prints the resulting literal addresses and renders them into nftables; changed
+DNS or changed policy requires destroying and recreating the VM. This makes the
+grant inspectable and fail-closed. A public application's name merely sharing a
+suffix with an internal domain is not blocked or granted by that suffix: only
+the exact names above matter.
+
+No grants means no internal reachability. The file is worktree-controlled data,
+so inspect the effective plan and start warning before confirming a VM:
 
 ```sh
-sandbox exec -- curl -I https://cache.nixos.org/
-sandbox exec -- bash -lc \
+sandbox plan
+sandbox validate
+sandbox start
+# Type: START PUBLIC
+```
+
+### Hardened public allowlisting
+
+`restricted` is an optional stricter mode for work that can operate through a
+small public-domain allowlist. It keeps the lateral IP boundary and adds a
+guest-local Squid proxy; direct public egress stays denied.
+
+```toml
+[network]
+mode = "restricted"
+public_domains = ["registry.npmjs.org"]
+internal_domains = ["dev.example.internal"]
+```
+
+The fixed bootstrap domains for Nix, Determinate Nix, and GitHub remain
+available. `public_domains` contains exact public FQDNs and is valid only in
+this mode. Internal endpoints are never implicit baseline grants.
+
+```sh
+sandbox start --network restricted
+# Type: START RESTRICTED
+sandbox exec --network restricted -- curl -I https://cache.nixos.org/
+sandbox exec --network restricted -- bash -lc \
   'if curl --noproxy "*" --connect-timeout 5 -I https://example.com; then exit 1; else echo blocked; fi'
 ```
 
-Use open networking only where the explicit risk is appropriate, such as an
-external AI gateway or troubleshooting a dependency that the fixed allowlist
-does not cover:
+`open` is separate and deliberately not a convenience escape hatch. It removes
+both the public allowlist and the lateral boundary, so it can reach LAN,
+tailnet, host-side, and other internal targets reachable from the Mac. Use it
+only for explicit troubleshooting:
 
 ```sh
 sandbox plan --network open
@@ -78,8 +139,29 @@ sandbox exec --network open -- curl --noproxy '*' -I https://example.com
 ```
 
 Open mode installs neither Squid nor nftables. It is a separate VM instance,
-not a policy change to the restricted VM, and its confirmation deliberately
-spells out the wider exposure.
+not a policy change to a public or restricted VM, and its confirmation
+deliberately spells out the wider exposure.
+
+### Network acceptance checks
+
+After starting a sandbox, prove the policy rather than trusting the template:
+
+```sh
+# Public egress works in the default mode.
+sandbox exec -- curl --connect-timeout 10 -I https://example.com/
+
+# An ungranted protected address is blocked, even without DNS.
+sandbox exec -- bash -lc \
+  'if curl --noproxy "*" --connect-timeout 5 -I http://100.64.0.1; then exit 1; else echo blocked; fi'
+
+# For a worktree with an explicit grant, substitute the granted hostname.
+sandbox exec -- curl --connect-timeout 10 -I http://dev.example.internal/
+```
+
+For a stricter policy inspection, run `sandbox exec -- sudo nft list ruleset`
+inside the guest and compare the address sets with `sandbox plan`. The sandbox
+has no host credentials or forwarded SSH agent, and this iteration does not add
+GitHub credentials, SSH forwarding, or a web UI.
 
 ## Multiple VMs and cleanup
 
@@ -122,10 +204,10 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 ## Current limits
 
 - The implementation is Apple-Silicon macOS only.
-- There is no `.sandbox.toml` yet for per-worktree mounts, allowlist domains,
-  packages, agent/profile selection, credentials, or UI settings.
+- `.sandbox.toml` currently covers only network policy. Per-worktree mounts,
+  packages, agent/profile selection, credentials, and UI settings remain out
+  of scope.
 - No GitHub token/deploy key, host SSH forwarding, or web UI/port forwarding is
   available. Lima guest port forwarding is denied by default.
-- The restricted allowlist cannot yet be extended per project. Projects needing
-  npm, PyPI, a custom registry, or another endpoint should use the explicit
-  open mode for now.
+- Public mode is the default for ordinary registries and external gateways;
+  `restricted` mode requires declaring each additional public hostname.

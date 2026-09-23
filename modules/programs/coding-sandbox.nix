@@ -69,9 +69,11 @@ _: {
           gnused
           jq
           lima
+          python3
         ];
         text = ''
           export SANDBOX_GUEST_PROFILE=${guestProfile}
+          export SANDBOX_POLICY_HELPER=${./coding-sandbox-policy.py}
           ${builtins.readFile ./coding-sandbox.sh}
         '';
       };

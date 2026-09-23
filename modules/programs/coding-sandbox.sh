@@ -18,26 +18,27 @@ usage() {
 Usage:
   sandbox doctor
   sandbox list
-  sandbox plan [--network restricted|open] [WORKTREE]
-  sandbox template [--network restricted|open] [WORKTREE]
-  sandbox validate [--network restricted|open] [WORKTREE]
-  sandbox start [--network restricted|open] [--yes] [WORKTREE]
-  sandbox shell [--network restricted|open] [WORKTREE]
-  sandbox exec [--network restricted|open] [WORKTREE] -- COMMAND [ARG...]
-  sandbox status [--network restricted|open] [WORKTREE]
-  sandbox stop [--network restricted|open] [WORKTREE]
-  sandbox destroy [--network restricted|open] [--yes] [WORKTREE]
+  sandbox plan [--network public|restricted|open] [WORKTREE]
+  sandbox template [--network public|restricted|open] [WORKTREE]
+  sandbox validate [--network public|restricted|open] [WORKTREE]
+  sandbox start [--network public|restricted|open] [--yes] [WORKTREE]
+  sandbox shell [--network public|restricted|open] [WORKTREE]
+  sandbox exec [--network public|restricted|open] [WORKTREE] -- COMMAND [ARG...]
+  sandbox status [--network public|restricted|open] [WORKTREE]
+  sandbox stop [--network public|restricted|open] [WORKTREE]
+  sandbox destroy [--network public|restricted|open] [--yes] [WORKTREE]
   sandbox delete [--yes] INSTANCE
 
 The default worktree is the current directory's Git worktree.
 
 Network modes:
-  restricted  Default. Guest egress is default-drop; only HTTPS through an
-              allowlisted proxy is possible. The initial allowlist is the two
-              local model endpoints, Nix caches, Determinate Nix, and GitHub
-              (needed to materialize the fixed guest Home Manager profile).
-  open        No guest egress firewall or proxy. Use only for troubleshooting
-              or a task that cannot work through the restricted proxy.
+  public      Default. Public internet is available, but an IP-layer policy
+              denies LAN, tailnet, host-side, and other protected destinations
+              unless .sandbox.toml grants an exact domain or internal CIDR.
+  restricted  Hardened mode. Only exact configured public domains and explicit
+              internal grants are reachable through a local proxy.
+  open        No guest egress firewall or proxy. It removes the lateral
+              boundary too; use only for deliberate troubleshooting.
 
 The selected worktree is the only mutable host path, mounted read-write at
 /workspace. The fixed, store-built guest profile is separately mounted
@@ -51,7 +52,7 @@ json_string() {
 }
 
 parse_target() {
-  network_mode=restricted
+  network_mode_override=''
   assume_yes=false
   target=
   command=( )
@@ -66,8 +67,8 @@ parse_target() {
 
     case "$1" in
       --network)
-        (($# >= 2)) || die '--network needs restricted or open'
-        network_mode="$2"
+        (($# >= 2)) || die '--network needs public, restricted, or open'
+        network_mode_override="$2"
         shift 2
         ;;
       --yes)
@@ -93,9 +94,9 @@ parse_target() {
     esac
   done
 
-  case "$network_mode" in
-    restricted|open) ;;
-    *) die "unknown network mode '$network_mode' (choose restricted or open)" ;;
+  case "$network_mode_override" in
+    ''|public|restricted|open) ;;
+    *) die "unknown network mode '$network_mode_override' (choose public, restricted, or open)" ;;
   esac
 
   target="${target:-$PWD}"
@@ -106,6 +107,7 @@ parse_target() {
   [[ "$worktree" != "$primary_worktree" ]] || die \
     "$worktree is the primary checkout; create/select a per-work-item worktree first"
 
+  load_policy
   instance_id=$(printf '%s' "$worktree:$network_mode" | sha256sum | cut -c1-12)
   # Lima's per-instance Unix sockets live beneath its state directory. Keep
   # the readable part short enough for macOS's 104-byte socket-path limit;
@@ -113,6 +115,17 @@ parse_target() {
   worktree_label=$(basename "$worktree" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-*//; s/-*$//' | cut -c1-16)
   worktree_label="${worktree_label:-worktree}"
   instance="coding-sandbox-$worktree_label-$instance_id"
+  policy_record="$HOME/.local/state/coding-sandbox/$instance.policy.json"
+}
+
+load_policy() {
+  local -a args=("$worktree")
+  if [[ -n "$network_mode_override" ]]; then
+    args+=(--network "$network_mode_override")
+  fi
+  policy_json=$("$SANDBOX_POLICY_HELPER" "${args[@]}") \
+    || die 'invalid .sandbox.toml network policy; run sandbox plan after fixing it'
+  network_mode=$(jq -r '.mode' <<<"$policy_json")
 }
 
 check_host() {
@@ -190,14 +203,54 @@ Coding sandbox plan
   Profile mount: fixed store-built profile (read-only)
   Other paths:  none
   SSH agent:    not forwarded
-  Network:      $network_mode
+  Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
 
+  case "$network_mode" in
+    public)
+      printf '%s\n' '  Public internet: allowed directly'
+      printf '%s\n' '  Lateral boundary: IP-layer deny with only the grants below'
+      ;;
+    restricted)
+      printf '%s\n' '  Public internet: exact-domain allowlist through a local proxy only'
+      printf '%s\n' '  Lateral boundary: IP-layer deny with only the grants below'
+      ;;
+    open)
+      printf '%s\n' '  Egress:       WIDE OPEN — no guest firewall or proxy is installed'
+      printf '%s\n' '  Lateral boundary: DISABLED; configured grants do not constrain this mode'
+      ;;
+  esac
+
+  if [[ "$network_mode" != open ]]; then
+    cat <<'EOF'
+
+  Protected destinations denied unless explicitly granted:
+    IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+          100.64.0.0/10 (CGNAT/Tailscale), 169.254.0.0/16
+    IPv6: fc00::/7 (unique local), fe80::/10 (link-local)
+
+  Internal grants:
+EOF
+    if [[ $(jq '.internal_domains | length' <<<"$policy_json") -eq 0 ]]; then
+      printf '%s\n' '    domains: none'
+    else
+      jq -r '.internal_domains[] | "    domain: \(.name) -> \(.addresses | join(", "))"' <<<"$policy_json"
+    fi
+    if [[ $(jq '.internal_cidrs | length' <<<"$policy_json") -eq 0 ]]; then
+      printf '%s\n' '    CIDRs: none'
+    else
+      jq -r '.internal_cidrs[] | "    CIDR: \(.)"' <<<"$policy_json"
+    fi
+    cat <<'EOF'
+
+  Lima infrastructure: DHCP only; DNS only to the discovered NAT resolver on
+  TCP/UDP port 53. No general gateway or private-subnet exception exists.
+EOF
+  fi
+
   if [[ "$network_mode" == restricted ]]; then
-    printf '%s\n' '  Egress:       default-drop; allowlisted HTTPS proxy only'
-    printf '%s\n' '  Allowlist:    local model endpoints, Nix caches, Determinate Nix, GitHub'
-  else
-    printf '%s\n' '  Egress:       WIDE OPEN — no guest firewall or proxy is installed'
+    printf '\n  Restricted public domains:\n'
+    jq -r '.strict_domains[] | "    \(.name) -> \(.addresses | join(", "))"' <<<"$policy_json"
   fi
 
   cat <<'EOF'
@@ -258,9 +311,59 @@ YAML
   } >>"$template"
 }
 
-append_restricted_provision() {
-  # shellcheck disable=SC2129 # A quoted here-document makes the guest script literal.
+policy_nft_set() {
+  local field="$1"
+  jq -r --arg field "$field" '
+    .[$field] | if length == 0 then "" else "elements = { " + join(", ") + " }" end
+  ' <<<"$policy_json"
+}
+
+append_profile_provision() {
+  local use_proxy="$1"
   cat >>"$template" <<'YAML'
+- mode: user
+  script: |
+    #!/bin/bash
+    set -euxo pipefail
+    marker="$HOME/.local/state/coding-sandbox/profile-ready"
+    if test -e "$marker"; then
+      exit 0
+    fi
+    mkdir -p "$HOME/.local/share/coding-sandbox/profile" "$(dirname "$marker")"
+    cp -a /mnt/sandbox-profile/. "$HOME/.local/share/coding-sandbox/profile/"
+    # The source is a read-only Nix-store mount. Nix writes the initial lock
+    # file beside the guest's private copy, never into that source.
+    chmod -R u+w "$HOME/.local/share/coding-sandbox/profile"
+    source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+YAML
+  if [[ "$use_proxy" == true ]]; then
+    cat >>"$template" <<'YAML'
+    export http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
+    export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
+YAML
+  fi
+  cat >>"$template" <<'YAML'
+    nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#lima"
+    touch "$marker"
+YAML
+}
+
+append_protected_provision() {
+  local mode="$1" packages strict_domains granted_v4 granted_v6 strict_v4 strict_v6 use_proxy=false
+  granted_v4=$(policy_nft_set grants_v4)
+  granted_v6=$(policy_nft_set grants_v6)
+  strict_v4=$(policy_nft_set strict_v4)
+  strict_v6=$(policy_nft_set strict_v6)
+  packages='ca-certificates curl git jq nftables'
+  if [[ "$mode" == restricted ]]; then
+    packages+=' squid'
+    strict_domains=$(jq -r '.strict_domains | map(.name) | join(" ")' <<<"$policy_json")
+    use_proxy=true
+  else
+    strict_domains=''
+  fi
+
+  cat >>"$template" <<YAML
 provision:
 - mode: system
   script: |
@@ -268,29 +371,35 @@ provision:
     set -euxo pipefail
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y ca-certificates curl git jq nftables squid
+    apt-get install -y $packages
 
-    # Nix and Home Manager are realized in the guest, never cross-built on
-    # the Mac. This is intentionally before the firewall is installed: the
-    # bootstrap has no access to /workspace code and no forwarded credentials.
+    # Bootstrap is trusted launcher code; no worktree command has run and no
+    # host credential is mounted. The firewall below is active before the
+    # guest profile or any sandbox command is realized.
     if ! test -x /nix/var/nix/profiles/default/bin/nix; then
-      curl --proto '=https' --tlsv1.2 -fsSL https://install.determinate.systems/nix \
+      curl --proto '=https' --tlsv1.2 -fsSL https://install.determinate.systems/nix \\
         | sh -s -- install --no-confirm
     fi
 
-    # Squid must resolve names itself. Let it use Lima's NAT resolver, derived
-    # from the guest's DHCP default route, so the resolver process itself need
-    # not get an egress exception. Direct guest DNS remains default-drop.
-    dns_resolver="$(ip route show default | awk '/default/ { print $3; exit }')"
-    test -n "$dns_resolver"
+    # Lima NAT normally supplies this IPv4 default gateway as both router and
+    # resolver. Refuse an unfamiliar topology rather than allowing a private
+    # subnet or gateway generally.
+    gateway="\$(ip -4 route show default | awk '/default/ { print \$3; exit }')"
+    test -n "\$gateway"
+    install -d /etc/coding-sandbox
+    cat >/etc/coding-sandbox/policy.json <<'POLICY'
+    $policy_json
+    POLICY
+YAML
 
-    # Own squid.conf rather than an include in Ubuntu's stock policy: an
-    # earlier stock `http_access allow localhost` would otherwise let every
-    # guest process use this loopback proxy before our allowlist is reached.
+  if [[ "$mode" == restricted ]]; then
+    cat >>"$template" <<YAML
+    # Squid checks exact requested names; nftables below additionally confines
+    # its resolved connections to this inspectable address set.
     cat >/etc/squid/squid.conf <<SQUID
-    dns_nameservers $dns_resolver
+    dns_nameservers \$gateway
     http_port 127.0.0.1:3128
-    acl allowed_domains dstdomain llm.amos.ipreston.net llm-terra.amos.ipreston.net cache.nixos.org nix-community.cachix.org install.determinate.systems github.com api.github.com codeload.github.com
+    acl allowed_domains dstdomain $strict_domains
     http_access allow allowed_domains
     http_access deny all
     cache deny all
@@ -299,10 +408,6 @@ provision:
     SQUID
     systemctl restart squid
 
-    # The user shell below carries lower-case proxy variables, but substituter
-    # fetches run in Determinate's systemd-managed nix-daemon. Give that unit
-    # the same loopback-only proxy explicitly; Nix has no http-proxy nix.conf
-    # setting. Squid is already live, while the firewall is not yet enabled.
     install -d /etc/systemd/system/nix-daemon.service.d
     cat >/etc/systemd/system/nix-daemon.service.d/coding-sandbox-proxy.conf <<'PROXY'
     [Service]
@@ -321,37 +426,90 @@ provision:
     export ALL_PROXY=http://127.0.0.1:3128
     export NO_PROXY=127.0.0.1,localhost
     PROXY
-    cat >/etc/nftables.conf <<'NFT'
+YAML
+  fi
+
+  cat >>"$template" <<YAML
+    cat >/etc/nftables.conf <<NFT
     flush ruleset
     table inet coding_sandbox {
+      set protected_v4 {
+        type ipv4_addr
+        flags interval
+        elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 }
+      }
+      set protected_v6 {
+        type ipv6_addr
+        flags interval
+        elements = { fc00::/7, fe80::/10 }
+      }
+      set granted_v4 {
+        type ipv4_addr
+        flags interval
+        $granted_v4
+      }
+      set granted_v6 {
+        type ipv6_addr
+        flags interval
+        $granted_v6
+      }
+      set strict_v4 {
+        type ipv4_addr
+        flags interval
+        $strict_v4
+      }
+      set strict_v6 {
+        type ipv6_addr
+        flags interval
+        $strict_v6
+      }
       chain output {
         type filter hook output priority filter; policy drop;
         oifname "lo" accept
+        # Lima infrastructure only: DHCP and DNS to the one discovered NAT
+        # gateway. It is not a general private-gateway exception.
+        ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
+        ip daddr \$gateway udp dport 53 accept
+        ip daddr \$gateway tcp dport 53 accept
+        # Permit only IPv6 neighbour discovery / DHCPv6 control messages, then
+        # deny all IPv6 multicast and link-local application traffic below.
+        ip6 daddr ff02::/16 icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } accept
+        ip6 daddr ff02::1:2 udp sport 546 udp dport 547 accept
+        ip daddr @granted_v4 accept
+        ip6 daddr @granted_v6 accept
+        ip daddr @protected_v4 drop
+        ip6 daddr @protected_v6 drop
+        ip daddr 224.0.0.0/4 drop
+        ip daddr 255.255.255.255 drop
+        ip6 daddr ff00::/8 drop
+YAML
+  if [[ "$mode" == restricted ]]; then
+    cat >>"$template" <<'YAML'
+        meta skuid "proxy" ip daddr @strict_v4 accept
+        meta skuid "proxy" ip6 daddr @strict_v6 accept
         ct state established,related accept
-        meta skuid "proxy" accept
+YAML
+  else
+    cat >>"$template" <<'YAML'
+        ct state established,related accept
+        accept
+YAML
+  fi
+  cat >>"$template" <<'YAML'
       }
     }
     NFT
     systemctl enable --now nftables
-- mode: user
-  script: |
-    #!/bin/bash
-    set -euxo pipefail
-    marker="$HOME/.local/state/coding-sandbox/profile-ready"
-    if test -e "$marker"; then
-      exit 0
-    fi
-    mkdir -p "$HOME/.local/share/coding-sandbox/profile" "$(dirname "$marker")"
-    cp -a /mnt/sandbox-profile/. "$HOME/.local/share/coding-sandbox/profile/"
-    # The source is a read-only Nix-store mount. Nix writes the initial lock
-    # file beside the guest's private copy, never into that source.
-    chmod -R u+w "$HOME/.local/share/coding-sandbox/profile"
-    source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-    export http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
-    export HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
-    nix run github:nix-community/home-manager/release-26.05 -- switch --flake "$HOME/.local/share/coding-sandbox/profile#lima"
-    touch "$marker"
 YAML
+  append_profile_provision "$use_proxy"
+}
+
+append_public_provision() {
+  append_protected_provision public
+}
+
+append_restricted_provision() {
+  append_protected_provision restricted
 }
 
 append_open_provision() {
@@ -391,6 +549,7 @@ make_template() {
   template=$(mktemp "${TMPDIR:-/tmp}/coding-sandbox.XXXXXX.yaml")
   append_common_template
   case "$network_mode" in
+    public) append_public_provision ;;
     restricted) append_restricted_provision ;;
     open) append_open_provision ;;
   esac
@@ -411,30 +570,82 @@ validate_template() {
 }
 
 confirm_start() {
-  if "$assume_yes"; then
-    return
-  fi
+  local response='' confirmation
+  case "$network_mode" in
+    public)
+      confirmation='START PUBLIC'
+      cat <<'EOF'
 
-  if [[ "$network_mode" == open ]]; then
-    printf '\nType OPEN NETWORK to create this unrestricted VM: '
-    read -r response
-    [[ "$response" == 'OPEN NETWORK' ]] || die 'not started'
-  else
-    printf '\nType start to create this VM: '
-    read -r response
-    [[ "$response" == start ]] || die 'not started'
-  fi
+Network mode: public
+Public internet is allowed. LAN, tailnet, host-side, and other protected
+destinations are blocked at the IP layer except for the grants listed above.
+EOF
+      ;;
+    restricted)
+      confirmation='START RESTRICTED'
+      cat <<'EOF'
+
+Network mode: restricted
+Only the listed exact public domains and internal grants are reachable.
+All other public and protected destinations are blocked.
+EOF
+      ;;
+    open)
+      confirmation='OPEN NETWORK'
+      cat <<'EOF'
+
+WARNING: Network mode: open
+This VM may reach public internet, LAN, tailnet, host-side services, and other
+internal targets reachable from the Mac. No lateral network boundary applies.
+EOF
+      ;;
+  esac
+
+  "$assume_yes" && return
+  printf 'Type %s to create this VM: ' "$confirmation"
+  read -r response
+  [[ "$response" == "$confirmation" ]] || die 'not started'
+}
+
+policy_matches_instance() {
+  local recorded
+  [[ -r "$policy_record" ]] || die \
+    "existing $instance has no recorded policy; destroy it before using this network-policy version"
+  recorded=$(jq -ceS '.policy' "$policy_record") \
+    || die "cannot read recorded policy for $instance; destroy it before continuing"
+  [[ "$recorded" == "$(jq -cS . <<<"$policy_json")" ]] || die \
+    "effective policy changed for $instance; inspect sandbox plan, then destroy and recreate the VM"
+}
+
+record_policy() {
+  local record_dir temporary
+  record_dir=$(dirname "$policy_record")
+  mkdir -p "$record_dir"
+  temporary=$(mktemp "$record_dir/.policy.XXXXXX")
+  jq -cn --arg instance "$instance" --argjson policy "$policy_json" \
+    '{ instance: $instance, policy: $policy }' >"$temporary"
+  mv "$temporary" "$policy_record"
 }
 
 start() {
   check_host
   show_plan
+  if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
+    policy_matches_instance
+  fi
   confirm_start
+
+  if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
+    limactl start "$instance"
+    note "ready. Run: sandbox shell --network $network_mode $worktree"
+    return
+  fi
   make_template
   trap 'rm -f "$template"' EXIT
 
   note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the fixed guest profile"
   limactl start --tty=false --name="$instance" "$template"
+  record_policy
   note "ready. Run: sandbox shell --network $network_mode $worktree"
 }
 
@@ -445,6 +656,7 @@ instance_action() {
   if ! limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
     die "$instance does not exist; run sandbox start first"
   fi
+  policy_matches_instance
   case "$action" in
     shell)
       if [[ "$network_mode" == restricted ]]; then
@@ -497,6 +709,7 @@ destroy() {
     [[ "$response" == destroy ]] || die 'not destroyed'
   fi
   limactl delete --force "$instance"
+  rm -f "$policy_record"
   note 'deleted. The host worktree was not changed.'
 }
 
