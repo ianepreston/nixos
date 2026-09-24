@@ -27,6 +27,16 @@ entries:
       redirect_uris:
         - matching_mode: strict
           url: https://bookorbit.@serverDomain@/oauth2-callback
+        # Private-use scheme the official iOS/watchOS app hands the IdP via
+        # ASWebAuthenticationSession. Compiled into the App Store binary
+        # (config.js falls back to it when NATIVE_REDIRECT_URI is unset, which
+        # it is here), so it is the same on every host and takes no per-host
+        # domain placeholder — deliberately not spelled here, because
+        # renderedBlueprintDir substitutes that literal in comments too.
+        # Strict, not regex: it is a fixed literal, and a loose match on a
+        # non-special scheme is how `evil://anything` gets accepted.
+        - matching_mode: strict
+          url: bookorbit://oauth2-callback
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
