@@ -556,6 +556,20 @@ append_profile_provision() {
     if test -e "$marker"; then
       exit 0
     fi
+    # These are guest-only developer tools. Install them through their
+    # upstream bootstrap scripts rather than putting a host package closure in
+    # the VM boundary. Restricted mode intentionally does not fetch arbitrary
+    # installer domains after its exact-domain egress policy becomes active.
+    if [[ ! -r /etc/coding-sandbox/policy.json || $(jq -r .mode /etc/coding-sandbox/policy.json) != restricted ]]; then
+      if ! command -v databricks >/dev/null; then
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      fi
+      if ! command -v uv >/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh
+      fi
+      databricks -v
+      uv --version
+    fi
     state_dir="$agent_home/.local/state/coding-sandbox"
     install -d -m 0700 -o agent -g agent \
       "$agent_home/.local/share/coding-sandbox/profile" \
@@ -645,7 +659,7 @@ append_protected_provision() {
   granted_v6=$(policy_nft_set grants_v6)
   strict_v4=$(policy_nft_set strict_v4)
   strict_v6=$(policy_nft_set strict_v6)
-  packages='ca-certificates curl git jq nftables'
+  packages='ca-certificates curl git jq nftables unzip'
   if [[ "$mode" == restricted ]]; then
     packages+=' squid'
     strict_domains=$(jq -r '.strict_domains | map(.name) | join(" ")' <<<"$policy_json")
@@ -841,7 +855,7 @@ provision:
     set -euxo pipefail
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y ca-certificates curl git jq
+    apt-get install -y ca-certificates curl git jq unzip
     if ! id -u agent >/dev/null 2>&1; then
       useradd --create-home --user-group --shell /bin/bash agent
     fi

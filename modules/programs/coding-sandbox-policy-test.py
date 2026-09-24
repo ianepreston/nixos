@@ -260,6 +260,11 @@ class PolicyTest(unittest.TestCase):
         self.assertIn('format: true', template)
         self.assertIn('persistent_nix_root=/mnt/lima-s', template)
         self.assertIn('mount --bind "$persistent_nix_root/store" /nix/store', template)
+        self.assertIn('apt-get install -y ca-certificates curl git jq nftables unzip', template)
+        self.assertIn('https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh', template)
+        self.assertIn('UV_UNMANAGED_INSTALL=/usr/local/bin sh', template)
+        self.assertIn('databricks -v', template)
+        self.assertIn('uv --version', template)
         self.assertLess(
             template.index('ct state established,related accept'),
             template.index('ip daddr @protected_v4 drop'),

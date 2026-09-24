@@ -55,10 +55,15 @@ has only the declared mounts, a fixed store-built Home Manager base profile,
 and a read-only copy of the active specification at
 `/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
 credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
-direnv/nix-direnv, curl, git, and jq; it deliberately does not install Pi,
-OpenCode, Claude Code, local-model configuration, or model credentials. A
-project may compose extra portable HM modules and unprivileged startup scripts
-as described below, or use a project `nix develop` for its declared tools.
+direnv/nix-direnv, curl, git, and jq. Public and open VMs also run the upstream
+Databricks CLI and uv install scripts at first boot, placing both in
+`/usr/local/bin` for the unprivileged agent; destroy and recreate a VM to pick
+up a newer upstream release. Restricted VMs do not fetch those unrestricted
+installer domains after their exact-domain egress policy is active. The base
+profile deliberately does not install Pi, OpenCode, Claude Code, local-model
+configuration, or model credentials. A project may compose extra portable HM
+modules and unprivileged startup scripts as described below, or use a project
+`nix develop` for its declared tools.
 
 A project may intentionally expose no host paths at all. Omit `[[mounts]]`
 from the visible specification; the agent then starts in its private
