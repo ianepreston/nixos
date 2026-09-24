@@ -295,6 +295,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         return {
             "version": 1,
             "network": {},
+            "storage": {"nix_store": "instance"},
             "mounts": [],
             "profile": {"modules": [], "digest": file_digest_data({"modules": [], "startup": []})},
             "startup": [],
@@ -308,7 +309,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network", "mounts", "profile", "startup"}
+    unknown = set(config) - {"version", "network", "storage", "mounts", "profile", "startup"}
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -319,6 +320,15 @@ def parse_config(project: Path) -> dict[str, Any]:
     unknown = set(network) - {"mode", "internal_domains", "internal_cidrs", "public_domains"}
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
+    storage = config.get("storage", {})
+    if not isinstance(storage, dict):
+        fail("storage must be a table")
+    unknown = set(storage) - {"nix_store"}
+    if unknown:
+        fail(f"unknown storage key(s): {', '.join(sorted(unknown))}")
+    nix_store = storage.get("nix_store", "instance")
+    if nix_store not in {"instance", "persistent"}:
+        fail('storage.nix_store must be "instance" or "persistent"')
     mounts = parse_mounts(config.get("mounts"), config_path.parent)
     profile = parse_profile(config.get("profile"), config_path.parent, mounts)
     startup = parse_startup(config.get("startup"), config_path.parent, mounts)
@@ -326,6 +336,7 @@ def parse_config(project: Path) -> dict[str, Any]:
     return {
         "version": 1,
         "network": network,
+        "storage": {"nix_store": nix_store},
         "mounts": mounts,
         "profile": profile,
         "startup": startup,
@@ -414,6 +425,7 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "config_path": str(config["config_path"]) if config["config_path"] else None,
         "config_root": str(config["config_root"]),
         "mounts": config["mounts"],
+        "storage": config["storage"],
         "profile": config["profile"],
         "startup": config["startup"],
         "protected_v4": [str(network) for network in PROTECTED_V4],

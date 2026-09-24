@@ -36,6 +36,7 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(policy["mode"], "public")
         self.assertEqual(policy["grants_v4"], [])
         self.assertEqual(policy["grants_v6"], [])
+        self.assertEqual(policy["storage"]["nix_store"], "instance")
         self.assertIn("100.64.0.0/10", policy["protected_v4"])
         self.assertIn("fe80::/10", policy["protected_v6"])
 
@@ -73,6 +74,17 @@ class PolicyTest(unittest.TestCase):
         POLICY.resolve = lambda domain: [ipaddress.ip_address("203.0.113.10")]
         policy = POLICY.render_policy(root, "restricted")
         self.assertIn("registry.npmjs.org", [entry["name"] for entry in policy["strict_domains"]])
+
+    def test_nix_store_lifecycle_is_explicit_and_strict(self) -> None:
+        root = self.config('[storage]\nnix_store = "persistent"\n')
+        self.assertEqual(POLICY.render_policy(root, None)["storage"]["nix_store"], "persistent")
+        for text in (
+            '[storage]\nnix_store = "shared"\n',
+            '[storage]\nunknown = true\n',
+            'storage = "persistent"\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(self.config(text), None)
 
     def test_non_git_mount_defaults_read_only_and_resolves_from_spec(self) -> None:
         root = self.config("")
@@ -190,6 +202,7 @@ class PolicyTest(unittest.TestCase):
         (source / "bootstrap.sh").write_text("#!/usr/bin/env bash\nprintf ready\\n")
         (root / ".sandbox.toml").write_text(
             '[[mounts]]\npath = "sandbox"\nmount_point = "/sandbox"\n\n'
+            '[storage]\nnix_store = "persistent"\n\n'
             '[profile]\nmodules = ["sandbox/profile.nix"]\n\n'
             '[[startup]]\nname = "bootstrap"\npath = "sandbox/bootstrap.sh"\nargs = ["--quiet"]\n'
         )
@@ -218,12 +231,17 @@ class PolicyTest(unittest.TestCase):
         self.assertIn('startup-$startup_name.log', template)
         self.assertIn('switch --impure --flake', template)
         self.assertIn('PATH="$agent_profile_path"', template)
+        self.assertIn('additionalDisks:', template)
+        self.assertIn('format: true', template)
+        self.assertIn('persistent_nix_root=/mnt/lima-s', template)
+        self.assertIn('mount --bind "$persistent_nix_root/store" /nix/store', template)
         self.assertLess(
             template.index('ct state established,related accept'),
             template.index('ip daddr @protected_v4 drop'),
         )
         self.assertIn("Selected profile: sha256:", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
+        self.assertIn("Nix store:    persistent Lima disk", plan)
 
 
 if __name__ == "__main__":

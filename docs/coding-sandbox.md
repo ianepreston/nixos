@@ -182,6 +182,48 @@ to a selected module, startup script, source location, or profile declaration
 changes the effective policy: inspect `sandbox plan`, then destroy and recreate
 the VM before it can run.
 
+### Nix cache lifecycle
+
+The default keeps `/nix` on the VM's primary disk. It is warm across
+`sandbox stop` / `sandbox start`, but `sandbox destroy` removes it along with
+all other guest state. This is the ordinary disposable-sandbox path.
+
+For a worktree whose profile takes substantial time to realize, opt in to a
+dedicated persistent cache disk:
+
+```toml
+[storage]
+# Default is "instance". "persistent" keeps Nix's store and database after
+# sandbox destroy; the agent home, guest OS, and project state remain volatile.
+nix_store = "persistent"
+```
+
+The launcher creates one sparse 50 GiB Lima disk for the project and network
+mode. It is never shared with another sandbox, so public and restricted
+instances can run at the same time and untrusted worktrees cannot share a
+writable Nix store. The plan names the disk before creation.
+
+The first VM initializes the disk from its newly installed Nix store. Later
+VMs still install their own daemon and build users on the disposable OS disk,
+then bind the persistent store, database, profile roots, and GC roots into
+place. Consequently no guest configuration, credentials, or agent state is
+carried across recreation—only Nix cache data and profile references.
+
+Inspect or deliberately remove the disk with:
+
+```sh
+sandbox cache status
+sandbox destroy
+sandbox cache purge
+# Type: purge cache s<instance-id-prefix>
+```
+
+`cache purge` refuses while the instance exists, even when stopped. It is the
+only command that deletes a persistent cache disk; `destroy` deliberately
+leaves it intact for the next VM. When that VM is running, `destroy` first
+flushes and shuts it down normally before deleting it, so an ext4 cache disk
+does not survive a forced VZ termination with an incomplete Nix-store write.
+
 ## Network modes
 
 The default `public` mode is the normal safe path:
@@ -325,6 +367,7 @@ sandbox status --network open          # current project, open mode
 sandbox stop                           # retain this VM and its guest Nix cache
 sandbox destroy                        # remove this project's public VM
 sandbox destroy --network open         # remove this project's open VM
+sandbox cache status                    # inspect an opted-in persistent cache disk
 ```
 
 If the original worktree is gone, list the VMs and explicitly delete the
@@ -342,11 +385,12 @@ is available for scripted, deliberate cleanup.
 
 Stopping a VM preserves its complete guest disk, including `/nix`, by default.
 That gives each work item a warm, isolated Nix cache on the next start.
-Destroying the VM removes that cache. Do not mount a shared writable `/nix`
-store from macOS or another sandbox: Nix's store database and locks are not a
-safe multi-guest cache, exposing it would give untrusted guest code a host
-filesystem boundary to attack, and a Darwin host store is not a substitute for
-Linux guest outputs. A future shared-cache design should instead use a
+Destroying an `instance` cache removes it; destroying a `persistent` cache
+leaves its dedicated Lima disk for the next VM. Do not mount a shared writable
+`/nix` store from macOS or another sandbox: Nix's store database and locks are
+not a safe multi-guest cache, exposing it would give untrusted guest code a
+host filesystem boundary to attack, and a Darwin host store is not a substitute
+for Linux guest outputs. A future shared-cache design should instead use a
 dedicated, content-addressed binary-cache service with a narrow interface.
 
 ## Current limits

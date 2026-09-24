@@ -18,6 +18,8 @@ usage() {
 Usage:
   sandbox doctor
   sandbox list
+  sandbox cache status [--network public|restricted|open] [PROJECT]
+  sandbox cache purge [--network public|restricted|open] [--yes] [PROJECT]
   sandbox plan [--network public|restricted|open] [PROJECT]
   sandbox template [--network public|restricted|open] [PROJECT]
   sandbox validate [--network public|restricted|open] [PROJECT]
@@ -50,6 +52,11 @@ those declared mounts; they are activated and run as the unprivileged `agent`
 account. The Lima transport account retains passwordless sudo only to bootstrap
 the guest and switch to that account. SSH keys, credential agents, and the
 rest of HOME are never forwarded or mounted.
+
+The default storage.nix_store = "instance" keeps /nix only for the lifetime of
+one VM. storage.nix_store = "persistent" keeps a separate 50 GiB Lima disk
+for this project and network mode; inspect it with `sandbox cache status` and
+delete it deliberately with `sandbox cache purge` after destroying the VM.
 EOF
 }
 
@@ -143,6 +150,11 @@ parse_target() {
   project_label=$(basename "$project" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-*//; s/-*$//' | cut -c1-16)
   project_label="${project_label:-project}"
   instance="coding-sandbox-$project_label-$instance_id"
+  nix_store_mode=$(jq -r '.storage.nix_store' <<<"$policy_json")
+  # Lima labels ext4 volumes "lima-$name" and ext4 labels are at most 16
+  # bytes. Keep the opaque disk name to 11 bytes while retaining 40 bits of
+  # the per-project/per-network instance identity.
+  nix_store_disk="s${instance_id:0:10}"
   policy_record="$HOME/.local/state/coding-sandbox/$instance.policy.json"
   temporary_root="${TMPDIR:-/tmp}"
   temporary_root="${temporary_root%/}"
@@ -238,6 +250,16 @@ Coding sandbox plan
   SSH agent:    not forwarded
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
+
+  case "$nix_store_mode" in
+    instance)
+      printf '%s\n' '  Nix store:    instance-local (warm across stop/start; deleted with the VM)'
+      ;;
+    persistent)
+      printf '%s\n' "  Nix store:    persistent Lima disk $nix_store_disk (50 GiB sparse)"
+      printf '%s\n' '                survives VM deletion; no cache is shared with another sandbox'
+      ;;
+  esac
 
   printf '\n  Declared mounts:\n'
   jq -r --arg mount_root "$mount_root" '
@@ -434,13 +456,53 @@ portForwards:
   proto: any
   ignore: true
 
-mounts:
 YAML
+    if [[ "$nix_store_mode" == persistent ]]; then
+      printf '%s\n' 'additionalDisks:'
+      printf '%s\n' "- name: $(json_string "$nix_store_disk")" '  # Format only when the new disk has no Lima label.'
+      printf '%s\n' '  format: true' '  fsType: ext4'
+    fi
+    printf '%s\n' 'mounts:'
     append_declared_mounts
     printf '%s\n' '  # Fixed, store-built guest profile; read-only and not a host secret.'
     printf '%s\n' "- location: $(json_string "$SANDBOX_GUEST_PROFILE")"
     printf '%s\n' '  mountPoint: /mnt/sandbox-profile' '  writable: false'
   } >>"$template"
+}
+
+append_persistent_nix_store_provision() {
+  [[ "$nix_store_mode" == persistent ]] || return 0
+  cat >>"$template" <<YAML
+
+    # Lima owns this separate ext4 volume. Keep only Nix's content-addressed
+    # store, database, and profile roots there; the guest OS, agent home, and
+    # all project state remain on the disposable VM disk.
+    persistent_nix_root=/mnt/lima-$nix_store_disk
+    test -d "\$persistent_nix_root"
+    systemctl stop nix-daemon.service nix-daemon.socket 2>/dev/null || true
+    if test -e "\$persistent_nix_root/.coding-sandbox-nix-cache-v1"; then
+      test -d "\$persistent_nix_root/store"
+      test -d "\$persistent_nix_root/db"
+      test -d "\$persistent_nix_root/profiles"
+      test -d "\$persistent_nix_root/gcroots"
+    else
+      install -d -m 0755 \\
+        "\$persistent_nix_root/store" \\
+        "\$persistent_nix_root/db" \\
+        "\$persistent_nix_root/profiles" \\
+        "\$persistent_nix_root/gcroots"
+      cp -a /nix/store/. "\$persistent_nix_root/store/"
+      cp -a /nix/var/nix/db/. "\$persistent_nix_root/db/"
+      cp -a /nix/var/nix/profiles/. "\$persistent_nix_root/profiles/"
+      cp -a /nix/var/nix/gcroots/. "\$persistent_nix_root/gcroots/"
+      touch "\$persistent_nix_root/.coding-sandbox-nix-cache-v1"
+    fi
+    mountpoint -q /nix/store || mount --bind "\$persistent_nix_root/store" /nix/store
+    mountpoint -q /nix/var/nix/db || mount --bind "\$persistent_nix_root/db" /nix/var/nix/db
+    mountpoint -q /nix/var/nix/profiles || mount --bind "\$persistent_nix_root/profiles" /nix/var/nix/profiles
+    mountpoint -q /nix/var/nix/gcroots || mount --bind "\$persistent_nix_root/gcroots" /nix/var/nix/gcroots
+    systemctl start nix-daemon.service
+YAML
 }
 
 policy_nft_set() {
@@ -594,6 +656,10 @@ provision:
       curl --proto '=https' --tlsv1.2 -fsSL https://install.determinate.systems/nix \\
         | sh -s -- install --no-confirm
     fi
+
+YAML
+  append_persistent_nix_store_provision
+  cat >>"$template" <<YAML
 
     # Lima NAT normally supplies this IPv4 default gateway as both router and
     # resolver. Refuse an unfamiliar topology rather than allowing a private
@@ -758,6 +824,7 @@ provision:
         | sh -s -- install --no-confirm
     fi
 YAML
+  append_persistent_nix_store_provision
   append_profile_provision false
 }
 
@@ -857,6 +924,90 @@ record_policy() {
   mv "$temporary" "$policy_record"
 }
 
+persistent_disk_exists() {
+  limactl disk list 2>/dev/null | awk -v disk="$nix_store_disk" '$1 == disk { found = 1 } END { exit !found }'
+}
+
+ensure_persistent_disk() {
+  [[ "$nix_store_mode" == persistent ]] || return 0
+  if persistent_disk_exists; then
+    return
+  fi
+  note "creating persistent 50 GiB Nix cache disk $nix_store_disk"
+  limactl disk create --size 50GiB --format qcow2 --yes "$nix_store_disk"
+}
+
+cache_status() {
+  check_host
+  case "$nix_store_mode" in
+    instance)
+      if persistent_disk_exists; then
+        printf '%s\n' "Nix cache: persistent disk $nix_store_disk retained from an earlier persistent setting."
+        cat <<'EOF'
+
+The current storage.nix_store setting is instance, but this project still has
+an older persistent cache disk. It can be purged after the VM is destroyed.
+EOF
+      else
+        cat <<'EOF'
+Nix cache: instance-local
+
+It remains warm while this VM is stopped, then is deleted with the VM. There
+is no separately persistent Lima disk for this project.
+EOF
+      fi
+      ;;
+    persistent)
+      if persistent_disk_exists; then
+        limactl disk list | awk -v disk="$nix_store_disk" '$1 == disk { print "Nix cache: persistent " $0; found = 1 } END { exit !found }'
+        printf '%s\n' "It is isolated to $instance and survives sandbox destroy."
+      else
+        printf '%s\n' "Nix cache: persistent mode selected; disk $nix_store_disk has not been created yet."
+      fi
+      ;;
+  esac
+}
+
+cache_purge() {
+  check_host
+  if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
+    die "destroy $instance before purging its persistent cache disk"
+  fi
+  if ! persistent_disk_exists; then
+    if [[ "$nix_store_mode" == instance ]]; then
+      die 'storage.nix_store is instance and no retained persistent cache disk exists'
+    fi
+    note "persistent cache disk $nix_store_disk does not exist"
+    return
+  fi
+  if ! "$assume_yes"; then
+    local response
+    printf 'Type purge cache %s to delete this persistent Nix cache: ' "$nix_store_disk"
+    read -r response
+    [[ "$response" == "purge cache $nix_store_disk" ]] || die 'cache not purged'
+  fi
+  limactl disk delete "$nix_store_disk"
+  note "deleted persistent Nix cache disk $nix_store_disk"
+}
+
+cache_command() {
+  local action="${1:-}"
+  case "$action" in
+    status|purge)
+      shift
+      ;;
+    *)
+      die 'sandbox cache needs status or purge'
+      ;;
+  esac
+  parse_target "$@"
+  ((${#command[@]} == 0)) || die "sandbox cache $action does not accept a guest command"
+  case "$action" in
+    status) cache_status ;;
+    purge) cache_purge ;;
+  esac
+}
+
 start() {
   check_host
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
@@ -870,6 +1021,7 @@ start() {
     note "ready. Run: sandbox shell --network $network_mode $project"
     return
   fi
+  ensure_persistent_disk
   make_template
   trap 'rm -f "$template"' EXIT
 
@@ -932,9 +1084,19 @@ instance_action() {
 }
 
 destroy() {
+  local instance_nix_store_mode="$nix_store_mode" recorded_policy
   check_host
   if ! limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
     die "$instance does not exist"
+  fi
+  # Destruction must use the lifecycle captured when this VM was created.  A
+  # user may have changed .sandbox.toml from persistent to instance while
+  # deciding to tear it down; that must not orphan a cache disk which the
+  # current policy can no longer address.
+  if [[ -r "$policy_record" ]]; then
+    recorded_policy=$(jq -cer '.policy' "$policy_record") \
+      || die "cannot read recorded policy for $instance; use sandbox delete to remove this legacy VM"
+    instance_nix_store_mode=$(jq -r '.storage.nix_store // "instance"' <<<"$recorded_policy")
   fi
   show_plan
   if ! "$assume_yes"; then
@@ -942,9 +1104,26 @@ destroy() {
     read -r response
     [[ "$response" == destroy ]] || die 'not destroyed'
   fi
-  limactl delete --force "$instance"
+  if [[ "$instance_nix_store_mode" == persistent ]] && [[ $(limactl list --format '{{.Status}}' "$instance") == Running ]]; then
+    # `limactl delete --force` terminates VZ immediately. Flush and stop a VM
+    # with a persistent ext4 cache disk first so its Nix database and store do
+    # not survive a torn write.
+    note "flushing persistent Nix cache disk $nix_store_disk"
+    limactl shell "$instance" sudo sync
+    limactl stop "$instance"
+    # The guest is already down and the disk is detached. `--force` only
+    # removes Lima's stopped-instance state here, avoiding its redundant
+    # second disk-unlock attempt.
+    limactl delete --force "$instance"
+  else
+    limactl delete --force "$instance"
+  fi
   rm -f "$policy_record"
-  note 'deleted. Declared host paths and generated Git worktrees were retained.'
+  if [[ "$instance_nix_store_mode" == persistent ]]; then
+    note "deleted VM. Persistent Nix cache disk $nix_store_disk was retained."
+  else
+    note 'deleted. Declared host paths and generated Git worktrees were retained.'
+  fi
 }
 
 delete_instance() {
@@ -1004,6 +1183,9 @@ main() {
     list)
       (($# == 0)) || die 'sandbox list accepts no arguments'
       list_instances
+      ;;
+    cache)
+      cache_command "$@"
       ;;
     delete)
       delete_instance "$@"
