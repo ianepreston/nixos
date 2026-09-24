@@ -42,6 +42,7 @@ BASE_RESTRICTED_DOMAINS = (
 RESERVED_MOUNT_POINTS = (PurePosixPath("/sandbox-spec"), PurePosixPath("/mnt/sandbox-profile"))
 DOMAIN_RE = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}\Z")
 STARTUP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+ENVIRONMENT_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 class PolicyError(Exception):
@@ -289,6 +290,30 @@ def parse_startup(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -
     return entries
 
 
+def parse_environment(value: Any) -> dict[str, str]:
+    """Parse literal environment values for the unprivileged guest account.
+
+    These values are project policy, not references to the host environment:
+    accepting interpolation here would create an implicit host-credential
+    channel into an untrusted project.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        fail("environment must be a table")
+
+    environment: dict[str, str] = {}
+    for name, entry in value.items():
+        if not ENVIRONMENT_NAME_RE.fullmatch(name):
+            fail(f"environment key {name!r} must be a POSIX environment-variable name")
+        if not isinstance(entry, str):
+            fail(f"environment.{name} must be a string")
+        if "\0" in entry:
+            fail(f"environment.{name} must not contain a NUL byte")
+        environment[name] = entry
+    return dict(sorted(environment.items()))
+
+
 def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     if value is None:
         return {"port_ranges": []}
@@ -331,6 +356,7 @@ def parse_config(project: Path) -> dict[str, Any]:
             "version": 1,
             "network": {},
             "callbacks": {"port_ranges": []},
+            "environment": {},
             "storage": {"nix_store": "instance"},
             "mounts": [],
             "profile": {"modules": [], "digest": file_digest_data({"modules": [], "startup": []})},
@@ -345,7 +371,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network", "callbacks", "storage", "mounts", "profile", "startup"}
+    unknown = set(config) - {"version", "network", "callbacks", "environment", "storage", "mounts", "profile", "startup"}
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -357,6 +383,7 @@ def parse_config(project: Path) -> dict[str, Any]:
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
     callbacks = parse_callbacks(config.get("callbacks"))
+    environment = parse_environment(config.get("environment"))
     storage = config.get("storage", {})
     if not isinstance(storage, dict):
         fail("storage must be a table")
@@ -374,6 +401,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         "version": 1,
         "network": network,
         "callbacks": callbacks,
+        "environment": environment,
         "storage": {"nix_store": nix_store},
         "mounts": mounts,
         "profile": profile,
@@ -465,6 +493,7 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "mounts": config["mounts"],
         "callbacks": config["callbacks"],
         "storage": config["storage"],
+        "environment": config["environment"],
         "profile": config["profile"],
         "startup": config["startup"],
         "protected_v4": [str(network) for network in PROTECTED_V4],

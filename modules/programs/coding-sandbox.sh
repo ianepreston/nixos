@@ -283,6 +283,13 @@ EOF
     jq -r '.profile.modules[] | "    module: \(.guest_path) <- \(.source) [\(.mount_access), \(.digest)]"' \
       <<<"$policy_json"
   fi
+
+  if [[ $(jq '.environment | length' <<<"$policy_json") -eq 0 ]]; then
+    printf '%s\n' '  Guest environment: none declared'
+  else
+    printf '%s\n' '  Guest environment (literal values, agent only):'
+    jq -r '.environment | to_entries[] | "    \(.key)=\(.value | @json)"' <<<"$policy_json"
+  fi
   if [[ $(jq '.startup | length' <<<"$policy_json") -eq 0 ]]; then
     printf '%s\n' '    startup: none'
   else
@@ -543,8 +550,9 @@ policy_nft_set() {
 }
 
 append_profile_provision() {
-  local use_proxy="$1" profile_state
-  profile_state=$(jq -c '{ profile, startup }' <<<"$policy_json")
+  local use_proxy="$1" profile_state environment_exports
+  profile_state=$(jq -c '{ profile, startup, environment }' <<<"$policy_json")
+  environment_exports=$(jq -r '.environment | to_entries[] | "export \(.key)=\(.value | @sh)"' <<<"$policy_json")
   {
     cat <<'YAML'
 - mode: system
@@ -574,11 +582,27 @@ append_profile_provision() {
     install -d -m 0700 -o agent -g agent \
       "$agent_home/.local/share/coding-sandbox/profile" \
       "$state_dir" \
-      "$agent_home/.local/state/nix/profiles"
+      "$agent_home/.local/state/nix/profiles" \
+      "$agent_home/.config/coding-sandbox"
+    cat >"$agent_home/.config/coding-sandbox/environment.sh" <<'ENVIRONMENT'
+YAML
+    printf '%s\n' "$environment_exports" | sed 's/^/    /'
+    cat <<'YAML'
+    # uv installs tool entrypoints here. Keep them available in every agent
+    # shell and startup command without requiring `uv tool update-shell`.
+    export PATH="$HOME/.local/bin:$PATH"
+    ENVIRONMENT
+    cat >"$agent_home/.bash_profile" <<'BASH_PROFILE'
+    if [[ -r "$HOME/.bashrc" ]]; then
+      source "$HOME/.bashrc"
+    fi
+    source "$HOME/.config/coding-sandbox/environment.sh"
+    BASH_PROFILE
     cp -a /mnt/sandbox-profile/. "$agent_home/.local/share/coding-sandbox/profile/"
     # The source is a read-only Nix-store mount. Nix writes the initial lock
     # file beside the guest's private copy, never into that source.
-    chown -R agent:agent "$agent_home/.local"
+    chown -R agent:agent "$agent_home/.local" "$agent_home/.config" "$agent_home/.bash_profile"
+    chmod 0600 "$agent_home/.config/coding-sandbox/environment.sh" "$agent_home/.bash_profile"
     chmod -R u+w "$agent_home/.local/share/coding-sandbox/profile"
 YAML
     cat <<YAML
@@ -639,7 +663,8 @@ YAML
       verify_source "$startup_path" "$startup_digest"
       mapfile -d '' -t startup_args < <(jq -j ".startup[$startup_index].args[] | ., \"\\u0000\"" "$state_dir/profile.json")
       if ! runuser -u agent -- env HOME="$agent_home" PATH="$agent_profile_path" "${proxy_environment[@]}" \
-        bash "$startup_path" "${startup_args[@]}" >"$startup_log" 2>&1; then
+        bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; exec bash "$@"' \
+        sandbox-startup "$startup_path" "${startup_args[@]}" >"$startup_log" 2>&1; then
         chown agent:agent "$startup_log"
         printf '%s\n' "$startup_name" >"$state_dir/failed-startup"
         chown agent:agent "$state_dir/failed-startup"
@@ -1112,10 +1137,10 @@ instance_action() {
           NO_PROXY=127.0.0.1,localhost \
           http_proxy=http://127.0.0.1:3128 \
           https_proxy=http://127.0.0.1:3128 \
-          bash -c "cd \"\$1\"; shift; exec \"\$@\"" sandbox-agent-exec "$guest_workdir" "${command[@]}"
+          bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
       else
         limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-          bash -c "cd \"\$1\"; shift; exec \"\$@\"" sandbox-agent-exec "$guest_workdir" "${command[@]}"
+          bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
       fi
       ;;
     status)
