@@ -55,10 +55,15 @@ has only the declared mounts, a fixed store-built Home Manager base profile,
 and a read-only copy of the active specification at
 `/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
 credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
-direnv/nix-direnv, curl, git, and jq; it deliberately does not install Pi,
-OpenCode, Claude Code, local-model configuration, or model credentials. A
-project may compose extra portable HM modules and unprivileged startup scripts
-as described below, or use a project `nix develop` for its declared tools.
+direnv/nix-direnv, curl, git, and jq. Public and open VMs also run the upstream
+Databricks CLI and uv install scripts at first boot, placing both in
+`/usr/local/bin` for the unprivileged agent; destroy and recreate a VM to pick
+up a newer upstream release. Restricted VMs do not fetch those unrestricted
+installer domains after their exact-domain egress policy is active. The base
+profile deliberately does not install Pi, OpenCode, Claude Code, local-model
+configuration, or model credentials. A project may compose extra portable HM
+modules and unprivileged startup scripts as described below, or use a project
+`nix develop` for its declared tools.
 
 A project may intentionally expose no host paths at all. Omit `[[mounts]]`
 from the visible specification; the agent then starts in its private
@@ -353,6 +358,47 @@ list ruleset`, where `INSTANCE` comes from `sandbox plan`. The sandbox has no
 host credentials or forwarded SSH agent, and this iteration does not add
 GitHub credentials, SSH forwarding, or a web UI.
 
+### Browser OAuth callbacks
+
+An OAuth CLI running in the guest can receive a browser callback through a
+small, project-declared TCP allowlist. This is host-loopback ingress, separate
+from the guest's `[network]` egress policy. For example, the Databricks CLI
+starts at port 8020 and can fall back through 8040:
+
+```toml
+[callbacks]
+port_ranges = [[8020, 8040]]
+```
+
+After adding, removing, or changing callback ranges, inspect the changed
+policy and destroy/recreate the sandbox; an existing VM keeps the policy it was
+created with:
+
+```sh
+sandbox plan
+sandbox destroy
+sandbox start
+```
+
+For each declared range, Lima dynamically forwards guest TCP listeners to the
+same port range on `127.0.0.1` only. A redirect to
+`http://localhost:8020/...` in the Mac browser therefore reaches the guest's
+`localhost:8020` listener. No listener or host-port reservation exists merely
+because the range is declared: Lima creates the host listener when a guest
+program starts listening, and removes it when that guest listener closes.
+
+If another Mac process already owns a declared port when the guest CLI opens
+its listener, Lima cannot forward that callback. Stop the conflicting process
+or use another port already declared by the CLI's callback range; the launcher
+does not silently remap a redirect port. `sandbox plan` and `sandbox validate`
+show the effective ranges and this dynamic conflict model before a VM is
+created.
+
+This is intentionally not general service publishing: only declared TCP
+ranges map 1:1, UDP is unavailable, and undeclared guest listeners remain
+denied by the all-port Lima rule. The host binding is never `0.0.0.0`, so the
+callback is not reachable from the LAN, tailnet, or another host.
+
 ## Multiple VMs and cleanup
 
 An instance is keyed by the project specification path and its network mode.
@@ -399,7 +445,8 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 - `.sandbox.toml` covers mount/network policy plus portable Home Manager
   modules and agent-only startup scripts. Credentials, agent selection, and UI
   settings remain out of scope.
-- No GitHub token/deploy key, host SSH forwarding, or web UI/port forwarding is
-  available. Lima guest port forwarding is denied by default.
+- No GitHub token/deploy key, host SSH forwarding, web UI, or general service
+  publishing is available. Lima guest port forwarding is denied by default
+  except for explicitly declared loopback-only TCP browser callbacks.
 - Public mode is the default for ordinary registries and external gateways;
   `restricted` mode requires declaring each additional public hostname.

@@ -289,12 +289,48 @@ def parse_startup(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -
     return entries
 
 
+def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
+    if value is None:
+        return {"port_ranges": []}
+    if not isinstance(value, dict):
+        fail("callbacks must be a table")
+    unknown = set(value) - {"port_ranges"}
+    if unknown:
+        fail(f"unknown callbacks key(s): {', '.join(sorted(unknown))}")
+
+    ranges = value.get("port_ranges", [])
+    if not isinstance(ranges, list):
+        fail("callbacks.port_ranges must be an array of [first, last] ranges")
+
+    normalized: list[list[int]] = []
+    for index, entry in enumerate(ranges):
+        field = f"callbacks.port_ranges[{index}]"
+        if not isinstance(entry, list) or len(entry) != 2:
+            fail(f"{field} must be a two-integer [first, last] range")
+        first, last = entry
+        # bool is an int subclass, so require the exact TOML integer type.
+        if type(first) is not int or type(last) is not int:
+            fail(f"{field} must contain integers, not booleans or strings")
+        if not 1024 <= first <= 65535 or not 1024 <= last <= 65535:
+            fail(f"{field} ports must be in 1024..65535")
+        if first > last:
+            fail(f"{field} must not be reversed")
+        normalized.append([first, last])
+
+    normalized.sort()
+    for previous, current in zip(normalized, normalized[1:]):
+        if current[0] <= previous[1]:
+            fail("callbacks.port_ranges must not contain duplicate or overlapping ranges")
+    return {"port_ranges": normalized}
+
+
 def parse_config(project: Path) -> dict[str, Any]:
     config_path = find_config_path(project)
     if config_path is None:
         return {
             "version": 1,
             "network": {},
+            "callbacks": {"port_ranges": []},
             "storage": {"nix_store": "instance"},
             "mounts": [],
             "profile": {"modules": [], "digest": file_digest_data({"modules": [], "startup": []})},
@@ -309,7 +345,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network", "storage", "mounts", "profile", "startup"}
+    unknown = set(config) - {"version", "network", "callbacks", "storage", "mounts", "profile", "startup"}
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -320,6 +356,7 @@ def parse_config(project: Path) -> dict[str, Any]:
     unknown = set(network) - {"mode", "internal_domains", "internal_cidrs", "public_domains"}
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
+    callbacks = parse_callbacks(config.get("callbacks"))
     storage = config.get("storage", {})
     if not isinstance(storage, dict):
         fail("storage must be a table")
@@ -336,6 +373,7 @@ def parse_config(project: Path) -> dict[str, Any]:
     return {
         "version": 1,
         "network": network,
+        "callbacks": callbacks,
         "storage": {"nix_store": nix_store},
         "mounts": mounts,
         "profile": profile,
@@ -425,6 +463,7 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "config_path": str(config["config_path"]) if config["config_path"] else None,
         "config_root": str(config["config_root"]),
         "mounts": config["mounts"],
+        "callbacks": config["callbacks"],
         "storage": config["storage"],
         "profile": config["profile"],
         "startup": config["startup"],

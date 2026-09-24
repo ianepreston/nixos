@@ -251,6 +251,8 @@ Coding sandbox plan
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
 
+  show_callbacks
+
   case "$nix_store_mode" in
     instance)
       printf '%s\n' '  Nix store:    instance-local (warm across stop/start; deleted with the VM)'
@@ -340,6 +342,27 @@ EOF
 No host credentials, SSH agent, or directories outside the declared mounts are
 available in the VM. Git mount worktrees are retained under the temporary
 directory after VM deletion so uncommitted guest work is never discarded.
+EOF
+}
+
+show_callbacks() {
+  if [[ $(jq '.callbacks.port_ranges | length' <<<"$policy_json") -eq 0 ]]; then
+    printf '%s\n' '  Browser callbacks: none (all guest ports remain denied on the host)'
+    return
+  fi
+
+  cat <<'EOF'
+  Browser callbacks: dynamic TCP forwarding on host loopback only
+EOF
+  jq -r '.callbacks.port_ranges[] | "    127.0.0.1:[\(.[0]), \(.[1])] -> guest localhost:[\(.[0]), \(.[1])]"' \
+    <<<"$policy_json"
+  cat <<'EOF'
+    Lima creates a host listener only while the guest listens on a declared
+    port. Declarations do not reserve host ports when this VM starts. If a
+    host port is already in use when a guest listener appears, Lima cannot
+    forward that listener; stop the conflicting process or choose another
+    declared OAuth callback port. No fallback port is selected here.
+
 EOF
 }
 
@@ -446,10 +469,17 @@ user:
   home: /home/lima
   shell: /bin/bash
 
+# Lima evaluates port-forwarding rules in order. Explicit callback rules are
+# deliberately dynamic: Lima creates their host listener only after the guest
+# opens the matching port, and removes it again when that listener closes.
+portForwards:
+YAML
+    jq -r '.callbacks.port_ranges[] | "- guestPortRange: [\(.[0]), \(.[1])]\n  hostIP: \"127.0.0.1\"\n  hostPortRange: [\(.[0]), \(.[1])]\n  proto: tcp"' \
+      <<<"$policy_json"
+    cat <<'YAML'
 # Lima appends an all-ports loopback forwarding rule unless a preceding rule
 # matches. This deny rule covers every guest listener, including one bound to
 # 127.0.0.1, so the VM never publishes a service on the host by default.
-portForwards:
 - guestIP: "0.0.0.0"
   guestIPMustBeZero: false
   guestPortRange: [1, 65535]
@@ -525,6 +555,20 @@ append_profile_provision() {
     marker="$agent_home/.local/state/coding-sandbox/profile-ready"
     if test -e "$marker"; then
       exit 0
+    fi
+    # These are guest-only developer tools. Install them through their
+    # upstream bootstrap scripts rather than putting a host package closure in
+    # the VM boundary. Restricted mode intentionally does not fetch arbitrary
+    # installer domains after its exact-domain egress policy becomes active.
+    if [[ ! -r /etc/coding-sandbox/policy.json || $(jq -r .mode /etc/coding-sandbox/policy.json) != restricted ]]; then
+      if ! command -v databricks >/dev/null; then
+        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      fi
+      if ! command -v uv >/dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh
+      fi
+      databricks -v
+      uv --version
     fi
     state_dir="$agent_home/.local/state/coding-sandbox"
     install -d -m 0700 -o agent -g agent \
@@ -615,7 +659,7 @@ append_protected_provision() {
   granted_v6=$(policy_nft_set grants_v6)
   strict_v4=$(policy_nft_set strict_v4)
   strict_v6=$(policy_nft_set strict_v6)
-  packages='ca-certificates curl git jq nftables'
+  packages='ca-certificates curl git jq nftables unzip'
   if [[ "$mode" == restricted ]]; then
     packages+=' squid'
     strict_domains=$(jq -r '.strict_domains | map(.name) | join(" ")' <<<"$policy_json")
@@ -811,7 +855,7 @@ provision:
     set -euxo pipefail
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y ca-certificates curl git jq
+    apt-get install -y ca-certificates curl git jq unzip
     if ! id -u agent >/dev/null 2>&1; then
       useradd --create-home --user-group --shell /bin/bash agent
     fi
@@ -849,6 +893,7 @@ validate_template() {
   make_template
   trap 'rm -f "$template"' EXIT
   limactl validate "$template"
+  show_callbacks
   note 'template is valid. Next gate: inspect with sandbox plan, then sandbox start.'
 }
 
