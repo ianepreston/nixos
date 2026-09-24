@@ -1380,30 +1380,47 @@ _: {
               #     series, against 232 on a switch walk), so every
               #     octet counter is 32-bit and wraps at 4.295e9.
               #     rate() reads a wrap as a reset-to-zero, so it does
-              #     not spike — it silently undercounts. Treat AP octet
-              #     rates as a floor, not a measurement, and lean on
-              #     packets, errors, discards and ifOperStatus for
-              #     anything load-bearing.
+              #     not spike — it silently undercounts. Treat every AP
+              #     octet rate as a floor, not a measurement, and lean
+              #     on packets, errors, discards and ifOperStatus for
+              #     anything load-bearing. This applies to what is kept
+              #     below as much as to what is dropped: wifi2 was at
+              #     2.5e9 of 4.295e9 when this was written.
               #   - `ifName` and `ifAlias` are empty on every AP
-              #     interface; only `ifDescr` is populated. The
-              #     switches populate all three (ifAlias="AP1"), so a
-              #     panel or rule spanning both has to key on ifDescr.
+              #     interface; only `ifDescr` is populated, so ifDescr
+              #     is the only label to name an AP interface by. It
+              #     does not join the two jobs, though: on the switches
+              #     ifDescr is the port name ("two-gigabitEthernet
+              #     1/0/23") and the AP identity lives in ifAlias
+              #     ("AP1"), so the two sides share no value.
+              #     Correlating an AP's radios with its switch port
+              #     means `instance` here and `ifAlias` there.
               #
-              # The deny-list below trims 21 interfaces to 9. Eleven
-              # are permanently zero: the GRE/ERSPAN stubs, the SoC
-              # pseudo-devices, an unused bond, a tunnelled-vap stub,
-              # and mld-wifi0 — plausibly a Wi-Fi 7 multi-link
-              # pseudo-device these EAP77x would populate if MLO were
-              # enabled, so re-check it after the next firmware bump,
-              # the same trigger that produced #693. eth0 goes for a
-              # different reason: it is the AP uplink, already measured
-              # from the switch side where ports AP1/AP2 expose 64-bit
-              # counters, and at 3.6e9 it is the interface closest to a
-              # 32-bit wrap — ~14s at its 2.5Gbps line rate, well
-              # inside the 30s scrape interval. What is kept is what
-              # the switch cannot see: the per-radio aggregates
-              # (wifi0/1/2 = 2.4/5/6GHz), the per-BSSID vaps (ath*),
-              # and br0 for a single bridged-client-traffic total.
+              # The deny-list below trims 21 interfaces to 8, keeping
+              # only what the switch cannot see: the per-radio
+              # aggregates (wifi0/1/2 = 2.4/5/6GHz) and the per-BSSID
+              # vaps (ath*). What goes, and why:
+              #
+              #   - Ten permanently-zero interfaces — the GRE/ERSPAN
+              #     stubs, the SoC pseudo-devices, an unused bond, a
+              #     tunnelled-vap stub, and mld-wifi0, plausibly a
+              #     Wi-Fi 7 multi-link pseudo-device these EAP77x
+              #     would populate if MLO were enabled. Re-check that
+              #     one after the next firmware bump, the same trigger
+              #     that produced #693.
+              #   - `lo`, which is not zero but is loopback: 5.7 kB
+              #     over the life of the AP.
+              #   - `eth0`, the uplink, already measured from the
+              #     switch side where ports AP1/AP2 expose 64-bit
+              #     counters — strictly better for the same bytes.
+              #   - `br0`, which looks like the bridged-client-traffic
+              #     total and is not. Client traffic is bridged in
+              #     hardware and never reaches it: measured on both
+              #     APs it sits at a flat ~443 B/s and ~94 MB
+              #     lifetime, against 2.5-3.1 GB on the radios over
+              #     the same uptime. It counts the AP's own management
+              #     plane, so keeping it would mostly serve to invite
+              #     a "total AP traffic" panel reading ~27x low.
               #
               # Deny-list with `drop`, not allow-list with `keep`:
               # ifNumber and the exporter's own snmp_scrape_* series
@@ -1450,7 +1467,7 @@ _: {
                 metric_relabel_configs = [
                   {
                     source_labels = [ "ifDescr" ];
-                    regex = "lo|eth0|bond0|br_gre|erspan0|gre0|gretap0|miireg|mld-wifi0|soc[0-9]+|txvap[0-9]+";
+                    regex = "lo|eth0|br0|bond0|br_gre|erspan0|gre0|gretap0|miireg|mld-wifi0|soc[0-9]+|txvap[0-9]+";
                     action = "drop";
                   }
                 ];
