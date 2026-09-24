@@ -245,7 +245,7 @@ _: {
 
       virtualisation.oci-containers.containers.omada = {
         # renovate: datasource=docker depName=mbentley/omada-controller
-        image = "mbentley/omada-controller:6.3.0.44-openj9";
+        image = "mbentley/omada-controller:6.3.0.45-openj9";
         volumes = [
           "/var/lib/containers/omada/data:/opt/tplink/EAPController/data"
           "/var/lib/containers/omada/logs:/opt/tplink/EAPController/logs"
