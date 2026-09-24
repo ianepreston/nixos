@@ -36,6 +36,15 @@ jobs:
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, nixos]
+    # Bounds a wedged job on the single self-hosted runner. This does
+    # NOT cover the #736 stall shape -- jobs that never get picked up
+    # sit `queued`, and GitHub's separate 24h queue limit governs those
+    # (SystemdUnitFailed / GithubRunnerStuckActivating are what catch
+    # that now). What it does replace is the 360m default, which is
+    # long enough for a hung build to hold the one ephemeral runner for
+    # most of a working day and stall every job behind it.
+    # Observed 4-9m; 45 is ample headroom for a cold input fetch.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -103,6 +112,16 @@ jobs:
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, nixos]
+    # Bounds a wedged job on the single self-hosted runner. This does
+    # NOT cover the #736 stall shape -- jobs that never get picked up
+    # sit `queued`, and GitHub's separate 24h queue limit governs those
+    # (SystemdUnitFailed / GithubRunnerStuckActivating are what catch
+    # that now). What it does replace is the 360m default, which is
+    # long enough for a hung build to hold the one ephemeral runner for
+    # most of a working day and stall every job behind it.
+    # Observed up to 20m on a nixpkgs bump that rebuilds broadly; 90
+    # leaves room for a worse one without ever bounding a real build.
+    timeout-minutes: 90
     strategy:
       # Surface every failing host on a single PR rather than bailing
       # on the first red.
@@ -151,6 +170,15 @@ jobs:
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, nixos]
+    # Bounds a wedged job on the single self-hosted runner. This does
+    # NOT cover the #736 stall shape -- jobs that never get picked up
+    # sit `queued`, and GitHub's separate 24h queue limit governs those
+    # (SystemdUnitFailed / GithubRunnerStuckActivating are what catch
+    # that now). What it does replace is the 360m default, which is
+    # long enough for a hung build to hold the one ephemeral runner for
+    # most of a working day and stall every job behind it.
+    # VM tests boot real guests; 90 matches the build matrix above.
+    timeout-minutes: 90
     needs: flake-check
     steps:
       - name: Checkout

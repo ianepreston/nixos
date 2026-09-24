@@ -44,6 +44,13 @@ jobs:
     # for vendored-dependency hashes, so skip it by subject line.
     if: ${{ !contains(github.event.head_commit.message, 'regenerate fetch hashes') }}
     runs-on: [self-hosted, nixos]
+    # Bounds a wedged job on the single self-hosted runner -- see the
+    # matching note in check.yml. This job is unattended, so a hang here
+    # holds the one ephemeral runner (and every PR check behind it) for
+    # the full 360m default with nobody watching.
+    # Vendored-dependency hashes need a real build (caddy.withPlugins),
+    # so this needs more room than a pure-fetch job.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:

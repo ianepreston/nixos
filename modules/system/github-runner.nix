@@ -46,6 +46,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
@@ -95,8 +96,9 @@ _: {
         # (e.g. after `replace`-style PAT rotation or a state wipe).
         replace = true;
         # One job per runner registration: the agent de-registers and exits
-        # after each job, systemd restarts it (Restart=on-success), and it
-        # comes back as a fresh registration with a wiped state directory.
+        # after each job, systemd restarts it (see the `serviceOverrides`
+        # note below), and it comes back as a fresh registration with a
+        # wiped state directory.
         #
         # This is what stops a compromised workflow from leaving anything
         # behind. Previously the state dir persisted between jobs *and*
@@ -131,6 +133,116 @@ _: {
           pkgs.openssh
           pkgs.jq
         ];
+        # Upstream ties the restart policy to `ephemeral`:
+        #
+        #   Restart = if cfg.ephemeral then "on-success" else "no";
+        #
+        # which is correct for the success path above and leaves the
+        # failure path with no recovery at all. On 2026-09-24 the
+        # registration call to api.github.com hung (660B out, nothing
+        # back), systemd killed ExecStartPre at the 90s
+        # DefaultTimeoutStartSec, the unit latched `failed`, and CI was
+        # dead for 56 minutes until someone started it by hand — with
+        # two PRs queued behind it the whole time (#736).
+        #
+        # `Restart` is a plain assignment inside upstream's `mkMerge`
+        # list and `serviceOverrides` merges last but at the same
+        # priority, so a plain value here is an eval conflict rather
+        # than an override. mkForce is required.
+        #
+        # RestartSec and the start limit stay at their defaults
+        # (RestartUSec=100ms, StartLimitBurst=5 per
+        # StartLimitIntervalUSec=10s). The consequence, measured on
+        # hpp-1 by blocking the runner's egress to api.github.com:
+        #
+        # - Slow hang (the 09-24 shape, egress DROPped): each attempt
+        #   burns the full 90s start timeout, so attempts are 90s apart
+        #   and the 10s window never accumulates. Observed 8 restarts
+        #   over 12m, `activating` throughout, never `failed`; the unit
+        #   registered and went `active` 8s after egress was restored,
+        #   with no human action.
+        # - Fast fail (egress REJECTed, i.e. a revoked PAT or a 4xx):
+        #   `config.sh` still takes ~4s per attempt even on an instant
+        #   connection-refused, so the loop peaks at 3 starts in a
+        #   rolling 10s window against a burst of 5. The start limit is
+        #   therefore NOT reachable: observed 62 restarts over 7m, never
+        #   `failed`. The unit retries indefinitely here too.
+        #
+        # So this unit never latches `failed` under either shape, and
+        # SystemdUnitFailed will essentially never fire for it — the
+        # liveness rule below is the real detector. That is the accepted
+        # trade: an unbounded retry against GitHub (~13 attempts/minute,
+        # with a human paged at 15m) in exchange for a runner that
+        # recovers by itself the instant the fault clears.
+        #
+        # Do NOT widen StartLimitIntervalSec to make either path reach
+        # `failed`. systemd's rate limiting counts *every* start,
+        # including the ~96/day successful ephemeral re-registrations,
+        # and widening it reintroduces exactly #736's defect — a
+        # transient fault latching the unit off until someone starts it
+        # by hand. Measured 7d on hpp-1 (694 normal starts): minimum gap
+        # 20s, p05 23s, median 62s, and max starts per rolling window of
+        # 1 (10s) / 2 (30s) / 3 (60s) / 5 (120s). A 60s window with
+        # burst 6 would separate normal (3) from fast-fail (11) cleanly
+        # if that trade is ever wanted; it is deliberately not taken.
+        #
+        # Upstream's `RestartForceExitStatus = [ 2 ]` becomes a no-op
+        # under `always` — every exit status restarts already. Left in
+        # place rather than cleared, since it costs nothing and reverts
+        # cleanly if this override is ever dropped.
+        serviceOverrides.Restart = lib.mkForce "always";
       };
+
+      # Nothing watched this unit until #736 — a failed start was both
+      # terminal *and* invisible, and the outage was found only by a
+      # human noticing a stalled Actions queue. Keyed off `runnerName`
+      # rather than hardcoded, so it follows the module to another host
+      # exactly like the unit name does. Entries omit the `.service`
+      # suffix (modules/system/observability-options.nix).
+      myObservability.monitoredSystemdUnits = [ "github-runner-${runnerName}" ];
+
+      myObservability.metricRuleGroups.github-runner.groups = [
+        {
+          name = "github-runner";
+          rules = [
+            {
+              # The one rule that has to work, because under
+              # `Restart=always` this unit never reaches `failed` (see
+              # the serviceOverrides note above) and so
+              # SystemdUnitFailed never fires for it.
+              #
+              # Phrased as absence of `active` rather than presence of
+              # `activating`, for two reasons:
+              #
+              # 1. It is immune to sampling gaps. A retry loop is not
+              #    `activating` for ~0.23s per cycle while systemd
+              #    schedules the restart — 3.45% duty in the fast-fail
+              #    shape, which gives a ~50% chance that one 30s scrape
+              #    inside any 10m window lands in a gap and resets a
+              #    `for:` timer on an instantaneous `activating == 1`.
+              #    `max_over_time` over the window cannot be reset that
+              #    way.
+              # 2. It covers every failure shape with one expression —
+              #    slow hang, fast-fail loop, latched `failed`,
+              #    `inactive`, or stopped — rather than one rule per
+              #    shape.
+              #
+              # No false positives: a healthy runner is `active` the
+              # whole time it sits in "Listening for Jobs" and while it
+              # runs a job, and is non-`active` only for the ~20-25s of
+              # each registration. 15m of no `active` sample at all does
+              # not occur in normal operation at any CI volume.
+              alert = "GithubRunnerDown";
+              expr = ''max_over_time(node_systemd_unit_state{name="github-runner-${runnerName}.service",state="active"}[15m]) == 0'';
+              for = "0m";
+              labels.severity = "warning";
+              annotations = {
+                summary = "GitHub Actions runner down on {{ $labels.instance }}";
+                description = "github-runner-${runnerName}.service has not been active at any point in 15m — it is stuck retrying registration against api.github.com, or stopped. Self-hosted CI jobs will sit queued; GitHub holds them 24h before dropping them.";
+              };
+            }
+          ];
+        }
+      ];
     };
 }
