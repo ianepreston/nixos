@@ -857,6 +857,13 @@ _: {
                 # signal and no coordinated shutdown on any host. It
                 # also means the 5-minute pfSense cron watchdog has
                 # already failed twice over.
+                #
+                # Since #728, `snmp_pfsense` is scraped by amos1
+                # only, so this split exists on prod alone. On hpp-1
+                # the `up{job="snmp_pfsense"}` series is absent, the rule
+                # can never fire, and the router case falls into
+                # UpsNoCommunication's `unless on()` branch below —
+                # which is exactly the fail-safe that branch is for.
                 alert = "UpsMasterNutBroken";
                 expr = ''up{job="nut",ups_source="router"} == 0 and on() up{job="snmp_pfsense"} == 1'';
                 for = "10m";
@@ -1202,19 +1209,37 @@ _: {
                 job_name = "vector";
                 static_configs = [ { targets = [ "127.0.0.1:${toString vectorMetricsPort}" ]; } ];
               }
-              # ========== External device SNMP ==========
-              # Multi-target scrape: one snmp_exporter, many devices.
-              # Targets list device IPs/hostnames in `static_configs`,
-              # then relabel_configs rewrite __address__ to the local
-              # exporter and stash the original into __param_target.
-              # The `modules` query string (repeatable) selects which
-              # generator profiles to walk; `auth` picks the auth name
-              # from snmp.yml (we kept the shipped `public_v2` slot
-              # with its community sed-substituted at build time).
-              #
-              # pfSense bsnmpd only exposes standard mibII (no UCD-SNMP),
-              # so we limit it to if_mib + system. Synology gets the
-              # dedicated synology module plus if_mib + system.
+            ]
+            # ========== External device SNMP ==========
+            # Multi-target scrape: one snmp_exporter, many devices.
+            # Targets list device IPs/hostnames in `static_configs`,
+            # then relabel_configs rewrite __address__ to the local
+            # exporter and stash the original into __param_target.
+            # The `modules` query string (repeatable) selects which
+            # generator profiles to walk; `auth` picks the auth name
+            # from snmp.yml (we kept the shipped `public_v2` slot
+            # with its community sed-substituted at build time).
+            #
+            # pfSense bsnmpd only exposes standard mibII (no UCD-SNMP),
+            # so we limit it to if_mib + system. Synology gets the
+            # dedicated synology module plus if_mib + system.
+            #
+            # Prod-only (#728). Every job below walks a device outside
+            # this fleet, so running them on both servers polls the
+            # same agent twice for no redundancy — the dev host's
+            # alerts are not the notification path. On the Omada
+            # switches that is not merely wasteful: their SNMP agent
+            # serializes concurrent walks, so two pollers doubled every
+            # walk (192.168.15.3 measured 17.6s against a ~8.8s solo
+            # walk) and left less headroom under the 25s
+            # `scrape_timeout` than one more walker costs. A single
+            # extra SNMP client anywhere on the network then pushed it
+            # over, `up` went to 0 and `InstanceDown` paged — observed
+            # 2026-09-22/23 and reproduced on demand. Gating here keeps
+            # `services.prometheus.exporters.snmp` enabled on both
+            # hosts, so hpp-1 stays the ad-hoc diagnosis path (#629,
+            # #686, #693) while walking nothing on a schedule.
+            ++ lib.optionals (hostSpec.serverEnvironment == "prod") [
               {
                 job_name = "snmp_pfsense";
                 metrics_path = "/snmp";
@@ -1283,10 +1308,20 @@ _: {
               # TP-Link private MIB that upstream's generated snmp.yml
               # does not carry, so it is not available here.
               #
-              # The if_mib walk takes ~11s per switch (~1,200 PDUs over
-              # v3 AuthPriv), past the 10s default scrape_timeout, so
-              # every scrape was cancelled and the target read up=0
-              # (#629). 25s leaves headroom inside the 30s interval.
+              # The if_mib walk is ~1,200 PDUs over v3 AuthPriv and
+              # runs past the 10s default scrape_timeout, so every
+              # scrape was cancelled and the target read up=0 (#629).
+              # 25s leaves headroom inside the 30s interval.
+              #
+              # #638 sized that 25s against "~11s per switch (14.1s on
+              # the SG3428X)", but those were two-poller numbers — both
+              # servers walking the same serializing agent at once —
+              # and nothing recorded that they were, so they read as a
+              # property of the switch. Under the prod-only gating
+              # above the same walks measure 6.6s on 192.168.15.2 and
+              # 9.0s on 192.168.15.3. Size any future timeout change
+              # against a walk you measured, not against a recorded
+              # scrape_duration_seconds.
               {
                 job_name = "snmp_omada_switches";
                 metrics_path = "/snmp";
@@ -1335,7 +1370,9 @@ _: {
               # Taking it is #693's call — it carries a cardinality
               # question (5 radio BSSID interfaces per AP × counters)
               # and would likely want the #629 scrape_timeout bump
-              # along with it.
+              # along with it. #693's sizing predates #728 and was
+              # measured with both servers walking, so re-measure solo
+              # before assuming a bump is needed at all.
               {
                 job_name = "snmp_omada_aps";
                 metrics_path = "/snmp";

@@ -7,9 +7,14 @@
 # hand-editing /usr/local/etc/snmpd.conf over SSH, which doesn't
 # survive a config restore cleanly. Synology would do v3 trivially
 # but mixing v3 here / v2c there isn't worth it when pfSense is the
-# weak link. Defense in depth: each device's SNMP listener is
-# restricted (on the device) to hpp-1's IP only, and the community
-# string lives in encrypted sops, not plaintext in this repo.
+# weak link. Defense in depth is the community string and the v3
+# credentials living in encrypted sops rather than plaintext in this
+# repo. There is no device-side source-IP restriction: this comment
+# claimed until #728 that each listener was restricted to hpp-1's IP,
+# and it never was — amos1 scraped every one of these devices for the
+# whole of VictoriaMetrics' retained history. Only amos1 scrapes them
+# now, but that is scrape-job gating in
+# modules/system/victoriametrics.nix, not an ACL on the device.
 #
 # Shipped snmp.yml: prometheus-snmp-exporter ships a `snmp.yml` with
 # generated modules for synology, if_mib, system, ip_mib, ucd_*, and
@@ -78,8 +83,11 @@ _: {
           upstreamSnmpYml;
     in
     {
-      # All three secrets come from the shared file: both servers run
-      # the observability stack and both poll the same devices.
+      # All three secrets come from the shared file: the exporter runs
+      # on both servers even though only amos1 carries the scrape jobs
+      # (#728). Keeping it enabled on hpp-1 costs nothing while idle
+      # and keeps the dev host usable for ad-hoc walks — it is the
+      # diagnosis path #629, #686 and #693 were worked from.
       sops = {
         secrets = {
           "snmp/community".sopsFile = "${sopsFolder}/server-shared.yaml";
