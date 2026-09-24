@@ -30,9 +30,13 @@
 # log (which survives ~7 months locally).
 #
 # Both servers are registered as remote targets on pfSense, so each
-# keeps its own independent copy — same duplication as the
-# `snmp_pfsense` scrape job in victoriametrics.nix, and deliberate for
-# the same reason: neither host depends on the other being up.
+# keeps its own independent copy — deliberate: neither host depends on
+# the other being up. This is *not* the same call as the SNMP scrape
+# jobs, which #728 narrowed to prod only, and the difference is who
+# pays. Syslog is pfSense pushing the same datagrams at two listeners,
+# which costs the router nothing per extra listener; an SNMP walk is
+# two pollers queueing on one agent that serializes them, which
+# doubled every walk.
 #
 # Firewall events arrive as pfSense's positional filterlog CSV, which is
 # split into `fw_*` fields at ingest so alerts and dashboards can filter
