@@ -147,23 +147,20 @@ jobs:
             --print-build-logs \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
   checks:
-    name: build NixOS VM checks
-    # Builds the flake's NixOS VM integration checks. Building a
-    # `runNixOSTest` derivation *runs* the test in a QEMU VM and fails
-    # on any assertion failure — so `nix build` of the derivation is
-    # the test run. Today that's checks.x86_64-linux.rollback-root-resilience
-    # (modules/flake/checks-rollback-root.nix), guarding the
-    # btrfs-rollback-with-nested-subvolumes regression (#310). Neither
-    # flake-check (evals each config's drvPath) nor build (builds each
-    # host's toplevel) touches checks.*, so without this job the VM
-    # test is never built and never runs.
+    name: build Linux flake checks
+    # Builds every x86_64-linux flake check except pre-commit, which the lint
+    # job owns. Building a `runNixOSTest` derivation *runs* the test in a QEMU
+    # VM and fails on any assertion failure. Neither flake-check (evals each
+    # config's drvPath) nor build (builds each host's toplevel) touches
+    # checks.*, so without this job those checks are never built or run. Other
+    # systems expose checks too, but there are no runners for them.
     #
     # We build the check derivation directly rather than via
     # `nix flake check` on purpose: `nix flake check --all-systems`
     # races on concurrent addToStore for filtered sub-paths of
     # transitive flake inputs on this runner (see the long comment on
     # flake-check above). A targeted `nix build` sidesteps that race
-    # while still exercising the VM test.
+    # while still exercising every x86_64-linux check.
     #
     # Same fork-PR guard as build: the workflow YAML can be edited by
     # fork PRs, which would otherwise run arbitrary code on our host.
@@ -187,11 +184,18 @@ jobs:
         uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
-      - name: Build rollback-root-resilience VM test
+      - name: Build flake checks
         run: |
-          nix build \
-            --print-build-logs \
-            ".#checks.x86_64-linux.rollback-root-resilience"
+          set -euo pipefail
+          for attr in $(nix eval --json '.#checks.x86_64-linux' \
+            --apply 'builtins.attrNames' | jq -r '.[]'); do
+            if [ "$attr" = pre-commit ]; then
+              continue
+            fi
+            echo "::group::checks.x86_64-linux.$attr"
+            nix build --print-build-logs ".#checks.x86_64-linux.$attr"
+            echo "::endgroup::"
+          done
   lint:
     name: pre-commit hooks
     # Builds checks.x86_64-linux.pre-commit — the check the

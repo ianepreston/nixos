@@ -167,8 +167,8 @@ load_policy() {
   if [[ -n "$network_mode_override" ]]; then
     args+=(--network "$network_mode_override")
   fi
-  policy_json=$("$SANDBOX_POLICY_HELPER" "${args[@]}") \
-    || die 'invalid .sandbox.toml network policy; run sandbox plan after fixing it'
+  policy_json=$(python3 "$SANDBOX_POLICY_HELPER" "${args[@]}") \
+    || die 'sandbox policy helper failed; see the error above'
   network_mode=$(jq -r '.mode' <<<"$policy_json")
 }
 
