@@ -1130,6 +1130,8 @@ instance_action() {
         # /etc/profile.d.  Inject only the guest-local proxy endpoints, never
         # a host proxy or credential, so `sandbox exec -- curl …` has the
         # documented allowlisted path while direct connections stay default-drop.
+        # The command below is evaluated by the guest shell, not this launcher.
+        # shellcheck disable=SC2016
         limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- env \
           HTTP_PROXY=http://127.0.0.1:3128 \
           HTTPS_PROXY=http://127.0.0.1:3128 \
@@ -1139,6 +1141,8 @@ instance_action() {
           https_proxy=http://127.0.0.1:3128 \
           bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
       else
+        # The command below is evaluated by the guest shell, not this launcher.
+        # shellcheck disable=SC2016
         limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
           bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
       fi
