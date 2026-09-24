@@ -890,7 +890,7 @@ _: {
                 labels.severity = "warning";
                 annotations = {
                   summary = "Lost communication with {{ $labels.ups_source }}-side UPS master";
-                  description = "nut_exporter for the {{ $labels.ups_source }}-side UPS has failed to reach its master for 10m, and the master host is not answering on any other channel either — so treat this as a host or network problem, not a NUT one. Loss of comms with both masters at once probably means LAN-down, not power.";
+                  description = "nut_exporter for the {{ $labels.ups_source }}-side UPS has failed to reach its master for 10m, and no independent channel contradicted that — so treat this as a host or network problem before a NUT one. Confirm with `upsc UPSA` on behemoth: if it answers at all, this is the NUT-only failure UpsMasterNutBroken describes and `ssh behemoth /usr/local/etc/rc.d/nut.sh restart` is the fix. Note the independent channel is the snmp_pfsense scrape, which since #728 runs on amos1 only — on hpp-1 there is nothing to contradict it, so the router-side NUT failure lands here rather than in UpsMasterNutBroken. Loss of comms with both masters at once probably means LAN-down, not power.";
                 };
               }
               {

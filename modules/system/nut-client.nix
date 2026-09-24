@@ -62,7 +62,9 @@
 # *not* try to tell them apart in alerting — see the rules in
 # ./victoriametrics.nix, which discriminate on the axis that actually
 # changes the response (is behemoth itself reachable?) using the
-# `snmp_pfsense` scrape we already run.
+# `snmp_pfsense` scrape. Since #728 that scrape runs on amos1 only, so
+# the discrimination is prod-side: on hpp-1 there is no SNMP series to
+# split on and every shape lands in UpsNoCommunication instead.
 #
 # Manual repair — escalate, don't lead with the hammer. Probe with
 # `upsc UPSA` (exits 1 on every shape above) between steps:
