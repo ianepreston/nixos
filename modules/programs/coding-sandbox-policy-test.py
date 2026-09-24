@@ -36,6 +36,7 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(policy["mode"], "public")
         self.assertEqual(policy["grants_v4"], [])
         self.assertEqual(policy["grants_v6"], [])
+        self.assertEqual(policy["callbacks"]["port_ranges"], [])
         self.assertEqual(policy["storage"]["nix_store"], "instance")
         self.assertIn("100.64.0.0/10", policy["protected_v4"])
         self.assertIn("fe80::/10", policy["protected_v6"])
@@ -82,6 +83,30 @@ class PolicyTest(unittest.TestCase):
             '[storage]\nnix_store = "shared"\n',
             '[storage]\nunknown = true\n',
             'storage = "persistent"\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(self.config(text), None)
+
+    def test_callback_ranges_are_strict_and_normalized(self) -> None:
+        root = self.config(
+            '[callbacks]\n'
+            'port_ranges = [[8080, 8080], [8020, 8040]]\n'
+        )
+        self.assertEqual(
+            POLICY.render_policy(root, None)["callbacks"]["port_ranges"],
+            [[8020, 8040], [8080, 8080]],
+        )
+
+        for text in (
+            '[callbacks]\nport_ranges = true\n',
+            '[callbacks]\nport_ranges = [[8020]]\n',
+            '[callbacks]\nport_ranges = [[true, 8040]]\n',
+            '[callbacks]\nport_ranges = [["8020", 8040]]\n',
+            '[callbacks]\nport_ranges = [[1023, 8040]]\n',
+            '[callbacks]\nport_ranges = [[8040, 8020]]\n',
+            '[callbacks]\nport_ranges = [[8020, 8040], [8040, 8050]]\n',
+            '[callbacks]\nport_ranges = [[8020, 8040], [8020, 8040]]\n',
+            '[callbacks]\nunknown = []\n',
         ):
             with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
                 POLICY.render_policy(self.config(text), None)
@@ -242,6 +267,58 @@ class PolicyTest(unittest.TestCase):
         self.assertIn("Selected profile: sha256:", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
         self.assertIn("Nix store:    persistent Lima disk", plan)
+
+    def test_template_allows_only_declared_loopback_callback_ranges(self) -> None:
+        root = self.config("")
+        environment = {
+            **os.environ,
+            "HOME": str(root),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+        }
+
+        template_without_callbacks = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "template", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        self.assertIn('guestPortRange: [1, 65535]', template_without_callbacks)
+        self.assertIn('proto: any\n  ignore: true', template_without_callbacks)
+        self.assertNotIn('hostIP: "127.0.0.1"', template_without_callbacks)
+
+        (root / ".sandbox.toml").write_text(
+            '[callbacks]\n'
+            'port_ranges = [[8080, 8080], [8020, 8040]]\n'
+        )
+        template_with_callbacks = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "template", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        deny_index = template_with_callbacks.index('guestPortRange: [1, 65535]')
+        first_callback_index = template_with_callbacks.index('guestPortRange: [8020, 8040]')
+        second_callback_index = template_with_callbacks.index('guestPortRange: [8080, 8080]')
+        self.assertLess(first_callback_index, second_callback_index)
+        self.assertLess(second_callback_index, deny_index)
+        self.assertEqual(template_with_callbacks.count('hostIP: "127.0.0.1"'), 2)
+        self.assertIn(
+            'guestPortRange: [8020, 8040]\n'
+            '  hostIP: "127.0.0.1"\n'
+            '  hostPortRange: [8020, 8040]\n'
+            '  proto: tcp',
+            template_with_callbacks,
+        )
+        self.assertIn('Browser callbacks: dynamic TCP forwarding on host loopback only', subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout)
 
 
 if __name__ == "__main__":
