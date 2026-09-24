@@ -31,6 +31,12 @@ jobs:
   update-flake-lock:
     name: update flake.lock
     runs-on: [self-hosted, nixos]
+    # Bounds a wedged job on the single self-hosted runner -- see the
+    # matching note in check.yml. This job is unattended, so a hang here
+    # holds the one ephemeral runner (and every PR check behind it) for
+    # the full 360m default with nobody watching.
+    # `nix flake update` is almost entirely network fetches.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

@@ -464,8 +464,24 @@ _: {
                 # it is what actually decides a restart happened, it comes
                 # pre-scoped by the unit-include regex above, and it covers
                 # native services too, hence the rename off "Container".
+                #
+                # The github-runner unit is excluded because restarting
+                # is its design, not its failure mode: the ephemeral
+                # runner de-registers and exits after every job and
+                # systemd brings it straight back (see
+                # modules/system/github-runner.nix). Measured over 7d on
+                # hpp-1 that is 670 restarts, and of the 122 fifteen-
+                # minute buckets containing any restart, 95 (78%) are at
+                # or over this threshold, peaking at 12 — so tracking the
+                # unit (#736) without this exclusion would leave the
+                # alert near-permanently firing and train the Discord
+                # channel to ignore it. The runner's own failure shapes
+                # are covered by SystemdUnitFailed and by
+                # GithubRunnerStuckActivating instead. The selector is
+                # the `github-runner-.*` prefix rather than one host's
+                # unit name so it keeps working if the runner moves.
                 alert = "ServiceRestartLoop";
-                expr = "increase(node_systemd_service_restart_total[15m]) >= 3";
+                expr = ''increase(node_systemd_service_restart_total{name!~"github-runner-.*"}[15m]) >= 3'';
                 for = "0m";
                 labels.severity = "warning";
                 annotations = {
