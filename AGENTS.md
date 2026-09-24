@@ -509,7 +509,11 @@ not the template — fixed to template-only per #336.)
   with no `sed` pass — that pass mangled unrelated YAML values that happened to
   contain the literal string (closes #154). If you add a new way of contributing
   blueprints, do substitution at the contribution site if those files use the
-  placeholder.
+  placeholder. `renderedBlueprintDir`'s own substitution is whole-file, comments
+  included, so don't spell the placeholder in blueprint prose — a comment saying
+  a URI "carries no `@serverDomain@`" renders as "carries no dnix.ipreston.net"
+  (bookorbit's native redirect URI, #743). Say "per-host domain placeholder"
+  instead.
 - Blueprint secrets (`password`, `client_secret`, token `key`) go through
   `!Env VAR_NAME`. The var must be present in the `EnvironmentFile` consumed by
   the _worker_ (the worker is what applies blueprints, not just the server). The

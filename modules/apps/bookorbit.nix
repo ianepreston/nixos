@@ -26,8 +26,11 @@
 #   Issuer:        https://authentik.<serverDomain>/application/o/bookorbit/
 #   Client ID:     bookorbit/oidc_client_id     (in sops)
 #   Client secret: bookorbit/oidc_client_secret (in sops)
-# The redirect URI bookorbit uses is https://bookorbit.<serverDomain>/oauth2-callback
-# (matched strictly by the blueprint provider).
+# The blueprint provider strictly matches two redirect URIs: the web one,
+# https://bookorbit.<serverDomain>/oauth2-callback, and bookorbit://oauth2-callback
+# for the official iOS/watchOS app. The latter is compiled into the App Store
+# binary, so NATIVE_REDIRECT_URI must stay unset here — overriding it only
+# desynchronizes bookorbit's own allowlist from authentik's.
 #
 # The image runs read-only with a dropped cap set (see the compose
 # upstream ships); we replicate that hardening via extraOptions.
