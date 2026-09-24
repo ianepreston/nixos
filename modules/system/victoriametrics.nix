@@ -1306,7 +1306,10 @@ _: {
               # Switches: if_mib + system gets per-port counters,
               # errors, link state and uptime. PoE draw is behind a
               # TP-Link private MIB that upstream's generated snmp.yml
-              # does not carry, so it is not available here.
+              # does not carry, so it is not available over SNMP — it
+              # reaches us from the controller's Open API instead, as
+              # omada_device_poe_watts / _budget_watts (#586, see
+              # modules/apps/omada-metrics.nix).
               #
               # The if_mib walk is ~1,200 PDUs over v3 AuthPriv and
               # runs past the 10s default scrape_timeout, so every
@@ -1361,18 +1364,56 @@ _: {
               # `clientCount` — per-AP associated clients, which is the
               # number the coverage/band-steering work keeps needing.
               # `system` supplies sysName/sysUpTime so the two APs are
-              # distinguishable in a dashboard. Those two modules walk
-              # in tens of milliseconds, so the 10s default
-              # scrape_timeout is ample here — no #629-style bump
-              # needed. if_mib stays absent, but no longer because the
-              # APs can't serve it: it was to be added only if a walk
-              # showed it returns, and on firmware 1.4.3 it does.
-              # Taking it is #693's call — it carries a cardinality
-              # question (5 radio BSSID interfaces per AP × counters)
-              # and would likely want the #629 scrape_timeout bump
-              # along with it. #693's sizing predates #728 and was
-              # measured with both servers walking, so re-measure solo
-              # before assuming a bump is needed at all.
+              # distinguishable in a dashboard.
+              #
+              # if_mib was held back until a walk showed the EAPs serve
+              # it; firmware 1.4.3 Build 20260818 does, so #693 took it.
+              # Measured solo on hpp-1 after #728: 37ms, 22 packets,
+              # 463 PDUs, 447 series per AP — three orders of magnitude
+              # off the switches above, so no #629-style scrape_timeout
+              # bump; the 10s default is ample.
+              #
+              # Two properties of the EAP if_mib tree to know before
+              # writing a query against it:
+              #
+              #   - No 64-bit counters. `ifHC*` is entirely absent (0
+              #     series, against 232 on a switch walk), so every
+              #     octet counter is 32-bit and wraps at 4.295e9.
+              #     rate() reads a wrap as a reset-to-zero, so it does
+              #     not spike — it silently undercounts. Treat AP octet
+              #     rates as a floor, not a measurement, and lean on
+              #     packets, errors, discards and ifOperStatus for
+              #     anything load-bearing.
+              #   - `ifName` and `ifAlias` are empty on every AP
+              #     interface; only `ifDescr` is populated. The
+              #     switches populate all three (ifAlias="AP1"), so a
+              #     panel or rule spanning both has to key on ifDescr.
+              #
+              # The deny-list below trims 21 interfaces to 9. Eleven
+              # are permanently zero: the GRE/ERSPAN stubs, the SoC
+              # pseudo-devices, an unused bond, a tunnelled-vap stub,
+              # and mld-wifi0 — plausibly a Wi-Fi 7 multi-link
+              # pseudo-device these EAP77x would populate if MLO were
+              # enabled, so re-check it after the next firmware bump,
+              # the same trigger that produced #693. eth0 goes for a
+              # different reason: it is the AP uplink, already measured
+              # from the switch side where ports AP1/AP2 expose 64-bit
+              # counters, and at 3.6e9 it is the interface closest to a
+              # 32-bit wrap — ~14s at its 2.5Gbps line rate, well
+              # inside the 30s scrape interval. What is kept is what
+              # the switch cannot see: the per-radio aggregates
+              # (wifi0/1/2 = 2.4/5/6GHz), the per-BSSID vaps (ath*),
+              # and br0 for a single bridged-client-traffic total.
+              #
+              # Deny-list with `drop`, not allow-list with `keep`:
+              # ifNumber and the exporter's own snmp_scrape_* series
+              # carry no ifDescr label at all, so a `keep` regex on
+              # ifDescr would match them against the empty string and
+              # discard them. A `drop` deny-list leaves label-less
+              # series untouched. (`up` is synthesized by the scraper
+              # and is not subject to metric_relabel_configs either
+              # way, so InstanceDown is unaffected regardless.) This is
+              # the first metric_relabel_configs in this file.
               {
                 job_name = "snmp_omada_aps";
                 metrics_path = "/snmp";
@@ -1380,6 +1421,7 @@ _: {
                   module = [
                     "eap"
                     "system"
+                    "if_mib"
                   ];
                   auth = [ "omada_v3" ];
                 };
@@ -1403,6 +1445,13 @@ _: {
                   {
                     target_label = "__address__";
                     replacement = "127.0.0.1:${toString config.services.prometheus.exporters.snmp.port}";
+                  }
+                ];
+                metric_relabel_configs = [
+                  {
+                    source_labels = [ "ifDescr" ];
+                    regex = "lo|eth0|bond0|br_gre|erspan0|gre0|gretap0|miireg|mld-wifi0|soc[0-9]+|txvap[0-9]+";
+                    action = "drop";
                   }
                 ];
               }
