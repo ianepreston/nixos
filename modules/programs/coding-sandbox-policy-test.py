@@ -37,6 +37,7 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(policy["grants_v4"], [])
         self.assertEqual(policy["grants_v6"], [])
         self.assertEqual(policy["callbacks"]["port_ranges"], [])
+        self.assertEqual(policy["environment"], {})
         self.assertEqual(policy["storage"]["nix_store"], "instance")
         self.assertIn("100.64.0.0/10", policy["protected_v4"])
         self.assertIn("fe80::/10", policy["protected_v6"])
@@ -107,6 +108,30 @@ class PolicyTest(unittest.TestCase):
             '[callbacks]\nport_ranges = [[8020, 8040], [8040, 8050]]\n',
             '[callbacks]\nport_ranges = [[8020, 8040], [8020, 8040]]\n',
             '[callbacks]\nunknown = []\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(self.config(text), None)
+
+    def test_environment_is_literal_and_validated(self) -> None:
+        policy = POLICY.render_policy(
+            self.config(
+                '[environment]\n'
+                'UV_INDEX_URL = "https://pypi-proxy.cloud.databricks.com/simple"\n'
+                'BROWSER = "none"\n'
+            ),
+            None,
+        )
+        self.assertEqual(
+            policy["environment"],
+            {
+                "BROWSER": "none",
+                "UV_INDEX_URL": "https://pypi-proxy.cloud.databricks.com/simple",
+            },
+        )
+        for text in (
+            'environment = "no"\n',
+            '[environment]\nBAD-NAME = "no"\n',
+            '[environment]\nVALUE = true\n',
         ):
             with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
                 POLICY.render_policy(self.config(text), None)
@@ -227,6 +252,7 @@ class PolicyTest(unittest.TestCase):
         (source / "bootstrap.sh").write_text("#!/usr/bin/env bash\nprintf ready\\n")
         (root / ".sandbox.toml").write_text(
             '[[mounts]]\npath = "sandbox"\nmount_point = "/sandbox"\n\n'
+            '[environment]\nUV_INDEX_URL = "https://pypi-proxy.cloud.databricks.com/simple"\n\n'
             '[storage]\nnix_store = "persistent"\n\n'
             '[profile]\nmodules = ["sandbox/profile.nix"]\n\n'
             '[[startup]]\nname = "bootstrap"\npath = "sandbox/bootstrap.sh"\nargs = ["--quiet"]\n'
@@ -265,6 +291,8 @@ class PolicyTest(unittest.TestCase):
         self.assertIn('UV_UNMANAGED_INSTALL=/usr/local/bin sh', template)
         self.assertIn('databricks -v', template)
         self.assertIn('uv --version', template)
+        self.assertIn('export UV_INDEX_URL=\'https://pypi-proxy.cloud.databricks.com/simple\'', template)
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"', template)
         self.assertLess(
             template.index('ct state established,related accept'),
             template.index('ip daddr @protected_v4 drop'),
@@ -272,6 +300,7 @@ class PolicyTest(unittest.TestCase):
         self.assertIn("Selected profile: sha256:", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
         self.assertIn("Nix store:    persistent Lima disk", plan)
+        self.assertIn('UV_INDEX_URL="https://pypi-proxy.cloud.databricks.com/simple"', plan)
 
     def test_template_allows_only_declared_loopback_callback_ranges(self) -> None:
         root = self.config("")

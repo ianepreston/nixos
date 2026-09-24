@@ -179,6 +179,29 @@ can add user packages such as `uv`, but its Linux closure is built inside the
 guest—there is no Darwin or NixOS rebuild. In `restricted` mode, declare every
 additional public hostname required by a module or startup script.
 
+### Guest environment
+
+Projects can declare literal environment variables for the unprivileged guest
+account. They appear in `sandbox plan`, become part of the policy digest, and
+are available to interactive shells, `sandbox exec`, and startup scripts:
+
+```toml
+[environment]
+# Use an approved internal package mirror rather than bypassing host DNS policy.
+UV_INDEX_URL = "https://pypi-proxy.cloud.databricks.com/simple"
+BROWSER = "none"
+```
+
+This is not a host-environment bridge: values are literal strings, not
+references such as `$HOST_TOKEN`, and must not contain secrets. The launcher
+sets them only after it has dropped to the `agent` account; they never affect
+Lima or privileged guest provisioning. Changing the table requires destroying
+and recreating the VM. In `restricted` mode, separately list an index hostname
+in `network.public_domains` (or `network.internal_domains` when it is a
+protected endpoint). The launcher also includes `~/.local/bin` in the agent's
+PATH, so `uv tool install` entrypoints work immediately without running
+`uv tool update-shell`.
+
 Activation output is recorded in
 `~/.local/state/coding-sandbox/home-manager.log`; each startup entry gets
 `startup-<name>.log` there, and `profile.json` records the sources/digests used
