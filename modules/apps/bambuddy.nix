@@ -25,15 +25,22 @@
 # Networking: Bambu printers sit on the IoT VLAN (vlan30). Bambuddy's
 # Virtual Printer (Proxy Mode) relays a slicer's print to the real
 # printer, so the slicer must reach bambuddy and bambuddy must reach the
-# printer — both over one dedicated, STATIC vlan30 address. Bambuddy
-# attaches the `iot-static` macvlan (owned by modules/system/iot-network.nix)
-# with a pinned MAC + reserved IP (hostSpec.bambuddyVp{Mac,Ip}). The slicer
-# reaches that IP directly over routed mgmt<->vlan30 — there are NO
-# host-published relay ports and NO firewall openings, because the macvlan
-# child has its own IP/netns, off the host entirely. The web UI stays on
-# the default podman bridge so Caddy reaches it on 127.0.0.1:8000. When the
-# host has no IoT trunk NIC (test VMs) the macvlan attach is skipped and
-# only the bridge UI comes up.
+# printer — both over one dedicated, STATIC vlan30 address. When
+# `myBambuddy.virtualPrinter.enable` is set, this module creates the
+# `iot-static` macvlan on the host's vlan30 parent sub-interface (`iot`,
+# owned by modules/system/iot-network.nix) and attaches bambuddy to it
+# with a pinned MAC + reserved IP (myBambuddy.virtualPrinter.{mac,address}).
+# The slicer reaches that IP directly over routed mgmt<->vlan30 — there
+# are NO host-published relay ports and NO firewall openings, because the
+# macvlan child has its own IP/netns, off the host entirely. The web UI
+# stays on the default podman bridge so Caddy reaches it on 127.0.0.1:8000.
+# With the VP disabled (or on a host with no IoT trunk NIC) the macvlan
+# network and attach are skipped and only the bridge UI comes up.
+#
+# The macvlan lifecycle lives here rather than in iot-network.nix so the
+# generic IoT plumbing (host vlan30 sub-interface + firewall isolation)
+# owns no Bambuddy-specific state: with bambuddy unimported, or imported
+# with the VP disabled, no `iot-static` network or service exists (#689).
 #
 # Why Proxy Mode at all (not a direct slicer->printer connection): current
 # Bambu firmware gates direct third-party LAN access behind Bambu Connect.
@@ -45,11 +52,12 @@
 #
 # Operator steps (one-time, after deploy):
 #   1. bambuddy UI -> Virtual Printer -> Proxy mode; set the VP's Bind IP /
-#      network override to hostSpec.bambuddyVpIp (192.168.30.64 on amos1)
-#      and bind it to the printer added below.
-#   2. In OrcaSlicer add the printer in LAN mode by IP = bambuddyVpIp,
-#      access code = the PRINTER's 8-char code (not a bambuddy password).
-#      Add it manually ("bind with access code").
+#      network override to myBambuddy.virtualPrinter.address (192.168.30.64
+#      on amos1) and bind it to the printer added below.
+#   2. In OrcaSlicer add the printer in LAN mode by IP =
+#      myBambuddy.virtualPrinter.address, access code = the PRINTER's
+#      8-char code (not a bambuddy password). Add it manually ("bind with
+#      access code").
 #   3. Slice -> send; bambuddy relays to the printer.
 #
 # KNOWN ISSUE (see #297): with OrcaSlicer 2.3.2 + network plugin 02.03.00.62,
@@ -71,11 +79,15 @@
 _: {
   flake.modules.nixos.bambuddy =
     {
+      config,
       hostSpec,
       lib,
+      pkgs,
       ...
     }:
     let
+      cfg = config.myBambuddy;
+      vp = cfg.virtualPrinter;
       bambuddyHost = "bambuddy.${hostSpec.serverDomain}";
       # Bambuddy listens on 8000 inside the container; it is published on
       # a distinct host port so the host mapping doesn't collide with the
@@ -84,107 +96,203 @@ _: {
       # at the host port.
       port = 8000;
       hostPort = 8008;
+      # The VP's macvlan needs the host's vlan30 parent sub-interface,
+      # which iot-network.nix only stands up when iotTrunkInterface is set.
       iotEnabled = hostSpec.iotTrunkInterface != null;
+
+      # vlan30 (IoT VLAN) + mgmt VLAN addressing — fixed for this homelab,
+      # used only for the VP's static macvlan below. mgmtSubnet is where
+      # the slicers live; the VP macvlan needs an explicit return route to
+      # it via the vlan30 gateway (see the network service).
+      iotSubnet = "192.168.30.0/24";
+      iotGateway = "192.168.30.1";
+      mgmtSubnet = "192.168.10.0/24";
     in
     {
-      myAuthentik.oidcApps.bambuddy = {
-        blueprintsDir = ./bambuddy-blueprints;
-        # Creds are pasted into bambuddy's own UI, not read from env.
-        clientCredsInAppEnv = false;
-        displayName = "Bambuddy";
-        homepage = {
-          group = "Home";
-          icon = "bambu-lab";
-          description = "3D printer control";
+      options.myBambuddy.virtualPrinter = {
+        enable = lib.mkEnableOption ''
+          bambuddy's Virtual Printer macvlan on vlan30.
+
+          The VP (Proxy Mode) relays a slicer's print to a real Bambu
+          printer and needs a dedicated, STATIC vlan30 address for all its
+          services (MQTT/FTP/SSDP/Bind). Enabling this creates the
+          `iot-static` macvlan on the host's vlan30 parent and attaches the
+          bambuddy container to it at `address`, with `mac` pinned. Set it
+          from the host module (the address/MAC are a per-host DHCP
+          reservation), not from hostSpec — the VLAN parent stays generic
+          infrastructure (hostSpec.iotTrunkInterface), the VP identity is
+          this app's. Requires hostSpec.iotTrunkInterface to be set
+        '';
+
+        address = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            The DHCP-reserved vlan30 address the VP binds (reserved against
+            `mac` on the router). bambuddy requires a dedicated, stable IP
+            per VP for all services (MQTT/FTP/SSDP/Bind); this is the single
+            source for it — set the VP Bind IP and the slicer's printer IP
+            to this. Required when `enable` is set.
+          '';
+        };
+
+        mac = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = ''
+            Pinned MAC for the VP's macvlan leg on vlan30. podman assigns a
+            fresh random MAC on every container re-creation, which re-rolls
+            the DHCP lease and drifts the VP's IP — breaking the proxy's
+            bind and the slicer's by-IP device entry. Pinning the MAC
+            (paired with a DHCP reservation matching `address`) keeps the
+            dedicated address stable, which bambuddy requires. Required when
+            `enable` is set.
+          '';
         };
       };
 
-      myCaddy.apps.bambuddy = {
-        host = bambuddyHost;
-        routeConfig = ''
-          reverse_proxy localhost:${toString hostPort}
-        '';
-      };
+      config = {
+        myAuthentik.oidcApps.bambuddy = {
+          blueprintsDir = ./bambuddy-blueprints;
+          # Creds are pasted into bambuddy's own UI, not read from env.
+          clientCredsInAppEnv = false;
+          displayName = "Bambuddy";
+          homepage = {
+            group = "Home";
+            icon = "bambu-lab";
+            description = "3D printer control";
+          };
+        };
 
-      # Online .backup copy of the SQLite db into /var/backup/sqlite so
-      # the nightly restic run has a guaranteed point-in-time consistent
-      # copy alongside the live (possibly mid-write) file.
-      mySqliteQuiesce.apps.bambuddy.databases = [
-        "/var/lib/containers/bambuddy/data/bambuddy.db"
-      ];
+        myCaddy.apps.bambuddy = {
+          host = bambuddyHost;
+          routeConfig = ''
+            reverse_proxy localhost:${toString hostPort}
+          '';
+        };
 
-      # bambuddy listens on 8000 inside the container; publish it on a
-      # distinct host port (hostPort) and point Caddy at that.
-      myContainerApp.bambuddy = {
-        port = hostPort;
-        containerPort = port;
-        linuxServer = true;
-        stateDirs = [
-          "/var/lib/containers/bambuddy"
-          "/var/lib/containers/bambuddy/data"
-          "/var/lib/containers/bambuddy/logs"
+        # Online .backup copy of the SQLite db into /var/backup/sqlite so
+        # the nightly restic run has a guaranteed point-in-time consistent
+        # copy alongside the live (possibly mid-write) file.
+        mySqliteQuiesce.apps.bambuddy.databases = [
+          "/var/lib/containers/bambuddy/data/bambuddy.db"
         ];
-      };
 
-      systemd = {
-        # Order bambuddy after the static vlan30 macvlan (owned by
-        # modules/system/iot-network.nix); the `requires` edge pulls it in.
-        # That unit brings up the vlan30 netdev and creates `iot-static`, so
-        # it's the only network edge bambuddy needs (no dhcp-proxy — bambuddy
-        # uses static IPAM, not DHCP).
-        services = lib.mkIf iotEnabled {
+        # bambuddy listens on 8000 inside the container; publish it on a
+        # distinct host port (hostPort) and point Caddy at that.
+        myContainerApp.bambuddy = {
+          port = hostPort;
+          containerPort = port;
+          linuxServer = true;
+          stateDirs = [
+            "/var/lib/containers/bambuddy"
+            "/var/lib/containers/bambuddy/data"
+            "/var/lib/containers/bambuddy/logs"
+          ];
+        };
+
+        systemd.services = lib.mkIf vp.enable {
+          # Static macvlan for bambuddy's Virtual Printer. The VP needs a
+          # fixed, dedicated vlan30 IP, but DHCP reservations aren't honored
+          # here (netavark's DHCP client sends a client-id the router matches
+          # on instead of the MAC), so bambuddy rides this host-local (static)
+          # IPAM network on the same vlan30 parent (`iot`) and requests a
+          # specific --ip. We add an explicit --route to the slicer (mgmt)
+          # subnet via the vlan30 gateway rather than a --gateway default: a
+          # macvlan default would compete with the podman-bridge default (both
+          # metric 100), and the kernel's nondeterministic tie-break can send
+          # replies out the bridge (NAT'd, wrong source), making the VP
+          # unreachable. The specific route always wins for slicer traffic.
+          #
+          # No `wantedBy`: bambuddy's `requires` edge below is what pulls this
+          # in, so this only runs when the VP is enabled and bambuddy starts.
+          podman-network-iot-static = {
+            description = "podman static macvlan on vlan30 (bambuddy VP)";
+            after = [
+              "network-online.target"
+              "podman.service"
+              "sys-subsystem-net-devices-iot.device"
+            ];
+            wants = [ "network-online.target" ];
+            bindsTo = [ "sys-subsystem-net-devices-iot.device" ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+            };
+            script = ''
+              ${pkgs.iproute2}/bin/ip link set iot up
+              if ! ${pkgs.podman}/bin/podman network exists iot-static; then
+                ${pkgs.podman}/bin/podman network create \
+                  --driver macvlan \
+                  --opt parent=iot \
+                  --subnet ${iotSubnet} \
+                  --route ${mgmtSubnet},${iotGateway} \
+                  iot-static
+              fi
+            '';
+          };
+
+          # Order bambuddy after the static vlan30 macvlan; the `requires`
+          # edge pulls it in. That unit brings up the vlan30 netdev and
+          # creates `iot-static`, so it's the only network edge bambuddy
+          # needs (no dhcp-proxy — bambuddy uses static IPAM, not DHCP).
           podman-bambuddy = {
             after = [ "podman-network-iot-static.service" ];
             requires = [ "podman-network-iot-static.service" ];
           };
         };
-      };
 
-      # bambuddy's VP needs a stable, dedicated vlan30 IP for all its
-      # services; we get that by pinning the macvlan MAC and reserving the
-      # matching DHCP lease (hostSpec.bambuddyVp{Mac,Ip}). Fail early if an
-      # IoT host that runs bambuddy is missing either.
-      assertions = lib.optional iotEnabled {
-        assertion = hostSpec.bambuddyVpMac != null && hostSpec.bambuddyVpIp != null;
-        message = "bambuddy: hostSpec.bambuddyVpMac and bambuddyVpIp must be set on hosts that run bambuddy with IoT access (pinned MAC + reserved vlan30 IP for the VP's dedicated address).";
-      };
-
-      virtualisation.oci-containers.containers.bambuddy = {
-        # renovate: datasource=docker depName=ghcr.io/maziggy/bambuddy
-        image = "ghcr.io/maziggy/bambuddy:1.2.5.6";
-        # Default podman bridge for Caddy/host port mapping. The vlan30
-        # macvlan is attached via extraOptions below (so its MAC can be
-        # pinned), not here.
-        networks = [ "podman" ];
-        # The image ships a Docker HEALTHCHECK. podman runs it via a
-        # transient systemd unit that exits non-zero while the container
-        # is still in its "starting" grace window — and any deploy that
-        # restarts bambuddy lands switch-to-configuration inside that
-        # window, so the transient unit fails the whole switch (and the
-        # auto-upgrade timer's exit code) for no real reason. We don't
-        # use podman's healthcheck for anything (monitoring is external
-        # via Caddy/gatus), so disable it for deterministic deploys.
-        # Attach the vlan30 macvlan here (not via `networks`) so we can pin
-        # BOTH the IP and the MAC. The VP needs a fixed, dedicated vlan30
-        # address; DHCP reservations aren't honored (netavark's DHCP client
-        # sends a client-id the router matches on instead of the MAC), so
-        # bambuddy rides the host-local/static `iot-static` macvlan (created
-        # in iot-network.nix) and requests its reserved IP directly. The MAC
-        # is pinned too so the router page still shows a stable entry.
-        extraOptions = [
-          "--no-healthcheck"
-        ]
-        ++ lib.optional (
-          iotEnabled && hostSpec.bambuddyVpMac != null && hostSpec.bambuddyVpIp != null
-        ) "--network=iot-static:ip=${hostSpec.bambuddyVpIp},mac=${hostSpec.bambuddyVpMac}";
-        # The image runs as root and drops to PUID:PGID; don't set
-        # `user` here or the entrypoint can't fix up ownership.
-        volumes = [
-          "/var/lib/containers/bambuddy/data:/app/data"
-          "/var/lib/containers/bambuddy/logs:/app/logs"
+        # The VP needs a stable, dedicated vlan30 IP for all its services;
+        # we get that by pinning the macvlan MAC and reserving the matching
+        # DHCP lease (myBambuddy.virtualPrinter.{mac,address}), and the
+        # macvlan needs the vlan30 parent sub-interface (iotTrunkInterface).
+        # Fail early if the VP is enabled without them.
+        assertions = lib.optionals vp.enable [
+          {
+            assertion = iotEnabled;
+            message = "bambuddy: myBambuddy.virtualPrinter.enable requires hostSpec.iotTrunkInterface to be set — the VP's iot-static macvlan rides the vlan30 parent sub-interface that iot-network.nix only stands up on IoT-trunked hosts.";
+          }
+          {
+            assertion = vp.address != null && vp.mac != null;
+            message = "bambuddy: myBambuddy.virtualPrinter needs both address and mac set when enabled (pinned MAC + reserved vlan30 IP for the VP's dedicated address).";
+          }
         ];
-        environment = {
-          PORT = toString port;
+
+        virtualisation.oci-containers.containers.bambuddy = {
+          # renovate: datasource=docker depName=ghcr.io/maziggy/bambuddy
+          image = "ghcr.io/maziggy/bambuddy:1.2.5.6";
+          # Default podman bridge for Caddy/host port mapping. The vlan30
+          # macvlan is attached via extraOptions below (so its MAC can be
+          # pinned), not here.
+          networks = [ "podman" ];
+          # The image ships a Docker HEALTHCHECK. podman runs it via a
+          # transient systemd unit that exits non-zero while the container
+          # is still in its "starting" grace window — and any deploy that
+          # restarts bambuddy lands switch-to-configuration inside that
+          # window, so the transient unit fails the whole switch (and the
+          # auto-upgrade timer's exit code) for no real reason. We don't
+          # use podman's healthcheck for anything (monitoring is external
+          # via Caddy/gatus), so disable it for deterministic deploys.
+          # Attach the vlan30 macvlan here (not via `networks`) so we can pin
+          # BOTH the IP and the MAC. The VP needs a fixed, dedicated vlan30
+          # address; DHCP reservations aren't honored (netavark's DHCP client
+          # sends a client-id the router matches on instead of the MAC), so
+          # bambuddy rides the host-local/static `iot-static` macvlan (created
+          # above) and requests its reserved IP directly. The MAC is pinned
+          # too so the router page still shows a stable entry.
+          extraOptions = [
+            "--no-healthcheck"
+          ]
+          ++ lib.optional vp.enable "--network=iot-static:ip=${vp.address},mac=${vp.mac}";
+          # The image runs as root and drops to PUID:PGID; don't set
+          # `user` here or the entrypoint can't fix up ownership.
+          volumes = [
+            "/var/lib/containers/bambuddy/data:/app/data"
+            "/var/lib/containers/bambuddy/logs:/app/logs"
+          ];
+          environment = {
+            PORT = toString port;
+          };
         };
       };
     };
