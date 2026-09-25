@@ -114,11 +114,11 @@ _: {
           unit = "";
         };
 
+      # doCheck = false: ruff (git-hooks.nix) is the single Python authority;
+      # writePython3's flake8 pass conflicts with ruff-format's W503 style.
+      # See modules/apps/llm-metrics.nix for the full rationale.
       exporter = pkgs.writers.writePython3 "omada-metrics" {
-        flakeIgnore = [
-          "E501"
-          "W391"
-        ];
+        doCheck = false;
       } (builtins.readFile ./_omada-metrics/exporter.py);
     in
     {
