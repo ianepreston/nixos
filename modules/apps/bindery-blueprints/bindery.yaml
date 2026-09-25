@@ -66,8 +66,8 @@ entries:
       group: Users
       open_in_new_tab: true
       meta_launch_url: https://bindery.@serverDomain@
-      # No upstream icon in dashboard-icons yet; fall back to the repo favicon
-      # (same pattern as kapowarr). Swap to the dashboard-icons slug if one lands.
+      # No upstream icon in dashboard-icons yet; fall back to the repo favicon.
+      # Swap to the dashboard-icons slug if one lands.
       meta_icon: https://raw.githubusercontent.com/vavallee/bindery/main/web/public/favicon.png
       policy_engine_mode: all
 

@@ -363,8 +363,9 @@
                     description = ''
                       Extra directives spliced into the caddy `reverse_proxy`
                       body. Use this to inject `header_up` lines for apps
-                      that consume authentik headers (e.g. readeck reading
-                      Remote-User from X-authentik-username).
+                      that consume authentik headers (translating an
+                      X-authentik-* header into the Remote-* name an app
+                      expects), or transport directives like omada's.
                     '';
                   };
                   bypassAuthPaths = lib.mkOption {

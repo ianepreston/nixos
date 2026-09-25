@@ -10,7 +10,7 @@
 #   3. `expectedPreservedDirs` in modules/profiles/server-apps.nix (the
 #      structural guard).
 #
-# #136 was exactly this class of bug: native arrs / readeck shipped on
+# #136 was exactly this class of bug: the native arrs shipped on
 # hpp-1 with impermanence enabled but no preservation entry, and only
 # the lack of a reboot between deploy and audit kept it from silently
 # wiping state. The `expectedPreservedDirs` guard made that structural,

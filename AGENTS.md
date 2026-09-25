@@ -250,7 +250,7 @@ before importing it:
 
 Stay on the container path when:
 
-- **No nixpkgs module.** (e.g. actualbudget, kapowarr, mylar3, readmeabook,
+- **No nixpkgs module.** (e.g. actualbudget, mylar3, readmeabook,
   shelfmark, bindery, grimmory.) Re-check before taking this branch — tandoor
   sat on this list while `services.tandoor-recipes` existed all along (#441).
 - **The container is a fork or variant the nix module doesn't track.** Seerr is
@@ -472,7 +472,7 @@ Exceptions:
   via `$__file{}` from grafana.ini) is the example.
 
 Existing modules that have it on both the secret and the template
-(`readeck.nix`, `manyfold.nix`, `pinchflat.nix`) are not broken — converge them
+(`manyfold.nix`, `pinchflat.nix`) are not broken — converge them
 to template-only on drive-by edits rather than a dedicated cleanup pass. Closes
 #142. (`valheim.nix` had the inverse defect — `restartUnits` on the secret only,
 not the template — fixed to template-only per #336.)
@@ -489,10 +489,10 @@ not the template — fixed to template-only per #336.)
   cookie — with a rationale comment, following `modules/apps/radarr.nix`. Never
   bypass routes that serve data unauthenticated (gatus, pinchflat feeds, …);
   for those apps omit the option entirely and leave everything gated. Verify
-  the "key-gated" claim by actually curling the bypassed routes without a key —
-  kapowarr's `POST /api/auth` returns the API key unauthenticated when no UI
-  password is set, which is why it has no bypass despite having an API key
-  scheme. Keep path
+  the "key-gated" claim by actually curling the bypassed routes without a key:
+  an app whose auth endpoint hands out its API key unauthenticated when no UI
+  password is set must NOT bypass `/api/*` despite having an API key scheme,
+  because doing so would let any LAN client mint full API access. Keep path
   lists per-module — they genuinely differ per app (sabnzbd is the single exact
   path `/api`, prowlarr has no `/feed`).
 - **Don't use `pkgs.symlinkJoin` for `blueprints_dir`.** Authentik's

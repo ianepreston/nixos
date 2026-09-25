@@ -67,11 +67,11 @@
         valheim
       ];
 
-      # Apps that ship only on dev-environment servers.
+      # Apps that ship only on dev-environment servers. Empty today —
+      # kapowarr, readeck and ytdlp-web-player were removed in #700 — but
+      # the list and its `serverEnvironment == "dev"` import path below
+      # are kept so a future dev-only app is a one-line add here.
       devOnlyApps = with inputs.self.modules.nixos; [
-        kapowarr
-        readeck
-        ytdlp-web-player
       ];
 
       # Apps that ship only on prod-environment servers — the mirror of
@@ -118,7 +118,7 @@
       # Adding an app-owned path is therefore one `myAppState.<app>` block
       # in the owning module and no edit here.
       #
-      # Issue #136 was exactly this class of bug: native arrs / readeck
+      # Issue #136 was exactly this class of bug: the native arrs
       # shipped on hpp-1 with impermanence enabled and no preservation
       # entries; only the lack of a reboot between deploy and the audit
       # kept it from silently wiping arr history. `myAppState` now makes

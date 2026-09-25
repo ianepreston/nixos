@@ -77,9 +77,11 @@ _: {
     }:
     let
       bambuddyHost = "bambuddy.${hostSpec.serverDomain}";
-      # Bambuddy listens on 8000 inside the container; readeck already
-      # owns 127.0.0.1:8000 on the host, so publish on a distinct host
-      # port and point Caddy at that.
+      # Bambuddy listens on 8000 inside the container; it is published on
+      # a distinct host port so the host mapping doesn't collide with the
+      # container-internal port (and, historically, with readeck's
+      # 127.0.0.1:8000 before readeck was removed in #700). Caddy points
+      # at the host port.
       port = 8000;
       hostPort = 8008;
       iotEnabled = hostSpec.iotTrunkInterface != null;
@@ -111,9 +113,8 @@ _: {
         "/var/lib/containers/bambuddy/data/bambuddy.db"
       ];
 
-      # bambuddy listens on 8000 inside the container; readeck already owns
-      # 127.0.0.1:8000 on the host, so publish on a distinct host port
-      # (hostPort) and point Caddy at that.
+      # bambuddy listens on 8000 inside the container; publish it on a
+      # distinct host port (hostPort) and point Caddy at that.
       myContainerApp.bambuddy = {
         port = hostPort;
         containerPort = port;
