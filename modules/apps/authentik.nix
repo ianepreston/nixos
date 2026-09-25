@@ -430,21 +430,6 @@
           );
         };
 
-        ldap = {
-          enable = lib.mkEnableOption ''
-            authentik's LDAP outpost. Renders the LDAP provider /
-            application / ldapservice user blueprint, wires the
-            worker-side bind password, and starts `services.authentik-
-            ldap` against a sops-templated env file. Used by apps
-            (jellyfin) that can only authenticate against authentik
-            via LDAP — TV/native clients don't do OIDC redirects, so
-            same-credentials login is the goal, not full SSO.
-
-            One-time manual setup is required to capture the outpost
-            token: see the Jellyfin section of the README.
-          '';
-        };
-
         oidcApps = lib.mkOption {
           default = { };
           description = ''
@@ -570,6 +555,21 @@
               }
             )
           );
+        };
+
+        ldap = {
+          enable = lib.mkEnableOption ''
+            authentik's LDAP outpost. Renders the LDAP provider /
+            application / ldapservice user blueprint, wires the
+            worker-side bind password, and starts `services.authentik-
+            ldap` against a sops-templated env file. Used by apps
+            (jellyfin) that can only authenticate against authentik
+            via LDAP — TV/native clients don't do OIDC redirects, so
+            same-credentials login is the goal, not full SSO.
+
+            One-time manual setup is required to capture the outpost
+            token: see the Jellyfin section of the README.
+          '';
         };
       };
 
