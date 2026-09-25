@@ -148,7 +148,7 @@
       unit = "sparkyfitness.service";
       grantsUnit = "sparkyfitness-db-grants.service";
 
-      # Static uid/gid, same reason as gatus/readeck/prowlarr: the state
+      # Static uid/gid, same reason as gatus/prowlarr: the state
       # dir is preserved and restic-backed, and restic restores numeric
       # ownership. An auto-allocated system uid is stable on a running
       # host only because /var/lib/nixos is itself preserved — a

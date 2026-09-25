@@ -220,7 +220,7 @@ _: {
         # removed in #425.
         #
         # An app with nothing worth persisting sets `stateDirs = [ ]` and so
-        # contributes no path (see modules/apps/ytdlp-web-player.nix).
+        # contributes no path.
         #
         # Multi-subdir apps list the parent *and* its children so tmpfiles
         # creates the whole tree (e.g. omada's data/ and logs/); as restic

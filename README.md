@@ -241,7 +241,7 @@ Server hosts run `modules/system/server-backups.nix`, which composes:
   `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
 
 Apps that keep state outside `/var/lib/containers` (e.g. the native \*arr stack,
-jellyfin, kavita, komga, audiobookshelf, readeck) extend
+jellyfin, kavita, komga, audiobookshelf) extend
 `services.restic.backups.server.paths` themselves with their own
 `/var/lib/<app>` tree; the listOf merges via concat so the base paths stay
 intact.
@@ -253,7 +253,7 @@ restic run. The staging root is added to the restic paths automatically, so each
 snapshot contains both the (hot, possibly torn) live file under
 `/var/lib/<app>/...` and a guaranteed-consistent copy under
 `/var/backup/sqlite/<app>/`. Apps currently using it: jellyfin, sonarr, radarr,
-lidarr, prowlarr, bazarr, kavita, komga, readeck, audiobookshelf.
+lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf.
 
 Only server-local app state is in scope. NAS-resident media under `/mnt/content`
 is protected NAS-side via Synology snapshots / Hyper Backup, not by restic.
@@ -494,9 +494,9 @@ Media files themselves live on the NAS under `/mnt/content` and are out of scope
 for restic — Synology snapshots cover them.
 
 The same pattern applies to every app that opts into `mySqliteQuiesce` (sonarr,
-radarr, lidarr, prowlarr, bazarr, kavita, komga, readeck, audiobookshelf): stop
+radarr, lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf): stop
 the unit, `restic restore` both `/var/lib/<app>` (or `/var/lib/private/<app>`
-for DynamicUser apps like prowlarr and readeck) and `/var/backup/sqlite/<app>`,
+for DynamicUser apps like prowlarr) and `/var/backup/sqlite/<app>`,
 then `install` each staged `.db` over the live path declared in the app's
 module. Check `mySqliteQuiesce.apps.<app>.databases` in the module for the exact
 source paths to overwrite (e.g. sonarr →

@@ -19,30 +19,42 @@
 # URI" — see the migration-cleanup stanza at the top of
 # shelfmark-blueprints/shelfmark.yaml, and manyfold's in PR #428.
 #
-# Everything listed here was verified dead on BOTH servers before being
-# added — absent from `myCaddy.apps`, `myAuthentik.forwardAuthApps` and
-# `myAuthentik.oidcApps` on hpp-1 and amos1 alike. That matters because
-# this blueprint applies everywhere: a name that is retired on one host
-# but live on the other must NOT be listed, or the deletion would break
-# the host where it still runs. Two names are in that state today —
-# readeck is dev-only and so orphaned on amos1; omada is prod-only and
-# so orphaned on hpp-1, where the dev authentik still holds its proxy
-# provider and application tile. Those orphans
-# are the tolerable half of the tradeoff described above: they only
-# become a hazard if the same name is later reclaimed by an *OIDC*
-# provider on that host, and a forward-auth app coming back re-upserts
-# the object it left.
+# Everything listed here must be dead on BOTH servers — absent from
+# `myCaddy.apps`, `myAuthentik.forwardAuthApps` and `myAuthentik.oidcApps`
+# on hpp-1 and amos1 alike. That matters because this blueprint applies
+# everywhere: a name that is retired on one host but live on the other
+# must NOT be listed, or the deletion would break the host where it still
+# runs. One name is in that (excluded) state today — omada is prod-only
+# and so orphaned on hpp-1, where the dev authentik still holds its proxy
+# provider and application tile. That orphan is the tolerable half of the
+# tradeoff described above: it only becomes a hazard if the same name is
+# later reclaimed by an *OIDC* provider on that host, and a forward-auth
+# app coming back re-upserts the object it left.
+#
+# The usual discipline is to verify a name dead on both hosts *before*
+# adding it here. kapowarr, readeck and ytdlp-web-player (dev-only
+# forward-auth apps, #700) are the sanctioned exception: their objects
+# are added in the very same change that removes their modules, so the
+# forward-auth creation blueprint leaves `blueprints_dir` in the same
+# closure that ships these `absent` entries — nothing can re-upsert them.
+# kapowarr and ytdlp-web-player only ever ran on dev (hpp-1), so `absent`
+# is a live delete there and a no-op on amos1. readeck additionally has an
+# old orphan on amos1 from when it was a common app, which could not be
+# reaped while it still ran on hpp-1; this change clears it too.
 #
 # `state: absent` is idempotent — once an object is gone the identifier
 # matches nothing and the entry is a no-op — so entries can stay
 # indefinitely. Add to this file when retiring an app rather than
 # leaving the objects behind.
 #
+#   kapowarr     retired dev-only comics manager (#700)
 #   maintainerr  retired *arr-adjacent media-request janitor
 #   metube       retired yt-dlp frontend, replaced by pinchflat
+#   readeck      retired dev-only read-it-later / bookmark archive (#700)
 #   mylar3       renamed: the live forward-auth app is now `mylar`
 #   prometheus   retired, replaced by victoriametrics + vmalert
 #   watchstate   retired play-state sync
+#   ytdlp-web-player  retired dev-only yt-dlp streaming player (#700)
 #   shelfarr     retired book request system, replaced by shelfmark (manual
 #                search) + bindery (monitoring). Unlike the others this one
 #                spoke OIDC directly, so it leaves an oauth2provider rather
@@ -120,3 +132,32 @@ entries:
     state: absent
     identifiers:
       name: unifi
+
+  # kapowarr, readeck and ytdlp-web-player — dev-only forward-auth apps
+  # removed in #700. All three left ProxyProviders (forward_single).
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: kapowarr
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: kapowarr
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: readeck
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: readeck
+
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: ytdlp-web-player
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: ytdlp-web-player
