@@ -270,8 +270,8 @@ _: {
           #     `prune -a` would delete its image every morning and re-pull
           #     it every night.
           #   * `system prune` also removes unused *networks*. On hosts with
-          #     bambuddy that includes `iot-static`
-          #     (modules/system/iot-network.nix), whose creator unit is
+          #     bambuddy's Virtual Printer enabled that includes `iot-static`
+          #     (modules/apps/bambuddy.nix), whose creator unit is
           #     `RemainAfterExit=true` — so unlike an image it does not come
           #     back on its own and bambuddy simply fails to start.
           #

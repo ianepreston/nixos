@@ -199,6 +199,17 @@
             crossplay = true;
           };
 
+          # bambuddy's Virtual Printer is dormant (blocked upstream — see
+          # #298), so bambuddy is not imported (../profiles/server-apps.nix)
+          # and this stays commented. Restore both together when re-enabling:
+          # add `bambuddy` back to commonApps there, then set the VP here (the
+          # address/MAC are amos1's vlan30 DHCP reservation). #689.
+          #   myBambuddy.virtualPrinter = {
+          #     enable = true;
+          #     address = "192.168.30.64";
+          #     mac = "3a:3c:3e:21:8f:55";   # router: -> bambuddy-guest
+          #   };
+
           system.stateVersion = "25.11";
         }
       )
