@@ -59,7 +59,9 @@ Frequently used:
   pushing to GitHub. The `system.autoUpgrade` timer only catches up to `main`
   after a push, so deploy is the fast iteration path.
 - `task rebuild` / `task rebuild:<host>` — local rebuild.
-- `task check` — full pre-push gate (fmt, lint, `nix flake check`).
+- `task check` — full pre-push gate: Nix fmt/lint, Python and standalone
+  shell lint/format (ruff, ruff-format, check-ast, shellcheck, shfmt), and
+  `nix flake check`.
 - `task bootstrap:new` / `task bootstrap:reinstall` — provision a new host
   end-to-end via nixos-anywhere.
 

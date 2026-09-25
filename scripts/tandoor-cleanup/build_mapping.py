@@ -20,6 +20,7 @@ Strategy:
       - rename:         no canonical candidate at all; pure name cleanup
       - manual_review:  ambiguous / parser breakage / unrecognized
 """
+
 import json
 import re
 from pathlib import Path
@@ -48,7 +49,10 @@ def usage_summary(uses: list, max_quotes: int = 3) -> str:
         parts.append(f'"{quotes[0]}" in {rname!r}')
     extra = sum(len(v) for v in recipes.values()) - len(parts)
     suffix = f" (+{extra} more)" if extra > 0 else ""
-    return f"{len(uses)} use(s) in {len(recipes)} recipe(s): " + " | ".join(parts) + suffix
+    return (
+        f"{len(uses)} use(s) in {len(recipes)} recipe(s): " + " | ".join(parts) + suffix
+    )
+
 
 # --- UNIT MAPPING (hand-curated; only 67 rows total) -----------------------
 #
@@ -57,25 +61,24 @@ def usage_summary(uses: list, max_quotes: int = 3) -> str:
 
 UNIT_MERGE = {
     # source name : target name  (resolved to ids below)
-    "tablespoon":  "tbsp",
+    "tablespoon": "tbsp",
     "tablespoons": "tbsp",
-    "tbsp.":       "tbsp",
-    "tbs":         "tbsp",
-    "Tbls":        "tbsp",
-    "teaspoon":    "tsp",
-    "teaspoons":   "tsp",
-    "tsp.":        "tsp",
-    "grams":       "g",
-    "Litre":       "l",
-    "ounce":       "oz",
-    "ounces":      "oz",
-    "oz.":         "oz",
-    "lb.":         "lb",
-    "pound":       "lb",
-    "pounds":      "lb",
-    "c.":          "cup",
-    "cloves":      "clove",  # both kept as countable; collapse plural
-    "pounds":      "lb",
+    "tbsp.": "tbsp",
+    "tbs": "tbsp",
+    "Tbls": "tbsp",
+    "teaspoon": "tsp",
+    "teaspoons": "tsp",
+    "tsp.": "tsp",
+    "grams": "g",
+    "Litre": "l",
+    "ounce": "oz",
+    "ounces": "oz",
+    "oz.": "oz",
+    "lb.": "lb",
+    "pound": "lb",
+    "pounds": "lb",
+    "c.": "cup",
+    "cloves": "clove",  # both kept as countable; collapse plural
 }
 
 # Units that are clearly parser garbage (came in from misparsed ingredients).
@@ -84,10 +87,10 @@ UNIT_MERGE = {
 UNIT_DELETE = {
     "-",
     "to",
-    "red",       # never-unit; came from "red onion" misparse
-    "dried",     # adjective
-    "frozen",    # adjective
-    "garlic",    # ingredient leaked into unit
+    "red",  # never-unit; came from "red onion" misparse
+    "dried",  # adjective
+    "frozen",  # adjective
+    "garlic",  # ingredient leaked into unit
     "jalapeno",  # ingredient leaked into unit
     "lime",
     "shiitake",
@@ -98,7 +101,7 @@ UNIT_DELETE = {
 # Suspicious but I am NOT auto-merging or deleting these without review.
 # They get a manual_review entry so we can decide together.
 UNIT_REVIEW = {
-    "5-ounce can",       # very specific — keep or merge to 'can'?
+    "5-ounce can",  # very specific — keep or merge to 'can'?
     "bulbs (1 to 1 1/2 lb.)",  # garbage from import; delete?
     "dash",  # legit but tiny — Tandoor doesn't have a base for it
     "pinch",  # has base=ml(!) — Tandoor maps it to ~1ml
@@ -117,13 +120,49 @@ UNIT_REVIEW = {
 
 PREP_ADJECTIVES = {
     # Pure preparation verbs — strip aggressively.
-    "chopped", "diced", "sliced", "minced", "crushed", "shredded",
-    "melted", "softened", "grated", "peeled", "cooked", "uncooked",
-    "halved", "quartered", "thinly", "thickly", "finely", "coarsely",
-    "roughly", "lightly", "toasted", "boiled", "steamed", "raw",
-    "skinless", "boneless", "pitted", "trimmed", "drained", "rinsed",
-    "washed", "warm", "cold", "hot", "room", "temperature",
-    "small", "medium", "large", "extra", "your", "favorite", "of",
+    "chopped",
+    "diced",
+    "sliced",
+    "minced",
+    "crushed",
+    "shredded",
+    "melted",
+    "softened",
+    "grated",
+    "peeled",
+    "cooked",
+    "uncooked",
+    "halved",
+    "quartered",
+    "thinly",
+    "thickly",
+    "finely",
+    "coarsely",
+    "roughly",
+    "lightly",
+    "toasted",
+    "boiled",
+    "steamed",
+    "raw",
+    "skinless",
+    "boneless",
+    "pitted",
+    "trimmed",
+    "drained",
+    "rinsed",
+    "washed",
+    "warm",
+    "cold",
+    "hot",
+    "room",
+    "temperature",
+    "small",
+    "medium",
+    "large",
+    "extra",
+    "your",
+    "favorite",
+    "of",
     # "fresh" is a redundancy descriptor (canonicals are typically the
     # fresh form; "Dried X" is a separate canonical), so strip it.
     "fresh",
@@ -134,7 +173,11 @@ PREP_ADJECTIVES = {
 }
 
 DESCRIPTOR_TRAILERS = {
-    "to taste", "for serving", "for garnish", "optional", "as needed",
+    "to taste",
+    "for serving",
+    "for garnish",
+    "optional",
+    "as needed",
 }
 
 
@@ -158,7 +201,9 @@ def strip_paren_qty(name: str) -> str:
         r"ounces?|pounds?|grams?|liters?|tablespoons?|teaspoons?|"
         r"stick|sticks|slices?|pieces?|cans?|packages?|bottles?|"
         r"bunches?|cloves?|heads?|handfuls?|pinches?)?\b\.?\s*",
-        "", out, flags=re.IGNORECASE,
+        "",
+        out,
+        flags=re.IGNORECASE,
     )
     # Strip an empty "()" left behind by the import ("½ tsp () - x").
     out = re.sub(r"^\s*\(\s*\)\s*", "", out)
@@ -167,7 +212,9 @@ def strip_paren_qty(name: str) -> str:
     out = re.sub(
         r"^(?:big|small|large|a)?\s*(?:handful|bunch|pinch|dash)s?\s+"
         r"(?:of\s+)?",
-        "", out, flags=re.IGNORECASE,
+        "",
+        out,
+        flags=re.IGNORECASE,
     )
     # Strip leading "- " again (some have double prefix)
     out = re.sub(r"^[\-\+\*\s]+", "", out)
@@ -226,13 +273,60 @@ def normalize(name: str) -> str:
 # their own, which is what kills the adjective-collision false positives.
 
 MATCH_DESCRIPTORS = {
-    "salted", "unsalted", "dried", "fresh", "frozen", "canned", "ground",
-    "smoked", "sweetened", "unsweetened", "ripe", "raw", "cooked", "whole",
-    "reduced", "fat", "lowfat", "nonfat", "light", "lean", "organic", "baby",
-    "red", "green", "black", "brown", "white", "yellow", "blanched",
-    "clarified", "fine", "sea", "kosher", "ancient", "hard", "soft", "small",
-    "medium", "large", "powder", "flake", "flakes", "of", "or", "and", "cut",
-    "into", "leave", "leaves", "stalk", "stalks", "piece", "pieces", "can",
+    "salted",
+    "unsalted",
+    "dried",
+    "fresh",
+    "frozen",
+    "canned",
+    "ground",
+    "smoked",
+    "sweetened",
+    "unsweetened",
+    "ripe",
+    "raw",
+    "cooked",
+    "whole",
+    "reduced",
+    "fat",
+    "lowfat",
+    "nonfat",
+    "light",
+    "lean",
+    "organic",
+    "baby",
+    "red",
+    "green",
+    "black",
+    "brown",
+    "white",
+    "yellow",
+    "blanched",
+    "clarified",
+    "fine",
+    "sea",
+    "kosher",
+    "ancient",
+    "hard",
+    "soft",
+    "small",
+    "medium",
+    "large",
+    "powder",
+    "flake",
+    "flakes",
+    "of",
+    "or",
+    "and",
+    "cut",
+    "into",
+    "leave",
+    "leaves",
+    "stalk",
+    "stalks",
+    "piece",
+    "pieces",
+    "can",
     "cans",
 }
 
@@ -242,8 +336,16 @@ MATCH_DESCRIPTORS = {
 # canonical agree on these, so we never auto-collapse "smoked paprika" into
 # plain "Paprika" or "oregano" into "Dried Oregano".
 SEMANTIC_DESCRIPTORS = {
-    "salted", "unsalted", "dried", "smoked", "ground", "frozen", "canned",
-    "sweetened", "unsweetened", "ripe",
+    "salted",
+    "unsalted",
+    "dried",
+    "smoked",
+    "ground",
+    "frozen",
+    "canned",
+    "sweetened",
+    "unsweetened",
+    "ripe",
 }
 
 
@@ -256,6 +358,7 @@ def semantic_tokens(norm: str) -> set:
 
 
 # --- BUILD MAPPING ---------------------------------------------------------
+
 
 def main():
     foods = json.loads((INV / "food.json").read_text())
@@ -279,14 +382,22 @@ def main():
             continue  # source not present; skip
         if not d:
             raise RuntimeError(f"unit merge target {dst_name!r} not found")
-        unit_merges.append({
-            "src_id": s["id"], "src_name": s["name"],
-            "dst_id": d["id"], "dst_name": d["name"],
-        })
+        unit_merges.append(
+            {
+                "src_id": s["id"],
+                "src_name": s["name"],
+                "dst_id": d["id"],
+                "dst_name": d["name"],
+            }
+        )
     unit_deletes = [
-        {"id": u["id"], "name": u["name"],
-         "used_in": usage_summary(unit_usage.get(u["id"], []))}
-        for u in units if u["name"] in UNIT_DELETE
+        {
+            "id": u["id"],
+            "name": u["name"],
+            "used_in": usage_summary(unit_usage.get(u["id"], [])),
+        }
+        for u in units
+        if u["name"] in UNIT_DELETE
     ]
 
     # UNIT_REVIEW disposition (operator decision): a review unit that is now
@@ -301,8 +412,7 @@ def main():
         if u["name"] not in UNIT_REVIEW:
             continue
         uses = unit_usage.get(u["id"], [])
-        row = {"id": u["id"], "name": u["name"],
-               "used_in": usage_summary(uses)}
+        row = {"id": u["id"], "name": u["name"], "used_in": usage_summary(uses)}
         if not usage_available:
             unit_reviews.append(row)
         elif uses:
@@ -331,7 +441,8 @@ def main():
 
     def review_row(f, **extra):
         return {
-            "id": f["id"], "name": f["name"],
+            "id": f["id"],
+            "name": f["name"],
             **extra,
             "used_in": usage_summary(food_usage.get(f["id"], [])),
         }
@@ -346,39 +457,56 @@ def main():
             cands = canon_by_norm[norm]
             if len(cands) == 1:
                 tgt = cands[0]
-                food_merges.append({
-                    "src_id": f["id"], "src_name": f["name"],
-                    "dst_id": tgt["id"], "dst_name": tgt["name"],
-                    "via_norm": norm,
-                    "used_in": usage_summary(food_usage.get(f["id"], [])),
-                })
+                food_merges.append(
+                    {
+                        "src_id": f["id"],
+                        "src_name": f["name"],
+                        "dst_id": tgt["id"],
+                        "dst_name": tgt["name"],
+                        "via_norm": norm,
+                        "used_in": usage_summary(food_usage.get(f["id"], [])),
+                    }
+                )
                 continue
             # Ambiguous: route to review with the candidate set listed.
-            food_review.append(review_row(
-                f,
-                candidates=", ".join(f"{c['id']}={c['name']}" for c in cands),
-                reason=f"ambiguous canonical (multiple match norm={norm!r})",
-            ))
+            food_review.append(
+                review_row(
+                    f,
+                    candidates=", ".join(f"{c['id']}={c['name']}" for c in cands),
+                    reason=f"ambiguous canonical (multiple match norm={norm!r})",
+                )
+            )
             continue
         # Lowercase-only exact match
         if f["name"].lower() in canon_by_name:
             tgt = canon_by_name[f["name"].lower()]
-            food_merges.append({
-                "src_id": f["id"], "src_name": f["name"],
-                "dst_id": tgt["id"], "dst_name": tgt["name"],
-                "via_norm": "lowercase_exact",
-            })
+            food_merges.append(
+                {
+                    "src_id": f["id"],
+                    "src_name": f["name"],
+                    "dst_id": tgt["id"],
+                    "dst_name": tgt["name"],
+                    "via_norm": "lowercase_exact",
+                }
+            )
             continue
         # No canonical match — rename to cleaned form if it differs.
         if norm and norm != f["name"].strip().lower():
-            food_renames.append({
-                "id": f["id"], "old_name": f["name"], "new_name": norm,
-                "used_in": usage_summary(food_usage.get(f["id"], [])),
-            })
+            food_renames.append(
+                {
+                    "id": f["id"],
+                    "old_name": f["name"],
+                    "new_name": norm,
+                    "used_in": usage_summary(food_usage.get(f["id"], [])),
+                }
+            )
         else:
-            food_review.append(review_row(
-                f, reason="no canonical match, no rename needed",
-            ))
+            food_review.append(
+                review_row(
+                    f,
+                    reason="no canonical match, no rename needed",
+                )
+            )
 
     # Dedupe renames: when multiple junk foods normalize to the same
     # new_name, keep ONE as a rename (canonical-ish target) and turn the
@@ -396,12 +524,16 @@ def main():
         keeper = group[0]
         food_renames_final.append(keeper)
         for other in group[1:]:
-            rename_dedup_merges.append({
-                "src_id": other["id"], "src_name": other["old_name"],
-                "dst_id": keeper["id"], "dst_name": keeper["new_name"],
-                "via_norm": f"rename_cluster={new_name!r}",
-                "used_in": usage_summary(food_usage.get(other["id"], [])),
-            })
+            rename_dedup_merges.append(
+                {
+                    "src_id": other["id"],
+                    "src_name": other["old_name"],
+                    "dst_id": keeper["id"],
+                    "dst_name": keeper["new_name"],
+                    "via_norm": f"rename_cluster={new_name!r}",
+                    "used_in": usage_summary(food_usage.get(other["id"], [])),
+                }
+            )
     food_merges.extend(rename_dedup_merges)
     food_renames = food_renames_final
 
@@ -411,9 +543,12 @@ def main():
     # operator fills (or keeps, for the pre-filled high-confidence suggestions)
     # to turn the row into a merge; left blank, the row applies as a rename.
     canon_match = [
-        (c["id"], c["name"],
-         content_tokens(normalize(c["name"])),
-         semantic_tokens(normalize(c["name"])))
+        (
+            c["id"],
+            c["name"],
+            content_tokens(normalize(c["name"])),
+            semantic_tokens(normalize(c["name"])),
+        )
         for c in canonical
     ]
     food_review_merges = []
@@ -441,14 +576,18 @@ def main():
             _, cid, cname, ccontent, csem = cands[0]
             if jcontent <= ccontent and jsem == csem:
                 dst_id, dst_name = cid, cname
-        cand_str = " | ".join(
-            f"{cid}={cname}" for _, cid, cname, _, _ in cands[:8]
+        cand_str = " | ".join(f"{cid}={cname}" for _, cid, cname, _, _ in cands[:8])
+        food_review_merges.append(
+            {
+                "id": r["id"],
+                "old_name": r["old_name"],
+                "new_name": r["new_name"],
+                "dst_id": dst_id,
+                "dst_name": dst_name,
+                "candidates": cand_str,
+                "used_in": r["used_in"],
+            }
         )
-        food_review_merges.append({
-            "id": r["id"], "old_name": r["old_name"], "new_name": r["new_name"],
-            "dst_id": dst_id, "dst_name": dst_name,
-            "candidates": cand_str, "used_in": r["used_in"],
-        })
     food_renames = food_renames_only
 
     # Supermarket bucket — all 47 are seeded defaults the user doesn't use.
@@ -457,7 +596,7 @@ def main():
     # Write YAML by hand (no external dep)
     lines = []
     lines.append("# Tandoor cleanup mapping — proposed merges/renames/deletes.")
-    lines.append(f"# Generated from 893 foods, 67 units, 47 supermarkets.")
+    lines.append("# Generated from 893 foods, 67 units, 47 supermarkets.")
     lines.append("")
     lines.append("units:")
     lines.append(f"  merges: # {len(unit_merges)}")
@@ -525,21 +664,25 @@ def main():
         lines.append(f"    - {{ id: {d['id']:3d}, name: {d['name']!r} }}")
     OUT.write_text("\n".join(lines) + "\n")
 
-    print(f"=== UNIT SUMMARY ===")
+    print("=== UNIT SUMMARY ===")
     print(f"  merges:        {len(unit_merges):4d}")
     print(f"  deletes:       {len(unit_deletes):4d}  (incl. unused review units)")
     print(f"  keeps:         {len(unit_keeps):4d}  (review units still in use)")
     print(f"  manual_review: {len(unit_reviews):4d}  (only when usage data missing)")
-    print(f"  unchanged:     {len(units) - len(unit_merges) - len(unit_deletes) - len(unit_keeps) - len(unit_reviews):4d}")
-    print(f"=== FOOD SUMMARY ===")
+    print(
+        f"  unchanged:     {len(units) - len(unit_merges) - len(unit_deletes) - len(unit_keeps) - len(unit_reviews):4d}"
+    )
+    print("=== FOOD SUMMARY ===")
     print(f"  canonical (ODP, untouched): {len(canonical):4d}")
     print(f"  junk total:                 {len(junk):4d}")
     print(f"    merges to canonical:      {len(food_merges):4d}")
-    print(f"    review_merges (confirm):  {len(food_review_merges):4d}  "
-          f"({sum(1 for m in food_review_merges if m['dst_id'])} pre-filled)")
+    print(
+        f"    review_merges (confirm):  {len(food_review_merges):4d}  "
+        f"({sum(1 for m in food_review_merges if m['dst_id'])} pre-filled)"
+    )
     print(f"    renames (no candidate):   {len(food_renames):4d}")
     print(f"    manual_review:            {len(food_review):4d}")
-    print(f"=== SUPERMARKET SUMMARY ===")
+    print("=== SUPERMARKET SUMMARY ===")
     print(f"  proposed deletes: {len(sm_deletes)} (all defaults)")
     print(f"\nMapping written to {OUT}")
 

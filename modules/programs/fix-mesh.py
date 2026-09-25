@@ -19,7 +19,7 @@ import bmesh
 import sys
 import os
 
-argv = sys.argv[sys.argv.index("--") + 1:]
+argv = sys.argv[sys.argv.index("--") + 1 :]
 inp, outp = argv[0], argv[1]
 merge_dist = float(argv[2])
 min_shell_faces = int(argv[3])
@@ -37,23 +37,33 @@ def nm_count(obj):
 def do_import(path):
     ext = os.path.splitext(path)[1].lower()
     if ext == ".stl":
-        (bpy.ops.wm.stl_import if hasattr(bpy.ops.wm, "stl_import")
-         else bpy.ops.import_mesh.stl)(filepath=path)
+        (
+            bpy.ops.wm.stl_import
+            if hasattr(bpy.ops.wm, "stl_import")
+            else bpy.ops.import_mesh.stl
+        )(filepath=path)
     elif ext == ".obj":
-        (bpy.ops.wm.obj_import if hasattr(bpy.ops.wm, "obj_import")
-         else bpy.ops.import_scene.obj)(filepath=path)
+        (
+            bpy.ops.wm.obj_import
+            if hasattr(bpy.ops.wm, "obj_import")
+            else bpy.ops.import_scene.obj
+        )(filepath=path)
     elif ext == ".ply":
-        (bpy.ops.wm.ply_import if hasattr(bpy.ops.wm, "ply_import")
-         else bpy.ops.import_mesh.ply)(filepath=path)
+        (
+            bpy.ops.wm.ply_import
+            if hasattr(bpy.ops.wm, "ply_import")
+            else bpy.ops.import_mesh.ply
+        )(filepath=path)
     else:
         raise SystemExit(f"unsupported input extension: {ext}")
 
 
 def do_export_stl(path):
-    if hasattr(bpy.ops.wm, "stl_export"):        # Blender >= 4.0
-        bpy.ops.wm.stl_export(filepath=path, export_selected_objects=False,
-                              ascii_format=False)
-    else:                                        # Blender 3.x
+    if hasattr(bpy.ops.wm, "stl_export"):  # Blender >= 4.0
+        bpy.ops.wm.stl_export(
+            filepath=path, export_selected_objects=False, ascii_format=False
+        )
+    else:  # Blender 3.x
         bpy.ops.export_mesh.stl(filepath=path, ascii=False)
 
 
@@ -77,16 +87,16 @@ me = bpy.ops.mesh
 # --- operator pass -------------------------------------------------------
 bpy.ops.object.mode_set(mode="EDIT")
 me.select_all(action="SELECT")
-me.remove_doubles(threshold=merge_dist)     # weld coincident verts
-me.delete_loose()                           # strip stray verts/edges
-me.dissolve_degenerate()                    # kill zero-area/length geometry
+me.remove_doubles(threshold=merge_dist)  # weld coincident verts
+me.delete_loose()  # strip stray verts/edges
+me.dissolve_degenerate()  # kill zero-area/length geometry
 me.select_all(action="DESELECT")
-me.select_interior_faces()                  # internal walls -> >2-face edges
+me.select_interior_faces()  # internal walls -> >2-face edges
 me.delete(type="FACE")
 for _ in range(3):
     me.select_all(action="DESELECT")
     me.select_non_manifold()
-    me.fill_holes(sides=0)                   # 0 = all hole sizes
+    me.fill_holes(sides=0)  # 0 = all hole sizes
 bpy.ops.object.mode_set(mode="OBJECT")
 
 # --- bmesh pass: junk shells + pinch edges -------------------------------

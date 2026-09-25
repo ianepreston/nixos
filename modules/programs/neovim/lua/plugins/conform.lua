@@ -50,7 +50,11 @@ return {
       },
 
       shfmt = {
-        prepend_args = { "-i", "2" },
+        -- Keep in lockstep with the shfmt pre-commit hook
+        -- (modules/flake/git-hooks.nix): 2-space indent, indented case
+        -- bodies (-ci). Without -ci the editor would de-indent case bodies
+        -- that the `task check` gate then rejects.
+        prepend_args = { "-i", "2", "-ci" },
       },
       tfmt = {
         command = "tofu",

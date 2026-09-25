@@ -17,6 +17,7 @@ Phases:
 The script is idempotent: skips ops where the source no longer exists
 (already-merged / already-deleted).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -121,6 +122,7 @@ def load_section(name: str, subname: str) -> list[dict]:
 
 # --- HTTP plumbing ---------------------------------------------------------
 
+
 @dataclass
 class Result:
     ok: bool
@@ -177,6 +179,7 @@ def exists_supermarket(target: str, sid: int) -> bool:
 
 
 # --- Phase runners ---------------------------------------------------------
+
 
 def run_unit_merges(target: str, apply: bool) -> tuple[int, int]:
     rows = load_section("units", "merges")
@@ -284,8 +287,7 @@ def run_food_review_merges(target: str, apply: bool) -> tuple[int, int]:
         if not dst:
             continue  # operator left it blank → handled as a rename
         src = r["id"]
-        label = (f"food merge {src}({r.get('old_name')}) → "
-                 f"{dst}({r.get('dst_name')})")
+        label = f"food merge {src}({r.get('old_name')}) → {dst}({r.get('dst_name')})"
         if not exists_food(target, src):
             print(f"  SKIP  {label}  (source already gone)")
             skipped += 1
@@ -347,24 +349,24 @@ def run_food_renames(target: str, apply: bool) -> tuple[int, int]:
 def fetch_automations(target: str) -> list[dict]:
     res = call(target, "GET", "/api/automation/?page_size=500")
     if not res.ok:
-        print(f"  ERROR fetching automations: status={res.status} "
-              f"body={res.body[:200]}", file=sys.stderr)
+        print(
+            f"  ERROR fetching automations: status={res.status} body={res.body[:200]}",
+            file=sys.stderr,
+        )
         sys.exit(2)
     body = json.loads(res.body)
     return body.get("results", body) if isinstance(body, dict) else body
 
 
-def _run_aliases(target: str, apply: bool, *, section: str, alias_type: str,
-                 label_kind: str) -> tuple[int, int]:
+def _run_aliases(
+    target: str, apply: bool, *, section: str, alias_type: str, label_kind: str
+) -> tuple[int, int]:
     """Create <alias_type> automations from a merges section (param_1 = source
     name → param_2 = target name). Idempotent: skips when an automation of the
     same type already matches param_1 (case-insensitive)."""
     rows = load_section(section, "merges")
     existing = fetch_automations(target)
-    have = {
-        (a["type"], (a.get("param_1") or "").strip().lower())
-        for a in existing
-    }
+    have = {(a["type"], (a.get("param_1") or "").strip().lower()) for a in existing}
     done = skipped = 0
     for r in rows:
         src, dst = r["src_name"], r["dst_name"]
@@ -398,13 +400,15 @@ def _run_aliases(target: str, apply: bool, *, section: str, alias_type: str,
 
 
 def run_unit_aliases(target: str, apply: bool) -> tuple[int, int]:
-    return _run_aliases(target, apply, section="units",
-                        alias_type="UNIT_ALIAS", label_kind="Unit")
+    return _run_aliases(
+        target, apply, section="units", alias_type="UNIT_ALIAS", label_kind="Unit"
+    )
 
 
 def run_food_aliases(target: str, apply: bool) -> tuple[int, int]:
-    return _run_aliases(target, apply, section="foods",
-                        alias_type="FOOD_ALIAS", label_kind="Food")
+    return _run_aliases(
+        target, apply, section="foods", alias_type="FOOD_ALIAS", label_kind="Food"
+    )
 
 
 PHASES = {
@@ -436,8 +440,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", required=True, choices=list(TARGETS))
     ap.add_argument("--phase", required=True, choices=list(PHASES))
-    ap.add_argument("--apply", action="store_true",
-                    help="Actually execute. Default: dry-run.")
+    ap.add_argument(
+        "--apply", action="store_true", help="Actually execute. Default: dry-run."
+    )
     args = ap.parse_args()
 
     # Resolve the bearer token from the selected target (mirrors
@@ -446,8 +451,10 @@ def main():
     # missing token file raises FileNotFoundError here, surfacing the
     # misconfiguration before any request is made.
     TARGETS[args.target]["token"] = (
-        Path.home() / f".config/tandoor-cleanup/{args.target}.token"
-    ).read_text().strip()
+        (Path.home() / f".config/tandoor-cleanup/{args.target}.token")
+        .read_text()
+        .strip()
+    )
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     print(f"=== {mode} on {args.target} — phase={args.phase} ===")

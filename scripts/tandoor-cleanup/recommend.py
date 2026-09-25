@@ -17,6 +17,7 @@ Re-runnable: it rewrites the review_merges block in place. Run it after every
 
     python3 recommend.py            # rewrites ~/src/tandoor-cleanup/mapping.yaml
 """
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import apply as ap          # parse_row, MAPPING path
+import apply as ap  # parse_row, MAPPING path
 import build_mapping as bm  # normalize, content_tokens, MATCH_DESCRIPTORS
 
 MAPPING = ap.MAPPING
@@ -56,13 +57,32 @@ def build_idf() -> None:
 def idf(token: str) -> float:
     return _IDF.get(token, _MAX_IDF)
 
+
 # Recipe-context keywords that disambiguate a fresh vs. dried/ground vs.
 # leaf vs. seed canonical. When a candidate's distinctive token (the word it
 # adds over the junk name) matches the recipe context, it's a strong signal.
 FRESH_HINTS = {
-    "fresh", "grated", "grate", "peeled", "peel", "minced", "mince",
-    "chopped", "chop", "sliced", "slice", "julienne", "knob", "thumb",
-    "raw", "leaf", "leaves", "cilantro", "sprig", "stalk", "root",
+    "fresh",
+    "grated",
+    "grate",
+    "peeled",
+    "peel",
+    "minced",
+    "mince",
+    "chopped",
+    "chop",
+    "sliced",
+    "slice",
+    "julienne",
+    "knob",
+    "thumb",
+    "raw",
+    "leaf",
+    "leaves",
+    "cilantro",
+    "sprig",
+    "stalk",
+    "root",
 }
 DRY_HINTS = {"ground", "powder", "powdered", "dried", "dry", "seed", "seeds"}
 
@@ -71,8 +91,19 @@ DRY_HINTS = {"ground", "powder", "powdered", "dried", "dry", "seed", "seeds"}
 # one of these is still a variant (mergeable); a candidate that adds a genuine
 # food word ("Peanut" Butter, "Almond" Butter) is a different food.
 FORM_WORDS = {
-    "root", "leaf", "leaves", "sprig", "stalk", "stalks", "clove", "cloves",
-    "head", "bulb", "raw", "paste", "whole",
+    "root",
+    "leaf",
+    "leaves",
+    "sprig",
+    "stalk",
+    "stalks",
+    "clove",
+    "cloves",
+    "head",
+    "bulb",
+    "raw",
+    "paste",
+    "whole",
 }
 
 COLORS = {"red", "green", "black", "brown", "white", "yellow"}
@@ -83,8 +114,17 @@ COLORS = {"red", "green", "black", "brown", "white", "yellow"}
 # here — they don't distinguish a canonical, so they don't block.
 # Fat-content / form descriptors that separate canonicals of the same head
 # noun ("Milk Whole" vs "Milk Lowfat", "Onion Powder" vs fresh onion).
-FORM = {"lowfat", "nonfat", "whole", "reduced", "fat", "powder",
-        "flake", "flakes", "clarified"}
+FORM = {
+    "lowfat",
+    "nonfat",
+    "whole",
+    "reduced",
+    "fat",
+    "powder",
+    "flake",
+    "flakes",
+    "clarified",
+}
 # "ripe" is excluded — it's a ripeness/prep note, not a distinct canonical
 # (we want "ripe banana" → Banana, "ripe tomato" → Tomato).
 DISTINGUISH = (bm.SEMANTIC_DESCRIPTORS - {"ripe"}) | COLORS | FORM
@@ -135,8 +175,8 @@ def recommend(row: dict) -> tuple[int, str, str]:
         if not inter:
             continue
         shared = sum(idf(t) for t in inter)
-        extra = sum(idf(t) for t in ct - jt)       # info the canonical adds
-        coverage = shared / j_total if j_total else 0.0     # junk recall
+        extra = sum(idf(t) for t in ct - jt)  # info the canonical adds
+        coverage = shared / j_total if j_total else 0.0  # junk recall
         precision = shared / (shared + extra) if shared + extra else 0.0
         score = 0.7 * coverage + 0.3 * precision
         # Descriptor compatibility. A canonical that *adds* a distinguishing
@@ -147,12 +187,10 @@ def recommend(row: dict) -> tuple[int, str, str]:
         dropped = jdesc - cdesc
         # A candidate that adds a *food* word more specific than the junk's
         # head ("peanut" over "butter") is a different food, not a variant.
-        diff_food = any(
-            t not in FORM_WORDS and idf(t) >= jhead_idf for t in ct - jt
-        )
+        diff_food = any(t not in FORM_WORDS and idf(t) >= jhead_idf for t in ct - jt)
         desc_ok = not added and not dropped and not diff_food
         if jdesc and jdesc == cdesc:
-            score += 0.2                     # exact variant match — prefer it
+            score += 0.2  # exact variant match — prefer it
         # Recipe-context: a fresh/dried/leaf/seed token that distinguishes this
         # candidate and matches the recipe wording is a strong confirmation.
         distinct = cfull ^ jfull

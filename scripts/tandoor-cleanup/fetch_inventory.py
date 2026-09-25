@@ -12,6 +12,7 @@ point inventory collection at it expecting prod data.
 The bearer token is read from ~/.config/tandoor-cleanup/<target>.token, so
 each target needs its own operator-local token file.
 """
+
 import argparse
 import json
 import subprocess
@@ -50,7 +51,8 @@ def fetch_all(cfg: dict, bearer: str, endpoint: str) -> list:
     while url:
         page += 1
         cmd = [
-            "ssh", cfg["ssh"],
+            "ssh",
+            cfg["ssh"],
             f"curl -sS -H 'Host: {cfg['host_hdr']}' "
             f"-H 'Authorization: Bearer {bearer}' '{url}'",
         ]
@@ -71,7 +73,11 @@ def main():
     ap.add_argument("--target", default="amos1", choices=list(TARGETS))
     args = ap.parse_args()
     cfg = TARGETS[args.target]
-    bearer = (Path.home() / f".config/tandoor-cleanup/{args.target}.token").read_text().strip()
+    bearer = (
+        (Path.home() / f".config/tandoor-cleanup/{args.target}.token")
+        .read_text()
+        .strip()
+    )
 
     INV_DIR.mkdir(parents=True, exist_ok=True)
     print(f"=== fetching inventory from {args.target} ===")
