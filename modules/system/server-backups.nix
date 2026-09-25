@@ -65,11 +65,11 @@
       # Anything that doesn't match is dropped (e.g. mount roots,
       # top-level dirs). Atomic write via tempfile + rename so a
       # crashed run never leaves a partial `.prom` for node_exporter.
+      # doCheck = false: ruff (git-hooks.nix) is the single Python authority;
+      # writePython3's flake8 pass conflicts with ruff-format's W503 style.
+      # See modules/apps/llm-metrics.nix for the full rationale.
       resticMetrics = pkgs.writers.writePython3 "restic-metrics-server" {
-        flakeIgnore = [
-          "E501"
-          "W391"
-        ];
+        doCheck = false;
       } (builtins.readFile ./_server-backups/restic-metrics.py);
     in
     {

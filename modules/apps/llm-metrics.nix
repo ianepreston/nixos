@@ -96,11 +96,13 @@
             builtins.toJSON (lib.mapAttrs (_: e: "http://${e.host}:${toString e.port}") cfg.endpoints)
           );
 
+          # doCheck = false: skip writePython3's built-in flake8 pass. ruff
+          # (ruff check + ruff format --check in modules/flake/git-hooks.nix)
+          # is the single Python authority for tracked sources like this one.
+          # flake8 here also actively conflicts — its --ignore clobbers flake8's
+          # defaults, re-enabling W503, which ruff-format deliberately produces.
           exporter = pkgs.writers.writePython3 "llama-metrics" {
-            flakeIgnore = [
-              "E501"
-              "W391"
-            ];
+            doCheck = false;
           } (builtins.readFile ./_llm-metrics/collector.py);
         in
         {
