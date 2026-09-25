@@ -68,7 +68,7 @@ parse_target() {
   network_mode_override=''
   assume_yes=false
   target=
-  command=( )
+  command=()
   parsing_command=false
 
   while (($#)); do
@@ -92,7 +92,7 @@ parse_target() {
         parsing_command=true
         shift
         ;;
-      -h|--help)
+      -h | --help)
         usage
         exit 0
         ;;
@@ -108,7 +108,7 @@ parse_target() {
   done
 
   case "$network_mode_override" in
-    ''|public|restricted|open) ;;
+    '' | public | restricted | open) ;;
     *) die "unknown network mode '$network_mode_override' (choose public, restricted, or open)" ;;
   esac
 
@@ -119,8 +119,8 @@ parse_target() {
   if [[ $(jq -r '.config_path == null' <<<"$policy_json") == true ]]; then
     # Compatibility for projects without a spec: retain the original safe
     # secondary-worktree behaviour until they add an explicit mount table.
-    worktree=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) \
-      || die "$project has no .sandbox.toml; select a Git worktree or add a project specification"
+    worktree=$(git -C "$project" rev-parse --show-toplevel 2>/dev/null) ||
+      die "$project has no .sandbox.toml; select a Git worktree or add a project specification"
     primary_worktree=$(git -C "$worktree" worktree list --porcelain | awk '$1 == "worktree" { print $2; exit }')
     [[ "$worktree" != "$primary_worktree" ]] || die \
       "$worktree is the primary checkout; add .sandbox.toml with [[mounts]] to use it directly"
@@ -167,8 +167,8 @@ load_policy() {
   if [[ -n "$network_mode_override" ]]; then
     args+=(--network "$network_mode_override")
   fi
-  policy_json=$(python3 "$SANDBOX_POLICY_HELPER" "${args[@]}") \
-    || die 'sandbox policy helper failed; see the error above'
+  policy_json=$(python3 "$SANDBOX_POLICY_HELPER" "${args[@]}") ||
+    die 'sandbox policy helper failed; see the error above'
   network_mode=$(jq -r '.mode' <<<"$policy_json")
 }
 
@@ -378,8 +378,8 @@ prepare_git_worktree() {
   destination="$mount_root/mount-$index"
 
   if [[ -e "$destination" ]]; then
-    actual_root=$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null) \
-      || die "temporary mount $destination exists but is not a Git worktree; remove it manually"
+    actual_root=$(git -C "$destination" rev-parse --show-toplevel 2>/dev/null) ||
+      die "temporary mount $destination exists but is not a Git worktree; remove it manually"
     [[ "$actual_root" == "$destination" ]] || die \
       "temporary mount $destination is not a worktree root; remove it manually"
     actual_branch=$(git -C "$destination" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -634,19 +634,19 @@ YAML
         "$(jq -r ".profile.modules[$module_index].digest" "$state_dir/profile.json")"
     done
 YAML
-  if [[ "$use_proxy" == true ]]; then
-    cat <<'YAML'
+    if [[ "$use_proxy" == true ]]; then
+      cat <<'YAML'
     proxy_environment=(
       http_proxy=http://127.0.0.1:3128 https_proxy=http://127.0.0.1:3128
       HTTP_PROXY=http://127.0.0.1:3128 HTTPS_PROXY=http://127.0.0.1:3128 ALL_PROXY=http://127.0.0.1:3128
     )
 YAML
-  else
-    cat <<'YAML'
+    else
+      cat <<'YAML'
     proxy_environment=()
 YAML
-  fi
-  cat <<'YAML'
+    fi
+    cat <<'YAML'
     runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" bash -lc '
       source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
       nix run github:nix-community/home-manager/release-26.05 -- switch --impure --flake "$HOME/.local/share/coding-sandbox/profile#agent"
@@ -970,8 +970,8 @@ policy_matches_instance() {
   local recorded current_contract recorded_contract
   [[ -r "$policy_record" ]] || die \
     "existing $instance has no recorded policy; destroy it before using this network-policy version"
-  recorded=$(jq -ce '.policy' "$policy_record") \
-    || die "cannot read recorded policy for $instance; destroy it before continuing"
+  recorded=$(jq -ce '.policy' "$policy_record") ||
+    die "cannot read recorded policy for $instance; destroy it before continuing"
   # The strict bootstrap names are pinned into the VM at creation.  Public
   # CDN answers may legitimately rotate afterwards, so compare the policy
   # contract without those derived addresses and retain the recorded policy
@@ -1063,7 +1063,7 @@ cache_purge() {
 cache_command() {
   local action="${1:-}"
   case "$action" in
-    status|purge)
+    status | purge)
       shift
       ;;
     *)
@@ -1168,8 +1168,8 @@ destroy() {
   # deciding to tear it down; that must not orphan a cache disk which the
   # current policy can no longer address.
   if [[ -r "$policy_record" ]]; then
-    recorded_policy=$(jq -cer '.policy' "$policy_record") \
-      || die "cannot read recorded policy for $instance; use sandbox delete to remove this legacy VM"
+    recorded_policy=$(jq -cer '.policy' "$policy_record") ||
+      die "cannot read recorded policy for $instance; use sandbox delete to remove this legacy VM"
     instance_nix_store_mode=$(jq -r '.storage.nix_store // "instance"' <<<"$recorded_policy")
   fi
   show_plan
@@ -1210,7 +1210,7 @@ delete_instance() {
         assume_yes=true
         shift
         ;;
-      -h|--help)
+      -h | --help)
         usage
         exit 0
         ;;
@@ -1264,15 +1264,15 @@ main() {
     delete)
       delete_instance "$@"
       ;;
-    plan|template|validate|start|shell|exec|status|stop|destroy)
+    plan | template | validate | start | shell | exec | status | stop | destroy)
       parse_target "$@"
       case "$subcommand" in
         plan)
           # For an existing VM, report the address set it actually enforces,
           # rather than a fresh CDN lookup that would only apply after
           # recreation.  A plan remains usable without Lima for a new project.
-          if command -v limactl >/dev/null \
-            && limactl list --format '{{.Name}}' 2>/dev/null | grep -Fxq "$instance"; then
+          if command -v limactl >/dev/null &&
+            limactl list --format '{{.Name}}' 2>/dev/null | grep -Fxq "$instance"; then
             policy_matches_instance
           fi
           show_plan
@@ -1280,11 +1280,11 @@ main() {
         template) show_template ;;
         validate) validate_template ;;
         start) start ;;
-        shell|exec|status|stop) instance_action "$subcommand" ;;
+        shell | exec | status | stop) instance_action "$subcommand" ;;
         destroy) destroy ;;
       esac
       ;;
-    -h|--help|help)
+    -h | --help | help)
       usage
       ;;
     *)

@@ -8,6 +8,7 @@ context next to the delete/review proposals.
 `--target` selects the instance (default amos1). Run fetch_inventory.py
 against the *same* target first — this reads its recipe.json index.
 """
+
 import argparse
 import json
 import subprocess
@@ -25,10 +26,15 @@ TARGETS = {
 
 def fetch(cfg: dict, bearer: str, url: str) -> dict:
     r = subprocess.run(
-        ["ssh", cfg["ssh"],
-         f"curl -sS -H 'Host: {cfg['host_hdr']}' "
-         f"-H 'Authorization: Bearer {bearer}' '{url}'"],
-        capture_output=True, text=True, check=True,
+        [
+            "ssh",
+            cfg["ssh"],
+            f"curl -sS -H 'Host: {cfg['host_hdr']}' "
+            f"-H 'Authorization: Bearer {bearer}' '{url}'",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return json.loads(r.stdout)
 
@@ -38,7 +44,11 @@ def main():
     ap.add_argument("--target", default="amos1", choices=list(TARGETS))
     args = ap.parse_args()
     cfg = TARGETS[args.target]
-    bearer = (Path.home() / f".config/tandoor-cleanup/{args.target}.token").read_text().strip()
+    bearer = (
+        (Path.home() / f".config/tandoor-cleanup/{args.target}.token")
+        .read_text()
+        .strip()
+    )
 
     recipes_idx = json.loads((INV / "recipe.json").read_text())
     food_uses = defaultdict(list)  # food_id -> [{recipe_id, name, quote}]
@@ -48,7 +58,7 @@ def main():
     full = []
     for i, r in enumerate(recipes_idx):
         rid = r["id"]
-        print(f"  [{i+1:3d}/{len(recipes_idx)}] recipe {rid}: {r['name'][:50]}")
+        print(f"  [{i + 1:3d}/{len(recipes_idx)}] recipe {rid}: {r['name'][:50]}")
         detail = fetch(cfg, bearer, f"http://127.0.0.1:8083/api/recipe/{rid}/")
         full.append(detail)
         for step in detail.get("steps") or []:
@@ -64,25 +74,40 @@ def main():
                     + (f"  // {note}" if note else "")
                 ).strip()
                 if food.get("id"):
-                    food_uses[food["id"]].append({
-                        "recipe_id": rid, "recipe_name": detail["name"],
-                        "quote": quote,
-                    })
+                    food_uses[food["id"]].append(
+                        {
+                            "recipe_id": rid,
+                            "recipe_name": detail["name"],
+                            "quote": quote,
+                        }
+                    )
                 if unit.get("id"):
-                    unit_uses[unit["id"]].append({
-                        "recipe_id": rid, "recipe_name": detail["name"],
-                        "quote": quote,
-                    })
+                    unit_uses[unit["id"]].append(
+                        {
+                            "recipe_id": rid,
+                            "recipe_name": detail["name"],
+                            "quote": quote,
+                        }
+                    )
 
     (INV / "recipe-detail.json").write_text(json.dumps(full, indent=2))
-    OUT.write_text(json.dumps({
-        "food": {str(k): v for k, v in food_uses.items()},
-        "unit": {str(k): v for k, v in unit_uses.items()},
-    }, indent=2))
-    print(f"\nfood usages: {sum(len(v) for v in food_uses.values())} "
-          f"across {len(food_uses)} foods")
-    print(f"unit usages: {sum(len(v) for v in unit_uses.values())} "
-          f"across {len(unit_uses)} units")
+    OUT.write_text(
+        json.dumps(
+            {
+                "food": {str(k): v for k, v in food_uses.items()},
+                "unit": {str(k): v for k, v in unit_uses.items()},
+            },
+            indent=2,
+        )
+    )
+    print(
+        f"\nfood usages: {sum(len(v) for v in food_uses.values())} "
+        f"across {len(food_uses)} foods"
+    )
+    print(
+        f"unit usages: {sum(len(v) for v in unit_uses.values())} "
+        f"across {len(unit_uses)} units"
+    )
 
 
 if __name__ == "__main__":

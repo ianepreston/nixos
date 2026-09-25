@@ -39,8 +39,13 @@ BASE_RESTRICTED_DOMAINS = (
     "api.github.com",
     "codeload.github.com",
 )
-RESERVED_MOUNT_POINTS = (PurePosixPath("/sandbox-spec"), PurePosixPath("/mnt/sandbox-profile"))
-DOMAIN_RE = re.compile(r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}\Z")
+RESERVED_MOUNT_POINTS = (
+    PurePosixPath("/sandbox-spec"),
+    PurePosixPath("/mnt/sandbox-profile"),
+)
+DOMAIN_RE = re.compile(
+    r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}\Z"
+)
 STARTUP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 ENVIRONMENT_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -66,7 +71,9 @@ def normalize_domain(value: Any, field: str) -> str:
         fail(f"{field} entries must be strings")
     domain = value.lower().rstrip(".")
     if "*" in domain or not DOMAIN_RE.fullmatch(domain):
-        fail(f"{field} entry {value!r} must be one exact DNS name (no wildcard or suffix)")
+        fail(
+            f"{field} entry {value!r} must be one exact DNS name (no wildcard or suffix)"
+        )
     return domain
 
 
@@ -158,14 +165,26 @@ def parse_mounts(value: Any, config_root: Path) -> list[dict[str, Any]]:
             or mount_point == "/"
             or ".." in guest_path.parts
         ):
-            mount_error(index, "mount_point must be a normalized absolute guest path other than /")
-        if any(existing == guest_path or existing in guest_path.parents or guest_path in existing.parents for existing in mount_points):
+            mount_error(
+                index,
+                "mount_point must be a normalized absolute guest path other than /",
+            )
+        if any(
+            existing == guest_path
+            or existing in guest_path.parents
+            or guest_path in existing.parents
+            for existing in mount_points
+        ):
             mount_error(index, f"mount_point {mount_point!r} overlaps another mount")
         if any(
-            reserved == guest_path or reserved in guest_path.parents or guest_path in reserved.parents
+            reserved == guest_path
+            or reserved in guest_path.parents
+            or guest_path in reserved.parents
             for reserved in RESERVED_MOUNT_POINTS
         ):
-            mount_error(index, f"mount_point {mount_point!r} overlaps a launcher-reserved path")
+            mount_error(
+                index, f"mount_point {mount_point!r} overlaps a launcher-reserved path"
+            )
         mount_points.append(guest_path)
 
         repository_root = git_root(source)
@@ -173,14 +192,21 @@ def parse_mounts(value: Any, config_root: Path) -> list[dict[str, Any]]:
         branch = entry.get("branch")
         if is_git:
             if not isinstance(branch, str) or not branch:
-                mount_error(index, "branch is required when path names a Git repository")
+                mount_error(
+                    index, "branch is required when path names a Git repository"
+                )
             check_branch = subprocess.run(
-                ["git", "check-ref-format", "--branch", branch], capture_output=True, check=False, text=True
+                ["git", "check-ref-format", "--branch", branch],
+                capture_output=True,
+                check=False,
+                text=True,
             )
             if check_branch.returncode != 0:
                 mount_error(index, f"branch {branch!r} is not a valid Git branch name")
         elif branch is not None:
-            mount_error(index, "branch is valid only when path names a Git repository root")
+            mount_error(
+                index, "branch is valid only when path names a Git repository root"
+            )
 
         access = entry.get("access", "rw" if is_git else "ro")
         if access not in {"ro", "rw"}:
@@ -207,7 +233,9 @@ def file_digest(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def profile_path(value: Any, field: str, config_root: Path, mounts: list[dict[str, Any]]) -> dict[str, str]:
+def profile_path(
+    value: Any, field: str, config_root: Path, mounts: list[dict[str, Any]]
+) -> dict[str, str]:
     if not isinstance(value, str) or not value:
         fail(f"{field} must be a non-empty string")
     source = Path(value)
@@ -228,7 +256,9 @@ def profile_path(value: Any, field: str, config_root: Path, mounts: list[dict[st
             continue
         return {
             "source": str(source),
-            "guest_path": str(PurePosixPath(mount["mount_point"]) / relative_source.as_posix()),
+            "guest_path": str(
+                PurePosixPath(mount["mount_point"]) / relative_source.as_posix()
+            ),
             "mount_point": mount["mount_point"],
             "mount_access": mount["access"],
             "digest": file_digest(source),
@@ -236,7 +266,9 @@ def profile_path(value: Any, field: str, config_root: Path, mounts: list[dict[st
     fail(f"{field} path {value!r} must be beneath a declared mount")
 
 
-def parse_profile(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -> dict[str, Any]:
+def parse_profile(
+    value: Any, config_root: Path, mounts: list[dict[str, Any]]
+) -> dict[str, Any]:
     if value is None:
         return {"modules": [], "digest": file_digest_data([])}
     if not isinstance(value, dict):
@@ -262,7 +294,9 @@ def file_digest_data(value: Any) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
-def parse_startup(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def parse_startup(
+    value: Any, config_root: Path, mounts: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if value is None:
         return []
     if not isinstance(value, list):
@@ -278,14 +312,20 @@ def parse_startup(value: Any, config_root: Path, mounts: list[dict[str, Any]]) -
             fail(f"{prefix} unknown key(s): {', '.join(sorted(unknown))}")
         name = entry.get("name")
         if not isinstance(name, str) or not STARTUP_NAME_RE.fullmatch(name):
-            fail(f"{prefix}.name must contain only letters, digits, '.', '_' or '-', and cannot begin with punctuation")
+            fail(
+                f"{prefix}.name must contain only letters, digits, '.', '_' or '-', and cannot begin with punctuation"
+            )
         if name in names:
             fail(f"{prefix}.name {name!r} duplicates another startup entry")
         names.add(name)
         args = entry.get("args", [])
-        if not isinstance(args, list) or not all(isinstance(argument, str) for argument in args):
+        if not isinstance(args, list) or not all(
+            isinstance(argument, str) for argument in args
+        ):
             fail(f"{prefix}.args must be an array of strings")
-        resolved = profile_path(entry.get("path"), f"{prefix}.path", config_root, mounts)
+        resolved = profile_path(
+            entry.get("path"), f"{prefix}.path", config_root, mounts
+        )
         entries.append({"name": name, "args": args, **resolved})
     return entries
 
@@ -345,7 +385,9 @@ def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     normalized.sort()
     for previous, current in zip(normalized, normalized[1:]):
         if current[0] <= previous[1]:
-            fail("callbacks.port_ranges must not contain duplicate or overlapping ranges")
+            fail(
+                "callbacks.port_ranges must not contain duplicate or overlapping ranges"
+            )
     return {"port_ranges": normalized}
 
 
@@ -359,7 +401,10 @@ def parse_config(project: Path) -> dict[str, Any]:
             "environment": {},
             "storage": {"nix_store": "instance"},
             "mounts": [],
-            "profile": {"modules": [], "digest": file_digest_data({"modules": [], "startup": []})},
+            "profile": {
+                "modules": [],
+                "digest": file_digest_data({"modules": [], "startup": []}),
+            },
             "startup": [],
             "config_path": None,
             "config_root": project,
@@ -371,7 +416,16 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"cannot read {config_path}: {error}")
     if not isinstance(config, dict):
         fail(".sandbox.toml must contain a table")
-    unknown = set(config) - {"version", "network", "callbacks", "environment", "storage", "mounts", "profile", "startup"}
+    unknown = set(config) - {
+        "version",
+        "network",
+        "callbacks",
+        "environment",
+        "storage",
+        "mounts",
+        "profile",
+        "startup",
+    }
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
     if config.get("version", 1) != 1:
@@ -379,7 +433,12 @@ def parse_config(project: Path) -> dict[str, Any]:
     network = config.get("network", {})
     if not isinstance(network, dict):
         fail("network must be a table")
-    unknown = set(network) - {"mode", "internal_domains", "internal_cidrs", "public_domains"}
+    unknown = set(network) - {
+        "mode",
+        "internal_domains",
+        "internal_cidrs",
+        "public_domains",
+    }
     if unknown:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
     callbacks = parse_callbacks(config.get("callbacks"))
@@ -396,7 +455,9 @@ def parse_config(project: Path) -> dict[str, Any]:
     mounts = parse_mounts(config.get("mounts"), config_path.parent)
     profile = parse_profile(config.get("profile"), config_path.parent, mounts)
     startup = parse_startup(config.get("startup"), config_path.parent, mounts)
-    profile["digest"] = file_digest_data({"modules": profile["modules"], "startup": startup})
+    profile["digest"] = file_digest_data(
+        {"modules": profile["modules"], "startup": startup}
+    )
     return {
         "version": 1,
         "network": network,
@@ -420,20 +481,30 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
     mode = override_mode or requested_mode
 
     internal_domains = unique(
-        [normalize_domain(value, "network.internal_domains") for value in string_array(network, "internal_domains")]
+        [
+            normalize_domain(value, "network.internal_domains")
+            for value in string_array(network, "internal_domains")
+        ]
     )
     public_domains = unique(
-        [normalize_domain(value, "network.public_domains") for value in string_array(network, "public_domains")]
+        [
+            normalize_domain(value, "network.public_domains")
+            for value in string_array(network, "public_domains")
+        ]
     )
     if public_domains and mode != "restricted":
-        fail("network.public_domains is valid only when the effective network mode is restricted")
+        fail(
+            "network.public_domains is valid only when the effective network mode is restricted"
+        )
 
     grants_v4: set[str] = set()
     grants_v6: set[str] = set()
     resolved_internal_domains: list[dict[str, Any]] = []
     for domain in internal_domains:
         addresses = resolve(domain)
-        public_addresses = [str(address) for address in addresses if not is_protected(address)]
+        public_addresses = [
+            str(address) for address in addresses if not is_protected(address)
+        ]
         if public_addresses:
             fail(
                 f"network.internal_domains entry {domain} resolved to public address(es): "
@@ -442,7 +513,9 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
             )
         for address in addresses:
             (grants_v4 if address.version == 4 else grants_v6).add(str(address))
-        resolved_internal_domains.append({"name": domain, "addresses": [str(address) for address in addresses]})
+        resolved_internal_domains.append(
+            {"name": domain, "addresses": [str(address) for address in addresses]}
+        )
 
     normalized_cidrs: list[str] = []
     for value in string_array(network, "internal_cidrs"):
@@ -452,18 +525,30 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
             cidr = ipaddress.ip_network(value, strict=True)
         except ValueError as error:
             fail(f"invalid network.internal_cidrs entry {value!r}: {error}")
-        if not any(cidr.subnet_of(protected) for protected in protected_networks(cidr.version)):
-            fail(f"network.internal_cidrs entry {cidr} is not wholly within a protected range")
+        if not any(
+            cidr.subnet_of(protected) for protected in protected_networks(cidr.version)
+        ):
+            fail(
+                f"network.internal_cidrs entry {cidr} is not wholly within a protected range"
+            )
         normalized_cidrs.append(str(cidr))
         (grants_v4 if cidr.version == 4 else grants_v6).add(str(cidr))
 
     strict_domains: list[dict[str, Any]] = []
     if mode == "restricted":
-        for domain in unique([*BASE_RESTRICTED_DOMAINS, *public_domains, *internal_domains]):
+        for domain in unique(
+            [*BASE_RESTRICTED_DOMAINS, *public_domains, *internal_domains]
+        ):
             addresses = resolve(domain)
-            if domain not in internal_domains and any(is_protected(address) for address in addresses):
-                fail(f"restricted public domain {domain} resolved to a protected address")
-            strict_domains.append({"name": domain, "addresses": [str(address) for address in addresses]})
+            if domain not in internal_domains and any(
+                is_protected(address) for address in addresses
+            ):
+                fail(
+                    f"restricted public domain {domain} resolved to a protected address"
+                )
+            strict_domains.append(
+                {"name": domain, "addresses": [str(address) for address in addresses]}
+            )
 
     strict_v4 = sorted(
         {
@@ -487,7 +572,9 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
     return {
         "version": 1,
         "mode": mode,
-        "mode_source": "command line" if override_mode else (".sandbox.toml" if "mode" in network else "default"),
+        "mode_source": "command line"
+        if override_mode
+        else (".sandbox.toml" if "mode" in network else "default"),
         "config_path": str(config["config_path"]) if config["config_path"] else None,
         "config_root": str(config["config_root"]),
         "mounts": config["mounts"],
@@ -500,8 +587,20 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "protected_v6": [str(network) for network in PROTECTED_V6],
         "internal_domains": resolved_internal_domains,
         "internal_cidrs": unique(normalized_cidrs),
-        "grants_v4": sorted(grants_v4, key=lambda address: (ipaddress.ip_network(address, strict=False).prefixlen, int(ipaddress.ip_network(address, strict=False).network_address))),
-        "grants_v6": sorted(grants_v6, key=lambda address: (ipaddress.ip_network(address, strict=False).prefixlen, int(ipaddress.ip_network(address, strict=False).network_address))),
+        "grants_v4": sorted(
+            grants_v4,
+            key=lambda address: (
+                ipaddress.ip_network(address, strict=False).prefixlen,
+                int(ipaddress.ip_network(address, strict=False).network_address),
+            ),
+        ),
+        "grants_v6": sorted(
+            grants_v6,
+            key=lambda address: (
+                ipaddress.ip_network(address, strict=False).prefixlen,
+                int(ipaddress.ip_network(address, strict=False).network_address),
+            ),
+        ),
         "strict_domains": strict_domains,
         "strict_v4": strict_v4,
         "strict_v6": strict_v6,

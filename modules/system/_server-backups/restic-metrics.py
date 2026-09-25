@@ -113,7 +113,20 @@ snap_file_count = 0
 # nodes. The snapshot summary's total_files_processed is
 # the truth check — they must match (modulo dirs/symlinks).
 proc = subprocess.Popen(
-    ["restic", "-r", REPO, "-p", PWF, "--retry-lock", RETRY_LOCK, "ls", "--long", "--recursive", "--json", snap_id],
+    [
+        "restic",
+        "-r",
+        REPO,
+        "-p",
+        PWF,
+        "--retry-lock",
+        RETRY_LOCK,
+        "ls",
+        "--long",
+        "--recursive",
+        "--json",
+        snap_id,
+    ],
     stdout=subprocess.PIPE,
     text=True,
 )
@@ -147,7 +160,9 @@ out_dir = os.path.dirname(OUT)
 fd, tmp = tempfile.mkstemp(dir=out_dir, prefix=".restic.prom.")
 try:
     with os.fdopen(fd, "w") as f:
-        f.write("# HELP restic_repo_size_bytes Deduplicated size of restic repo (raw-data).\n")
+        f.write(
+            "# HELP restic_repo_size_bytes Deduplicated size of restic repo (raw-data).\n"
+        )
         f.write("# TYPE restic_repo_size_bytes gauge\n")
         f.write(f"restic_repo_size_bytes {repo.get('total_size', 0)}\n")
 
@@ -155,23 +170,33 @@ try:
         f.write("# TYPE restic_repo_blob_count gauge\n")
         f.write(f"restic_repo_blob_count {repo.get('total_blob_count', 0)}\n")
 
-        f.write("# HELP restic_repo_snapshot_count Snapshot count in the restic repo.\n")
+        f.write(
+            "# HELP restic_repo_snapshot_count Snapshot count in the restic repo.\n"
+        )
         f.write("# TYPE restic_repo_snapshot_count gauge\n")
         f.write(f"restic_repo_snapshot_count {repo.get('snapshots_count', 0)}\n")
 
-        f.write("# HELP restic_snapshot_size_bytes Raw size of the latest snapshot (sum of file sizes from `restic ls`).\n")
+        f.write(
+            "# HELP restic_snapshot_size_bytes Raw size of the latest snapshot (sum of file sizes from `restic ls`).\n"
+        )
         f.write("# TYPE restic_snapshot_size_bytes gauge\n")
         f.write(f"restic_snapshot_size_bytes {snap_total_size}\n")
 
-        f.write("# HELP restic_snapshot_file_count File count in the latest snapshot.\n")
+        f.write(
+            "# HELP restic_snapshot_file_count File count in the latest snapshot.\n"
+        )
         f.write("# TYPE restic_snapshot_file_count gauge\n")
         f.write(f"restic_snapshot_file_count {snap_file_count}\n")
 
-        f.write("# HELP restic_snapshot_timestamp_seconds Unix timestamp of the latest snapshot for this host.\n")
+        f.write(
+            "# HELP restic_snapshot_timestamp_seconds Unix timestamp of the latest snapshot for this host.\n"
+        )
         f.write("# TYPE restic_snapshot_timestamp_seconds gauge\n")
         f.write(f"restic_snapshot_timestamp_seconds {snap_ts}\n")
 
-        f.write("# HELP restic_app_size_bytes Restic-tracked size per app/component in the latest snapshot.\n")
+        f.write(
+            "# HELP restic_app_size_bytes Restic-tracked size per app/component in the latest snapshot.\n"
+        )
         f.write("# TYPE restic_app_size_bytes gauge\n")
         for (app, component), size in sorted(sizes.items()):
             f.write(

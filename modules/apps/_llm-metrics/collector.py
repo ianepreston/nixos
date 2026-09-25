@@ -120,9 +120,21 @@ for server in sorted(ENDPOINTS):
         # A powered-off terra lands here every minute. It is
         # a value, not a fault: publish up=0 and move on.
         sys.stderr.write("%s: /v1/models failed: %s\n" % (server, exc))
-        emit("llama_server_up", "gauge", "Whether this llama-server router answered /v1/models.", labels(llama_server=server), 0)
+        emit(
+            "llama_server_up",
+            "gauge",
+            "Whether this llama-server router answered /v1/models.",
+            labels(llama_server=server),
+            0,
+        )
         continue
-    emit("llama_server_up", "gauge", "Whether this llama-server router answered /v1/models.", labels(llama_server=server), 1)
+    emit(
+        "llama_server_up",
+        "gauge",
+        "Whether this llama-server router answered /v1/models.",
+        labels(llama_server=server),
+        1,
+    )
 
     for model in models:
         name = model["id"]
@@ -177,7 +189,14 @@ for server in sorted(ENDPOINTS):
 
         for src, (dst, help_text) in COUNTERS.items():
             if src in parsed:
-                emit(dst, "counter", help_text + " Resets when the model is evicted; survives sleep/wake.", labels(**common), parsed[src])
+                emit(
+                    dst,
+                    "counter",
+                    help_text
+                    + " Resets when the model is evicted; survives sleep/wake.",
+                    labels(**common),
+                    parsed[src],
+                )
         for src, (dst, help_text) in GAUGES.items():
             if src in parsed:
                 emit(dst, "gauge", help_text, labels(**common), parsed[src])

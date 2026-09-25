@@ -22,9 +22,11 @@ tasks:
     cmds:
       - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
   check:
-    desc: Full pre-push check (nixfmt + statix + deadnix + flake eval)
+    desc: Full pre-push check (nix + Python + shell lint/format + flake eval)
     # `nix flake check` builds the `checks.<system>.pre-commit` derivation,
-    # which runs nixfmt/statix/deadnix via git-hooks.nix — the single
+    # which runs nixfmt/statix/deadnix, the Python (ruff + ruff-format +
+    # check-ast) and shell (shellcheck + shfmt) source checks, and the
+    # secret/YAML/whitespace hooks via git-hooks.nix — the single
     # source of truth for lint config (incl. the hardware-file excludes).
     # No separate fmt-check/lint tasks: those hand-rolled the same tooling
     # and drifted out of sync (see #239 follow-up — the statix/deadnix CLI

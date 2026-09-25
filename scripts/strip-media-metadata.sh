@@ -12,7 +12,7 @@ set -euo pipefail
 HOST="hpp-1"
 DRY_RUN=1
 ROOTS=(/mnt/content/Movies /mnt/content/TV)
-AS_USER=""  # auto-discovered (server-* user) at apply time unless set
+AS_USER="" # auto-discovered (server-* user) at apply time unless set
 
 # Allowlist of extensions we treat as deletable metadata. Matched
 # case-insensitively. Subtitle (.srt, .sub, .idx, .ass, .ssa, .vtt, .sup,
@@ -25,7 +25,7 @@ EXTS=(nfo jpg jpeg png webp gif bmp tbn xml)
 EXCLUDE_PATHS=('*/*.trickplay/*')
 
 usage() {
-	cat <<EOF
+  cat <<EOF
 Usage: $0 [--host HOST] [--apply] [--as-user USER]
 
 Discover .nfo + image metadata under /mnt/content/{Movies,TV} on HOST.
@@ -40,42 +40,42 @@ EOF
 }
 
 while [[ $# -gt 0 ]]; do
-	case $1 in
-		--host)
-			HOST="$2"
-			shift 2
-			;;
-		--apply)
-			DRY_RUN=0
-			shift
-			;;
-		--as-user)
-			AS_USER="$2"
-			shift 2
-			;;
-		-h | --help)
-			usage
-			exit 0
-			;;
-		*)
-			echo "Unknown argument: $1" >&2
-			usage >&2
-			exit 1
-			;;
-	esac
+  case $1 in
+    --host)
+      HOST="$2"
+      shift 2
+      ;;
+    --apply)
+      DRY_RUN=0
+      shift
+      ;;
+    --as-user)
+      AS_USER="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
 done
 
 # Build the find -iname '*.ext' -o ... clause.
 ext_clause=""
 for ext in "${EXTS[@]}"; do
-	ext_clause+=" -iname '*.${ext}' -o"
+  ext_clause+=" -iname '*.${ext}' -o"
 done
 ext_clause="${ext_clause% -o}"
 
 # Build the path-exclusion prune clause.
 prune_clause=""
 for p in "${EXCLUDE_PATHS[@]}"; do
-	prune_clause+=" ! -path '${p}'"
+  prune_clause+=" ! -path '${p}'"
 done
 
 remote_cmd="find ${ROOTS[*]} -type f${prune_clause} \\( ${ext_clause} \\) -print0"
@@ -92,12 +92,12 @@ echo
 mapfile -d '' -t FILES < <(ssh -n "$HOST" "$remote_cmd")
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
-	echo "No metadata files found."
-	exit 0
+  echo "No metadata files found."
+  exit 0
 fi
 
 for f in "${FILES[@]}"; do
-	printf '  %s\n' "$f"
+  printf '  %s\n' "$f"
 done
 
 echo
@@ -107,13 +107,13 @@ echo "Total: ${#FILES[@]} files"
 echo
 echo "By extension:"
 for f in "${FILES[@]}"; do
-	printf '%s\n' "${f##*.}"
+  printf '%s\n' "${f##*.}"
 done | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -rn | sed 's/^/  /'
 
 if [[ $DRY_RUN -eq 1 ]]; then
-	echo
-	echo "(dry-run; re-run with --apply to delete)"
-	exit 0
+  echo
+  echo "(dry-run; re-run with --apply to delete)"
+  exit 0
 fi
 
 # /mnt/content is an NFS share that enforces UID-based access; the files
@@ -121,23 +121,26 @@ fi
 # etc.). Login users don't have write access, so route rm through
 # sudo -u <server-user>.
 if [[ -z "$AS_USER" ]]; then
-	AS_USER=$(ssh -n "$HOST" "getent passwd | awk -F: '/^server-/ {print \$1; exit}'")
+  AS_USER=$(ssh -n "$HOST" "getent passwd | awk -F: '/^server-/ {print \$1; exit}'")
 fi
 if [[ -z "$AS_USER" ]]; then
-	echo "Could not discover a server-* user on $HOST." >&2
-	echo "Pass --as-user USER to override." >&2
-	exit 1
+  echo "Could not discover a server-* user on $HOST." >&2
+  echo "Pass --as-user USER to override." >&2
+  exit 1
 fi
 
 echo
 echo "Delete will run as: ${AS_USER} (via sudo on ${HOST})"
 read -rp "Delete all ${#FILES[@]} files on ${HOST}? Type 'yes' to confirm: " reply
 if [[ "$reply" != "yes" ]]; then
-	echo "Aborted."
-	exit 1
+  echo "Aborted."
+  exit 1
 fi
 
 # Stream the null-delimited list to xargs on the remote so weird filenames
 # (spaces, brackets, etc.) survive intact.
+# SC2029: $AS_USER is deliberately expanded client-side — it is a local
+# variable naming the remote account, not a value that exists on $HOST.
+# shellcheck disable=SC2029
 printf '%s\0' "${FILES[@]}" | ssh "$HOST" "sudo -n -u ${AS_USER} xargs -0 -r rm -v"
 echo "Done."

@@ -4,7 +4,19 @@
   imports = [ inputs.git-hooks.flakeModule ];
 
   perSystem =
-    { pkgs, ... }:
+    { pkgs, lib, ... }:
+    let
+      # Two tracked files that `identify` classifies as shell but neither
+      # shellcheck nor shfmt should touch:
+      #   - scripts/dconf.sh: a Nushell program (`#!/usr/bin/env nu`) despite
+      #     the .sh extension — neither tool can parse it.
+      #   - .envrc: direnv's control file, not a standalone script (no shebang,
+      #     so SC2148); its one `use flake` line is direnv stdlib.
+      shellExcludes = [
+        "^scripts/dconf\\.sh$"
+        "^\\.envrc$"
+      ];
+    in
     {
       # Use prek (a fast Rust reimplementation of pre-commit) as the hook
       # runner instead of upstream `pre-commit`. It's a drop-in replacement
@@ -38,6 +50,45 @@
           excludes = [ "^modules/(apps|system)/[^/]*-blueprints[^/]*/" ];
         };
         check-json.enable = true;
+
+        # Python source validation for the tracked standalone programs (metric
+        # collectors under modules/**/_*/, the coding-sandbox policy scripts,
+        # the one-off scripts/tandoor-cleanup tools). These are ordinary source
+        # files now, not Nix multiline strings, so Nix evaluation no longer sees
+        # their syntax or style — this gate does.
+        #
+        # All three run non-mutating: the CI `lint` job builds this derivation
+        # in a sandbox copy of the tree, so a hook that rewrote files would
+        # report "files were modified" instead of a clear diagnostic, and would
+        # be a footgun locally too. `ruff check` (default rules, no --fix),
+        # `ruff format --check`, and check-ast (a syntax-only AST parse that
+        # writes no __pycache__) leave the checkout untouched and need no
+        # network or app dependencies.
+        check-python.enable = true; # check-ast: syntax parse, no bytecode
+        ruff = {
+          enable = true;
+          entry = lib.mkForce "${pkgs.ruff}/bin/ruff check";
+        };
+        ruff-format = {
+          enable = true;
+          entry = lib.mkForce "${pkgs.ruff}/bin/ruff format --check";
+        };
+
+        # Standalone shell source validation. shfmt runs in diff mode (-d,
+        # non-mutating) with 2-space indentation and indented case bodies (-ci)
+        # to match the existing house style; shellcheck is read-only already.
+        # Shell generated inside Nix (writeShellApplication et al.) stays its
+        # builder's responsibility and is not seen here. `shellExcludes` (above)
+        # drops the two tracked files `identify` mis-types as shell.
+        shellcheck = {
+          enable = true;
+          excludes = shellExcludes;
+        };
+        shfmt = {
+          enable = true;
+          entry = lib.mkForce "${pkgs.shfmt}/bin/shfmt -d -i 2 -ci";
+          excludes = shellExcludes;
+        };
 
         # Whitespace hygiene
         trim-trailing-whitespace.enable = true;

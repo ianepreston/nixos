@@ -121,8 +121,8 @@ for name in "${CONFIGURED[@]}"; do log "      $name"; done
 
 # --- expected cache locations for the configured set -----------------------
 # name -> repo dir basename, and the set of tags kept per repo dir.
-declare -A keep_dir=()      # dir basename -> 1
-declare -A keep_tags=()     # dir basename -> " TAG1 TAG2 "
+declare -A keep_dir=()  # dir basename -> 1
+declare -A keep_tags=() # dir basename -> " TAG1 TAG2 "
 
 for name in "${CONFIGURED[@]}"; do
   repo=${name%:*}

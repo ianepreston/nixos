@@ -110,7 +110,8 @@ def api(endpoint, path, token, params=None):
         return None
     if payload.get("errorCode") != 0:
         sys.stderr.write(
-            "%s: errorCode %s: %s\n" % (endpoint, payload.get("errorCode"), payload.get("msg"))
+            "%s: errorCode %s: %s\n"
+            % (endpoint, payload.get("errorCode"), payload.get("msg"))
         )
         errors[endpoint] = 1
         return None
@@ -152,7 +153,10 @@ def parse_uptime(text):
     if clock:
         days, hours, minutes, seconds = clock.groups()
         return (
-            int(days or 0) * 86400 + int(hours) * 3600 + int(minutes) * 60 + int(seconds)
+            int(days or 0) * 86400
+            + int(hours) * 3600
+            + int(minutes) * 60
+            + int(seconds)
         )
     matches = TOKEN_RE.findall(text)
     if not matches:
@@ -242,7 +246,9 @@ def scrape_site(token, root, site):
     # the switches this site happens to hold today.
     per_device_clients = {}
     for client in clients:
-        uplink = client.get("switchMac") or client.get("apMac") or client.get("gatewayMac")
+        uplink = (
+            client.get("switchMac") or client.get("apMac") or client.get("gatewayMac")
+        )
         if uplink:
             per_device_clients[uplink] = per_device_clients.get(uplink, 0) + 1
 
@@ -301,7 +307,11 @@ def scrape_site(token, root, site):
 
         for field, metric, help_text in (
             ("cpuUtil", "omada_device_cpu_percent", "Device CPU utilisation, percent."),
-            ("memUtil", "omada_device_mem_percent", "Device memory utilisation, percent."),
+            (
+                "memUtil",
+                "omada_device_mem_percent",
+                "Device memory utilisation, percent.",
+            ),
         ):
             if device.get(field) is not None:
                 emit(metric, "gauge", help_text, labels(**common), device[field])
@@ -370,7 +380,8 @@ def scrape_firmware(token, site_root, device, common):
     mac = device["mac"]
     fw = api(
         "latest-firmware-info",
-        "%s/devices/%s/latest-firmware-info" % (site_root, urllib.parse.quote(mac, safe="")),
+        "%s/devices/%s/latest-firmware-info"
+        % (site_root, urllib.parse.quote(mac, safe="")),
         token,
     )
     current = device.get("firmwareVersion") or ""
