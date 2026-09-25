@@ -44,7 +44,11 @@ _: {
       # Textfile collector — writable by root oneshots, scraped by
       # node_exporter's textfile collector. Used by server-backups.nix
       # to publish per-snapshot restic stats once per nightly backup.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # This stack owns the directory's creation (tmpfiles below) and the
+      # node_exporter flag; the path itself is the shared contract in
+      # modules/system/observability-options.nix, which every producer
+      # reads too.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
       vmPort = 8428;
       # The retired controller only displaced this default on amos1. Keep the

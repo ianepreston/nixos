@@ -52,9 +52,9 @@ _: {
       # in intent — partial downloads aren't worth keeping across reboots
       # except for in-flight resume. See #276.
       incompleteDir = "/var/lib/sabnzbd-incomplete";
-      # Textfile collector — set in modules/system/victoriametrics.nix.
-      # Kept in sync by hand; both modules live on the same hosts.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # modules/system/observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
       appriseConfigDir = "/var/lib/containers/apprise/config";
       appriseConfigFile = "${appriseConfigDir}/sabnzbd.yml";
       # Apprise URL pointing the local apprise lib at our apprise-api

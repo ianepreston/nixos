@@ -6,6 +6,7 @@
 _: {
   flake.modules.nixos.mylar3 =
     {
+      config,
       hostSpec,
       pkgs,
       ...
@@ -22,10 +23,9 @@ _: {
       # so a root `sqlite3 -readonly` reads it cleanly alongside the
       # running container.
       dbPath = "/var/lib/containers/mylar3/mylar/mylar.db";
-      # Textfile collector — set in modules/system/victoriametrics.nix.
-      # Kept in sync by hand; both modules live on the same hosts. Same
-      # arrangement as sabnzbd.nix's incomplete-dir metrics.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # modules/system/observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
     in
     {
       myObservability.monitoredSystemdUnits = [ "podman-mylar3" ];

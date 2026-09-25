@@ -1,6 +1,20 @@
 { lib, ... }:
 {
   options.myObservability = {
+    nodeExporterTextfileDirectory = lib.mkOption {
+      type = lib.types.str;
+      default = "/var/lib/node-exporter-textfile-collector";
+      readOnly = true;
+      description = ''
+        The single node_exporter textfile-collector drop directory. Every
+        producer that publishes `*.prom` files reads this, and
+        victoriametrics.nix (which owns the directory's creation and the
+        node_exporter `--collector.textfile.directory` flag) reads it too,
+        so a move needs to change one value rather than nine hand-synced
+        literals. Read-only: this is a shared contract, not a per-host knob.
+      '';
+    };
+
     monitoredSystemdUnits = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
