@@ -31,9 +31,9 @@
 let
   cfg = config.rollbackRoot;
 
-  # node_exporter textfile collector drop dir (same path the rest of the
-  # observability stack uses, e.g. modules/system/victoriametrics.nix).
-  textfileDir = "/var/lib/node-exporter-textfile-collector";
+  # Shared node_exporter textfile-collector drop dir; see
+  # ../system/observability-options.nix.
+  textfileDir = config.myObservability.nodeExporterTextfileDirectory;
   # Marker the initrd writes (under @persist) when the prune fails.
   marker = "/persist/var/lib/rollback-root/prune-failed";
   # systemd-escape the partlabel for the .device unit name: every "-"

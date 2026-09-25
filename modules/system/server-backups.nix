@@ -47,10 +47,9 @@
       # Healthchecks.io accepts a bare GET as a successful ping.
       heartbeatCmd = "${pkgs.curl}/bin/curl -fsS -m 10 --retry 5 -o /dev/null $HEALTHCHECK_URL";
 
-      # Textfile collector directory — defined in victoriametrics.nix's
-      # node_exporter config. Kept in sync by hand; both modules live
-      # in the same observability profile so they're loaded together.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # ./observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
       # Per-app aggregation for the latest snapshot. Streams `restic ls
       # --json` once, classifies each file by top-level path prefix, and

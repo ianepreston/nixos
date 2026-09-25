@@ -23,9 +23,9 @@ _: {
     let
       inherit (hostSpec) serverUid serverGid;
 
-      # node_exporter textfile collector drop dir (same path the rest of
-      # the observability stack uses, see modules/system/victoriametrics.nix).
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # ./observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
       # How much upstream release history to keep for images this
       # generation no longer references. Two weeks spans the weekly

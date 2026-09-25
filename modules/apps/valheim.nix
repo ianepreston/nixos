@@ -495,10 +495,9 @@ _: {
       # enough.
       gamePort = if cfg.crossplay then 2456 else 2466;
 
-      # node_exporter textfile collector drop dir — defined in
-      # modules/system/victoriametrics.nix's node exporter config. Kept in
-      # sync by hand, same as server-backups.nix and _rollback-root.nix.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # modules/system/observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
       # The single interface between valheim-player-notify and
       # valheim-metrics (#631). Deliberately a pair of files in /run rather

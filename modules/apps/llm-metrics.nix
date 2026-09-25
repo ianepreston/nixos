@@ -88,10 +88,9 @@
         let
           cfg = config.myLlmMetrics;
 
-          # Set in modules/system/victoriametrics.nix; kept in sync by
-          # hand, as in mylar3.nix and valheim.nix. Both modules land on
-          # the same hosts.
-          textfileDir = "/var/lib/node-exporter-textfile-collector";
+          # Shared node_exporter textfile-collector drop dir; see
+          # modules/system/observability-options.nix.
+          textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
           endpointsFile = pkgs.writeText "llama-endpoints.json" (
             builtins.toJSON (lib.mapAttrs (_: e: "http://${e.host}:${toString e.port}") cfg.endpoints)

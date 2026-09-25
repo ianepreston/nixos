@@ -98,9 +98,9 @@ _: {
       ...
     }:
     let
-      # Set in ../system/victoriametrics.nix; kept in sync by hand, as
-      # in llm-metrics.nix, mylar3.nix and valheim.nix.
-      textfileDir = "/var/lib/node-exporter-textfile-collector";
+      # Shared node_exporter textfile-collector drop dir; see
+      # ../system/observability-options.nix.
+      textfileDir = config.myObservability.nodeExporterTextfileDirectory;
 
       hasController = config.myServiceEndpoints ? omada;
       # The empty fallback keeps the assertion below responsible for the
