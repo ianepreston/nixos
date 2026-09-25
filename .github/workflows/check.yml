@@ -200,8 +200,9 @@ jobs:
     name: pre-commit hooks
     # Builds checks.x86_64-linux.pre-commit — the check the
     # git-hooks.flakeModule exposes (nixfmt, statix, deadnix,
-    # ripsecrets, check-yaml/json, whitespace; see
-    # modules/flake/git-hooks.nix). Building the check derivation runs
+    # ripsecrets, check-yaml/json, whitespace, the Python source checks
+    # ruff/ruff-format/check-ast, and the shell checks shellcheck/shfmt;
+    # see modules/flake/git-hooks.nix). Building the check derivation runs
     # every hook against the tree and fails on any lint/format
     # violation, so this is the CI gate that keeps regressions off main
     # (closes #349). The bespoke drvPath loop in flake-check never ran
