@@ -125,7 +125,91 @@ nix-secrets from `flake.lock`. Default-true is what you want for almost all
 local iteration; flip to false only when explicitly testing against published
 secrets.
 
+## Architecture and authored-source boundaries
+
+The rules below are the design principles behind the #687–#700 audit, made
+explicit so a later change does not recreate the coupling that audit removed.
+They decide where behaviour, metadata, contracts, and executable source belong
+when you add or change a cross-cutting feature. The concrete surfaces they name
+(`myCaddy.apps`, `myPostgresApp`, `myAppState`, `myRecovery.apps`,
+`myObservability.*`, `myServiceEndpoints`, `myRuntimeCredentials`,
+`myHomepage.tiles`) are documented in the sections that follow — this is the
+decision framework, not a second copy of their APIs.
+
+They sharpen the "each app module is self-contained" line below into general
+rules. They do **not** ban the deliberate co-locations this file already
+documents — the multi-context NixOS/HM aspects in `ssh.nix` / `sops.nix`, the
+`myAuthentik.*` surface hosted beside the IDP. Those stay; a *new* exception
+needs a stated reason, not silence.
+
+1. **App-owned behaviour and metadata live with the app.** An app module owns
+   its service, its state declaration, its app-specific observability
+   contribution, its recovery metadata, and its app-specific network
+   attachment. Profiles compose apps; generic infrastructure owns mechanisms,
+   not app-name exceptions. The Bambuddy Virtual Printer wiring belongs in its
+   own module, not in a host schema (#689).
+2. **Platforms aggregate additive, typed contributions.** When several apps
+   feed one platform — alerts and monitored units into observability
+   (`myObservability.metricRuleGroups` / `logRuleGroups` /
+   `monitoredSystemdUnits`, #687), routes into caddy, tiles into homepage — the
+   platform declares a narrow typed option beside the code that renders it and
+   each app fills it in. Never add a central app-specific list or regex as the
+   integration point.
+3. **One authoritative declaration.** State, backup, preservation, recovery,
+   and like operational metadata are declared once beside the service and
+   rendered or generated for every downstream consumer. `myAppState` renders the
+   preservation entry, the restic path, and the `expectedPreservedDirs` guard
+   from one declaration (#688); `myRecovery.apps` generates the dispatcher
+   manifest (#691). Do not keep a parallel Taskfile or profile inventory the Nix
+   owner could publish.
+4. **Cross-module consumers use a published contract, not a private read.** A
+   producer publishes only the endpoint, unit, path, or port claim a consumer
+   needs — `myServiceEndpoints` for a URL + readiness unit (#690),
+   `myObservability.nodeExporterTextfileDirectory` for the single textfile drop
+   directory that replaced nine hand-synced literals (#692). No consumer reads
+   another module's `services.*` / container attrset, and no shared literal is
+   copied between producer and consumer; the neutral contract owner does the
+   duplicate/conflict checking.
+5. **Keep executable source inspectable.** Nix owns derivation dependencies,
+   environment, and unit wiring; a nontrivial, independently understandable
+   Python or shell program does not live in a Nix multiline string. Extract it
+   to a colocated tracked source file read with `builtins.readFile` — the
+   `modules/<tier>/_<app>/<script>.py` pattern (#697) — and split a large module
+   by concern into a private `_<app>/` directory behind a stable public contract
+   file, as `valheim.nix` was (#696). Procedural incident history goes in a
+   nearby `README.md` / runbook, not atop the configuration module. Judge by the
+   boundary and independent responsibility, not an arbitrary line count.
+6. **Keep an option surface navigable.** Public option declarations and the
+   implementation blocks that consume them run in the same order, unless a local
+   comment explains a stronger dependency ordering (#698).
+7. **Retire an integration completely.** Removing an app removes its profile
+   import, its routes and identity, its state / recovery / monitoring metadata,
+   its static users, its docs and examples, and its now-unused secrets once
+   consumers are gone (#700). A half-removed app is worse than none.
+8. **Separate organization from behaviour.** A boundary or extraction refactor
+   preserves rendered configuration and is proved by a generated-config or
+   closure comparison; a behaviour change is separate work unless the two are
+   inseparable for correctness. #696 and #697 moved thousands of lines with no
+   rendered-config change on purpose.
+
+Before introducing or changing a cross-cutting feature, be able to name:
+
+- the **owner** — the single module the behaviour and metadata live in;
+- the **public contract** — the typed option or published endpoint others use,
+  never a raw read of the owner's internals;
+- the **single source of truth** — the one declaration everything downstream is
+  generated or rendered from;
+- every **generated downstream consumer** — the profile guards, manifests,
+  alerts, and routes that must fall out of that declaration rather than be
+  hand-synced; and
+- the **rendered configuration** that proves an organization-only change moved
+  no behaviour.
+
 ## Module layout
+
+Where a new module, option surface, or contract *belongs* is governed by
+*Architecture and authored-source boundaries* above; this section is the
+concrete directory map that follows from those rules.
 
 - `modules/system/*.nix` — NixOS modules, registered as
   `flake.modules.nixos.<name>` and consumed via
@@ -192,6 +276,12 @@ Containers are the fallback, not the baseline — they add a podman runtime laye
 separate volume bookkeeping under `/var/lib/containers/<app>`, and inter-app DNS
 that doesn't exist between native services. Reach for a container only when one
 of the exceptions below applies.
+
+Whichever path you take, *Architecture and authored-source boundaries* above
+still governs the module's shape: the app owns its behaviour and metadata,
+contributes to platforms through their typed surfaces, consumes other services
+through published contracts, and keeps any nontrivial program in a colocated
+source file.
 
 When evaluating a candidate, check the version in both the stable channel the
 flake tracks (the `nixpkgs` input in `flake.nix`) and `nixos-unstable`. Derive
