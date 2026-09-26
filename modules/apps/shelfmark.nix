@@ -114,7 +114,7 @@
 
       virtualisation.oci-containers.containers.shelfmark = {
         # renovate: datasource=docker depName=ghcr.io/calibrain/shelfmark
-        image = "ghcr.io/calibrain/shelfmark:v1.3.15";
+        image = "ghcr.io/calibrain/shelfmark:v1.4.0";
         volumes = [
           "/var/lib/containers/shelfmark/config:/config"
           "/mnt/content/books_intake:/books"
