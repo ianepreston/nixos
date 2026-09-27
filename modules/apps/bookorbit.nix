@@ -153,6 +153,8 @@ _: {
         volumes = [
           "/var/lib/containers/bookorbit/data:/data"
           "/mnt/content/books:/books"
+          "/mnt/content/audiobooks:/audiobooks"
+          "/mnt/content/Comics:/comics"
           "/mnt/content/books_intake:/data/book-dock"
         ];
         environment = {
