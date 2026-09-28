@@ -61,7 +61,7 @@ _: {
 
       virtualisation.oci-containers.containers.seerr = {
         # renovate: datasource=docker depName=ghcr.io/seerr-team/seerr
-        image = "ghcr.io/seerr-team/seerr:v3.4.1";
+        image = "ghcr.io/seerr-team/seerr:v3.5.0";
         volumes = [
           "/var/lib/containers/seerr:/app/config"
         ];
