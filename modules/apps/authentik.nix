@@ -1025,9 +1025,57 @@
                 # returns 200, but the worker may still be loading the
                 # blueprint, and /api/v3 may briefly 503 while Django
                 # initialises. Don't `set -e` over curl — retry instead.
+                #
+                # `-m 3` is what makes that retry loop real (#762). curl
+                # bounds only the connect phase by default
+                # (CURLOPT_CONNECTTIMEOUT 300s); CURLOPT_TIMEOUT is 0,
+                # "never times out during transfer", so authentik accepting
+                # the connection and then never answering — a wedged worker
+                # pool, a request stuck behind a database lock — is waited
+                # on forever. `|| true` cannot absorb that; nothing
+                # returns. Nor can the unit: `Type=oneshot` gets
+                # TimeoutStartUSec=infinity regardless of the manager's
+                # DefaultTimeoutStartUSec, and Restart=no. And this runs in
+                # the activation path (`wantedBy`/`before`
+                # authentik-ldap.service), so what waits is
+                # switch-to-configuration — i.e. a deploy, unbounded. Note
+                # the asymmetry it removes: authentik-ldap.service, which
+                # this gates, already has a 90s start timeout.
+                #
+                # 3s matches the authentik-ready probe above against the
+                # same localhost API. Measured: ~42ms per request on hpp-1,
+                # and every recorded run of this unit on either host has
+                # finished inside 2s with both calls and jq included. That
+                # size keeps the worst case a ~6min stuck deploy
+                # (60 × (3 + 2) here, plus 10 × (3 + 2) below) rather than
+                # an unbounded one; `-m 10` would make it ~14min for no
+                # measured benefit.
+                #
+                # What the bound trades away, stated plainly: an API that
+                # is alive but consistently slower than 3s now exhausts the
+                # loop and fails the unit, where the unbounded call would
+                # have waited and won. That is the intended direction, and
+                # it is not a new failure path — both loops already
+                # `exit 1` on exhaustion. Where it surfaces is worth
+                # knowing: authentik-ldap.service only `Wants` this unit,
+                # so the outpost starts regardless and reads
+                # /run/authentik-ldap-token/env, which
+                # RuntimeDirectoryPreserve keeps from the last good run. A
+                # re-deploy therefore carries a stale token forward, while
+                # a first install fails the outpost outright (authentik-nix
+                # sets EnvironmentFile with no `-` prefix). Raising the
+                # attempt counts would not help — a consistently slow
+                # endpoint times out on every attempt however many there
+                # are; only a larger `-m` would, and 42ms says it is not
+                # needed.
+                #
+                # Bare, not `--retry`: `--retry` re-runs the whole request
+                # after each timeout, so `-m` would bound one attempt and
+                # not the call. There is already an explicit outer loop
+                # here, so the two would multiply.
                 outpost=""
                 for _ in $(seq 1 60); do
-                  resp="$(curl -sS \
+                  resp="$(curl -sS -m 3 \
                     -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
                     "$HOST/api/v3/outposts/instances/?name__iexact=ldap" \
                     2>/dev/null || true)"
@@ -1038,13 +1086,16 @@
                   sleep 2
                 done
                 if [ -z "$outpost" ] || [ "$outpost" = "null" ]; then
-                  echo "LDAP outpost not found after 120s" >&2
+                  echo "LDAP outpost not found after 60 attempts" >&2
                   exit 1
                 fi
 
                 key=""
+                # Same bound for the same reason as the poll above (#762):
+                # same localhost API, same activation path, and a loop
+                # bounded in attempts rather than in time.
                 for _ in $(seq 1 10); do
-                  resp="$(curl -sS \
+                  resp="$(curl -sS -m 3 \
                     -H "Authorization: Bearer $BOOTSTRAP_TOKEN" \
                     "$HOST/api/v3/core/tokens/$outpost/view_key/" \
                     2>/dev/null || true)"
