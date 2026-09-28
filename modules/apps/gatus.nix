@@ -1,8 +1,8 @@
 #  Gatus - blackbox endpoint monitoring + public status page.
-# Native services.gatus from nixpkgs 25.11 (5.31.0; unstable is 5.35.0,
-# small lag, stable fine). Complements the prometheus white-box stack
-# in modules/system/observability.nix — see issue #128 for the failure
-# classes each catches.
+# Native services.gatus from the nixpkgs this flake tracks (5.36.0;
+# unstable is 5.37.0, small lag, stable fine). Complements the
+# prometheus white-box stack in modules/system/observability.nix — see
+# issue #128 for the failure classes each catches.
 #
 # Two-hostname split, both pointing at the same listener:
 #   * gatus.<domain>  — admin/config view, gated by authentik
@@ -28,7 +28,10 @@
 #       redirect form is accepted rather than just 302. Anything else
 #       (4xx, 5xx, timeout, bad cert) trips.
 #   * [RESPONSE_TIME] < 2000ms (issue spec).
-#   * [CERTIFICATE_EXPIRATION] > 336h (14d).
+#
+# Certificate lifetime is deliberately NOT asserted here. An HTTP
+# probe cannot measure it honestly — see `certEndpoints` below and
+# issue #758.
 #
 # The endpoint list is sourced from `config.myCaddy.apps` so it stays
 # in sync as apps are added/removed without duplicating the registry.
@@ -80,10 +83,19 @@ _: {
       # login flow. Following it cost five extra requests per probe to
       # learn nothing, and at ~20 gated apps × 1440 probes/day that was
       # 94% of authentik's log bytes and >50% of the entire host
-      # journal (closes #587). The asserted status is the first
-      # response, and TLS state comes from the first hop, so both
-      # [STATUS] and [CERTIFICATE_EXPIRATION] still describe what they
-      # did before.
+      # journal (closes #587). The asserted [STATUS] is the first
+      # response's, which is what we want.
+      #
+      # It is also what exposed #758. Gatus reads a response body only
+      # when some condition references [BODY]; ours never do, so an
+      # empty-bodied 302 is trivially fully-consumed and Go returns its
+      # connection to the idle pool — where gatus's transport, which
+      # leaves IdleConnTimeout at zero (= no limit), keeps it forever.
+      # Every subsequent probe then reports the certificate from that
+      # one original handshake. Cert assertions moved to
+      # `certEndpoints`; ignore-redirect stays, because it is worth
+      # >50% of the host journal and the split makes the pooling
+      # harmless.
       mkAppEndpoint = name: app: {
         inherit name;
         group = "apps";
@@ -92,7 +104,6 @@ _: {
         conditions = [
           "[STATUS] == any(200, 301, 302, 307, 308)"
           "[RESPONSE_TIME] < 2000"
-          "[CERTIFICATE_EXPIRATION] > 336h"
         ];
         client = {
           timeout = "10s";
@@ -111,7 +122,6 @@ _: {
           interval = "5m";
           conditions = [
             "[STATUS] == 200"
-            "[CERTIFICATE_EXPIRATION] > 336h"
           ];
           client.timeout = "10s";
         }
@@ -122,6 +132,87 @@ _: {
           interval = "5m";
           conditions = [
             "[CONNECTED] == true"
+          ];
+          client.timeout = "10s";
+        }
+        {
+          # healthchecks.io's certificate, on its own tls:// probe for
+          # the same reason as ours (see certEndpoints). No
+          # [CERTIFICATE_EXPIRATION] assertion: we cannot renew a
+          # third party's cert, so turning a short lifetime into a
+          # failing probe would page us about something we can only
+          # wait out. The 21d CertificateExpiringSoon warning in
+          # ../system/victoriametrics.nix is the whole signal here. An
+          # actually-expired cert still trips [CONNECTED], because
+          # verification happens in the handshake.
+          name = "healthchecks-io-cert";
+          group = "external";
+          url = "tls://healthchecks.io:443";
+          interval = "5m";
+          conditions = [
+            "[CONNECTED] == true"
+          ];
+          client.timeout = "10s";
+        }
+      ];
+
+      # Certificate lifetime, measured on a connection that is
+      # guaranteed to be fresh.
+      #
+      # The HTTP probes above cannot do this (#758). Gatus reads the
+      # cert off `response.TLS`, which on a reused keep-alive
+      # connection is the *original* handshake's state, and its
+      # transport pools connections for the process lifetime. On amos1
+      # that left 20 of 35 app endpoints counting down 1s/s toward a
+      # notAfter that had been retired 28 hours earlier — invisible to
+      # `_success`, and enough to drag `min by (group)` under the alert
+      # threshold. There is no client-side knob for it: gatus exposes
+      # no keep-alive or idle-timeout setting, so the endpoint *type*
+      # has to change.
+      #
+      # `tls://` goes through client.CanPerformTLS, which dials with
+      # `tls.DialWithDialer` and closes the connection on return — a
+      # fresh handshake every probe, no pool, so a *successful* probe
+      # cannot report a superseded certificate.
+      #
+      # Precisely that and no more. Gatus sets the gauge only when
+      # `result.CertificateExpiration != 0`, and the TLS branch returns
+      # early on a dial error, so a *failing* probe leaves the last
+      # good value in place rather than going absent — the gauge still
+      # freezes if the handshake breaks (bad chain, DNS, caddy down).
+      # What this fixes is the keep-alive pinning; GatusEndpointDown is
+      # what covers a broken probe.
+      #
+      # One endpoint per *certificate*, not per app: caddy serves a
+      # single `*.${serverDomain}` wildcard for every app host (see
+      # ../system/caddy.nix), so one subdomain covers all of them.
+      # `status.` is the one to probe because it is the public,
+      # unauthenticated route — nothing can gate it out from under the
+      # probe. Do not use the bare serverDomain: it has an A record
+      # but the wildcard does not cover the apex, so caddy answers the
+      # handshake with a TLS internal error.
+      #
+      # This one keeps the 336h assertion that came off the app
+      # probes. At 14d remaining on a cert we renew ourselves, caddy's
+      # ACME has been failing for over two weeks and a hard probe
+      # failure is warranted — and it is now one endpoint failing
+      # rather than a cascade across every app.
+      #
+      # Named for the domain rather than "wildcard" so the alert
+      # identifies itself. CertificateExpiringSoon reaches discord as
+      # summary + description only (see ../system/alertmanager.nix) and
+      # neither carries a host label, so `name` is the one field that
+      # can say which host's certificate this is. Gatus sanitizes dots
+      # out of the derived key, so the dotted form is safe.
+      certEndpoints = [
+        {
+          name = hostSpec.serverDomain;
+          group = "certs";
+          url = "tls://${statusHost}:443";
+          interval = "60s";
+          conditions = [
+            "[CONNECTED] == true"
+            "[CERTIFICATE_EXPIRATION] > 336h"
           ];
           client.timeout = "10s";
         }
@@ -156,7 +247,7 @@ _: {
           header = "Homelab status";
         };
 
-        endpoints = appEndpoints ++ externalEndpoints;
+        endpoints = appEndpoints ++ externalEndpoints ++ certEndpoints;
       };
     in
     {
