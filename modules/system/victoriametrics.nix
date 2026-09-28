@@ -938,38 +938,98 @@ _: {
               {
                 # Certificate expiry (audit checklist §5). gatus is
                 # the only cert-expiry source on the host: it probes
-                # each app's external URL and exports the remaining
+                # each certificate over TLS and exports the remaining
                 # lifetime it saw on the wire, which measures what
                 # clients actually get rather than what is on disk.
                 #
-                # Aggregated with `min by (group)` rather than
-                # alerted per endpoint. Caddy serves one wildcard
-                # cert for every app host, so a per-endpoint rule
-                # would fire ~37 identical alerts for one
-                # certificate; the `group` label (apps /
-                # infrastructure / external) is the coarsest split
-                # that still separates our own certs from an
-                # external dependency's. Gatus itself shows the
-                # per-endpoint view.
+                # Scoped to `type="TLS"` — the label gatus puts on a
+                # `tls://` endpoint — and that is load-bearing, not
+                # cosmetic. Gatus publishes this same gauge for every
+                # HTTPS response as well, and on an HTTP probe the
+                # value comes from whenever the pooled keep-alive
+                # connection was established, so it can track a
+                # certificate that was retired weeks ago (#758).
+                # Those series are dropped at scrape time (see the
+                # gatus job below); the selector is what keeps this
+                # rule correct on its own reading if that ever
+                # changes.
+                #
+                # Alerted per endpoint rather than the old
+                # `min by (group)`. That aggregation existed because
+                # the cert condition sat on all ~37 app probes, so a
+                # per-endpoint rule would have fired ~37 identical
+                # alerts for one wildcard. With one `tls://` endpoint
+                # per certificate there is one series per cert, and
+                # `name` is a finer split than `group` was — it names
+                # the certificate rather than the coarse
+                # ours-vs-theirs bucket.
                 #
                 # 21d threshold, sitting in a deliberate gap: Caddy
                 # renews a 90d Let's Encrypt cert at ~30d
-                # remaining, and gatus's own
+                # remaining, and the `certs` endpoint's own
                 # `[CERTIFICATE_EXPIRATION] > 336h` condition (see
-                # ../apps/gatus.nix) trips at 14d and turns this
-                # into a GatusEndpointDown cascade across every
-                # app. So 21d means renewal has been failing for
-                # about nine days and there is still a week of lead
-                # time — which is the warning the checklist asks
-                # for, rather than a notification that it is
-                # already too late.
+                # ../apps/gatus.nix) trips at 14d. So 21d means
+                # renewal has been failing for about nine days and
+                # there is still a week of lead time — which is the
+                # warning the checklist asks for, rather than a
+                # notification that it is already too late.
                 alert = "CertificateExpiringSoon";
-                expr = "min by (group) (gatus_results_certificate_expiration_seconds) < 21 * 24 * 3600";
+                expr = ''gatus_results_certificate_expiration_seconds{type="TLS"} < 21 * 24 * 3600'';
                 for = "1h";
                 labels.severity = "warning";
                 annotations = {
-                  summary = "TLS certificate expiring in {{ $value | humanizeDuration }} ({{ $labels.group }})";
-                  description = "The shortest-lived certificate gatus sees in the {{ $labels.group }} group expires in {{ $value | humanizeDuration }}, below the 21d warning threshold. Caddy should have auto-renewed at ~30d remaining, so check `journalctl -u caddy | grep -i certificate` for ACME failures. At 14d gatus starts failing every affected endpoint outright.";
+                  summary = "TLS certificate for {{ $labels.name }} expiring in {{ $value | humanizeDuration }}";
+                  description = "The certificate gatus sees on {{ $labels.name }} ({{ $labels.group }}) expires in {{ $value | humanizeDuration }}, below the 21d warning threshold. For group=certs this is our own wildcard: Caddy should have auto-renewed at ~30d remaining, so check `journalctl -u caddy | grep -i certificate` for ACME failures, and note it additionally fails its own gatus probe at 14d. For group=external the certificate belongs to a third party and there is nothing here to renew — confirm on the wire with `openssl s_client -connect <host>:443` and wait it out.";
+                };
+              }
+              {
+                # The companion to CertificateExpiringSoon above, and it
+                # exists because that rule's coverage is now a *single*
+                # series. Cert expiry used to be measured on all ~37 app
+                # probes, so losing one still left 36 watching the same
+                # wildcard; the `tls://` split traded that accidental
+                # redundancy for correctness, and this restores the
+                # loudness it also traded away.
+                #
+                # Three ways the signal can vanish silently, none of
+                # which fails anything at build or scrape time:
+                #   * the endpoint's URL loses its `tls://` prefix, so
+                #     the series comes back as `type="HTTP"` and the
+                #     scrape-time drop (see the gatus job below) eats
+                #     it;
+                #   * the `certs` group or the endpoint is renamed away;
+                #   * a gatus version bump changes the `type` label's
+                #     value.
+                # In every case `< 21 * 24 * 3600` evaluates over an
+                # empty vector and never fires — the failure direction
+                # is silence, which is the one an expiry warning cannot
+                # afford. Same shape as PfsenseLogsAbsent above: a
+                # signal whose absence means the monitoring broke, not
+                # that the thing is healthy.
+                #
+                # The matcher is `{group="certs",type="TLS"}` — the
+                # threshold rule's own selector, narrowed to our certs —
+                # rather than `group` alone, so that all three cases
+                # trip it. On `group` alone the third would not: the
+                # series would still exist under the new `type` value,
+                # `absent()` would stay quiet, and the threshold rule
+                # would go blind anyway. The guard has to require the
+                # exact series the rule it guards depends on.
+                #
+                # `and on() sum(up{job="gatus"}) == 1` so a gatus that
+                # is simply down reports as InstanceDown /
+                # SystemdUnitFailed rather than also as this. 15m rides
+                # out the restart a deploy causes without firing;
+                # scraping is 60s and the probe interval is 60s, so a
+                # healthy host re-publishes the series within two
+                # minutes of coming back.
+                alert = "CertificateMetricAbsent";
+                expr = ''absent(gatus_results_certificate_expiration_seconds{group="certs",type="TLS"}) and on() sum(up{job="gatus"}) == 1'';
+                for = "15m";
+                labels.severity = "warning";
+                annotations = {
+                  summary = "gatus publishes no certificate-expiry metric for our own certs";
+                  description = "gatus is up but no `gatus_results_certificate_expiration_seconds{group=\"certs\",type=\"TLS\"}` series has existed for 15m, so CertificateExpiringSoon is evaluating an empty vector and cannot warn about our own wildcard expiring. This is a monitoring failure, not a certificate problem. Check that the `certs` endpoint in ../apps/gatus.nix still has a `tls://` URL — an `https://` one is published as `type=\"HTTP\"` and dropped at scrape time — and that gatus still labels TLS endpoints `type=\"TLS\"`. `curl -s localhost:8084/metrics | grep certificate_expiration` on the host shows what gatus is actually publishing.";
                 };
               }
             ];
@@ -1221,6 +1281,33 @@ _: {
               {
                 job_name = "gatus";
                 static_configs = [ { targets = [ "127.0.0.1:${toString gatusPort}" ]; } ];
+                # Drop the cert-expiry gauge gatus publishes off its
+                # HTTP probes. Gatus sets it for any HTTPS response,
+                # independently of the endpoint's conditions, and on a
+                # reused keep-alive connection it reports the
+                # certificate from the original handshake — a value
+                # that can be weeks out of date and counts down 1s/s
+                # regardless (#758). The `certs` group's `tls://`
+                # endpoints are the honest source; these series exist
+                # only to be misread, so they do not reach storage.
+                # Nothing else from the job is touched — in
+                # particular `gatus_results_endpoint_success`, which
+                # GatusEndpointDown reads, is unaffected.
+                #
+                # Deny-list the one lying producer by name rather than
+                # keeping type="TLS": a `keep` here would apply to
+                # every metric in the job, and only the HTTP and
+                # STARTTLS/TLS code paths set a certificate at all.
+                metric_relabel_configs = [
+                  {
+                    source_labels = [
+                      "__name__"
+                      "type"
+                    ];
+                    regex = "gatus_results_certificate_expiration_seconds;HTTP";
+                    action = "drop";
+                  }
+                ];
               }
               {
                 # Vector's internal telemetry. Scraped mainly so the
