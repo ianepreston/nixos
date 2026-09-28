@@ -164,8 +164,20 @@ in
           # url via `-K -` (stdin) so the webhook secret never lands
           # in the process cmdline. A failed POST must not kill the
           # watcher — log it and keep following the journal.
+          #
+          # `--max-time` covers what a non-zero exit does not: a peer
+          # that completes the handshake and then stops answering,
+          # which curl waits on forever by default (CURLOPT_TIMEOUT
+          # 0, "never times out during transfer"). This runs inside
+          # the follow loop, so a hang freezes the roster — and the
+          # roster is what `valheim_players_online` and the join-code
+          # watchdog's "is anyone connected?" guard both read. A
+          # frozen non-empty roster blocks recovery; a frozen empty
+          # one permits a container restart with players on. Bare,
+          # not `--retry` — see the note on `notify` in
+          # joincode.nix. (#705)
           if printf 'url = "%s"\n' "$webhook" \
-            | "$curl" -fsS -K - \
+            | "$curl" -fsS --max-time 15 -K - \
                 -X POST -H 'Content-Type: application/json' -d "$payload"; then
             echo "posted: $1"
           else

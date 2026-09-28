@@ -153,8 +153,43 @@ in
           # url via `-K -` (stdin) so the webhook secret never lands
           # in the process cmdline. A failed POST must not kill the
           # watcher — log it and keep following the journal.
+          #
+          # `--max-time` is what extends that to a *hung* POST
+          # (#705). curl bounds only the connect phase by default
+          # (CURLOPT_CONNECTTIMEOUT 300s); CURLOPT_TIMEOUT is 0,
+          # "never times out during transfer", so a peer that
+          # completes the handshake and then stops answering is
+          # waited on forever. This call runs inside the
+          # single-threaded `dispatch` read-loop, so that stalls all
+          # journal routing: `pending` stops being written and stops
+          # being cleared. Either announcements go silent with no
+          # alert (#683 by another route), or a code stays pending
+          # while the watchdog restarts the container every 15
+          # minutes (#701) — and #704's is-active guard does not
+          # catch it, because a unit blocked in `recv` still reports
+          # active.
+          #
+          # Bare `--max-time`, not server-backups.nix's
+          # `-m 10 --retry 5`: `--retry` re-runs the whole request
+          # after each timeout, so `-m` bounds one attempt rather
+          # than the call. Fine for a backup oneshot, wrong for a
+          # follow loop where every later event pays the latency.
+          #
+          # Accepted cost of going bare: a timed-out POST is not
+          # retried inline, and `handle_active` has already cleared
+          # `pending`, so the watchdog cannot cover it either. The
+          # announcement is delayed, not lost — the marker is only
+          # written on success, so the next `is active` line posts
+          # it. That line recurs on ordinary lobby re-registration,
+          # not just on a restart: 27 of them in 30 days on amos1,
+          # two of them days apart on an unrestarted container. A
+          # `--retry 2 --retry-max-time 45` variant would close the
+          # gap at 48s of blocked loop (measured) instead of 15s;
+          # rejected because the window needs a stall that both
+          # exceeds 15s and then ends, and no POST has failed at
+          # all in 30 days.
           if printf 'url = "%s"\n' "$webhook" \
-            | ${pkgs.curl}/bin/curl -fsS -K - \
+            | ${pkgs.curl}/bin/curl -fsS --max-time 15 -K - \
                 -X POST -H 'Content-Type: application/json' -d "$payload"; then
             echo "announced join code $code"
             echo "$code" > "$marker"
@@ -574,11 +609,10 @@ in
           # `alerted` unset so the next tick retries, which is the
           # right direction to fail for an outage alert.
           #
-          # `--max-time` is not decoration, and this is the one
-          # place in the file that needs it: the announce runs
-          # *before* the retry below, so a webhook that blackholes
-          # rather than refuses would hang this unit with the retry
-          # still unreached.
+          # `--max-time` is not decoration here: the announce
+          # runs *before* the retry below, so a webhook that
+          # blackholes rather than refuses would hang this unit with
+          # the retry still unreached.
           #
           # Nothing would end that hang. `Type=oneshot` defaults to
           # `TimeoutStartUSec=infinity` — not the manager's 1min30s
@@ -601,9 +635,10 @@ in
           # fast failure was always fine: curl exits non-zero, the
           # `else` branch logs it, and the retry below still runs.
           #
-          # The notifier's two identical POSTs are unfixed (#705);
-          # they sit in a follow loop, not a oneshot, so the hang
-          # stalls journal routing instead.
+          # The notifier's two POSTs carry the same bound for a
+          # different reason (#705): they sit in a follow loop, not
+          # a oneshot, so a hang there stalls journal routing rather
+          # than disabling a timer-driven run.
           if printf 'url = "%s"\n' "$webhook" \
             | ${pkgs.curl}/bin/curl -fsS --max-time 15 -K - \
                 -X POST -H 'Content-Type: application/json' -d "$payload"; then
