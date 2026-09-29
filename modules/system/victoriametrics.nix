@@ -938,9 +938,22 @@ _: {
               {
                 # Certificate expiry (audit checklist §5). gatus is
                 # the only cert-expiry source on the host: it probes
-                # each certificate over TLS and exports the remaining
+                # our certificate over TLS and exports the remaining
                 # lifetime it saw on the wire, which measures what
                 # clients actually get rather than what is on disk.
+                #
+                # Scoped to `group="certs"` — certificates we renew —
+                # the same selector CertificateMetricAbsent guards
+                # below, so the absent check covers exactly the series
+                # this rule depends on. A third party's certificate
+                # is not ours to act on: healthchecks.io's once sat
+                # under 21d for ~17 days and re-posted to Discord
+                # every 4h with nothing to do but wait (#770). With
+                # public CA lifetimes heading for 47d, a threshold on
+                # someone else's renewal habits would fire every
+                # cycle. An actually-invalid third-party cert still
+                # fails that dependency's own probe in the TLS
+                # handshake, which GatusEndpointDown reports.
                 #
                 # Scoped to `type="TLS"` — the label gatus puts on a
                 # `tls://` endpoint — and that is load-bearing, not
@@ -974,12 +987,12 @@ _: {
                 # warning the checklist asks for, rather than a
                 # notification that it is already too late.
                 alert = "CertificateExpiringSoon";
-                expr = ''gatus_results_certificate_expiration_seconds{type="TLS"} < 21 * 24 * 3600'';
+                expr = ''gatus_results_certificate_expiration_seconds{group="certs",type="TLS"} < 21 * 24 * 3600'';
                 for = "1h";
                 labels.severity = "warning";
                 annotations = {
                   summary = "TLS certificate for {{ $labels.name }} expiring in {{ $value | humanizeDuration }}";
-                  description = "The certificate gatus sees on {{ $labels.name }} ({{ $labels.group }}) expires in {{ $value | humanizeDuration }}, below the 21d warning threshold. For group=certs this is our own wildcard: Caddy should have auto-renewed at ~30d remaining, so check `journalctl -u caddy | grep -i certificate` for ACME failures, and note it additionally fails its own gatus probe at 14d. For group=external the certificate belongs to a third party and there is nothing here to renew — confirm on the wire with `openssl s_client -connect <host>:443` and wait it out.";
+                  description = "The certificate gatus sees on {{ $labels.name }} expires in {{ $value | humanizeDuration }}, below the 21d warning threshold. This is our own wildcard: Caddy should have auto-renewed at ~30d remaining, so check `journalctl -u caddy | grep -i certificate` for ACME failures, and note it additionally fails its own gatus probe at 14d.";
                 };
               }
               {
@@ -1007,9 +1020,9 @@ _: {
                 # signal whose absence means the monitoring broke, not
                 # that the thing is healthy.
                 #
-                # The matcher is `{group="certs",type="TLS"}` — the
-                # threshold rule's own selector, narrowed to our certs —
-                # rather than `group` alone, so that all three cases
+                # The matcher is `{group="certs",type="TLS"}` — exactly
+                # the threshold rule's own selector — rather than
+                # `group` alone, so that all three cases
                 # trip it. On `group` alone the third would not: the
                 # series would still exist under the new `type` value,
                 # `absent()` would stay quiet, and the threshold rule

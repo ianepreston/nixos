@@ -135,25 +135,6 @@ _: {
           ];
           client.timeout = "10s";
         }
-        {
-          # healthchecks.io's certificate, on its own tls:// probe for
-          # the same reason as ours (see certEndpoints). No
-          # [CERTIFICATE_EXPIRATION] assertion: we cannot renew a
-          # third party's cert, so turning a short lifetime into a
-          # failing probe would page us about something we can only
-          # wait out. The 21d CertificateExpiringSoon warning in
-          # ../system/victoriametrics.nix is the whole signal here. An
-          # actually-expired cert still trips [CONNECTED], because
-          # verification happens in the handshake.
-          name = "healthchecks-io-cert";
-          group = "external";
-          url = "tls://healthchecks.io:443";
-          interval = "5m";
-          conditions = [
-            "[CONNECTED] == true"
-          ];
-          client.timeout = "10s";
-        }
       ];
 
       # Certificate lifetime, measured on a connection that is
