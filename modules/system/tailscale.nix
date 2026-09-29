@@ -1,7 +1,7 @@
 { inputs, ... }:
 {
   flake.modules.nixos.tailscale =
-    { config, ... }:
+    { config, lib, ... }:
     let
       sopsFolder = "${inputs.nix-secrets}/sops";
     in
@@ -12,7 +12,8 @@
         authKeyFile = config.sops.secrets."tailscale/authkey".path;
         # Pre-authorize is set on the key itself in admin console;
         # device approval gate (tailnet-level) catches it anyway.
-        extraUpFlags = [
+        # mkDefault so tailscale-client can replace the list outright.
+        extraUpFlags = lib.mkDefault [
           "--accept-dns=false" # don't override host /etc/resolv.conf
           "--accept-routes=false"
         ];

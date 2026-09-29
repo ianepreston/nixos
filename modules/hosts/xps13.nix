@@ -24,7 +24,7 @@
       keyd
       printing
       smbclient
-      tailscale
+      tailscale-client
       xreal-headset
       zsa-keeb
     ])
