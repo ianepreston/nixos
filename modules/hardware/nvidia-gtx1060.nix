@@ -16,7 +16,12 @@
 # replacing.
 _: {
   flake.modules.nixos.nvidia-gtx1060 =
-    { config, lib, ... }:
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
     {
       boot = {
         kernelParams = [
@@ -29,6 +34,21 @@ _: {
       };
 
       powerManagement.enable = true;
+
+      # Offload leaves every client on the iGPU unless it opts in, so Steam
+      # opts in wholesale: every game, native or Proton, lands on the 1060
+      # without per-game `nvidia-offload %command%` launch options. Scoped to
+      # Steam rather than the session so browsers/Electron stay on Intel.
+      # luna has no usable battery, so an always-on dGPU for games costs
+      # nothing. Inert on hosts that don't enable programs.steam.
+      programs.steam.package = pkgs.steam.override {
+        extraEnv = {
+          __NV_PRIME_RENDER_OFFLOAD = "1";
+          __NV_PRIME_RENDER_OFFLOAD_PROVIDER = "NVIDIA-G0";
+          __GLX_VENDOR_LIBRARY_NAME = "nvidia";
+          __VK_LAYER_NV_optimus = "NVIDIA_only";
+        };
+      };
       services.xserver.videoDrivers = [ "nvidia" ];
       hardware.graphics.enable = true;
       hardware.nvidia = {
