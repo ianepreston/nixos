@@ -168,14 +168,14 @@
         inherit (cfg.evaluation) residentBudgetMiB;
         targets = lib.mapAttrs (
           alias: target:
+          let
+            model = modelForAlias alias;
+          in
           target
           // {
             incumbent = modelNameForAlias alias;
-            contextTokens = (modelForAlias alias).ctxSize;
-            cacheTypeK = (modelForAlias alias).cacheTypeK;
-            cacheTypeV = (modelForAlias alias).cacheTypeV;
-            nGpuLayers = (modelForAlias alias).nGpuLayers;
-            nCpuMoeLayers = (modelForAlias alias).nCpuMoeLayers;
+            contextTokens = model.ctxSize;
+            inherit (model) cacheTypeK cacheTypeV nGpuLayers nCpuMoeLayers;
           }
         ) cfg.evaluation.targets;
       };
