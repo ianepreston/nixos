@@ -245,6 +245,24 @@
             };
           };
 
+          # Evaluation-facing contract for `task llm:radar`. The module
+          # publishes this with the active context/KV/offload settings, so
+          # radar code need not read the router's private model preset.
+          evaluation = {
+            residentBudgetMiB = 15360;
+            targets = {
+              text.role = "generalist";
+              code.role = "coding";
+              vision = {
+                role = "vision";
+                modalities = [
+                  "text"
+                  "image"
+                ];
+              };
+            };
+          };
+
           # Bound on the LAN so the servers can reach it, but only they
           # get through the firewall; every other client goes via one of
           # their HTTPS routes. Addresses come from the hostSpecs rather

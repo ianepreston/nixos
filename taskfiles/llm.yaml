@@ -22,6 +22,27 @@ shopt: [globstar]
 vars:
   CACHE_DIR: /var/lib/llama-cpp/models
 tasks:
+  radar:
+    desc: 'Collect LLM leaderboard leads and draft deduplicated candidate issues. Vars: CANDIDATES=/path/to/evidenced-candidates.json'
+    silent: true
+    vars:
+      CANDIDATES: '{{.CANDIDATES | default ""}}'
+    cmds:
+      - |
+        set -euo pipefail
+        radar_dir="${XDG_CACHE_HOME:-$HOME/.cache}/nixos-llm-radar"
+        mkdir -p "$radar_dir"
+        python3 scripts/llm-radar.py collect >"$radar_dir/leads.json"
+        nix eval --json .#nixosConfigurations.terra.config.myLlamaCpp.evalTargets >"$radar_dir/terra.json"
+        nix eval --json .#nixosConfigurations.amos1.config.myLlamaCpp.evalTargets >"$radar_dir/amos1.json"
+        candidates="{{.CANDIDATES}}"
+        [ -n "$candidates" ] || candidates="$radar_dir/leads.json"
+        python3 scripts/llm-radar.py radar \
+          --target "$radar_dir/terra.json" \
+          --target "$radar_dir/amos1.json" \
+          --candidates "$candidates" >"$radar_dir/drafts.json"
+        echo "Dry-run report written to $radar_dir/drafts.json; no issue was created."
+
   models:
     desc: 'List cached GGUFs on HOST against the configured set. Vars: HOST (default terra)'
     # The remote body is a heredoc; echoing it back drowns the listing.

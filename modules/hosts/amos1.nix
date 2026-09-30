@@ -176,6 +176,22 @@
               };
             };
 
+            # The 8 GB card's useful candidate envelope is its measured
+            # Jellyfin-NVENC-safe budget, not the nominal card capacity.
+            evaluation = {
+              residentBudgetMiB = 6200;
+              targets = {
+                text.role = "generalist";
+                vision = {
+                  role = "vision";
+                  modalities = [
+                    "text"
+                    "image"
+                  ];
+                };
+              };
+            };
+
             # Off the 8080 default: the daemon was moved here when another
             # service on this host held 8080, and #714 deliberately left it
             # rather than churn a working endpoint for a cosmetic default.
