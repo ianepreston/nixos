@@ -175,7 +175,12 @@
           // {
             incumbent = modelNameForAlias alias;
             contextTokens = model.ctxSize;
-            inherit (model) cacheTypeK cacheTypeV nGpuLayers nCpuMoeLayers;
+            inherit (model)
+              cacheTypeK
+              cacheTypeV
+              nGpuLayers
+              nCpuMoeLayers
+              ;
           }
         ) cfg.evaluation.targets;
       };
