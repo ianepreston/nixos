@@ -22,7 +22,7 @@ TARGET = {
 
 
 class RadarTest(unittest.TestCase):
-    def test_collection_reports_a_source_that_changes_out_from_under_the_adapter(self):
+    def test_collection_reports_a_source_without_a_supported_scored_adapter(self):
         with (
             patch.object(radar, "SOURCES", {"test": "https://example.invalid"}),
             patch.object(
@@ -30,12 +30,35 @@ class RadarTest(unittest.TestCase):
             ),
         ):
             leads = radar.collect()
-        self.assertEqual("no-machine-readable-leads", leads[0]["status"])
+        self.assertEqual("no-shortlist", leads[0]["status"])
+
+    def test_shortlist_keeps_top_open_weight_family_per_source_and_role(self):
+        leads = [
+            {
+                "source": "aider-polyglot",
+                "family": "Qwen3 32B (diff)",
+                "canonicalFamily": "qwen3 32b",
+                "publishedScores": {"Aider Polyglot": 60.0},
+            },
+            {
+                "source": "aider-polyglot",
+                "family": "Qwen3 32B (chat)",
+                "canonicalFamily": "qwen3 32b",
+                "publishedScores": {"Aider Polyglot": 55.0},
+            },
+        ]
+        selected = radar.shortlist(leads)
+        self.assertEqual(1, len(selected))
+        self.assertEqual("Qwen3 32B (diff)", selected[0]["family"])
+
+    def test_composite_leaderboard_rows_are_not_self_hosting_candidates(self):
+        self.assertFalse(radar.likely_open_weight("DeepSeek R1 + Claude Sonnet"))
 
     def test_evidence_uses_the_declared_complete_shard_set(self):
         candidate = {
             "family": "Example",
             "revision": "v1",
+            "roles": ["coding"],
             "primaryRepo": "org/example",
             "artifactRepo": "org/example-GGUF",
             "artifactFiles": [
