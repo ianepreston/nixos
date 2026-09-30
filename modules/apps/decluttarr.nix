@@ -140,7 +140,7 @@ _: {
       # buys nothing — it keeps its own TZ instead.
       virtualisation.oci-containers.containers.decluttarr = {
         # renovate: datasource=docker depName=ghcr.io/manimatter/decluttarr
-        image = "ghcr.io/manimatter/decluttarr:v2.1.0";
+        image = "ghcr.io/manimatter/decluttarr:v2.2.0";
         volumes = [
           "${configFile}:/app/config/config.yaml:ro"
           # NOTE: /mnt/content is intentionally NOT bind-mounted, even
