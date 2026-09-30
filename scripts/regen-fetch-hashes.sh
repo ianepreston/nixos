@@ -57,6 +57,19 @@
 # property this script is trying to buy everywhere else.
 set -euo pipefail
 
+# Every external tool below, checked up front. The parsers are consumed
+# through process substitution and `|| true`, where a missing binary reads
+# exactly like a file with nothing to regenerate — which is how CI ran this
+# for two weeks without awk, reporting success every time (#773).
+missing=()
+for tool in awk sed grep git mktemp nix nix-prefetch-url; do
+  command -v "$tool" >/dev/null || missing+=("$tool")
+done
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "regen-fetch-hashes: not on PATH: ${missing[*]}" >&2
+  exit 127
+fi
+
 fake_hash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 hash_re='sha256-[A-Za-z0-9+/=]\+'
 
@@ -152,7 +165,12 @@ parse_github_blocks() {
 }
 
 regen_github_src() {
-  local file=$1 lineno owner repo ref old caveats url base32 new
+  local file=$1 blocks lineno owner repo ref old caveats url base32 new
+
+  # Captured rather than read from `< <(...)`: set -e never sees a process
+  # substitution's exit status, so a failed parse would look like no blocks.
+  blocks=$(parse_github_blocks "$file")
+  [[ -n $blocks ]] || return 0
 
   while IFS=$'\t' read -r lineno owner repo ref old caveats; do
     if [[ -n $caveats ]]; then
@@ -171,7 +189,7 @@ regen_github_src() {
     [[ $new == "$old" ]] && continue
     report "$file" "$lineno" "$owner/$repo@$ref" "$old" "$new"
     $check_only || set_hash "$file" "$lineno" "$new"
-  done < <(parse_github_blocks "$file")
+  done <<<"$blocks"
 }
 
 # --- mechanism 2: `# regen-hash: <flake attr>` ------------------------------
