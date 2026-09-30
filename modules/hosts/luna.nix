@@ -43,6 +43,18 @@
             browser
             obsidian
             ssh-homelan
+            # Effectively a plugged-in workstation (the battery barely
+            # holds a charge), so never suspend on idle — long-running
+            # sessions die otherwise. Suspend stays manual (menu,
+            # `systemctl suspend`, lid close).
+            {
+              dconf.settings."org/gnome/settings-daemon/plugins/power" = {
+                sleep-inactive-ac-type = "nothing";
+                sleep-inactive-ac-timeout = 0;
+                sleep-inactive-battery-type = "nothing";
+                sleep-inactive-battery-timeout = 0;
+              };
+            }
           ];
 
           boot = {
