@@ -129,9 +129,14 @@ _: {
         # - openssh: webfactory/ssh-agent invokes `ssh-agent` to load
         #   NIX_SECRETS_DEPLOY_KEY for fetching the private flake input.
         # - jq: the flake-check job pipes `nix eval --json` through it.
+        # - gawk: renovate-hashes.yml's scripts/regen-fetch-hashes.sh
+        #   parses fetchFromGitHub blocks with awk. Without it every run
+        #   no-op'd while reporting success, and #678 merged a stale hash
+        #   (#773).
         extraPackages = [
           pkgs.openssh
           pkgs.jq
+          pkgs.gawk
         ];
         # Upstream ties the restart policy to `ephemeral`:
         #
