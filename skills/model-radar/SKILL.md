@@ -21,6 +21,12 @@ until it has all of:
 - the source URL and published score that make it worth considering; and
 - `config.json` content sufficient for the radar's KV calculation.
 
+The collector admits only likely open-weight, standalone families above each
+source's role-specific score floor, deduplicates family/template variants, and
+keeps the top five per source and role. A source whose page no longer exposes a
+supported scored table is reported as `no-shortlist`, never silently treated as
+an empty leaderboard.
+
 Place the reviewed records in a local, disposable JSON file. Its top level is
 an array; each record uses this shape:
 
@@ -28,6 +34,7 @@ an array; each record uses this shape:
 {
   "family": "Example-7B-Instruct",
   "revision": "v1.2",
+  "roles": ["coding"],
   "modalities": ["text"],
   "sourceUrl": "https://example.invalid/leaderboard",
   "publishedScores": {"LiveBench": 42.0},
@@ -42,7 +49,9 @@ fetches the primary `config.json` and exact declared GGUF/shard sizes itself,
 then does the reproducible policy work: standard KV sizing, explicit 1-GiB
 compute-buffer reserve, manual-review classification for sliding-window/MoE
 architectures, target/runtime fingerprints, and GitHub deduplication across
-open and closed `llm-candidate` issues. It writes drafts only.
+open and closed `llm-candidate` issues. The role list restricts a coding lead
+to the `code` alias rather than drafting an irrelevant generalist comparison.
+It writes drafts only.
 
 Read every draft. In particular, `manual-review` means the configuration is
 not enough to claim it fits; it is a retained candidate, not an approval.

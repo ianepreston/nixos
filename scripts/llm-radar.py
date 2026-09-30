@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import html.parser
 import json
+import re
 import subprocess
 import urllib.request
 from pathlib import Path
@@ -24,6 +25,31 @@ SOURCES = {
     "ocrbench-v2": "https://ocrbench.github.io/",
     "olmocr-bench": "https://olmocr.ai/",
 }
+SOURCE_POLICIES = {
+    "livebench": {"role": "generalist", "limit": 5, "scoreFloor": 50.0},
+    "aider-polyglot": {"role": "coding", "limit": 5, "scoreFloor": 50.0},
+    "swe-bench-verified": {"role": "coding", "limit": 5, "scoreFloor": 10.0},
+    "bfcl": {"role": "generalist", "limit": 5, "scoreFloor": 50.0},
+    "ocrbench-v2": {"role": "vision", "limit": 5, "scoreFloor": 50.0},
+    "olmocr-bench": {"role": "vision", "limit": 5, "scoreFloor": 50.0},
+}
+OPEN_WEIGHT_TOKENS = (
+    "aya",
+    "deepseek",
+    "falcon",
+    "gemma",
+    "glm",
+    "gpt-oss",
+    "kimi",
+    "llama",
+    "mistral",
+    "mixtral",
+    "nemotron",
+    "olmo",
+    "phi",
+    "qwen",
+    "yi",
+)
 CACHE_BYTES = {
     "f32": 4,
     "f16": 2,
@@ -80,14 +106,79 @@ def fetch_json(url: str) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
-def collect() -> list[dict[str, Any]]:
-    """Return leaderboard rows as leads; interpretation remains human work."""
+def canonical_family(name: str) -> str:
+    """Collapse provider/template variants without guessing an HF repository."""
+    name = re.sub(r"\([^)]*\)", "", name.lower())
+    name = re.sub(r"\b(chat|reasoner|diff|no think|thinking|api)\b", "", name)
+    return " ".join(re.findall(r"[a-z0-9]+", name))
+
+
+def likely_open_weight(name: str) -> bool:
+    lowered = name.lower()
+    return "+" not in name and any(token in lowered for token in OPEN_WEIGHT_TOKENS)
+
+
+def percent(value: str) -> float | None:
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)%\s*", value)
+    return float(match.group(1)) if match else None
+
+
+def aider_leads(rows: list[list[str]], source: str, url: str) -> list[dict[str, Any]]:
+    """Aider's model and score are its second and third table columns."""
     leads = []
+    for row in rows:
+        if len(row) < 3 or row[1] == "Model":
+            continue
+        score = percent(row[2])
+        if score is None or not likely_open_weight(row[1]):
+            continue
+        leads.append(
+            {
+                "source": source,
+                "sourceUrl": url,
+                "family": row[1],
+                "canonicalFamily": canonical_family(row[1]),
+                "role": SOURCE_POLICIES[source]["role"],
+                "publishedScores": {"Aider Polyglot": score},
+                "evidence": row,
+            }
+        )
+    return leads
+
+
+def shortlist(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep a small, source-ranked open-weight shortlist per alias role."""
+    by_source: dict[str, dict[str, dict[str, Any]]] = {}
+    for lead in leads:
+        policy = SOURCE_POLICIES[lead["source"]]
+        score = next(iter(lead["publishedScores"].values()))
+        if score < policy["scoreFloor"]:
+            continue
+        family = lead["canonicalFamily"]
+        current = by_source.setdefault(lead["source"], {}).get(family)
+        if current is None or score > next(iter(current["publishedScores"].values())):
+            by_source[lead["source"]][family] = lead
+    selected = []
+    for source, families in by_source.items():
+        ranked = sorted(
+            families.values(),
+            key=lambda lead: next(iter(lead["publishedScores"].values())),
+            reverse=True,
+        )[: SOURCE_POLICIES[source]["limit"]]
+        for rank, lead in enumerate(ranked, start=1):
+            selected.append(lead | {"status": "shortlisted", "sourceRank": rank})
+    return selected
+
+
+def collect() -> list[dict[str, Any]]:
+    """Collect adapter-specific leads, then return only the review shortlist."""
+    report = []
+    raw_leads = []
     for name, url in SOURCES.items():
         try:
             page = fetch(url)
         except Exception as exc:  # source breakage is an expected non-fatal outcome
-            leads.append(
+            report.append(
                 {
                     "source": name,
                     "url": url,
@@ -98,31 +189,20 @@ def collect() -> list[dict[str, Any]]:
             continue
         parser = TableText()
         parser.feed(page if isinstance(page, str) else json.dumps(page))
-        count = 0
-        for row in parser.rows[:100]:
-            if row:
-                count += 1
-                leads.append(
-                    {
-                        "source": name,
-                        "url": url,
-                        "status": "lead",
-                        "family": row[0],
-                        "sourceUrl": url,
-                        "model": row[0],
-                        "evidence": row,
-                    }
-                )
-        if count == 0:
-            leads.append(
+        adapter_leads = (
+            aider_leads(parser.rows, name, url) if name == "aider-polyglot" else []
+        )
+        raw_leads.extend(adapter_leads)
+        if not adapter_leads:
+            report.append(
                 {
                     "source": name,
                     "url": url,
-                    "status": "no-machine-readable-leads",
-                    "detail": "source fetched but exposed no HTML table rows",
+                    "status": "no-shortlist",
+                    "detail": "no supported scored rows from this source adapter",
                 }
             )
-    return leads
+    return report + shortlist(raw_leads)
 
 
 def bytes_per_token(
@@ -264,10 +344,13 @@ def materialize_evidence(candidate: dict[str, Any]) -> dict[str, Any]:
         "publishedScores",
         "family",
         "revision",
+        "roles",
     }
     if not required <= candidate.keys():
         missing = ", ".join(sorted(required - candidate.keys()))
         raise ValueError(f"missing candidate evidence declaration: {missing}")
+    if not set(candidate["roles"]) <= {"generalist", "coding", "vision"}:
+        raise ValueError("roles may contain only generalist, coding, or vision")
     config_url = (
         f"https://huggingface.co/{candidate['primaryRepo']}/raw/main/config.json"
     )
@@ -307,9 +390,22 @@ def radar(
 ) -> dict[str, Any]:
     candidates = json.loads(candidates_path.read_text())
     issues = [] if offline else github_issues(repo)
-    output: dict[str, Any] = {"pending": [], "drafts": [], "rejected": []}
+    output: dict[str, Any] = {
+        "pending": [],
+        "drafts": [],
+        "rejected": [],
+        "excluded": [],
+    }
     evidenced_candidates = []
     for candidate in candidates:
+        if candidate.get("status") and candidate["status"] != "shortlisted":
+            output["excluded"].append(
+                {
+                    "source": candidate.get("source", "unknown"),
+                    "reason": candidate["status"],
+                }
+            )
+            continue
         try:
             evidenced_candidates.append(materialize_evidence(candidate))
         except (ValueError, OSError) as exc:
@@ -321,6 +417,8 @@ def radar(
         contract = json.loads(target_path.read_text())
         for candidate in evidenced_candidates:
             for alias, target in contract["targets"].items():
+                if target["role"] not in candidate["roles"]:
+                    continue
                 if not set(target["modalities"]).issubset(
                     set(candidate.get("modalities", ["text"]))
                 ):
