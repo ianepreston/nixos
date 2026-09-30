@@ -100,11 +100,12 @@
       # whichever host claimed it most recently answered every code,
       # including the other's (2026-09-11, #644). A Steam-backend server
       # registers a PlayFab lobby too — it just never gets a join code, so
-      # the collision came back silently on 2026-09-21 — but it is the
-      # only one that moves off the default game port, which is what keeps
-      # the two endpoints distinct. See "Crossplay exclusivity" in
-      # ../apps/valheim.nix. valheim is in `commonApps` above, gated on
-      # `myValheim.enable`, with crossplay itself the per-host toggle.
+      # the collision came back silently on 2026-09-21. The constraint is
+      # therefore one game port per host, whatever the backend, and each
+      # host declares its own `myValheim.gamePort` (#771). See "Endpoint
+      # exclusivity" in ../apps/valheim.nix. valheim is in `commonApps`
+      # above, gated on `myValheim.enable`, with the backend and port
+      # per-host settings.
       prodOnlyApps = with inputs.self.modules.nixos; [
         omada
         omada-metrics

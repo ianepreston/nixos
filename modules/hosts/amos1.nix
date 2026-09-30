@@ -188,15 +188,16 @@
             sleepIdleSeconds = 300;
           };
 
-          # The only crossplay Valheim server: a PlayFab join code resolves
-          # to a network endpoint, so a second crossplay host behind this
-          # NAT would answer amos1's codes (2026-09-11, #644). hpp-1 runs
-          # the Steam backend for exactly that reason. Notifications (join
-          # code + player join/leave) both belong to this instance since it
-          # is the one players actually use.
+          # The players' Valheim server. A PlayFab join code resolves to
+          # `<public-ip>:<port>`, so every Valheim host behind this NAT
+          # needs its own game port (2026-09-11, #644, #771): amos1 keeps
+          # the image's default 2456, hpp-1 is on 2466. Notifications (join
+          # code + player join/leave) go to the players' channel from this
+          # instance only, since it is the one players actually use.
           myValheim = {
             enable = true;
             crossplay = true;
+            gamePort = 2456;
           };
 
           # bambuddy's Virtual Printer is dormant (blocked upstream — see

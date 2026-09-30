@@ -41,24 +41,35 @@
         };
 
         # Valheim dev instance — a place to test BepInEx mods, image
-        # bumps and config changes before they reach amos1 (#644).
+        # bumps and config changes before they reach amos1 (#644), under
+        # the same crossplay backend prod runs (#771).
         #
-        # `crossplay = false` keeps this off amos1's PlayFab endpoint two
-        # ways. It issues no join code, so there is no way to wander into
-        # this world by accident — and it moves the game port to 2466,
-        # which is what actually stops the lobby this server registers
-        # anyway from answering amos1's code (2026-09-21; see "Crossplay
-        # exclusivity" in ../apps/valheim.nix). Join deliberately, by
-        # typing 192.168.10.10:2466 into Join Game -> Add server. Steam
-        # clients only — console players cannot reach a Steam-backend
-        # server at all.
+        # `gamePort = 2466` is what keeps this off amos1's PlayFab
+        # endpoint: amos1 is on 2456 behind the same public IP, and a join
+        # code resolves to `<public-ip>:<port>`, so a shared port would
+        # have each server answer the other's codes (2026-09-11,
+        # 2026-09-21; see "Endpoint exclusivity" in ../apps/valheim.nix).
+        # It stays 2466 if this drops back to `crossplay = false` to act as
+        # a Steam-backend control — then join by typing 192.168.10.10:2466
+        # into Join Game -> Add server.
+        #
+        # Join codes go to this host's alerts channel, not the players'
+        # one, so nobody follows a dev code into the dev world by accident
+        # (`task valheim:joincode HOST=hpp-1` prints the current one too).
+        # Repoint to a dedicated channel by adding a key and naming it in
+        # `joincodeWebhookSecret`.
         #
         # `playerNotify = false` because join/leave here is terminal-side
         # noise, not something the players' Discord channel wants; see the
-        # option's description for how to repoint it instead.
+        # option's description for how to repoint it instead. The cost is
+        # that the join-code watchdog detects an unconfirmed code here but
+        # never restarts to recover — it needs that roster to know nobody
+        # is on. Restart by hand.
         myValheim = {
           enable = true;
-          crossplay = false;
+          crossplay = true;
+          gamePort = 2466;
+          joincodeWebhookSecret = "discord/alerts_webhook";
           bepinex = true;
           playerNotify = false;
         };

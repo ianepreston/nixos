@@ -26,11 +26,13 @@
 #
 # ## Two instances
 #
-# `myValheim` is what makes the two servers differ. amos1 runs crossplay: it
+# `myValheim` is what makes the two servers differ. Both run crossplay: each
 # reaches PlayFab outbound and players arrive over that relay, so there is no
-# inbound listening surface and the game UDP ports stay shut. hpp-1 runs the
-# Steam backend — the game UDP ports are open on the host firewall and players
-# connect by LAN address.
+# inbound listening surface and the game UDP ports stay shut. What keeps them
+# apart is `gamePort` — amos1 on the image's default 2456, hpp-1 on 2466 — and
+# hpp-1 posts its join codes to a dev channel rather than the players' one
+# (`joincodeWebhookSecret`). Either host can drop to the Steam backend
+# (`crossplay = false`) without moving its port.
 #
 # ## Crossplay
 #
@@ -41,24 +43,24 @@
 # join code, which rotates on every restart). Full tradeoff, and the
 # player-facing peer-relay cost, in `_valheim/README.md`.
 #
-# ## Crossplay exclusivity: one crossplay server per public IP
+# ## Endpoint exclusivity: one game port per server per public IP
 #
 # A PlayFab join code resolves to a network endpoint, not a server identity,
-# and this container runs `--network=host`. Two crossplay hosts behind one NAT
-# register the identical `<public-ip>:2456` and silently answer each other's
-# codes (the 2026-09-11 incident). At most one host behind a public IP may set
-# `crossplay`; `gamePort` moves the Steam-backend instance to 2466 so the two
-# PlayFab lobbies carry distinct endpoints even though the Steam backend also
-# registers one. Full account in `_valheim/README.md`.
+# and this container runs `--network=host`. Two hosts behind one NAT on the
+# same game port register the identical `<public-ip>:<port>` and silently
+# answer each other's codes (the 2026-09-11 incident). That holds whichever
+# backend each runs — a Steam-backend server registers a PlayFab lobby too
+# (2026-09-21) — so every concurrently running host behind a public IP needs
+# its own `gamePort`. Full account in `_valheim/README.md`.
 #
 # ## Mods (BepInEx)
 #
 # `myValheim.bepinex = true` installs BepInEx into /config/bepinex on next
 # container start; drop mod DLLs into
 # /var/lib/containers/valheim/config/bepinex/plugins/ and restart
-# podman-valheim.service. A mod that works on the Steam-backend dev instance is
-# not thereby cleared for crossplay — some misbehave on the PlayFab backend.
-# See `_valheim/README.md`.
+# podman-valheim.service. Dev runs the same crossplay backend as prod, so a
+# mod that misbehaves on PlayFab shows it there — but under a handful of peers,
+# not prod's load. See `_valheim/README.md`.
 _: {
   flake.modules.nixos.valheim =
     {
@@ -70,19 +72,6 @@ _: {
     }:
     let
       cfg = config.myValheim;
-
-      # UDP game port. The query port is always this + 1 — the image
-      # derives `SERVER_QUERY_PORT=$((SERVER_PORT + 1))` and offers no
-      # separate knob.
-      #
-      # The Steam-backend instance moves off the image's default 2456 so
-      # that the PlayFab lobby it registers (it does register one, even
-      # with `CROSSPLAY=false`) advertises a distinct
-      # `<public-ip>:<port>` and stops overwriting the crossplay host's.
-      # See "Crossplay exclusivity" in the header for the 2026-09-21
-      # collision this fixes and why `crossplay = false` alone was not
-      # enough.
-      gamePort = if cfg.crossplay then 2456 else 2466;
 
       # Bump to reseed. WORLD_NAME is the basename of the world's .db/.fwl in
       # /config/worlds_local; the image generates a fresh map whenever that
@@ -98,10 +87,11 @@ _: {
       # be numbers to keep in sync. So a bump reseeds both hosts' worlds,
       # which is fine — the hostName prefix keeps them distinct saves, and
       # dev's is scratch. What made that hurt in 2026-09-11 was not two
-      # worlds but two *reachable* worlds: both hosts were on PlayFab, so
-      # players followed a dev join code into the dev copy and lost three
-      # days of building there. A non-crossplay dev instance has no join
-      # code to follow, so a double reseed costs nothing. See "Crossplay
+      # worlds but two *reachable-by-accident* worlds: both hosts shared
+      # one PlayFab endpoint and one Discord channel, so players followed
+      # a dev join code into the dev copy and lost three days of building
+      # there. Distinct game ports and a dev-only join-code channel remove
+      # both accidents, so a double reseed costs nothing. See "Endpoint
       # exclusivity" in the header.
       #
       # The old world's files are *not* deleted — they stay in
@@ -144,28 +134,65 @@ _: {
           default = false;
           description = ''
             Run on Microsoft's PlayFab Party relay (`CROSSPLAY=true`)
-            instead of the Steam backend. See "Crossplay" and "Crossplay
+            instead of the Steam backend. See "Crossplay" and "Endpoint
             exclusivity" at the top of this file for the full tradeoff.
 
-            **At most one host behind a given public IP may set this.** A
-            PlayFab join code resolves to a network endpoint, and this
-            container runs `--network=host`, so two crossplay hosts behind
-            one NAT register the identical `<public-ip>:2456` and silently
-            answer each other's codes — the 2026-09-11 incident.
-            Defaulting to `false` (the image's own default) keeps the host
-            that needs the relay the one that has to ask for it.
-
-            It does not, on its own, keep the hosts apart: a Steam-backend
-            server registers a PlayFab lobby too, just without a join code
-            (2026-09-21). So this option also picks the game port via
-            `gamePort` — 2456 with the relay, 2466 without — and that is
-            what makes the two endpoints distinct.
+            Selects the backend only — the firewall rule and the join-code
+            notifier/watchdog follow it, the game port does not. Two hosts
+            behind one NAT are kept apart by `gamePort`, whichever backend
+            each runs.
 
             `true` gets non-Steam clients (console, Microsoft Store) and
             needs no inbound port-forward, at the cost of losing
             connect-by-address entirely. `false` opens the game UDP ports
             on the host firewall and players join by typing
-            `<host-lan-ip>:2466`, Steam clients only.
+            `<host-lan-ip>:<gamePort>`, Steam clients only. Defaults to
+            `false`, the image's own default.
+          '';
+        };
+
+        joincodeWebhookSecret = lib.mkOption {
+          type = lib.types.str;
+          default = "valheim/discord_webhook";
+          example = "discord/alerts_webhook";
+          description = ''
+            Key in this host's sops file holding the Discord webhook that
+            valheim-joincode-notify and valheim-joincode-watchdog post to.
+            Only read when `crossplay` is set.
+
+            A key name rather than a toggle so that a second crossplay
+            host keeps its join codes out of the players' channel without
+            losing the notifier: the watchdog's re-registration loop
+            refuses to run unless the notifier is active, so dropping the
+            unit would take detection and recovery with it. hpp-1 points
+            this at its alerts channel; give it a dedicated channel by
+            adding a key (`task secrets:secret` / `task secrets:edit:<host>`)
+            and naming it here.
+
+            A key another module also declares (e.g. alertmanager's
+            `discord/alerts_webhook`) is fine — sops-nix merges the two
+            declarations and each module's `restartUnits` accumulate.
+          '';
+        };
+
+        gamePort = lib.mkOption {
+          type = lib.types.port;
+          default = 2456;
+          description = ''
+            UDP game port (`SERVER_PORT`). The query port is always this
+            + 1 — the image derives `SERVER_QUERY_PORT=$((SERVER_PORT + 1))`
+            and offers no separate knob. 2456 is the image's default.
+
+            **Every concurrently running Valheim host behind the same
+            public IP needs a distinct value, regardless of `crossplay`.**
+            What a PlayFab lobby advertises is `<public-ip>:<gamePort>`,
+            a join code resolves to that endpoint, and a Steam-backend
+            server registers a lobby too — so two hosts on one port
+            answer each other's codes (2026-09-11 with both on crossplay,
+            2026-09-21 with one on Steam). This module cannot check that
+            across separate host evaluations; the host files carry the
+            assignments side by side for that reason. See "Endpoint
+            exclusivity" at the top of this file.
           '';
         };
 
@@ -177,8 +204,8 @@ _: {
             so mod DLLs dropped into
             /var/lib/containers/valheim/config/bepinex/plugins/ load. See
             the "Mods" section at the top of this file, including why a
-            mod that works here is not thereby cleared for a crossplay
-            server.
+            mod that works on dev is not thereby cleared for prod's
+            player load.
           '';
         };
 
@@ -234,12 +261,16 @@ _: {
                 };
               }
               // lib.optionalAttrs cfg.crossplay {
+                # Named by `joincodeWebhookSecret`, so on a host that points
+                # it at a shared key (hpp-1's `discord/alerts_webhook`) this
+                # merges with that key's other declaration.
+                #
                 # Consumed directly (the notifier reads the path in its script)
                 # rather than through a template, so the restart trigger has to
                 # live on the secret — there's no template to bind it to. See
                 # AGENTS.md "restartUnits goes on the template, not the secret",
                 # direct-consumption exception.
-                "valheim/discord_webhook" = {
+                ${cfg.joincodeWebhookSecret} = {
                   inherit (hostSpec) sopsFile;
                   # Only the follower, deliberately. valheim-joincode-watchdog
                   # reads this same secret, but it is a oneshot fired by a 1m
@@ -304,9 +335,9 @@ _: {
             # opening them is exposure that buys nothing — hence the gate
             # rather than an unconditional block.
             #
-            # `gamePort` is the game port and `gamePort + 1` its query port —
-            # 2466/2467 on the Steam backend, since that instance is the one
-            # moved off the image's default (see `gamePort` above). Upstream
+            # `gamePort` is the game port and `gamePort + 1` its query port.
+            # The gate is on the backend, the range on the port option — a
+            # host's port does not change when it switches backend. Upstream
             # documents three ports and the image's own compose files open all
             # three, but the third is the PlayFab one, so a Steam-backend
             # server never binds it — verified with `ss -ulnp` on hpp-1, where
@@ -320,8 +351,8 @@ _: {
             # the boundary against the internet. Nothing is port-forwarded.
             networking.firewall.allowedUDPPortRanges = lib.optionals (!cfg.crossplay) [
               {
-                from = gamePort;
-                to = gamePort + 1;
+                from = cfg.gamePort;
+                to = cfg.gamePort + 1;
               }
             ];
 
@@ -378,13 +409,11 @@ _: {
                 # Switch the networking backend from Steam to PlayFab so
                 # non-Steam clients can join and traffic is relayed rather
                 # than requiring an inbound port-forward. See the crossplay
-                # block at the top of this file for the LAN-join tradeoff, and
-                # `myValheim.crossplay` for why at most one host may set it.
+                # block at the top of this file for the LAN-join tradeoff.
                 CROSSPLAY = lib.boolToString cfg.crossplay;
-                # 2456 under crossplay, 2466 on the Steam backend, so the two
-                # hosts' PlayFab lobbies carry different endpoints. See
-                # `gamePort` in the `let` block above.
-                SERVER_PORT = toString gamePort;
+                # Per host, independent of the backend, so the hosts' PlayFab
+                # lobbies carry different endpoints. See `myValheim.gamePort`.
+                SERVER_PORT = toString cfg.gamePort;
 
                 # Weekly rather than upstream's daily default — every restart
                 # rotates the join code, and the metrics say the daily clean
@@ -444,10 +473,10 @@ _: {
                 # `BEPINEX = "false"`. The image's own default is off, so the
                 # two are equivalent to the container — but the var is part of
                 # the generated unit, so emitting it unconditionally would
-                # rewrite podman-valheim.service on the crossplay host and
-                # bounce it for no behavioural reason, which on that host
-                # rotates the join code out from under every player holding
-                # one.
+                # rewrite podman-valheim.service on amos1, which runs
+                # without it, and bounce it for no behavioural reason —
+                # rotating the join code out from under every player
+                # holding one.
                 BEPINEX = "true";
               };
               environmentFiles = [ config.sops.templates."valheim.env".path ];

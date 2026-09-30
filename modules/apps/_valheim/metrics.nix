@@ -35,8 +35,10 @@ let
   # the whole script.
   #
   # Crossplay-gated so a Steam-backend host's exporter is byte-identical
-  # to before #683 — it has no join code, so there is nothing to measure
-  # and no reason to change hpp-1's closure for this.
+  # to before #683 — it has no join code, so there is nothing to measure.
+  # (hpp-1 was that host when this was written; since #771 both hosts run
+  # crossplay and publish the gauge, and the gate matters only for a host
+  # dropped back to the Steam backend.)
   #
   # The `\n`-prefixed `*Line` wrappers are what make "byte-identical"
   # literally true rather than nearly true. Interpolating on its own
@@ -175,7 +177,20 @@ in
           labels.severity = "warning";
           annotations = {
             summary = "Valheim join code never confirmed on {{ $labels.instance }}";
-            description = "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record. See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
+            # The recovery half is conditional because the watchdog's
+            # re-registration loop needs valheim-player-notify's roster to
+            # prove the server is empty; without it (hpp-1, #771) the
+            # watchdog only detects. Split so the playerNotify host renders
+            # the exact string it always has.
+            description =
+              "A PlayFab join code has been registered for {{ $value | humanizeDuration }} on {{ $labels.instance }} without the server's confirming `is active` line, so the advertised code most likely does not resolve and no player can join — while the server process itself reads healthy. These arrive in episodes lasting 1-3.5h in which every registration fails, so a restart only takes once the episode has ended — "
+              + (
+                if cfg.playerNotify then
+                  "which is why valheim-joincode-watchdog is already re-registering on its own, every 15 minutes, uncapped, for as long as the code stays unconfirmed and the server stays empty. Expect no action: this clears when PlayFab starts confirming again. `journalctl -u valheim-joincode-watchdog` shows the attempts, and logs at error level once the episode outlasts every one on record."
+                else
+                  "but valheim-joincode-watchdog will not re-register on this host: it runs `playerNotify = false`, so there is no player roster to prove the server is empty. Restart podman-valheim by hand, and again ~15 minutes later if the code still does not confirm."
+              )
+              + " See the join-code notes in modules/apps/valheim.nix (#683, #694, #701).";
           };
         }
         {

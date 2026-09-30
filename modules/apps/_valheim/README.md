@@ -9,14 +9,14 @@ Valheim - dedicated server (ghcr.io/community-valheim-tools/valheim-server
 container, formerly lloesche/valheim-server).
 Gameplay is UDP and there's no web UI to put behind Caddy/Authentik.
 
-Two instances, and `myValheim` below is what makes them differ. amos1
-runs crossplay: the server reaches PlayFab outbound and players arrive
+Two instances, and `myValheim` below is what makes them differ. Both
+run crossplay: the server reaches PlayFab outbound and players arrive
 over that relay, so there is no inbound listening surface at all and
-the game UDP ports stay shut. hpp-1 runs the Steam backend, which is
-the opposite shape — the game UDP ports are open on the host firewall
-and players connect by typing its LAN address. That asymmetry is not
-incidental; it is the whole reason a second instance can exist (see
-"Crossplay exclusivity" below).
+the game UDP ports stay shut. What lets a second instance exist is the
+game port — amos1 on 2456, hpp-1 on 2466 — not the backend (see
+"Endpoint exclusivity" below). hpp-1 can drop to the Steam backend as a
+control, where the game UDP ports open on the host firewall and players
+connect by typing its LAN address; its port does not move when it does.
 
 ## Crossplay (myValheim.crossplay)
 
@@ -101,7 +101,7 @@ already ended — it tests the outage, it does not end it.
 
 One caveat on "the only variable": both episodes also fall inside a
 window where hpp-1 held a PlayFab lobby on the same public endpoint.
-See "Crossplay exclusivity" below — that is a second variable that
+See "Endpoint exclusivity" below — that is a second variable that
 tracks the outcome, and 2466 below is the test of it.
 
 That still makes it the right thing to run, because the server never
@@ -124,7 +124,7 @@ below ~10m spacing; see joincodeRetryInterval below for the derivation.
 Note the restart hands back the *same* digits, so an unchanged code is
 not evidence it did nothing. That is not the deterministic custom ID —
 it is because a join code resolves to the network endpoint
-(`<public-ip>:2456`), per the crossplay-exclusivity section below.
+(`<public-ip>:<gamePort>`), per the endpoint-exclusivity section below.
 Changing SERVER_NAME mints a new custom ID and a new entity ID and the
 code stays put; verified on 2026-09-21. Check for the `is active` line,
 not for a new number.
@@ -192,15 +192,17 @@ frequency is the thing worth watching — a 90s stall is over before anyone
 could act on a page, so these are for trending, not alerting, and there
 is deliberately no vmalert rule. They are also the only way to tell
 whether a future image or game update helped. hpp-1 publishes them too
-and, running the Steam backend, should read flat zero on the stall
-counter — the A/B control mentioned under "What the dev instance cannot
-tell you" below.
+and, when switched to the Steam backend, should read flat zero on the
+stall counter — the A/B control mentioned under "What the dev instance
+cannot tell you" below.
 
-## Crossplay exclusivity: one *crossplay* server per public IP
+## Endpoint exclusivity: one game port per server per public IP
 
 The constraint learned the hard way on 2026-09-11 is not "one Valheim
-server per household" — it is one *PlayFab* server per public IP, and
-the distinction is what `myValheim.crossplay` exists to exploit.
+server per household" — it is one PlayFab *endpoint* per server, and a
+PlayFab endpoint is `<public-ip>:<gamePort>`. The history below took
+two wrong turns before landing there; `myValheim.gamePort` is the
+result (#771).
 
 A PlayFab join code resolves to a *network endpoint*, not to a server
 identity. This container runs `--network=host` on UDP 2456, so two
@@ -236,26 +238,31 @@ so the collision is the 2026-09-11 one unchanged: players using amos1's
 published code reached hpp-1's empty g2 map, and saw a join code that
 was not the one in Discord.
 
-So the port is the lever after all, and `gamePort` in the `let` block
-below moves the Steam-backend instance to 2466 (query 2467). What a
-lobby advertises is the server's *configured* port, not a NAT-observed
-mapping — amos1 logs `IP <public-ip>:2456`, which is its SERVER_PORT —
-so a distinct SERVER_PORT is a distinct endpoint, and the two lobbies
-stop answering for each other.
+So the port is the lever after all. What a lobby advertises is the
+server's *configured* port, not a NAT-observed mapping — amos1 logs
+`IP <public-ip>:2456`, which is its SERVER_PORT — so a distinct
+SERVER_PORT is a distinct endpoint, and the two lobbies stop answering
+for each other.
 
-Two things the `crossplay = false` argument got right, and which the
-port change keeps:
+The first version of that fix derived the port from the backend (2456
+with crossplay, 2466 without), which made it impossible to run crossplay
+on dev: flipping the backend silently put hpp-1 back on 2456 and
+recreated the collision. The port is now its own per-host option,
+`myValheim.gamePort`, and both hosts run crossplay on distinct ports
+(#771). It cannot be checked across two separate host evaluations, so
+the two host files state their ports side by side.
 
-  - No join code on dev, which removes the *mechanism* of the original
-    incident rather than just the collision: nobody can follow a dev
-    join code into a dev world, because there is no dev join code.
-    Players reach dev only by deliberately typing its LAN address into
-    Join Game -> Add server — now `<host-lan-ip>:2466`.
-  - Reachability is fine for the intended audience. LAN clients connect
-    direct; tailnet clients arrive over behemoth's subnet route as
-    ordinary LAN traffic, so the one host-firewall rule below covers
-    both. No port-forward, no WAN exposure — the NAT stays the
-    boundary.
+What stops the *mechanism* of the original incident — players
+following a dev join code into a dev world — is no longer "dev has no
+join code" but "dev's code is not published where players look": hpp-1
+posts its codes to its alerts channel (`joincodeWebhookSecret`), and
+the players' channel only ever sees amos1's.
+
+On the Steam backend reachability is fine for the intended audience.
+LAN clients connect direct; tailnet clients arrive over behemoth's
+subnet route as ordinary LAN traffic, so the one host-firewall rule
+below covers both. No port-forward, no WAN exposure — the NAT stays the
+boundary.
 
 Suspected, not proven: the "PlayFab episodes" above may be this
 collision rather than PlayFab-side weather. Every failed registration
@@ -272,17 +279,20 @@ the watchdog and ValheimJoinCodeUnconfirmed earn their keep either way.
 
 Two honest limits, worth having in the file rather than rediscovering:
 
-1. Console / non-Steam players cannot join dev at all — they can't
-   reach a Steam-backend server, period. Dev is a Steam-client-only
-   test bed.
-2. A mod that passes on dev is not proven under crossplay. The image
-   leaves crossplay off by default precisely because some mods
-   misbehave on the PlayFab backend. Dev de-risks "does this load, does
-   it corrupt the world, does it survive a restart"; it cannot de-risk
-   "does it survive the relay". Prod stays the only place the relay path
-   exists — see also #627, where PlayFab peer-relay drops freeze world
-   objects for ~90s. (Small upside: a Steam-backend instance is a useful
-   A/B control for exactly that issue.)
+1. Dev runs crossplay now (#771), so console players can reach it and
+   a mod can be tested on the relay path — but only with whoever is at
+   the terminal, not prod's player load. A mod that survives dev's
+   relay with one or two peers is not thereby proven against the
+   peer-relay stalls in #627, which scale with connected peers. Check
+   the plugin's startup patch audit (`PATCH FAILED` / `PATCH SKIP`)
+   before reading anything into a run.
+2. Dev's watchdog detects an unconfirmed join code but never restarts
+   to recover: `playerNotify = false` there, so it has no roster to
+   prove nobody is on. Restart by hand.
+
+Setting hpp-1 back to `crossplay = false` (keeping `gamePort = 2466`)
+turns it into a Steam-backend A/B control — the stall counters should
+read flat zero there.
 
 ### The second half of the 2026-09-11 damage, and why it's now harmless
 
@@ -293,9 +303,10 @@ whichever join code they could see and built three days of world on the
 dev host's copy, which then had to be migrated onto amos1 by hand.
 
 Two worlds is fine again now, because the reason it hurt was that both
-were *reachable by the same accident*. Dev has no join code to follow
-and its world is scratch; a bump reseeds it alongside prod and nobody
-notices. See the note on `worldGeneration` in the `let` block below.
+were *reachable by the same accident*. Dev's join code resolves to its
+own endpoint and is posted only to a dev channel, and its world is
+scratch; a bump reseeds it alongside prod and nobody notices. See the
+note on `worldGeneration` in the `let` block below.
 
 A contributing factor worth remembering, since it is the reason nobody
 noticed for three days: valheim-joincode-notify reads codes out of the
@@ -305,8 +316,7 @@ GetPublicIP flood (see #590 and the log-filter notes below) was getting
 them, so prod announced no code at all while looking perfectly healthy
 — unit `active (running)`, hundreds of MB of journal read, zero
 matches. The per-unit rate cap below plus the log filter close that
-window; and the unit now only exists on the crossplay host, so there is
-still exactly one server whose code can go missing.
+window.
 
 ## Restart cadence vs. the join code
 
@@ -473,7 +483,8 @@ locally. See
 https://github.com/community-valheim-tools/valheim-server-docker#bepinex.
 
 This is on for hpp-1 and off for amos1 — testing mods is the reason the
-dev instance exists. Note the limit from "What the dev instance cannot
-tell you" above: some mods misbehave specifically on the PlayFab
-backend, which is why the image ships crossplay off by default, so a
-green run on dev does not clear a mod for prod's relay path.
+dev instance exists. Some mods misbehave specifically on the PlayFab
+backend, which is why the image ships crossplay off by default; dev now
+runs crossplay too (#771), so that failure shows up there first. Note
+the limit from "What the dev instance cannot tell you" above: dev's
+relay carries a handful of peers, not prod's load.
