@@ -134,7 +134,7 @@ in
         pending=${joincodePending}
         alerted=${joincodeAlerted}
         retried=${joincodeRetried}
-        webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
+        webhook="$(cat ${config.sops.secrets.${config.myValheim.joincodeWebhookSecret}.path})"
         server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
 
         notify() {
@@ -572,7 +572,7 @@ in
         # restart per episode, which is the capped design the
         # episode model rules out.
         if [ ! -e "$alerted" ]; then
-          webhook="$(cat ${config.sops.secrets."valheim/discord_webhook".path})"
+          webhook="$(cat ${config.sops.secrets.${config.myValheim.joincodeWebhookSecret}.path})"
           server=${config.virtualisation.oci-containers.containers.valheim.environment.SERVER_NAME}
 
           # The wording matters more than it looks. #661 was a stale
@@ -587,22 +587,38 @@ in
           # be hand-running a probe the host is already running on a
           # timer. Saying so is what stops the channel reading the
           # silence as "nobody is doing anything".
+          #
+          # Except where it isn't: without the player roster the
+          # re-registration below never runs (see the roster guard), so
+          # on a `playerNotify = false` host (hpp-1) the message has to
+          # ask for the restart after all (#771). `selfheal` picks the
+          # branch; the `true` one is the text this has always sent.
           payload="$(${pkgs.jq}/bin/jq -nc \
             --arg code "$code" \
             --arg server "$server" \
             --arg mins "$(( age / 60 ))" \
             --arg every "$(( ${toString joincodeRetryInterval} / 60 ))" \
+            --argjson selfheal ${pkgs.lib.boolToString config.myValheim.playerNotify} \
             '{content: ("⚠️ Valheim server **" + $server
                         + "** registered join code **" + $code + "** " + $mins
                         + "m ago, but PlayFab never confirmed it.\n"
                         + "**That code most likely does not work** — do not share it.\n"
                         + "_These come in episodes lasting 1-3.5h in which every "
-                        + "registration fails. While nobody is connected the host "
-                        + "re-registers itself every " + $every + "m and will announce "
-                        + "the code again when one takes, so normally there is nothing "
-                        + "to do. It holds off while anyone is on rather than kicking "
-                        + "them — if players are connected, restart by hand once they "
-                        + "log off (#701)._")}')"
+                        + "registration fails. "
+                        + (if $selfheal then
+                            "While nobody is connected the host "
+                            + "re-registers itself every " + $every + "m and will announce "
+                            + "the code again when one takes, so normally there is nothing "
+                            + "to do. It holds off while anyone is on rather than kicking "
+                            + "them — if players are connected, restart by hand once they "
+                            + "log off (#701)."
+                          else
+                            "This host does not re-register by itself — it has no player "
+                            + "roster to prove it is empty — so restart podman-valheim by "
+                            + "hand, and again ~" + $every + "m later if the code still "
+                            + "does not confirm (#771)."
+                          end)
+                        + "_")}')"
 
           # Same `-K -` stdin trick as the notifier: the webhook must
           # not reach the process cmdline. A failed POST leaves
@@ -703,9 +719,12 @@ in
         # count and a non-zero count all land in the same `*` arm,
         # because "cannot tell" and "someone is on" call for the
         # same thing: do not bounce the server. The standing cost is
-        # that a crossplay host with playerNotify = false would get
-        # detection and never recovery; amos1 is the only crossplay
-        # host and runs it true.
+        # that a crossplay host with playerNotify = false gets
+        # detection and never recovery. That is hpp-1, deliberately:
+        # dev is terminal-attended, so a restart by hand is cheap, and
+        # turning the roster on there would mean either posting dev
+        # join/leave to the players' channel or splitting the roster
+        # from its Discord feed (#771).
         if [ ! -e "$rosterReady" ]; then
           exit 0
         fi

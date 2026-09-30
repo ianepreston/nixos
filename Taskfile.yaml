@@ -74,10 +74,10 @@ tasks:
     # has to be re-read (and re-shared with players) after any restart of
     # podman-valheim.service. The code is only in the server's stdout.
     #
-    # Only meaningful on a host with `myValheim.crossplay = true`. A
-    # Steam-backend server (hpp-1) registers no PlayFab session and has no
-    # code at all — players join it by address — so the failure message
-    # below is the expected output there, not a bug.
+    # Only meaningful on a host with `myValheim.crossplay = true` (both
+    # amos1 and hpp-1 today). A Steam-backend server gets no join code at
+    # all — players join it by address — so the failure message below is
+    # the expected output there, not a bug.
     vars:
       HOST: '{{.HOST | default "amos1"}}'
     cmd: |
