@@ -133,6 +133,53 @@
         "iq4_nl"
       ];
 
+      # The radar consumes this compact contract instead of `models`, which
+      # is an implementation surface for llama-server. The mechanical fields
+      # are derived below so a cache, context or offload change cannot drift
+      # from the evaluation assumptions.
+      targetType = lib.types.submodule {
+        options = {
+          role = lib.mkOption {
+            type = lib.types.enum [
+              "generalist"
+              "coding"
+              "vision"
+            ];
+            description = "The job this alias is evaluated to replace.";
+          };
+          modalities = lib.mkOption {
+            type = lib.types.listOf (
+              lib.types.enum [
+                "text"
+                "image"
+              ]
+            );
+            default = [ "text" ];
+            description = "Input modalities a candidate must support for this alias.";
+          };
+        };
+      };
+
+      modelNamesForAlias =
+        alias: lib.attrNames (lib.filterAttrs (_: model: lib.elem alias model.aliases) cfg.models);
+      modelNameForAlias = alias: lib.head (modelNamesForAlias alias);
+      modelForAlias = alias: cfg.models.${modelNameForAlias alias};
+      evaluationExport = {
+        inherit (cfg.evaluation) residentBudgetMiB;
+        targets = lib.mapAttrs (
+          alias: target:
+          target
+          // {
+            incumbent = modelNameForAlias alias;
+            contextTokens = (modelForAlias alias).ctxSize;
+            cacheTypeK = (modelForAlias alias).cacheTypeK;
+            cacheTypeV = (modelForAlias alias).cacheTypeV;
+            nGpuLayers = (modelForAlias alias).nGpuLayers;
+            nCpuMoeLayers = (modelForAlias alias).nCpuMoeLayers;
+          }
+        ) cfg.evaluation.targets;
+      };
+
       pkgsCuda = import inputs.nixpkgs {
         inherit (pkgs.stdenv.hostPlatform) system;
         config = pkgs.config // {
@@ -310,6 +357,35 @@
           );
         };
 
+        evaluation = {
+          residentBudgetMiB = lib.mkOption {
+            type = lib.types.ints.positive;
+            description = ''
+              GPU memory available to a candidate after this host's desktop
+              or NVENC workload has taken its share. This is an evaluation
+              budget, not nominal card capacity.
+            '';
+          };
+          targets = lib.mkOption {
+            type = lib.types.attrsOf targetType;
+            default = { };
+            description = ''
+              Alias-level evaluation roles. The radar derives active context,
+              KV types and offload settings, then consumes only evalTargets.
+            '';
+          };
+        };
+
+        evalTargets = lib.mkOption {
+          type = lib.types.attrs;
+          readOnly = true;
+          default = evaluationExport;
+          description = ''
+            Read-only evaluation-facing export for local tooling. Combines the
+            declared role/budget with the active model's sizing assumptions.
+          '';
+        };
+
         sleepIdleSeconds = lib.mkOption {
           type = lib.types.ints.positive;
           example = 600;
@@ -402,6 +478,17 @@
             message = ''
               myLlamaCpp.models: an alias collides with a model's own
               name (${lib.concatStringsSep ", " (lib.intersectLists allAliases (lib.attrNames cfg.models))}).
+            '';
+          }
+          {
+            assertion = lib.all (alias: modelNamesForAlias alias != [ ]) (lib.attrNames cfg.evaluation.targets);
+            message = ''
+              myLlamaCpp.evaluation.targets declares an alias absent from
+              myLlamaCpp.models: ${
+                lib.concatStringsSep ", " (
+                  lib.filter (alias: modelNamesForAlias alias == [ ]) (lib.attrNames cfg.evaluation.targets)
+                )
+              }.
             '';
           }
         ];
