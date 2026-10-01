@@ -29,10 +29,11 @@
 # `myValheim` is what makes the two servers differ. Both run crossplay: each
 # reaches PlayFab outbound and players arrive over that relay, so there is no
 # inbound listening surface and the game UDP ports stay shut. What keeps them
-# apart is `gamePort` — amos1 on the image's default 2456, hpp-1 on 2466 — and
-# hpp-1 posts its join codes to a dev channel rather than the players' one
-# (`joincodeWebhookSecret`). Either host can drop to the Steam backend
-# (`crossplay = false`) without moving its port.
+# apart is `gamePort` — amos1 on the image's default 2456, hpp-1 on 2466.
+# Both post join codes to a players'-visible channel (`joincodeWebhookSecret`,
+# a per-host sops key); a host can be dropped to a dev-only alerts channel the
+# same way if its codes shouldn't reach players. Either host can drop to the
+# Steam backend (`crossplay = false`) without moving its port.
 #
 # ## Crossplay
 #
@@ -208,13 +209,14 @@ _: {
             Only read when `crossplay` is set.
 
             A key name rather than a toggle so that a second crossplay
-            host keeps its join codes out of the players' channel without
-            losing the notifier: the watchdog's re-registration loop
-            refuses to run unless the notifier is active, so dropping the
-            unit would take detection and recovery with it. hpp-1 points
-            this at its alerts channel; give it a dedicated channel by
-            adding a key (`task secrets:secret` / `task secrets:edit:<host>`)
-            and naming it here.
+            host can keep its join codes out of the players' channel
+            without losing the notifier: the watchdog's re-registration
+            loop refuses to run unless the notifier is active, so dropping
+            the unit would take detection and recovery with it. Point this
+            at a dev-only channel by naming a key here and setting it in
+            that host's sops file (`task secrets:edit:<host>`; a Discord
+            webhook URL is pasted in, not generated, so this is not a
+            `task secrets:secret` case).
 
             A key another module also declares (e.g. alertmanager's
             `discord/alerts_webhook`) is fine — sops-nix merges the two
@@ -399,8 +401,9 @@ _: {
               }
               // lib.optionalAttrs cfg.crossplay {
                 # Named by `joincodeWebhookSecret`, so on a host that points
-                # it at a shared key (hpp-1's `discord/alerts_webhook`) this
-                # merges with that key's other declaration.
+                # it at a key another module also declares (e.g.
+                # alertmanager's `discord/alerts_webhook`) this merges with
+                # that key's other declaration.
                 #
                 # Consumed directly (the notifier reads the path in its script)
                 # rather than through a template, so the restart trigger has to

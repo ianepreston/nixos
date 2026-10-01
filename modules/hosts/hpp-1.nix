@@ -53,23 +53,24 @@
         # a Steam-backend control — then join by typing 192.168.10.10:2466
         # into Join Game -> Add server.
         #
-        # Join codes go to this host's alerts channel, not the players'
-        # one, so nobody follows a dev code into the dev world by accident
-        # (`task valheim:joincode HOST=hpp-1` prints the current one too).
-        # Repoint to a dedicated channel by adding a key and naming it in
-        # `joincodeWebhookSecret`.
+        # Join codes go to a dedicated channel players actually watch
+        # (`joincodeWebhookSecret` defaults to `valheim/discord_webhook`, so
+        # no override here — hpp-1's sops file already carries its own
+        # `valheim/discord_webhook` value, distinct from amos1's).
+        # `task valheim:joincode HOST=hpp-1` prints the current code too.
         #
-        # `playerNotify = false` because join/leave here is terminal-side
-        # noise, not something the players' Discord channel wants; see the
-        # option's description for how to repoint it instead. The cost is
-        # that the join-code watchdog detects an unconfirmed code here but
-        # never restarts to recover — it needs that roster to know nobody
-        # is on. Restart by hand.
+        # `playerNotify = false` because join/leave here is still
+        # terminal-side noise, not something the players' Discord channel
+        # wants — unlike the join code, that's a per-host toggle and not
+        # tied to the webhook repoint above; see the option's description
+        # for how to turn it on if that changes. The cost is that the
+        # join-code watchdog detects an unconfirmed code here but never
+        # restarts to recover — it needs that roster to know nobody is on.
+        # Restart by hand.
         myValheim = {
           enable = true;
           crossplay = true;
           gamePort = 2466;
-          joincodeWebhookSecret = "discord/alerts_webhook";
           bepinex = true;
           playerNotify = false;
         };
