@@ -394,8 +394,9 @@ modules/system/victoriametrics.nix. The pre-existing 4 GiB
 silence, which was fine when the process was reset every 24h and is
 not fine when detecting that leak is the point of the phase.
 
-World state and the image's automatic world backups (every 2h by
-default into /config/backups inside the container) live under
+World state and the image's automatic world backups (hourly by
+default — `BACKUPS_CRON=5 * * * *`, kept 3 days — into /config/backups
+inside the container; see the env-var reference below) live under
 /var/lib/containers/valheim/config, which the daily restic snapshot
 in modules/system/server-backups.nix picks up automatically. The
 Steam install of the game itself lives under
@@ -610,3 +611,303 @@ pruned its DLL from the running tree on the same start.
 Some mods misbehave specifically on the PlayFab backend, which is why
 the image ships crossplay off by default; dev runs crossplay too (#771),
 so that failure shows up there first.
+
+## Full environment-variable reference (image v1.4.0, #793)
+
+Everything `ghcr.io/community-valheim-tools/valheim-server` reads from its
+environment, so tuning a knob does not start from a cold read of upstream.
+Taken from the image's `README.md` table and its `defaults` file at the
+**`v1.4.0`** tag, which is the pinned image. Both files were byte-identical
+to upstream `main` when this was written (2026-10-01). Where the scripts
+disagree with upstream's README, the scripts win, and the row says so.
+Re-check this section when renovate bumps the image tag.
+
+The **Here** column says what this module does with each variable. "default"
+means the variable is not set and the image default applies.
+
+Two conventions from `defaults` that matter for almost every row:
+
+- **Empty vs unset.** Most variables use `${VAR:-default}`, so an empty
+  value falls back to the default. A few use `${VAR-default}`, where an
+  explicitly empty value is kept and **turns the feature off**. Those are
+  `UPDATE_CRON`, `RESTART_CRON`, `BACKUPS_CRON`, `STEAMCMD_ARGS`,
+  `SERVER_PASS`, and the `VALHEIM_LOG_FILTER_MATCH` / `_STARTSWITH`
+  defaults. `RESTART_CRON = ""` means "never restart", not "the default
+  schedule".
+- **Booleans are the literal strings `true` / `false`.** The one
+  exception is `SERVER_PUBLIC`, which `defaults` normalises to `1` / `0`.
+  Nix values go through `lib.boolToString` or a string literal for that
+  reason.
+
+### Identity and network
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `SERVER_NAME` | `My Server` | string | Name shown in the server browser and in the join-code log line. | `${worldName}-valheim`, per host. |
+| `SERVER_PORT` | `2456` | UDP port | Game port. The query port is always `SERVER_PORT + 1` (`SERVER_QUERY_PORT` is derived in `defaults` and cannot be set on its own). | `myValheim.gamePort` (amos1 2456, hpp-1 2466). See "Endpoint exclusivity". |
+| `WORLD_NAME` | `Dedicated` | string | World directory under `worlds_local/` (or the `.db`/`.fwl` basename on pre-1.0 saves). | `worldName` (host + `worldGeneration`). |
+| `SERVER_PASS` | `secret` | string, at least 5 characters | Join password. Set-but-empty is kept, not defaulted. Also forced empty when `VPCFG_Server_disableServerPassword=true`. | Set from sops via the `valheim.env` template. |
+| `SERVER_PASS_FILE` | — | path inside the container | Read `SERVER_PASS` from a file instead. | Unused. The sops env template sets `SERVER_PASS` directly, which has the same effect. |
+| `SERVER_PUBLIC` | `true` | `true`/`false` (normalised to `1`/`0`) | List in the community server browser. It also picks how the idle check works (see Idle detection). | Always `false`. |
+| `SERVER_ARGS` | — | space-separated string | Extra game CLI arguments, expanded unquoted. | `myValheim.serverArgs`, emitted only when nonempty (the "Server arguments" section). |
+| `CROSSPLAY` | `false` | `true`/`false` | Use the PlayFab backend instead of Steam. `-crossplay` in `SERVER_ARGS` also counts. | `myValheim.crossplay`. See "Crossplay". |
+| `TZ` | `Etc/UTC` | tz database name | Container time zone, and so the zone every `*_CRON` runs in. An unknown zone warns and falls back to UTC. | Set to `config.time.timeZone` by the oci-containers wrapper. |
+
+### Access control
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `ADMINLIST_IDS` | — | space-separated SteamID64s | Rewrites `/config/adminlist.txt` with exactly these IDs. | Unset. |
+| `BANNEDLIST_IDS` | — | same | Rewrites `/config/bannedlist.txt`. | Unset. |
+| `PERMITTEDLIST_IDS` | — | same | Rewrites `/config/permittedlist.txt` (whitelist). | Unset. |
+
+The lists **overwrite rather than merge**. `write_serverlist` in the image's
+`common` replaces the whole file on every start whenever the variable is
+nonempty. An in-game `ban`/`unban`, or an admin change made during a
+session, survives only until the next container start and then silently
+reverts. An empty or unset variable leaves the file alone, which is how
+this module runs today: `/config/*list.txt` is hand-edited state under
+`/var/lib/containers/valheim/config`, covered by the restic snapshot. Wiring
+one of these into a `myValheim` option makes the Nix value the only source
+of truth for that list.
+
+### Idle detection
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `IDLE_DATAGRAM_WINDOW` | `3` | seconds | How long the idle check counts incoming UDP datagrams. | **Not settable in v1.4.0.** See below. |
+| `IDLE_DATAGRAM_MAX_COUNT` | `30` | integer | Datagram count above which the server counts as busy. | **Not settable in v1.4.0.** See below. |
+
+Upstream's README lists both as environment variables, but `defaults`
+assigns them unconditionally (`IDLE_DATAGRAM_WINDOW=3`, no `${…:-…}`), so a
+value passed in is overwritten before anything reads it. They are listed
+here so nobody sets them and expects a change.
+
+The mechanism still matters here. `server_is_idle` (in `common`) uses this
+datagram count instead of an A2S player query whenever `SERVER_PUBLIC=0` or
+crossplay is on. Both are true on both hosts. The count comes from `nstat`
+`UdpInDatagrams`, a per-network-namespace counter. This container runs
+`--network=host`, so the count includes **every UDP datagram the host
+receives** (tailscale/WireGuard, DNS replies, mDNS), not just game traffic.
+It is known to misfire. #631 found the updater logging "Players
+connected" 39 times in a window where the world file never changed a byte,
+which it put down to PlayFab lobby chatter. Host traffic adds to the same
+counter. So an empty server can read as busy, and that skips
+`UPDATE_IF_IDLE` / `RESTART_IF_IDLE` work and keeps `BACKUPS_IF_IDLE=false`
+backups running. It is not stuck busy, though: the 2026-09-11 amos1 restart
+came from `UPDATE_CRON` with `UPDATE_IF_IDLE` at its default. That is why
+`valheim_players_online` (in `_valheim/metrics.nix`) is derived from the
+player-notify roster and not from anything the image reports. Treat every
+`*_IF_IDLE` gate as best-effort.
+
+### Update cadence
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `UPDATE_CRON` | `*/15 * * * *` | cron, or empty to disable | When the in-container updater checks Steam for a new game build. If one is found, it downloads it and restarts the server. | Default. The image tag pin is only the wrapper; the game updates itself. |
+| `UPDATE_IF_IDLE` | `true` | `true`/`false` | Only check or update when the server is idle. | Default. |
+| `STEAMCMD_ARGS` | `validate` | string; empty is kept | Extra `steamcmd` arguments for each update. | Default. |
+| `PUBLIC_TEST` | `false` | `true`/`false` | Appends the public-test beta branch flags to `STEAMCMD_ARGS`. | Default. |
+| `UPDATE_INTERVAL` | `315360000` | seconds | Legacy. **Do not set.** | Unset. |
+
+`bootstrap` installs the `UPDATE_CRON` entry only while `UPDATE_INTERVAL`
+still equals its sentinel default of `315360000` (10 years). Setting
+`UPDATE_INTERVAL` to any other value silently drops the cron and puts the
+updater back on the old fixed-interval sleep loop.
+
+### Restart cadence
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `RESTART_CRON` | `10 5 * * *` | cron, or empty to disable | Scheduled `supervisorctl restart valheim-server`. Every restart rotates the crossplay join code. | `10 5 * * 1` (weekly). See "Restart cadence vs. the join code" (#458). |
+| `RESTART_IF_IDLE` | `true` | `true`/`false` | Restart only if idle. A busy occurrence is skipped, not deferred. | Default. The idle caveat above applies. |
+
+### Backups
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `BACKUPS` | `true` | `true`/`false` | Periodic world backups, plus one on startup. | Default. |
+| `BACKUPS_CRON` | `5 * * * *` | cron, or empty to disable | Backup schedule: **hourly at minute 5**. | Default. |
+| `BACKUPS_DIRECTORY` | `/config/backups` | path inside the container | Backup target. Must not be under `/config/worlds_local/`. | Default, so it lands at `/var/lib/containers/valheim/config/backups` and goes into the daily restic snapshot. |
+| `BACKUPS_MAX_AGE` | `3` | days | Delete backups older than this. Always enforced, even under `BACKUPS_MAX_COUNT`. | Default. |
+| `BACKUPS_MAX_COUNT` | `0` | integer, `0` = unlimited | Keep at most this many backups. | Default. |
+| `BACKUPS_IF_IDLE` | `true` | `true`/`false` | `true` backs up regardless of activity. `false` backs up only with players connected, or within the grace period after the last one leaves. | Default. |
+| `BACKUPS_IDLE_GRACE_PERIOD` | `3600` | seconds | Grace period for `BACKUPS_IF_IDLE=false`. It should cover one 20-minute world save plus one `BACKUPS_CRON` tick. | Default. |
+| `BACKUPS_ZIP` | `true` | `true`/`false` | Zip each backup. `false` stores 1.0 worlds as directories. | Default. |
+| `BACKUPS_INTERVAL` | `315360000` | seconds | Legacy. **Do not set.** Same sentinel trap as `UPDATE_INTERVAL`: any other value drops the `BACKUPS_CRON` entry. | Unset. |
+
+So with the defaults, the in-container backup directory holds roughly 72
+hourly zips (3 days' worth) at any time. restic snapshots that whole set
+daily, alongside the live world.
+
+### Permissions
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `PUID` | `0` | uid | Uid the game server runs as. | `hostSpec.serverUid`, emitted by the oci-containers wrapper because of `myContainerApp.valheim.linuxServer = true`. |
+| `PGID` | `0` | gid | Gid. | `hostSpec.serverGid`, same mechanism. |
+| `PERMISSIONS_UMASK` | `022` | octal umask | Permissions applied to config, worlds, backups and mod config. | Default. |
+
+The derived per-tree modes are under Undocumented below.
+
+### Mods
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `BEPINEX` | `false` | `true`/`false` | Install BepInExPack Valheim. Config is in `/config/bepinex`, plugins in `/config/bepinex/plugins`. | `myValheim.bepinex`. Emitted only when true, so amos1's unit does not change. |
+| `VALHEIM_PLUS` | `false` | `true`/`false` | Install ValheimPlus instead. `valheim-bootstrap` refuses to start with both this and `BEPINEX` enabled. | Unset. |
+| `VALHEIM_PLUS_REPO` | `Grantapher/ValheimPlus` | `owner/repo` | Which V+ fork to download. | Unset. |
+| `VALHEIM_PLUS_RELEASE` | `latest` | `latest` or `tags/<tag>` | Which V+ release to download. | Unset. |
+| `VPCFG_<section>_<key>` | — | value | Merged into `valheim_plus.cfg` on start. | Unused. |
+| `BEPINEXCFG_<section>_<key>` | — | value | Merged into `BepInEx.cfg` on start. | Unused, deliberately. |
+
+The image's env-to-config mechanism (`env2cfg`) encodes characters that
+are illegal in variable names: `_DOT_` → `.`, `_HYPHEN_` → `-`,
+`_UNDERSCORE_` → `_`, `_PLUS_` → `+`, `_SPACE_` → a space. So
+`BEPINEXCFG_Logging_DOT_Console_Enabled=true` writes `[Logging.Console]
+Enabled=true`. Existing keys are kept, and the old file is saved as
+`*.cfg.old`.
+
+BepInEx, not ValheimPlus, because BepInEx is the framework the plugins in
+`bepinexPlugins` target. ValheimPlus is one monolithic mod with its own
+loader.
+
+**Do not propose `BEPINEXCFG_*` as a simplification.** Plugin config here
+comes from `_valheim/bepinex-materialize.sh`, which installs Nix-built,
+pinned config files into the Nix-managed subtree before every start. That
+config is reviewable in a diff, removes its own files when a plugin is
+dropped, and changes the `ExecStartPre` line, so a deploy restarts the
+server. A sprawl of encoded env vars has none of those properties, and it
+only reaches `BepInEx.cfg`, not plugin config files.
+
+### Supervisor HTTP
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `SUPERVISOR_HTTP` | `false` | `true`/`false` | Start supervisord's web UI/XML-RPC API (start, stop, restart, tail). | Unused. |
+| `SUPERVISOR_HTTP_PORT` | `9001` | TCP port | Its listen port. | — |
+| `SUPERVISOR_HTTP_USER` | `admin` | string | Basic-auth user. Auth is applied only if both user and pass are set. | — |
+| `SUPERVISOR_HTTP_PASS` | — | string | Basic-auth password. | — |
+| `SUPERVISOR_HTTP_PASS_FILE` | — | path | Read the password from a file. | — |
+
+It binds `:<port>` on every interface. Under `--network=host` that means
+the host itself, so turning it on would need a firewall decision and a sops
+secret for the password. Everything it offers is already available via
+`podman exec valheim supervisorctl …`.
+
+### Status HTTP
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `STATUS_HTTP` | `false` | `true`/`false` | Start busybox httpd plus an updater that writes `status.json` (players, version and so on) every 10 s from an A2S query. | Unused. |
+| `STATUS_HTTP_PORT` | `80` | TCP port | httpd port. Under host networking this would claim the host's port 80. | — |
+| `STATUS_HTTP_CONF` | `/config/httpd.conf` | path | busybox httpd config. | — |
+| `STATUS_HTTP_HTDOCS` | `/opt/valheim/htdocs` | path | Where `status.json` is written. | — |
+
+**Inert as configured.** Nothing in `bootstrap` stops `STATUS_HTTP` from
+starting, but the data comes from A2S queries, which upstream says private
+(`SERVER_PUBLIC=false`) servers do not answer, and which answer 0 players
+under crossplay anyway. This module sets both, so the page would serve a
+timeout error at best. The player count
+it would carry is already published by the module's own exporter
+(`_valheim/metrics.nix` and the player-notify roster).
+
+### Remote syslog
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `SYSLOG_REMOTE_HOST` | — | host/IP | Ship the in-container syslogd output to a remote syslog. | Unused. |
+| `SYSLOG_REMOTE_PORT` | `514` | UDP port | Remote port. | — |
+| `SYSLOG_REMOTE_AND_LOCAL` | `true` | `true`/`false` | Keep logging to stdout too. | — |
+
+Unused because stdout already reaches journald through podman's log driver,
+and vector ships it to VictoriaLogs from there. Note that setting
+`SYSLOG_REMOTE_AND_LOCAL=false` would drop the server's output from the
+journal, and with it everything `joincode.nix`, `player-notify.nix` and
+`JournalLogRateHigh` read.
+
+### Log filters
+
+| Variable | Default | Values | What it does | Here |
+| --- | --- | --- | --- | --- |
+| `VALHEIM_LOG_FILTER_EMPTY` | `true` | `true`/`false` | Drop empty lines. | Default. |
+| `VALHEIM_LOG_FILTER_UTF8` | `true` | `true`/`false` | Drop invalid UTF-8. | Default. |
+| `VALHEIM_LOG_FILTER_MATCH*` | `` ` `` (one space) | string | Drop lines exactly equal to the value. | Default. |
+| `VALHEIM_LOG_FILTER_STARTSWITH*` | `(Filename:` | string | Drop lines with this prefix. | Default. |
+| `VALHEIM_LOG_FILTER_ENDSWITH*` | — | string | Drop lines with this suffix. | — |
+| `VALHEIM_LOG_FILTER_CONTAINS*` | — | string | Drop lines containing this substring (case-sensitive). | Three `…_GetPublicIP*` filters (#590). See "GetPublicIP log-rate runaway". |
+| `VALHEIM_LOG_FILTER_REGEXP*` | — | Go regexp | Drop matching lines. | — |
+| `ON_VALHEIM_LOG_FILTER_<kind>*` | — | shell command | Instead of dropping the line, run the command with the line on stdin. | Avoided, deliberately. |
+| `VALHEIM_LOG_FILTER_VERBOSE` | `2` | integer | glog `-v` level of `valheim-logfilter` itself. Only in `defaults`, not in upstream's README. | Default. |
+
+Every filter except `_EMPTY` and `_UTF8` is a **prefix**: any variable
+whose name starts with it defines another filter (the `*` above), and the
+suffix is just a unique name. `defaults` ships two more out of the box:
+`VALHEIM_LOG_FILTER_STARTSWITH_AssertionFailed` (the packet-timeout
+assertion flood). When `BEPINEX` or `VALHEIM_PLUS` is on, it also ships
+`VALHEIM_LOG_FILTER_STARTSWITH_BepInEx` (`Fallback handler could not load
+library`).
+
+The `ON_*` hooks run `/bin/bash -c` once per matching line. The comment on
+the GetPublicIP filters in `../valheim.nix` explains why that is the wrong
+tool at that log rate. It is also why the notifiers here tail the journal
+instead of hooking log lines.
+
+### Event hooks
+
+All default to empty. Each hook is a shell command run **inside the
+container**. The scripts run every one of them with a synchronous `eval`,
+so each hook holds up whatever invoked it until it returns. That includes
+the two upstream does not describe as blocking.
+
+| Variable | Runs | Blocks |
+| --- | --- | --- |
+| `PRE_SUPERVISOR_HOOK` | in `bootstrap`, before supervisord starts | container startup |
+| `PRE_BOOTSTRAP_HOOK` / `POST_BOOTSTRAP_HOOK` | around `valheim-bootstrap` (the POST hook is where upstream suggests installing extra packages) | startup |
+| `PRE_BACKUP_HOOK` / `POST_BACKUP_HOOK` | around each backup; `@BACKUP_FILE@` is replaced with its path | that backup and the next |
+| `PRE_UPDATE_CHECK_HOOK` / `POST_UPDATE_CHECK_HOOK` | around each `UPDATE_CRON` check | the check and later updates |
+| `PRE_START_HOOK` / `POST_START_HOOK` | around the updater's first server start | that start, then later restarts and updates |
+| `PRE_RESTART_HOOK` / `POST_RESTART_HOOK` | around an updater-driven restart | that restart, then later ones |
+| `PRE_SERVER_RUN_HOOK` / `POST_SERVER_RUN_HOOK` | around the game process itself | server start / shutdown (POST times out after 29 s) |
+| `PRE_SERVER_LISTENING_HOOK` / `POST_SERVER_LISTENING_HOOK` | before / once the server accepts connections (status `running`) | the listening poll |
+| `PRE_SERVER_SHUTDOWN_HOOK` / `POST_SERVER_SHUTDOWN_HOOK` | around shutdown | shutdown (PRE is hard-killed at 90 s) |
+| `PRE_BEPINEX_CONFIG_HOOK` / `POST_BEPINEX_CONFIG_HOOK` | around writing `BepInEx.cfg` (POST is where upstream suggests running `env2cfg` for plugin config) | startup |
+
+That is 19 hooks. Upstream's README table lists all of them, though
+`POST_SERVER_SHUTDOWN_HOOK` is easy to miss.
+
+**The built-in Discord pattern, and why this repo does not use it.**
+`DISCORD_WEBHOOK` and `DISCORD_MESSAGE` are not image variables. They are
+a convention from upstream's examples: define them yourself, then reference
+them from a hook such as `PRE_RESTART_HOOK='curl … "$DISCORD_WEBHOOK" &&
+sleep 60'`, or from an `ON_VALHEIM_LOG_FILTER_CONTAINS_*` hook on `Got
+character ZDOID from` for player joins. This repo instead uses its own
+systemd notifier units (`_valheim/joincode.nix`, `_valheim/player-notify.nix`)
+that tail the journal. The hooks run on the container's hot path, so a slow
+or hanging `curl` delays a backup, a restart or a shutdown. They also get no
+retry, restart, watchdog or alerting of their own, and they would need the
+webhook URL in the container environment. The systemd units are decoupled
+from the game process, are watched by the module's own alerts, and read the
+webhook from sops. Revisiting that choice is separate work.
+
+### Undocumented (`defaults` only)
+
+Upstream's README says these "could break things if configured wrong" and
+points at `defaults` without documenting them. They are listed here with
+that warning standing. None is set here, and none should be without
+reading the script that consumes it.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DEBUG_START_FRESH` | `false` | Wipe all downloaded server data on start (config untouched). |
+| `DEBUG_REINSTALL_VALHEIM_PLUS` | `false` | Make the V+ updater reinstall the V+ zip over the vanilla server. |
+| `DEBUG_REINSTALL_BEPINEX` | `false` | Same for BepInEx. |
+| `VALHEIM_PLUS_CFG_ENV_PREFIX` | `VPCFG_` | Prefix the V+ env-to-config pass looks for. |
+| `BEPINEX_CFG_ENV_PREFIX` | `BEPINEXCFG_` | Prefix the BepInEx env-to-config pass looks for. |
+| `SERVER_STATUS_FILE` | `/var/run/valheim/valheim-server.status` | Where the image records its own server state (starting/running/stopped). Its scripts read it. |
+| `DEFAULT_DIRECTORY_PERMISSIONS` / `DEFAULT_FILE_PERMISSIONS` | `0777` / `0666` masked by `PERMISSIONS_UMASK` (so `0755` / `0644`) | Base modes the per-tree variables below inherit. |
+| `CONFIG_DIRECTORY_PERMISSIONS` / `CONFIG_FILE_PERMISSIONS` | the defaults above | Modes applied under `/config`. |
+| `WORLDS_DIRECTORY_PERMISSIONS` / `WORLDS_FILE_PERMISSIONS` | the defaults above | Modes applied to the worlds directories. |
+| `BACKUPS_DIRECTORY_PERMISSIONS` / `BACKUPS_FILE_PERMISSIONS` | the defaults above | Modes applied to `BACKUPS_DIRECTORY`. |
+| `VALHEIM_PLUS_CONFIG_DIRECTORY_PERMISSIONS` / `VALHEIM_PLUS_CONFIG_FILE_PERMISSIONS` | the defaults above | Modes for `/config/valheimplus` when V+ is on. |
+| `BEPINEX_CONFIG_DIRECTORY_PERMISSIONS` / `BEPINEX_CONFIG_FILE_PERMISSIONS` | the defaults above | Modes for `/config/bepinex` when BepInEx is on. The materializer's tree lives here, so the image re-chmods it on each start. |
