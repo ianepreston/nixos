@@ -22,7 +22,10 @@
 # the memory/RESTART_CRON evidence, the GetPublicIP log runaway, and the mods
 # notes — lives in `_valheim/README.md`. Option and alert-rule descriptions
 # that say "at the top of this file" or "modules/apps/valheim.nix" mean the
-# sections summarised below and, for the detail, that runbook.
+# sections summarised below and, for the detail, that runbook. Every
+# environment variable the image accepts — default, values, and what this
+# module does with it — is tabulated in its "Full environment-variable
+# reference" section (#793).
 #
 # ## Two instances
 #
