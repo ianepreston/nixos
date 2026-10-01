@@ -53,14 +53,19 @@
 # (2026-09-21) — so every concurrently running host behind a public IP needs
 # its own `gamePort`. Full account in `_valheim/README.md`.
 #
-# ## Mods (BepInEx)
+# ## Mods and dev experiments (BepInEx, server arguments)
 #
-# `myValheim.bepinex = true` installs BepInEx into /config/bepinex on next
-# container start; drop mod DLLs into
-# /var/lib/containers/valheim/config/bepinex/plugins/ and restart
-# podman-valheim.service. Dev runs the same crossplay backend as prod, so a
-# mod that misbehaves on PlayFab shows it there — but under a handful of peers,
-# not prod's load. See `_valheim/README.md`.
+# `myValheim.bepinex = true` has the image install BepInEx; `bepinexPlugins`
+# selects pinned plugin packages from `availablePlugins`, which
+# `_valheim/bepinex-materialize.sh` installs into a Nix-managed subtree of
+# /config/bepinex before every container start. `serverArgs` passes verified
+# game arguments. hpp-1 declares its experiments in its host file; amos1 sets
+# none of these. Dev runs the same crossplay backend as prod, so a mod that
+# misbehaves on PlayFab shows it there — but under a handful of peers, not
+# prod's load. See "Mods and dev experiments" in `_valheim/README.md` (#772).
+#
+#   _valheim/bepinex-plugins.nix     pinned plugin packages + their layout.
+#   _valheim/bepinex-materialize.sh  the pre-start installer.
 _: {
   flake.modules.nixos.valheim =
     {
@@ -113,6 +118,48 @@ _: {
       };
       joincode = import ./_valheim/joincode.nix { inherit pkgs config paths; };
       player = import ./_valheim/player-notify.nix { inherit pkgs config paths; };
+
+      # Flags valheim-server (in the image) always passes itself, plus
+      # -crossplay, which `crossplay` owns. Rejected in `serverArgs`.
+      imageOwnedArgs = [
+        "-nographics"
+        "-batchmode"
+        "-name"
+        "-port"
+        "-world"
+        "-public"
+        "-password"
+        "-crossplay"
+      ];
+      # Nonempty, and nothing the image's unquoted `$SERVER_ARGS` would split
+      # or glob-expand.
+      badServerArgs = lib.filter (
+        t: builtins.match "[^[:space:]*?[]+" t == null || lib.elem t imageOwnedArgs
+      ) cfg.serverArgs;
+
+      networkingPluginGuids = with cfg.availablePlugins; [
+        betterNetworking10.guid
+        firesGhettoNetworking.guid
+      ];
+      selectedNetworkingPlugins = lib.filter (
+        p: lib.elem (p.guid or null) networkingPluginGuids
+      ) cfg.bepinexPlugins;
+
+      # One tree for the materializer. buildEnv fails the build when two
+      # plugins ship the same path, rather than letting one silently win.
+      bepinexPluginTree = pkgs.buildEnv {
+        name = "valheim-bepinex-plugins";
+        paths = cfg.bepinexPlugins;
+      };
+      bepinexMaterialize = pkgs.writeShellApplication {
+        name = "valheim-bepinex-materialize";
+        runtimeInputs = with pkgs; [
+          coreutils
+          findutils
+          gnused
+        ];
+        text = builtins.readFile ./_valheim/bepinex-materialize.sh;
+      };
     in
     {
       options.myValheim = {
@@ -196,16 +243,89 @@ _: {
           '';
         };
 
+        serverArgs = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [
+            "-preset"
+            "hard"
+          ];
+          description = ''
+            Extra valheim_server argv tokens, appended after the ones the
+            image builds itself. Rendered as the image's `SERVER_ARGS`
+            only when nonempty, so a host that sets nothing keeps an
+            unchanged unit (an empty `SERVER_ARGS` would still rewrite it
+            and restart the server, rotating the join code).
+
+            One list element is one argv token. The image expands
+            `$SERVER_ARGS` unquoted, so a token holding whitespace or a
+            glob character would be split or expanded; an assertion
+            rejects those instead of letting the argv differ from the
+            declaration. It also rejects the flags the image already
+            passes (`-name`, `-port`, `-world`, `-public`, `-password`,
+            `-crossplay`, …) — those have typed options or come from
+            the module, and a second copy would leave which one wins up
+            to the game's parser.
+
+            Only for arguments the server binary is verified to accept;
+            see "Mods and dev experiments" in `_valheim/README.md`.
+          '';
+        };
+
         bepinex = lib.mkOption {
           type = lib.types.bool;
           default = false;
           description = ''
-            Install BepInEx into /config/bepinex on next container start,
-            so mod DLLs dropped into
-            /var/lib/containers/valheim/config/bepinex/plugins/ load. See
-            the "Mods" section at the top of this file, including why a
-            mod that works on dev is not thereby cleared for prod's
-            player load.
+            Have the image install BepInEx (the framework, from its own
+            Thunderstore lookup) and load plugins from /config/bepinex on
+            next container start. Required by `bepinexPlugins`; on its
+            own it also allows unmanaged local exploration by dropping a
+            DLL straight into
+            /var/lib/containers/valheim/config/bepinex/plugins/. See the
+            "Mods" section at the top of this file, including why a mod
+            that works on dev is not thereby cleared for prod's player
+            load.
+          '';
+        };
+
+        bepinexPlugins = lib.mkOption {
+          type = lib.types.listOf lib.types.package;
+          default = [ ];
+          example = lib.literalExpression ''
+            [
+              (config.myValheim.availablePlugins.betterNetworking10.override {
+                settings."02 - Networking"."Queue Size" = "KB64";
+              })
+            ]
+          '';
+          description = ''
+            Nix-built plugin trees installed into the container before it
+            starts — the reviewable alternative to hand-dropped DLLs.
+            Each package uses the layout documented in
+            `_valheim/bepinex-plugins.nix`; `availablePlugins` holds the
+            pinned ones. Removing an entry removes its files and its
+            declared config on the next start, and nothing outside the
+            managed subtree is touched (see
+            `_valheim/bepinex-materialize.sh` for exactly what is owned).
+
+            Requires `bepinex`. At most one networking plugin
+            (BetterNetworking10, FiresGhettoNetworking) at a time — both
+            patch ZDO send pacing, and a combined result would say
+            nothing about either.
+          '';
+        };
+
+        availablePlugins = lib.mkOption {
+          type = lib.types.attrsOf lib.types.package;
+          readOnly = true;
+          default = import ./_valheim/bepinex-plugins.nix { inherit lib pkgs; };
+          defaultText = lib.literalMD "the pinned packages in `_valheim/bepinex-plugins.nix`";
+          description = ''
+            Pinned BepInEx plugin packages for `bepinexPlugins`. Each is
+            overridable: `.override { settings = { <section>.<key> = …; }; }`
+            renders that plugin's BepInEx config. Published as an option
+            so a host can select from it and so `task hashes` can reach
+            each `src` by flake attribute.
           '';
         };
 
@@ -233,6 +353,23 @@ _: {
       config = lib.mkIf cfg.enable (
         lib.mkMerge [
           {
+            assertions = [
+              {
+                assertion = badServerArgs == [ ];
+                message = "myValheim.serverArgs: ${
+                  lib.concatMapStringsSep ", " builtins.toJSON badServerArgs
+                } — each entry must be one nonempty argv token with no whitespace or glob characters, and not a flag the image already passes (${lib.concatStringsSep " " imageOwnedArgs}).";
+              }
+              {
+                assertion = cfg.bepinexPlugins == [ ] || cfg.bepinex;
+                message = "myValheim.bepinexPlugins is set but myValheim.bepinex is false — the image would not load BepInEx, so the plugins would sit on disk doing nothing.";
+              }
+              {
+                assertion = lib.length selectedNetworkingPlugins <= 1;
+                message = "myValheim.bepinexPlugins: select at most one networking plugin (BetterNetworking10 or FiresGhettoNetworking); both patch ZDO send pacing.";
+              }
+            ];
+
             myObservability.monitoredSystemdUnits = [
               "podman-valheim"
               "valheim-joincode-(notify|watchdog)"
@@ -465,9 +602,10 @@ _: {
                 VALHEIM_LOG_FILTER_CONTAINS_GetPublicIPFrame = "at ZNet.<GetPublicIP>g__DownloadStringAsync";
               }
               // lib.optionalAttrs cfg.bepinex {
-                # Install BepInEx on next start so mod DLLs dropped into
-                # /config/bepinex/plugins load. See the "Mods" section at the
-                # top of this file.
+                # Install BepInEx on next start so plugins under
+                # /config/bepinex/plugins load — the Nix-managed subtree from
+                # `bepinexPlugins` and anything dropped by hand. See the
+                # "Mods" section at the top of this file.
                 #
                 # Set only when true, rather than always emitting
                 # `BEPINEX = "false"`. The image's own default is off, so the
@@ -478,10 +616,33 @@ _: {
                 # rotating the join code out from under every player
                 # holding one.
                 BEPINEX = "true";
+              }
+              // lib.optionalAttrs (cfg.serverArgs != [ ]) {
+                # Same reasoning as BEPINEX: absent rather than empty when
+                # unset, so amos1's unit does not change. The assertion
+                # above guarantees the space-join round-trips through the
+                # image's unquoted expansion token for token.
+                SERVER_ARGS = lib.concatStringsSep " " cfg.serverArgs;
               };
               environmentFiles = [ config.sops.templates."valheim.env".path ];
               extraOptions = [ "--network=host" ];
             };
+
+            # Install `bepinexPlugins` into /config/bepinex ahead of every
+            # container start; the image then syncs it into the BepInEx
+            # install. Gated on `bepinex` rather than on a nonempty list so
+            # that removing the last plugin still runs one more pass and
+            # cleans up after it. A changed plugin set changes this line,
+            # so a deploy restarts the server with the new tree.
+            systemd.services.podman-valheim.serviceConfig.ExecStartPre = lib.mkIf cfg.bepinex [
+              (lib.escapeShellArgs [
+                (lib.getExe bepinexMaterialize)
+                bepinexPluginTree
+                "/var/lib/containers/valheim/config/bepinex"
+                (toString hostSpec.serverUid)
+                (toString hostSpec.serverGid)
+              ])
+            ];
           }
           metrics
           (lib.mkIf cfg.crossplay joincode)

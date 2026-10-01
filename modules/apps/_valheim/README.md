@@ -472,19 +472,141 @@ podman's log driver, and is the only layer that can protect retention.
 The filter is deliberately partial — see the comment on the vars for why
 suppressing all five lines would make the wedge undetectable.
 
-## Mods (BepInEx / Valheim+ / Jotunn)
+## Mods and dev experiments (BepInEx, server arguments — #772)
 
-`myValheim.bepinex = true` makes the image install BepInEx into
-/config/bepinex on next start. Drop mod DLLs into
-/var/lib/containers/valheim/config/bepinex/plugins/ and restart
-`podman-valheim.service`. Server-side-only mods just need the DLL;
-client-affecting mods need every player to install the same mod
-locally. See
-https://github.com/community-valheim-tools/valheim-server-docker#bepinex.
+hpp-1 is where server-side changes get tried before anyone proposes them
+for amos1. Experiments are declared in `modules/hosts/hpp-1.nix`, so the
+reviewed mainline config is the record of what was tested; promoting a
+result to amos1 is a separate change. amos1 sets none of these options,
+and with them at their defaults the rendered container environment and
+unit are identical to before (no empty `SERVER_ARGS`, no
+`BEPINEX = "false"` — either would restart amos1 and rotate its join
+code for nothing).
 
-This is on for hpp-1 and off for amos1 — testing mods is the reason the
-dev instance exists. Some mods misbehave specifically on the PlayFab
-backend, which is why the image ships crossplay off by default; dev now
-runs crossplay too (#771), so that failure shows up there first. Note
-the limit from "What the dev instance cannot tell you" above: dev's
-relay carries a handful of peers, not prod's load.
+### Server arguments (`myValheim.serverArgs`)
+
+Exact argv tokens, appended by the image as `SERVER_ARGS`. The image
+expands that variable unquoted, so the module asserts each token has no
+whitespace or glob characters, and rejects flags the image already
+passes. Declare only an argument the server binary is verified to
+accept: there is no generic "drop rate" knob, and an invented one would
+be silently ignored rather than rejected.
+
+**World presets and modifiers, as verified on hpp-1's 1.0.16 server
+(2026-09-30).** Decompiling `FejdStartup` in `assembly_valheim.dll`
+shows the server parses:
+
+- `-preset <p>` — `Enum.TryParse<WorldPresets>`, case-insensitive:
+  `normal`, `casual`, `easy`, `hard`, `hardcore`, `immersive`, `hammer`.
+  Logs `Setting world modifier preset: <p>`; an unknown value logs
+  `Could not parse '<p>' as a world modifier preset.` and starts anyway,
+  so that log line, not a clean start, is the check.
+- `-modifier <WorldModifiers> <WorldModifierOption>` — the individual
+  knobs (combat, deathpenalty, resources, raids, portals, …), same
+  case-insensitive parse.
+- `-resetmodifiers` — clears the world's starting keys.
+
+**A preset is sticky.** The parse writes the world's starting global keys
+and flags them changed, and they are saved with the world. Removing the
+argument therefore does *not* undo it — roll back with one start on
+`-preset normal` (or `-resetmodifiers`), then drop the argument.
+
+hpp-1 runs `-preset hard` as the first experiment; its log shows
+`Setting world modifier preset: hard` on every start.
+
+### Plugins (`myValheim.bepinexPlugins`)
+
+`myValheim.bepinex = true` makes the image install the BepInEx framework
+(its own Thunderstore lookup, unchanged). `bepinexPlugins` then selects
+Nix-built plugin trees from `myValheim.availablePlugins`
+(`bepinex-plugins.nix`): each a fixed version with a fixed hash, built as
+
+```text
+BepInEx/plugins/<dir>/…      the plugin and any dependent DLLs
+BepInEx/patchers/<dir>/…     preloader patchers, only when needed
+BepInEx/config/<guid>.cfg    only the keys the declaration sets
+```
+
+Before every container start, `bepinex-materialize.sh` (an ExecStartPre
+of `podman-valheim.service`) copies the merged tree into
+`/config/bepinex/{plugins,patchers}/nix-managed/` and writes the declared
+configs. The image's own sync then carries it into the running install
+and prunes what an earlier sync put there and is now gone. The script
+owns exactly those two subdirectories and the configs listed in
+`/config/bepinex/.nix-managed-configs`. BepInEx's own files, a config a
+plugin generated for itself, and anything dropped by hand are left alone.
+
+A declared config is rewritten from the declaration on every start, so
+an in-game edit to a managed key does not survive a restart; the place to
+change it is the host file. A plugin declared with no `settings` writes
+its own defaults on first load, and that file is unmanaged: it outlives
+the plugin's removal (harmless, and kept so a re-test starts from the
+same values; delete it by hand for a clean slate).
+
+Rollback is removing the entry and deploying hpp-1. Revert one plugin at
+a time so each result stays attributable.
+
+**Bumping a plugin:** change `version` in `bepinex-plugins.nix`, run
+`task hashes` (each `src` carries a `regen-hash` marker — Renovate does
+not track these), re-read upstream's changelog for client requirements,
+and update the table below.
+
+**Unmanaged exploration** is still possible: with `bepinex = true`, a DLL
+dropped directly into
+`/var/lib/containers/valheim/config/bepinex/plugins/` loads on the next
+restart. Nothing reviews or cleans it, so it is for a quick look only;
+anything worth a result goes through `bepinexPlugins`.
+
+### Packaged plugins
+
+| Plugin | Version | Source / licence | Dependencies | Clients | Status on hpp-1 |
+| --- | --- | --- | --- | --- | --- |
+| BetterNetworking10 (`DIT.BetterNetworking10`) | 1.2.0 | [GitHub release](https://github.com/LabodiDavid/BetterNetworking10/releases/tag/v1.2.0), MIT | image's BepInExPack | optional: compression only engages when both ends run it; the queue-size patch is server-side | enabled (#671 A/B, side A); load-verified |
+| FiresGhettoNetworking (`com.Fire.FiresGhettoNetworkMod`) | 1.5.17 | [Thunderstore](https://thunderstore.io/c/valheim/p/VerdantsAscent/FiresGhettoNetworking/) ([source](https://github.com/fire-VA/FiresGhettoNetworking)), MIT | image's BepInExPack | optional for the server-side half; client half needs every client on the same version | packaged, not enabled (#671 A/B, side B); load-verified |
+
+The two take **opposite** positions on the crossplay queue, which is what
+makes them an A/B rather than two tries at one idea. Both start from the
+same fact — PlayFab's `GetSendQueueSize` reports a quarter of the bytes
+actually in flight. BetterNetworking10 raises the ZDO send budget
+(`Queue Size`, 10 KB → 32 KB), i.e. lets more through. FiresGhettoNetworking
+caps crossplay peers at a fixed `Crossplay In-Flight KB` (20 KB real bytes),
+i.e. holds less in flight because PlayFab recovers from loss slowly, and adds
+server-side traffic reduction (RPC area-of-interest filtering, ZDO delta
+compression) that works on either transport. Its transport tuning,
+compression and HyperBoost are Steam-socket only and do nothing on amos1.
+
+The module asserts at most one of them is selected at a time. Neither
+`Force Crossplay` setting is declared: both default to following the
+command line, which `myValheim.crossplay` already drives, and forcing it
+in a plugin config would let the plugin silently contradict the module's
+backend, firewall and join-code wiring.
+
+What counts as a result, per plugin:
+
+1. **It loaded.** The BepInEx chain-loader lines in
+   `journalctl -u podman-valheim` name the plugin and version. Present on
+   disk is not proof it ran.
+2. **It patched.** BetterNetworking10 logs `PATCH OK` / `PATCH SKIP` /
+   `PATCH FAILED` per patch and `Valheim compatibility verified: <ver>`;
+   any `PATCH FAILED` voids the run. FiresGhettoNetworking prints its
+   version banner and, on a dedicated server, the join address.
+3. **It helped.** Only a multiplayer session can say that for #671, and
+   dev carries a handful of peers, not prod's load (see "What the dev
+   instance cannot tell you" above).
+
+Load results on hpp-1, Valheim `l-1.0.16`, BepInExPack 5.4.2351
+(2026-09-30):
+
+| Plugin | Loaded | Patch / startup audit | Notes |
+| --- | --- | --- | --- |
+| BetterNetworking10 1.2.0 | `Loading [Better Networking 1.0 Safe 1.2]`; chainloader 1 loaded, 0 failed | `Patch audit complete: 15 applied, 4 skipped, 0 failed. Mode=Balanced`, including `PATCH OK ZDO queue budget: ZDOMan.SendZDOs`. Skips: update rate (100% = off), new-connection buffer, force crossplay (vanilla), player limit | Warns that 1.0.16 is outside its audited 1.0.12–1.0.15 range; every patch still verified its IL pattern. Recheck the audit after each game update. |
+| FiresGhettoNetworking 1.5.17 | `Loading [FiresGhettoNetworkMod 1.5.17]`; chainloader 1 loaded, 0 failed; `Fires Ghetto Networking Loaded.` | `Running on DEDICATED SERVER`; server auto-tune picked tier Medium (Queue Size 48 KB); server-side sim off, delta + throttle + AI LOD + WearNTear on | Writes a ~60 KB `com.Fire.FiresGhettoNetworkMod.cfg` of its own (undeclared, so unmanaged). |
+
+Neither has had a multiplayer session yet, so neither has a #671 result.
+Swapping between them was exercised on the host: the materializer
+deleted the outgoing plugin's declared config, and the image's sync
+pruned its DLL from the running tree on the same start.
+
+Some mods misbehave specifically on the PlayFab backend, which is why
+the image ships crossplay off by default; dev runs crossplay too (#771),
+so that failure shows up there first.

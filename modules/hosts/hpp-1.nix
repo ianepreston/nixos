@@ -76,6 +76,46 @@
 
         system.stateVersion = "25.11";
       }
+
+      # Valheim dev experiments (#772). This block is the record of what is
+      # under test on hpp-1; amos1 gets none of it, and promoting a result is
+      # a separate change there. Revert one entry at a time — removing a
+      # plugin and deploying cleans its files and declared config, leaving
+      # the world and BepInEx's own files alone. Results and per-plugin
+      # notes: "Mods and dev experiments" in ../apps/_valheim/README.md.
+      (
+        { config, ... }:
+        {
+          myValheim = {
+            # Accepted values verified against this server's
+            # assembly_valheim.dll; see the README. A preset is saved
+            # into the world, so removing this does not undo it — run
+            # one start on `-preset normal` first.
+            serverArgs = [
+              "-preset"
+              "hard"
+            ];
+
+            # #671 A/B, one networking plugin at a time (asserted).
+            # Switching is swapping this entry for
+            # `firesGhettoNetworking`. Settings spell out the upstream
+            # "first test" block so the tested configuration is visible
+            # here even where it matches the defaults.
+            bepinexPlugins = [
+              (config.myValheim.availablePlugins.betterNetworking10.override {
+                settings = {
+                  "00 - Compatibility".Mode = "Balanced";
+                  "01 - Features" = {
+                    "Queue Size" = true;
+                    "New Connection ZDO Buffer" = false;
+                  };
+                  "02 - Networking"."Queue Size" = "KB32";
+                };
+              })
+            ];
+          };
+        }
+      )
     ];
   };
 }
