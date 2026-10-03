@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Reproducible CPU/GPU thermal captures for before/after hardware changes
+# (scripts/thermal-bench.sh, #757). Runs on workstations as well as servers,
+# which is why it isn't in maintenance.yaml.
+#
+# The package bundles a CUDA gpu-burn. CUDA is unfree and no binary cache
+# serves it, so the first `task thermal:bench` on a host builds it locally —
+# budget for that before the run you actually care about.
+#
+# bench always runs under sudo: CPU package power is root-only, and
+# --compare refuses a root run against a non-root one, so both halves of a
+# comparison have to be taken the same way.
+#
+# On a host without a checkout (amos1):
+#   sudo nix run github:ianepreston/nixos#thermal-bench -- --label <l> --ambient <degC>
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+  bench:
+    desc: 'Capture a thermal profile under load. Pass flags after --, e.g. task thermal:bench -- --label before-nic --ambient 21.5 (first run builds CUDA gpu-burn: slow)'
+    cmds:
+      - |
+        set -euo pipefail
+        out=$(nix build --no-link --print-out-paths .#thermal-bench)
+        sudo "$out/bin/thermal-bench" {{.CLI_ARGS}}
+  compare:
+    desc: 'Compare two captures. Pass the run directories after --, e.g. task thermal:compare -- ~/thermal-bench/A ~/thermal-bench/B'
+    cmds:
+      - nix run .#thermal-bench -- --compare {{.CLI_ARGS}}
