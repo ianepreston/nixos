@@ -113,6 +113,10 @@
 # signal. The RTX 5080 exposes no memory/hotspot temperature. Both are
 # recorded in meta.json's `absent` list rather than discovered mid-comparison.
 #
+# Of the throttle counters, read the two thermal ones. amos1's RTX 3070
+# accrues sw_power_cap for the whole run, idle included (120 s of a 120 s
+# idle phase on 2026-10-03), so on that card it says nothing about load.
+#
 # A capture is only as clean as the host is quiet: stop anything that would
 # load the CPU or GPU (llama-server requests, Jellyfin transcodes,
 # nixos-upgrade) before starting.
@@ -146,6 +150,15 @@ milli() {
     _mv=$((-_mv))
   fi
   printf -v "$2" '%s%d.%03d' "$_ms" $((_mv / 1000)) $((_mv % 1000))
+}
+
+# read_sysfs <file> <var>: one sysfs value, or "" if the read fails. Sensors
+# pass a read check at discovery, but a transient EIO (an nvme or drivetemp
+# sensor mid-load, a device going away) must cost one blank cell, not the run.
+read_sysfs() {
+  local _rv
+  IFS= read -r _rv <"$1" 2>/dev/null || _rv=""
+  printf -v "$2" '%s' "$_rv"
 }
 
 now_us() {
@@ -255,6 +268,14 @@ discover_cpufreq() {
 
 readonly GPU_QUERY=temperature.gpu,temperature.gpu.tlimit,fan.speed,power.draw,clocks.sm,utilization.gpu,pcie.link.gen.current,pcie.link.width.current,clocks_throttle_reasons.active
 readonly GPU_FIELDS=(temp_c tlimit_c fan_pct power_w sm_mhz util_pct pcie_gen pcie_width throttle_hex)
+# jq: per-GPU counter deltas between two read_counters snapshots $a and $b.
+# A counter a driver reports as N/A is null in both and stays null.
+# shellcheck disable=SC2016 # $a, $b and $i are jq variables, not shell ones
+readonly JQ_COUNTER_DELTA='[range(0; $a | length) as $i
+  | $a[$i] | to_entries
+  | map({key, value: (($b[$i][.key]) as $after
+      | if .value == null or $after == null then null else $after - .value end)})
+  | from_entries]'
 readonly GPU_COUNTERS=clocks_event_reasons_counters.hw_thermal_slowdown,clocks_event_reasons_counters.sw_thermal_slowdown,clocks_event_reasons_counters.sw_power_cap
 
 discover_gpu() {
@@ -326,7 +347,8 @@ sample() {
   local -a row=("$t" "$phase")
 
   if [[ -n $CPU_TEMP_FILE ]]; then
-    milli "$(<"$CPU_TEMP_FILE")" v
+    read_sysfs "$CPU_TEMP_FILE" v
+    [[ -n $v ]] && milli "$v" v
     row+=("$v")
   else
     row+=("")
@@ -340,9 +362,14 @@ sample() {
   PREV_STAT_IDLE=$STAT_IDLE
 
   if ((${#CPUFREQ_FILES[@]})); then
-    local sum=0 f
-    for f in "${CPUFREQ_FILES[@]}"; do sum=$((sum + $(<"$f"))); done
-    row+=("$((sum / ${#CPUFREQ_FILES[@]} / 1000))")
+    local sum=0 n=0 f
+    for f in "${CPUFREQ_FILES[@]}"; do
+      read_sysfs "$f" v
+      [[ -n $v ]] || continue
+      sum=$((sum + v))
+      n=$((n + 1))
+    done
+    if ((n)); then row+=("$((sum / n / 1000))"); else row+=(""); fi
   else
     row+=("")
   fi
@@ -382,8 +409,8 @@ sample() {
 
   local i
   for i in "${!HW_FILES[@]}"; do
-    v=$(<"${HW_FILES[$i]}")
-    if [[ ${HW_KINDS[$i]} == temp ]]; then milli "$v" v; fi
+    read_sysfs "${HW_FILES[$i]}" v
+    if [[ -n $v && ${HW_KINDS[$i]} == temp ]]; then milli "$v" v; fi
     row+=("$v")
   done
 
@@ -746,7 +773,14 @@ main() {
   local started dir
   started=$(date -u +%Y%m%dT%H%MZ)
   dir=$out/$host-$label-$started
+  # Under sudo, hand the output back to the invoking user — the parent too if
+  # this run created it, or they couldn't delete their own runs inside it.
+  if [[ -n $owner && ! -d $out ]]; then
+    mkdir -p "$out"
+    chown "$owner:" "$out"
+  fi
   mkdir -p "$dir"
+  give_back() { if [[ -n $owner ]]; then chown -R "$owner:" "$dir" || true; fi; }
   log "writing to $dir"
 
   local -a columns
@@ -802,8 +836,8 @@ main() {
     printf '  - %s\n' "${ABSENT[@]}" >&2
   fi
 
-  trap 'stop_stressors; exit 130' INT TERM
-  trap 'stop_stressors' EXIT
+  trap 'stop_stressors; give_back; exit 130' INT TERM
+  trap 'stop_stressors; give_back' EXIT
 
   local before counters_phases='{}' c0 c1 seconds t next_us sleep_us
   before=$(read_counters)
@@ -827,20 +861,17 @@ main() {
     c1=$(read_counters)
     counters_phases=$(jq -n --argjson acc "$counters_phases" --arg p "$p" \
       --argjson a "$c0" --argjson b "$c1" \
-      '$acc + {($p): [range(0; $a | length) as $i
-        | $a[$i] | to_entries | map({key, value: ($b[$i][.key] - .value)}) | from_entries]}')
+      "\$acc + {(\$p): $JQ_COUNTER_DELTA}")
   done
   trap - INT TERM EXIT
 
   jq -n --argjson a "$before" --argjson b "$(read_counters)" --argjson phases "$counters_phases" \
-    '{before: $a, after: $b, phases: $phases,
-      delta: [range(0; $a | length) as $i
-        | $a[$i] | to_entries | map({key, value: ($b[$i][.key] - .value)}) | from_entries]}' \
+    "{before: \$a, after: \$b, phases: \$phases, delta: $JQ_COUNTER_DELTA}" \
     >"$dir/counters.json"
 
   summarize "$dir" >"$dir/summary.json"
   render_md "$dir/summary.json" >"$dir/summary.md"
-  [[ -n $owner ]] && chown -R "$owner:" "$dir"
+  give_back
 
   cat "$dir/summary.md"
   log "done: $dir"
