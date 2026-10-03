@@ -62,11 +62,13 @@
 # `myValheim.bepinex = true` has the image install BepInEx; `bepinexPlugins`
 # selects pinned plugin packages from `availablePlugins`, which
 # `_valheim/bepinex-materialize.sh` installs into a Nix-managed subtree of
-# /config/bepinex before every container start. `serverArgs` passes verified
-# game arguments. hpp-1 declares its experiments in its host file; amos1 sets
-# none of these. Dev runs the same crossplay backend as prod, so a mod that
-# misbehaves on PlayFab shows it there — but under a handful of peers, not
-# prod's load. See "Mods and dev experiments" in `_valheim/README.md` (#772).
+# /config/bepinex before every container start. `worldModifiers` sets the
+# difficulty preset and modifiers, validated at eval time; `serverArgs`
+# passes any other verified game argument. hpp-1 declares its experiments
+# in its host file; amos1 sets none of these. Dev runs the same crossplay
+# backend as prod, so a mod that misbehaves on PlayFab shows it there — but
+# under a handful of peers, not prod's load. See "Mods and dev experiments"
+# in `_valheim/README.md` (#772).
 #
 #   _valheim/bepinex-plugins.nix     pinned plugin packages + their layout.
 #   _valheim/bepinex-materialize.sh  the pre-start installer.
@@ -123,8 +125,93 @@ _: {
       joincode = import ./_valheim/joincode.nix { inherit pkgs config paths; };
       player = import ./_valheim/player-notify.nix { inherit pkgs config paths; };
 
-      # Flags valheim-server (in the image) always passes itself, plus
-      # -crossplay, which `crossplay` owns. Rejected in `serverArgs`.
+      # `-modifier` names (as spelled in the dedicated server manual) and
+      # their accepted values, per `worldModifiers` field. The game parses
+      # both halves case-insensitively, but it accepts any
+      # WorldModifierOption for any modifier and only logs when the slider
+      # has no such step — so the per-modifier lists are the real check.
+      worldModifierValues = {
+        combat = {
+          name = "Combat";
+          values = [
+            "veryeasy"
+            "easy"
+            "hard"
+            "veryhard"
+          ];
+        };
+        deathPenalty = {
+          name = "DeathPenalty";
+          values = [
+            "casual"
+            "veryeasy"
+            "easy"
+            "hard"
+            "hardcore"
+          ];
+        };
+        resources = {
+          name = "Resources";
+          values = [
+            "muchless"
+            "less"
+            "more"
+            "muchmore"
+            "most"
+          ];
+        };
+        raids = {
+          name = "Raids";
+          values = [
+            "none"
+            "muchless"
+            "less"
+            "more"
+            "muchmore"
+          ];
+        };
+        portals = {
+          name = "Portals";
+          values = [
+            "casual"
+            "hard"
+            "veryhard"
+          ];
+        };
+      };
+
+      # Preset first: it clears every world modifier before applying its
+      # own, so a `-modifier` or `-setkey` placed ahead of it would be
+      # wiped on the same start.
+      worldModifierArgs =
+        let
+          wm = cfg.worldModifiers;
+        in
+        lib.optionals (wm.preset != null) [
+          "-preset"
+          wm.preset
+        ]
+        ++ lib.concatLists (
+          lib.mapAttrsToList (
+            field: m:
+            lib.optionals (wm.${field} != null) [
+              "-modifier"
+              m.name
+              wm.${field}
+            ]
+          ) worldModifierValues
+        )
+        ++ lib.concatMap (k: [
+          "-setkey"
+          k
+        ]) (lib.unique wm.setKeys);
+      serverArgv = worldModifierArgs ++ cfg.serverArgs;
+
+      # Flags valheim-server (in the image) always passes itself, plus the
+      # ones a typed option owns: -crossplay (`crossplay`) and the world
+      # modifier flags (`worldModifiers`, which -resetmodifiers would
+      # silently undo). Rejected in `serverArgs`, compared lowercased
+      # because the game lowercases each flag before matching it.
       imageOwnedArgs = [
         "-nographics"
         "-batchmode"
@@ -134,11 +221,15 @@ _: {
         "-public"
         "-password"
         "-crossplay"
+        "-preset"
+        "-modifier"
+        "-setkey"
+        "-resetmodifiers"
       ];
       # Nonempty, and nothing the image's unquoted `$SERVER_ARGS` would split
       # or glob-expand.
       badServerArgs = lib.filter (
-        t: builtins.match "[^[:space:]*?[]+" t == null || lib.elem t imageOwnedArgs
+        t: builtins.match "[^[:space:]*?[]+" t == null || lib.elem (lib.toLower t) imageOwnedArgs
       ) cfg.serverArgs;
 
       networkingPluginGuids = with cfg.availablePlugins; [
@@ -248,16 +339,88 @@ _: {
           '';
         };
 
+        worldModifiers =
+          let
+            stickyNote = ''
+              Saved into the world (its starting keys, in the world
+              metadata file), so unsetting this does not undo it on its
+              own. With `preset`
+              set the next start re-applies the whole declaration, since
+              a preset clears every modifier first; without one, roll
+              back with a single start on `preset = "normal"`, then
+              unset that too.
+            '';
+          in
+          {
+            preset = lib.mkOption {
+              type = lib.types.nullOr (
+                lib.types.enum [
+                  "normal"
+                  "casual"
+                  "easy"
+                  "hard"
+                  "hardcore"
+                  "immersive"
+                  "hammer"
+                ]
+              );
+              default = null;
+              example = "hard";
+              description = ''
+                World difficulty preset (`-preset`). Clears every other
+                world modifier before applying its own, so the module
+                renders it ahead of the `-modifier`/`-setkey` tokens and
+                those refine it.
+
+                ${stickyNote}
+              '';
+            };
+
+            setKeys = lib.mkOption {
+              type = lib.types.listOf (
+                lib.types.enum [
+                  "nobuildcost"
+                  "playerevents"
+                  "passivemobs"
+                  "nomap"
+                ]
+              );
+              default = [ ];
+              example = [ "nomap" ];
+              description = ''
+                Checkbox world modifiers, one `-setkey <key>` each. The
+                game adds any string here as a world key without a log
+                line or an error, so this list is the only check.
+
+                ${stickyNote}
+              '';
+            };
+          }
+          // lib.mapAttrs (
+            _: m:
+            lib.mkOption {
+              type = lib.types.nullOr (lib.types.enum m.values);
+              default = null;
+              description = ''
+                `-modifier ${m.name} <value>`, applied after
+                `preset`.${lib.optionalString (m.name == "Resources") " This is the drop-rate knob."}
+
+                ${stickyNote}
+              '';
+            }
+          ) worldModifierValues;
+
         serverArgs = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [ ];
           example = [
-            "-preset"
-            "hard"
+            "-saveinterval"
+            "900"
           ];
           description = ''
             Extra valheim_server argv tokens, appended after the ones the
-            image builds itself. Rendered as the image's `SERVER_ARGS`
+            image builds itself and after `worldModifiers`. Rendered,
+            together with `worldModifiers`, as the image's `SERVER_ARGS`
             only when nonempty, so a host that sets nothing keeps an
             unchanged unit (an empty `SERVER_ARGS` would still rewrite it
             and restart the server, rotating the join code).
@@ -268,9 +431,10 @@ _: {
             rejects those instead of letting the argv differ from the
             declaration. It also rejects the flags the image already
             passes (`-name`, `-port`, `-world`, `-public`, `-password`,
-            `-crossplay`, …) — those have typed options or come from
-            the module, and a second copy would leave which one wins up
-            to the game's parser.
+            `-crossplay`, …) and the world modifier flags (`-preset`,
+            `-modifier`, `-setkey`, `-resetmodifiers`) — those have
+            typed options or come from the module, and a second copy
+            would leave which one wins up to the game's parser.
 
             Only for arguments the server binary is verified to accept;
             see "Mods and dev experiments" in `_valheim/README.md`.
@@ -363,7 +527,7 @@ _: {
                 assertion = badServerArgs == [ ];
                 message = "myValheim.serverArgs: ${
                   lib.concatMapStringsSep ", " builtins.toJSON badServerArgs
-                } — each entry must be one nonempty argv token with no whitespace or glob characters, and not a flag the image already passes (${lib.concatStringsSep " " imageOwnedArgs}).";
+                } — each entry must be one nonempty argv token with no whitespace or glob characters, and not a flag the image already passes or a typed option owns (${lib.concatStringsSep " " imageOwnedArgs}).";
               }
               {
                 assertion = cfg.bepinexPlugins == [ ] || cfg.bepinex;
@@ -623,12 +787,13 @@ _: {
                 # holding one.
                 BEPINEX = "true";
               }
-              // lib.optionalAttrs (cfg.serverArgs != [ ]) {
+              // lib.optionalAttrs (serverArgv != [ ]) {
                 # Same reasoning as BEPINEX: absent rather than empty when
                 # unset, so amos1's unit does not change. The assertion
-                # above guarantees the space-join round-trips through the
-                # image's unquoted expansion token for token.
-                SERVER_ARGS = lib.concatStringsSep " " cfg.serverArgs;
+                # above and the `worldModifiers` enums guarantee the
+                # space-join round-trips through the image's unquoted
+                # expansion token for token.
+                SERVER_ARGS = lib.concatStringsSep " " serverArgv;
               };
               environmentFiles = [ config.sops.templates."valheim.env".path ];
               extraOptions = [ "--network=host" ];
