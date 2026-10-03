@@ -175,30 +175,9 @@ tasks:
           LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'
       - |
         set -euo pipefail
-        echo -e "\x1B[32m[+] Waiting for {{.HOST}} to reboot into installed system\x1B[0m"
-        ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
-        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
-        # See bootstrap.yaml's reinstall AUTO_WAIT block for the
-        # rationale on `UpdateHostKeys=no` and waiting on systemd state.
-        # 240 iterations * 3s = 12 min. tests-server's first boot
-        # (server-apps stack) takes 4-8 min; 6 min isn't enough.
-        for i in $(seq 1 240); do
-          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
-                      -o StrictHostKeyChecking=accept-new \
-                      -o UpdateHostKeys=no \
-                      {{.TARGET_USER}}@127.0.0.1 'systemctl is-system-running' 2>/dev/null || echo connecting)
-          case "$state" in
-            running|degraded)
-              echo -e "\x1B[32m[+] {{.HOST}} reachable (systemd: $state)\x1B[0m"
-              exit 0
-              ;;
-            *)
-              sleep 3
-              ;;
-          esac
-        done
-        echo -e "\x1B[31m[!] {{.HOST}} did not come up within 12 minutes after install\x1B[0m"
-        exit 1
+        # 12 min: tests-server's first boot (server-apps stack) takes
+        # 4-8 min; 6 min isn't enough.
+        ./scripts/wait-for-boot.sh {{.TARGET_USER}} 127.0.0.1 {{.SSH_PORT}} 12
 
   down:
     desc: Tear down the VM (kill quickemu, delete qcow2 — preserves SSH host key)
