@@ -11,6 +11,7 @@ includes:
   recovery: ./taskfiles/recovery.yaml
   secrets: ./taskfiles/secrets.yaml
   ssh: ./taskfiles/ssh.yaml
+  thermal: ./taskfiles/thermal.yaml
   vm: ./taskfiles/vm.yaml
 
 tasks:
