@@ -343,11 +343,11 @@ tasks:
       - task: :vm:up
       - task: :vm:sops-authorize
         vars: {TARGET: '{{.SOURCE_HOST}}'}
-      # vm:install routes through bootstrap:reinstall with LOCAL_SECRETS=true
-      # (default), so the installed system already reflects local repo
-      # state — including the uncommitted sops envelope edits the previous
-      # step just made. The bootstrap:reinstall flow also runs sync +
-      # rebuild on the target afterwards, but for this drill we only
+      # bootstrap:install with LOCAL_SECRETS=true pre-builds against local
+      # repo state, so the installed system already carries the
+      # uncommitted sops envelope edits the previous step just made. Not
+      # bootstrap:reinstall: that flow also runs sync + rebuild on the
+      # target afterwards, but for this drill we only
       # need the install — the per-app restore subtasks below are the
       # actual signal, and a full rebuild on a freshly-installed
       # tests-server would fail on harmless degraded units (tailscale
@@ -363,51 +363,9 @@ tasks:
           LOCAL_SECRETS: 'true'
       - |
         set -euo pipefail
-        echo -e "\x1B[32m[+] Waiting for tests-server to reboot into installed system\x1B[0m"
-        ssh-keygen -R "127.0.0.1" -f ~/.ssh/known_hosts 2>/dev/null || true
-        ssh-keygen -R "[127.0.0.1]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
-        # Readiness is `multi-user.target` being active, NOT
-        # `systemctl is-system-running` returning running|degraded. That
-        # state is effectively unreachable on a freshly installed
-        # tests-server: radarr cannot start without the NFS content paths a
-        # VM does not have, decluttarr's pre-start polls radarr and fails,
-        # and its Restart= loop keeps a start job queued every ~30s.
-        # `is-system-running` reports `starting` until the job queue goes
-        # idle *for the first time*, so it only flips during the brief gap
-        # between one decluttarr attempt exiting and the next being queued —
-        # a gap a 3s poll routinely steps over. Measured on 2026-09-23:
-        # multi-user.target active at 2min36 and stable thereafter, while
-        # the old loop polled for a full 12 min without once catching an
-        # idle window. The 6 min version before it never caught one either;
-        # it simply had no failure branch and fell through silently, which
-        # is how this step has always "passed".
-        #
-        # running|degraded is still accepted as an early exit for hosts
-        # whose units all settle — it just isn't required.
-        #
-        # 240 iterations * 3s = 12 min, matching vm:install. tests-server's
-        # first boot (server-apps stack) takes 4-8 min, so 6 min was too
-        # short regardless.
-        for i in $(seq 1 240); do
-          state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
-                      -o StrictHostKeyChecking=accept-new \
-                      -o UpdateHostKeys=no \
-                      ipreston@127.0.0.1 \
-                      'systemctl is-active multi-user.target || true;
-                       systemctl is-system-running || true' \
-                      2>/dev/null | paste -sd, - || echo connecting)
-          case "$state" in
-            active,*|*,running|*,degraded)
-              echo -e "\x1B[32m[+] Target reachable (multi-user.target + systemd: $state)\x1B[0m"
-              exit 0
-              ;;
-            *)
-              sleep 3
-              ;;
-          esac
-        done
-        echo -e "\x1B[31m[!] tests-server did not come up within 12 minutes after install\x1B[0m"
-        exit 1
+        # 12 min, matching vm:install. See the script for why readiness
+        # is multi-user.target rather than is-system-running.
+        ./scripts/wait-for-boot.sh ipreston 127.0.0.1 {{.SSH_PORT}} 12
       - |
         set -euo pipefail
         # Seed sentinel files inside the paths the upcoming restores

@@ -48,7 +48,9 @@ tasks:
       # flake-locked git URL. Set to false to force flake.lock resolution.
       LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
       # Skip the post-install "press enter once it's up" prompt and
-      # poll instead. Used by recovery:test:full for unattended runs.
+      # poll instead, for unattended runs. Nothing in-repo sets it:
+      # vm:install and recovery:test:full call bootstrap:install directly
+      # and run the same wait themselves.
       AUTO_WAIT: '{{.AUTO_WAIT | default "false"}}'
       TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
     cmds:
@@ -64,60 +66,9 @@ tasks:
       - |
         set -euo pipefail
         if [ "{{.AUTO_WAIT}}" = "true" ]; then
-          echo -e "\x1B[32m[+] Polling for {{.TARGET_USER}}@{{.DEST}}:{{.SSH_PORT}} after reboot (up to 6 min)\x1B[0m"
-          ssh-keygen -R "{{.DEST}}" -f ~/.ssh/known_hosts 2>/dev/null || true
-          ssh-keygen -R "[{{.DEST}}]:{{.SSH_PORT}}" -f ~/.ssh/known_hosts 2>/dev/null || true
-          # `UpdateHostKeys=no` on every ssh below: OpenSSH 9.5+'s default
-          # behavior is to open a flurry of parallel verification
-          # connections (one per advertised host-key algorithm) on every
-          # successful connect — to learn additional host keys. The VM
-          # only has an ed25519 host key, so every other verification
-          # attempt is refused, and the burst can fill sshd's MaxStartups
-          # window. The next legitimate connection (rsync below) then
-          # lands preauth-rejected. Disabling the update kills the flood.
-          # Also wait for systemd to leave the `starting` state before
-          # handing back to bootstrap:sync — otherwise sysinit-reactivation
-          # can flap sshd mid-handshake.
-          #
-          # `BatchMode=yes` is safe with the hardware keys, despite
-          # appearances. The enrolled sk credentials are verify-required,
-          # so signing is a two-step: the first attempt comes back
-          # SSH_SK_ERR_PIN_REQUIRED and ssh then retries `with-pin`,
-          # prompting for the FIDO2 PIN. That prompt is written to
-          # /dev/tty by the sk helper, not through the stdio BatchMode
-          # governs, so BatchMode does not suppress it — verified against
-          # a cold token (unplugged and replugged to clear the cached
-          # pinUvAuthToken) on 2026-09-03.
-          #
-          # Worth stating because the intermediate failure looks fatal and
-          # names the wrong cause:
-          #
-          #   sshsk_sign: sk_sign failed with code -3
-          #   ssh-sk-helper: Signing failed: incorrect passphrase supplied
-          #                  to decrypt private key
-          #
-          # That is a normal step on the way to a successful signature,
-          # not a passphrase problem. What genuinely does fail is sk auth
-          # with no tty *and* no warm UV cache — nothing here runs that
-          # way, since bootstrap is interactive by nature. #547 removed
-          # BatchMode on the mistaken reading that it blocked the prompt;
-          # reverted, because failing fast on *any* prompt is exactly what
-          # a poll loop wants.
-          for i in $(seq 1 120); do
-            state=$(ssh -p {{.SSH_PORT}} -o ConnectTimeout=2 -o BatchMode=yes \
-                        -o StrictHostKeyChecking=accept-new \
-                        -o UpdateHostKeys=no \
-                        {{.TARGET_USER}}@{{.DEST}} 'systemctl is-system-running' 2>/dev/null || echo connecting)
-            case "$state" in
-              running|degraded)
-                echo -e "\x1B[32m[+] Target reachable (systemd: $state)\x1B[0m"
-                break
-                ;;
-              *)
-                sleep 3
-                ;;
-            esac
-          done
+          # Fails the task if the target isn't up in time, rather than
+          # carrying on into bootstrap:sync against a dead host.
+          ./scripts/wait-for-boot.sh {{.TARGET_USER}} {{.DEST}} {{.SSH_PORT}} 6
         else
           echo ""
           echo "===  Installation complete. Waiting for target to reboot.  ==="
