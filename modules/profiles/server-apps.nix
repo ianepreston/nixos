@@ -67,11 +67,12 @@
         valheim
       ];
 
-      # Apps that ship only on dev-environment servers. Empty today —
-      # kapowarr, readeck and ytdlp-web-player were removed in #700 — but
-      # the list and its `serverEnvironment == "dev"` import path below
-      # are kept so a future dev-only app is a one-line add here.
+      # Apps that ship only on dev-environment servers. Promoting one to
+      # prod is a move into `commonApps` (kapowarr, readeck and
+      # ytdlp-web-player were removed from here in #700).
       devOnlyApps = with inputs.self.modules.nixos; [
+        # On trial on hpp-1 before amos1 becomes its long-lived home (#802).
+        lubelogger
       ];
 
       # Apps that ship only on prod-environment servers — the mirror of
