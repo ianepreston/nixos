@@ -88,14 +88,10 @@
         { config, ... }:
         {
           myValheim = {
-            # Accepted values verified against this server's
-            # assembly_valheim.dll; see the README. A preset is saved
-            # into the world, so removing this does not undo it — run
-            # one start on `-preset normal` first.
-            serverArgs = [
-              "-preset"
-              "hard"
-            ];
+            # A preset is saved into the world, so removing this does
+            # not undo it — run one start on `"normal"` first. See the
+            # option description and the README.
+            worldModifiers.preset = "hard";
 
             # #671 A/B, one networking plugin at a time (asserted).
             # Switching is swapping this entry for

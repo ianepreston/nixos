@@ -484,36 +484,101 @@ unit are identical to before (no empty `SERVER_ARGS`, no
 `BEPINEX = "false"` — either would restart amos1 and rotate its join
 code for nothing).
 
-### Server arguments (`myValheim.serverArgs`)
+### Server arguments (`myValheim.worldModifiers`, `myValheim.serverArgs`)
 
-Exact argv tokens, appended by the image as `SERVER_ARGS`. The image
-expands that variable unquoted, so the module asserts each token has no
-whitespace or glob characters, and rejects flags the image already
-passes. Declare only an argument the server binary is verified to
-accept: there is no generic "drop rate" knob, and an invented one would
-be silently ignored rather than rejected.
+Both render into the image's `SERVER_ARGS`: `worldModifiers` first, then
+`serverArgs`, emitted only when the result is nonempty. The image expands
+that variable unquoted, so the module asserts each `serverArgs` token has
+no whitespace or glob characters, and rejects flags the image already
+passes or a typed option owns: `-preset`, `-modifier`, `-setkey` and
+`-resetmodifiers` belong to `worldModifiers` and are rejected in
+`serverArgs`, matched case-insensitively as the game matches them.
+Declare only an argument the server binary is verified to accept: an
+invented one is silently ignored rather than rejected.
 
-**World presets and modifiers, as verified on hpp-1's 1.0.16 server
-(2026-09-30).** Decompiling `FejdStartup` in `assembly_valheim.dll`
-shows the server parses:
+Sources: `Valheim Dedicated Server Manual.pdf`, which ships with the
+server (`/opt/valheim/server/` in the container), and a decompile of
+`FejdStartup` in `assembly_valheim.dll`. Both were checked against hpp-1's
+1.0.16 server, the preset on 2026-09-30 and the rest on 2026-10-02 (#794).
+After a game update, re-pull both rather than trusting this copy.
 
-- `-preset <p>` — `Enum.TryParse<WorldPresets>`, case-insensitive:
-  `normal`, `casual`, `easy`, `hard`, `hardcore`, `immersive`, `hammer`.
-  Logs `Setting world modifier preset: <p>`; an unknown value logs
-  `Could not parse '<p>' as a world modifier preset.` and starts anyway,
-  so that log line, not a clean start, is the check.
-- `-modifier <WorldModifiers> <WorldModifierOption>` — the individual
-  knobs (combat, deathpenalty, resources, raids, portals, …), same
-  case-insensitive parse.
-- `-resetmodifiers` — clears the world's starting keys.
+#### World difficulty (`myValheim.worldModifiers`)
 
-**A preset is sticky.** The parse writes the world's starting global keys
-and flags them changed, and they are saved with the world. Removing the
-argument therefore does *not* undo it — roll back with one start on
-`-preset normal` (or `-resetmodifiers`), then drop the argument.
+| Field | Renders | Accepted values |
+| --- | --- | --- |
+| `preset` | `-preset <p>` | `normal`, `casual`, `easy`, `hard`, `hardcore`, `immersive`, `hammer` |
+| `combat` | `-modifier Combat <v>` | `veryeasy`, `easy`, `hard`, `veryhard` |
+| `deathPenalty` | `-modifier DeathPenalty <v>` | `casual`, `veryeasy`, `easy`, `hard`, `hardcore` |
+| `resources` | `-modifier Resources <v>` | `muchless`, `less`, `more`, `muchmore`, `most`: **the drop-rate knob** |
+| `raids` | `-modifier Raids <v>` | `none`, `muchless`, `less`, `more`, `muchmore` |
+| `portals` | `-modifier Portals <v>` | `casual`, `hard`, `veryhard` |
+| `setKeys` | `-setkey <k>` each | `nobuildcost`, `playerevents`, `passivemobs`, `nomap` |
 
-hpp-1 runs `-preset hard` as the first experiment; its log shows
+Every field is unset by default. The enums are the only real validation,
+because the game's own checks are weak:
+
+- `-preset`: `Enum.TryParse<WorldPresets>`, case-insensitive. It logs
+  `Setting world modifier preset: <p>`. An unknown value logs
+  `Could not parse '<p>' as a world modifier preset.` and the server starts
+  anyway.
+- `-modifier`: both halves go through a case-insensitive `Enum.TryParse`,
+  but against the *shared* `WorldModifierOption` enum, so `Raids most`
+  parses. That logs `Setting world modifier: Raids->most` followed by
+  `Slider Raids missing value to set: Most`, and changes nothing.
+- `-setkey`: no parse at all. The argument is lowercased and added as a
+  world key, with no log line and no error, so a typo becomes a
+  meaningless global key.
+- The flag names themselves are lowercased before matching, so `-Preset`
+  works too.
+
+**Order matters.** `-preset` (and `-resetmodifiers`) clears every starting
+key before applying its own. A `-modifier` or `-setkey` placed before it is
+wiped on the same start, which is why the module always renders the preset
+first.
+
+**All of these are sticky.** Each one writes the world's starting global
+keys, which are saved in the world's metadata (`_main.<n>.fwl2` in a 1.0
+world directory, `<world>.fwl` before that) and reapplied on every load.
+Removing a field therefore does *not* undo it by itself:
+
+- With `preset` set, the declaration is authoritative: each start clears
+  the keys and re-applies preset, then modifiers, then setkeys. Removing a
+  modifier or setkey takes effect on the next start.
+- Without `preset`, a removed modifier or setkey stays in the world. To
+  roll back, set `preset = "normal"` for one start, then unset it. That
+  includes rolling back a preset itself.
+
+hpp-1 runs `preset = "hard"` as the first experiment. Its log shows
 `Setting world modifier preset: hard` on every start.
+
+#### Other native game flags (not wired up)
+
+The manual documents these. All of them are unset on both hosts, so the
+game's defaults apply. Pass any of them through `serverArgs` once it has a
+reason to change.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-saveinterval <s>` | `1800` | World save interval. |
+| `-backups <n>` | `4` | Automatic backups kept: one "short", the rest "long". |
+| `-backupshort <s>` | `7200` | Age of the first automatic backup. |
+| `-backuplong <s>` | `43200` | Spacing of the remaining automatic backups. |
+| `-savedir <path>` | Unity's per-user path | Save location. The image leaves it unset and symlinks the default (`~/.config/unity3d/IronGate/Valheim`) to `/config`. Do not override it. |
+| `-logFile <path>` | — | Write the log to a file instead of stdout. The journal-driven notifiers read stdout. |
+| `-instanceid <id>` | — | A distinct value per server keeps the PlayFab IDs of servers on one port and MAC apart. |
+
+The game's `-backups`/`-backupshort`/`-backuplong` are a **separate
+mechanism** from the image's `BACKUPS_*` cron (see "Backups" in the
+environment reference below). The game writes
+`<world>_backup_auto-<timestamp>` copies next to the world in
+`/config/worlds_local`, while the image zips into `/config/backups`. Both
+run at once, nothing reconciles them, and restic snapshots both. Tuning
+either is separate work.
+
+`-instanceid` is close kin to the incidents in "Endpoint exclusivity"
+above. Per-host `gamePort` is the fix that resolved those (#771), so this
+flag is documented here rather than wired up, in case a third collision
+ever needs a second axis.
 
 ### Plugins (`myValheim.bepinexPlugins`)
 
@@ -649,7 +714,7 @@ Two conventions from `defaults` that matter for almost every row:
 | `SERVER_PASS` | `secret` | string, at least 5 characters | Join password. Set-but-empty is kept, not defaulted. Also forced empty when `VPCFG_Server_disableServerPassword=true`. | Set from sops via the `valheim.env` template. |
 | `SERVER_PASS_FILE` | — | path inside the container | Read `SERVER_PASS` from a file instead. | Unused. The sops env template sets `SERVER_PASS` directly, which has the same effect. |
 | `SERVER_PUBLIC` | `true` | `true`/`false` (normalised to `1`/`0`) | List in the community server browser. It also picks how the idle check works (see Idle detection). | Always `false`. |
-| `SERVER_ARGS` | — | space-separated string | Extra game CLI arguments, expanded unquoted. | `myValheim.serverArgs`, emitted only when nonempty (the "Server arguments" section). |
+| `SERVER_ARGS` | — | space-separated string | Extra game CLI arguments, expanded unquoted. | `myValheim.worldModifiers` then `myValheim.serverArgs`, emitted only when nonempty (the "Server arguments" section). |
 | `CROSSPLAY` | `false` | `true`/`false` | Use the PlayFab backend instead of Steam. `-crossplay` in `SERVER_ARGS` also counts. | `myValheim.crossplay`. See "Crossplay". |
 | `TZ` | `Etc/UTC` | tz database name | Container time zone, and so the zone every `*_CRON` runs in. An unknown zone warns and falls back to UTC. | Set to `config.time.timeZone` by the oci-containers wrapper. |
 
