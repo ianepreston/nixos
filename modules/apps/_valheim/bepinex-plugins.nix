@@ -60,7 +60,8 @@ let
 in
 {
   # https://github.com/LabodiDavid/BetterNetworking10 — MIT. The maintained
-  # Valheim 1.0 fork of CW-Jesse's Better Networking; candidate lever for #671.
+  # Valheim 1.0 fork of CW-Jesse's Better Networking; the #671 alternative to
+  # FiresGhettoNetworking (README "Packaged plugins" says why it lost).
   # A single DLL with no dependency beyond the image's BepInExPack.
   betterNetworking10 = mkPlugin rec {
     pname = "better-networking10";

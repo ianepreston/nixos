@@ -79,8 +79,8 @@
       }
 
       # Valheim dev experiments (#772). This block is the record of what is
-      # under test on hpp-1; amos1 gets none of it, and promoting a result is
-      # a separate change there. Revert one entry at a time — removing a
+      # under test on hpp-1; amos1 gets none of it unless its own host file
+      # says so (today: the #671 networking plugin). Revert one entry at a time — removing a
       # plugin and deploying cleans its files and declared config, leaving
       # the world and BepInEx's own files alone. Results and per-plugin
       # notes: "Mods and dev experiments" in ../apps/_valheim/README.md.
@@ -93,22 +93,16 @@
             # option description and the README.
             worldModifiers.preset = "hard";
 
-            # #671 A/B, one networking plugin at a time (asserted).
-            # Switching is swapping this entry for
-            # `firesGhettoNetworking`. Settings spell out the upstream
-            # "first test" block so the tested configuration is visible
-            # here even where it matches the defaults.
+            # #671: FiresGhettoNetworking, the plugin amos1 runs too, so a
+            # deploy here exercises exactly what prod gets on its next
+            # auto-upgrade. BetterNetworking10 stays packaged as the
+            # alternative (one networking plugin at a time, asserted);
+            # why FGN won is under "Packaged plugins" in the README. No
+            # `settings`: its crossplay handling (a real 20 KB in-flight
+            # window, RPC area-of-interest, ZDO deltas) is on by default,
+            # and its server auto-tune owns the rest.
             bepinexPlugins = [
-              (config.myValheim.availablePlugins.betterNetworking10.override {
-                settings = {
-                  "00 - Compatibility".Mode = "Balanced";
-                  "01 - Features" = {
-                    "Queue Size" = true;
-                    "New Connection ZDO Buffer" = false;
-                  };
-                  "02 - Networking"."Queue Size" = "KB32";
-                };
-              })
+              config.myValheim.availablePlugins.firesGhettoNetworking
             ];
           };
         }

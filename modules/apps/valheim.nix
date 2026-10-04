@@ -65,10 +65,10 @@
 # /config/bepinex before every container start. `worldModifiers` sets the
 # difficulty preset and modifiers, validated at eval time; `serverArgs`
 # passes any other verified game argument. hpp-1 declares its experiments
-# in its host file; amos1 sets none of these. Dev runs the same crossplay
-# backend as prod, so a mod that misbehaves on PlayFab shows it there — but
-# under a handful of peers, not prod's load. See "Mods and dev experiments"
-# in `_valheim/README.md` (#772).
+# in its host file; amos1 runs only FiresGhettoNetworking (#671). Dev runs
+# the same crossplay backend as prod, so a mod that misbehaves on PlayFab
+# shows it there — but under a handful of peers, not prod's load. See
+# "Mods and dev experiments" in `_valheim/README.md` (#772).
 #
 #   _valheim/bepinex-plugins.nix     pinned plugin packages + their layout.
 #   _valheim/bepinex-materialize.sh  the pre-start installer.

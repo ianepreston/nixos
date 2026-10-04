@@ -210,10 +210,21 @@
           # the image's default 2456, hpp-1 is on 2466. Notifications (join
           # code + player join/leave) go to the players' channel from this
           # instance only, since it is the one players actually use.
+          #
+          # FiresGhettoNetworking is the #671 lever for creature desync in
+          # multiplayer fights: server-side only, so vanilla and console
+          # clients need nothing. Promoted on reasoning, ahead of a
+          # multiplayer result on hpp-1 (which runs the same plugin) — see
+          # "Packaged plugins" in ../apps/_valheim/README.md for why this
+          # one and not BetterNetworking10. Rollback is dropping both
+          # lines below. Enabling BepInEx changes the unit, so the switch
+          # that lands this restarts the server and rotates the join code.
           myValheim = {
             enable = true;
             crossplay = true;
             gamePort = 2456;
+            bepinex = true;
+            bepinexPlugins = [ config.myValheim.availablePlugins.firesGhettoNetworking ];
           };
 
           # bambuddy's Virtual Printer is dormant (blocked upstream — see
