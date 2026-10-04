@@ -478,11 +478,11 @@ suppressing all five lines would make the wedge undetectable.
 hpp-1 is where server-side changes get tried before anyone proposes them
 for amos1. Experiments are declared in `modules/hosts/hpp-1.nix`, so the
 reviewed mainline config is the record of what was tested; promoting a
-result to amos1 is a separate change. amos1 sets none of these options,
-and with them at their defaults the rendered container environment and
+result to amos1 is a separate change in `modules/hosts/amos1.nix`. With
+the options at their defaults the rendered container environment and
 unit are identical to before (no empty `SERVER_ARGS`, no
-`BEPINEX = "false"` — either would restart amos1 and rotate its join
-code for nothing).
+`BEPINEX = "false"` — either would restart a host and rotate its join
+code for nothing). amos1 sets exactly one: FiresGhettoNetworking, below.
 
 ### Server arguments (`myValheim.worldModifiers`, `myValheim.serverArgs`)
 
@@ -627,8 +627,8 @@ anything worth a result goes through `bepinexPlugins`.
 
 | Plugin | Version | Source / licence | Dependencies | Clients | Status on hpp-1 |
 | --- | --- | --- | --- | --- | --- |
-| BetterNetworking10 (`DIT.BetterNetworking10`) | 1.2.0 | [GitHub release](https://github.com/LabodiDavid/BetterNetworking10/releases/tag/v1.2.0), MIT | image's BepInExPack | optional: compression only engages when both ends run it; the queue-size patch is server-side | enabled (#671 A/B, side A); load-verified |
-| FiresGhettoNetworking (`com.Fire.FiresGhettoNetworkMod`) | 1.5.17 | [Thunderstore](https://thunderstore.io/c/valheim/p/VerdantsAscent/FiresGhettoNetworking/) ([source](https://github.com/fire-VA/FiresGhettoNetworking)), MIT | image's BepInExPack | optional for the server-side half; client half needs every client on the same version | packaged, not enabled (#671 A/B, side B); load-verified |
+| BetterNetworking10 (`DIT.BetterNetworking10`) | 1.2.0 | [GitHub release](https://github.com/LabodiDavid/BetterNetworking10/releases/tag/v1.2.0), MIT | image's BepInExPack | optional: compression only engages when both ends run it; the queue-size patch is server-side | packaged, not enabled (#671 alternative); load-verified |
+| FiresGhettoNetworking (`com.Fire.FiresGhettoNetworkMod`) | 1.5.17 | [Thunderstore](https://thunderstore.io/c/valheim/p/VerdantsAscent/FiresGhettoNetworking/) ([source](https://github.com/fire-VA/FiresGhettoNetworking)), MIT | image's BepInExPack | optional for the server-side half; client half needs every client on the same version | **enabled on hpp-1 and amos1** (#671); load-verified |
 
 The two take **opposite** positions on the crossplay queue, which is what
 makes them an A/B rather than two tries at one idea. Both start from the
@@ -640,6 +640,31 @@ i.e. holds less in flight because PlayFab recovers from loss slowly, and adds
 server-side traffic reduction (RPC area-of-interest filtering, ZDO delta
 compression) that works on either transport. Its transport tuning,
 compression and HyperBoost are Steam-socket only and do nothing on amos1.
+
+**FiresGhettoNetworking is the one amos1 runs (2026-10-03),** chosen on
+mechanism, before either had a multiplayer session:
+
+- **BetterNetworking10 pushes the wrong way on PlayFab.** Its budget is
+  compared against the *reported* queue size, so `KB32` admits roughly
+  128 KB really in flight per crossplay peer, against vanilla's ~40 KB.
+  PlayFab resends only the oldest unacknowledged packet, after three
+  seconds, with cumulative ACKs — so one loss holds everything queued
+  behind it. More in flight means longer snaps after each loss, and its
+  compression never reaches the PlayStation player anyway.
+- **FiresGhettoNetworking aims at the symptom.** Its 1.5.17 changelog
+  hands mob ownership to the lowest-ping player (in worlds without its
+  Server-Side Simulation, which stays off); RPC area-of-interest stops
+  hits, effects and damage numbers going to every peer, which upstream
+  calls "the big one for large fights"; ZDO deltas cut what a creature
+  resync costs; and it moves PlayFab compression off the main thread,
+  which upstream says otherwise freezes the server for up to a second.
+  All of that is server-side and works over PlayFab with vanilla and
+  console clients.
+
+The client half (interpolation, auto-tune) needs the mod on a client at
+the server's version; nobody needs it to join. Rollback on amos1 is
+dropping `bepinex` and `bepinexPlugins` from its host file; a restart
+follows either way.
 
 The module asserts at most one of them is selected at a time. Neither
 `Force Crossplay` setting is declared: both default to following the
