@@ -433,9 +433,12 @@ code for two months; the `check` jobs run on hpp-1, whose warm store is exactly
 the store that can't notice (#625).
 
 So don't hand-maintain them: `.github/workflows/renovate-hashes.yml` runs
-`scripts/regen-fetch-hashes.sh` on every `renovate/**` branch and pushes a fixup
-commit. Run the same script by hand (`task hashes`, or `task hashes -- --check`
-to only report) after editing a pin yourself. Two paths, both automatic:
+`scripts/regen-fetch-hashes.sh` on every `renovate/**` branch and the weekly
+`automated/flake-update` branch, then pushes a fixup commit. A `flake.lock`
+change scans every build-derived `regen-hash:` marker because nixpkgs can move
+those sources without changing their `.nix` files. Run the same script by hand
+(`task hashes`, or `task hashes -- --check` to only report) after editing a pin
+yourself. Two paths, both automatic:
 
 - **`fetchFromGitHub` blocks** are found structurally — no annotation needed.
   The hash is the NAR hash of the unpacked `archive/<ref>.tar.gz`, which
