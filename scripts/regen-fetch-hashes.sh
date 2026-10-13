@@ -2,9 +2,9 @@
 # Regenerate the fetch hashes Renovate can't maintain.
 #
 # Driven by `task hashes` locally and by
-# .github/workflows/renovate-hashes.yml on every `renovate/**` branch, which
-# commits whatever this script rewrites. See #625 for the failure it exists to
-# prevent.
+# .github/workflows/renovate-hashes.yml on every `renovate/**` and
+# `automated/flake-update` branch, which commits whatever this script rewrites.
+# See #625 for the failure it exists to prevent.
 #
 # Usage: regen-fetch-hashes.sh [--check] [file...]
 #
