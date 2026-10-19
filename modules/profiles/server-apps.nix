@@ -73,6 +73,9 @@
       devOnlyApps = with inputs.self.modules.nixos; [
         # On trial on hpp-1 before amos1 becomes its long-lived home (#802).
         lubelogger
+        # Measuring CPU transcription throughput and detection quality on
+        # hpp-1 before picking a long-term host (#654).
+        minuspod
       ];
 
       # Apps that ship only on prod-environment servers — the mirror of
