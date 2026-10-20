@@ -48,10 +48,11 @@
 # feed key instead: `?key=` on every feed, audio, caption, chapter and
 # cover URL, 401 without it (`require_feed_key` in
 # src/main_app/feed_auth.py). FEED_AUTH_ENABLED seeds that gate on and
-# mints the key at boot (copy it from Settings > Security). The bypass
-# below is only safe while that gate is on: switching feed auth off in the
-# UI flips the stored setting, survives every rebuild, and leaves the
-# feeds and audio open to anyone who can reach the host.
+# mints the key at boot; the UI's feed URLs already carry `?key=`, and
+# the toggle lives under Settings > Authenticated Feeds. The bypass below
+# is only safe while that gate is on: switching feed auth off in the UI
+# flips the stored setting, survives every rebuild, and leaves the feeds
+# and audio open to anyone who can reach the host.
 #
 # State. DATA_DIR holds podcast.db (subscriptions, corrections, learned
 # sponsor patterns: the authored state), `backups/` (upstream's
