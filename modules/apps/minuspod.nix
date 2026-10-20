@@ -36,7 +36,13 @@
 # for one of them in particular, below.
 #
 # Auth. MinusPod has a single app password and no OIDC or proxy-header
-# login, so the UI sits behind authentik forward-auth. Podcast clients
+# login, so the UI sits behind authentik forward-auth, which is the only
+# login. The app password stays unset and MINUSPOD_REQUIRE_AUTH stays off:
+# with it on, all of /api/v1 returns 503 until a first password is set,
+# which only loopback or a setup token can do, and a second login behind
+# authentik buys nothing while the host port binds 127.0.0.1 only. Serving
+# this without forward-auth in front would leave it fully open; set a
+# password in Settings > Security first. Podcast clients
 # (Apple Podcasts on a phone, Audiobookshelf) can't do a forward-auth
 # login, so the feed surface bypasses it and is gated by MinusPod's own
 # feed key instead: `?key=` on every feed, audio, caption, chapter and
@@ -106,7 +112,7 @@
         displayName = "MinusPod";
         inherit iconUrl;
         # Feed surface only; everything else (/, /ui/*, /api/*) stays
-        # behind forward-auth *and* MinusPod's own password. All of these
+        # behind forward-auth, the only UI login. All of these
         # 401 without the feed key while feed auth is on; see the header.
         #
         #   /*?*        the re-cut RSS feed at /<slug>. Caddy treats a
@@ -176,7 +182,6 @@
           # Caddy is the one proxy hop; without this the login lockout and
           # rate limiter key on caddy's address instead of the client's.
           MINUSPOD_TRUSTED_PROXY_COUNT = "1";
-          MINUSPOD_REQUIRE_AUTH = "true";
           # An unauthenticated feed hit must not be able to start a run.
           MINUSPOD_ALLOW_PUBLIC_PROCESSING = "false";
           SESSION_COOKIE_SECURE = "true";
