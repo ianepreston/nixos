@@ -24,10 +24,11 @@ in
         system.primaryUser = hostSpec.username;
 
         # Corporate DNS can't see the homelab, but behemoth (pfSense)
-        # answers LAN queries directly and already carries the
-        # *.amos.ipreston.net wildcard. A scoped resolver sends only that
-        # suffix there; everything else stays on the corporate resolver.
-        environment.etc."resolver/${hostSpecs.amos1.serverDomain}".text = ''
+        # answers LAN queries directly for the whole ipreston.net zone
+        # (including the *.amos wildcard and DHCP-registered hosts). A scoped
+        # resolver sends only that suffix there; everything else stays on the
+        # corporate resolver.
+        environment.etc."resolver/${inputs.nix-secrets.domain}".text = ''
           nameserver 192.168.10.1
         '';
 
