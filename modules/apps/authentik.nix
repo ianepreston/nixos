@@ -321,8 +321,13 @@
                     description = "External hostname Caddy matches and authentik enforces.";
                   };
                   port = lib.mkOption {
-                    type = lib.types.port;
-                    description = "Port the upstream exposes on `upstreamHost`.";
+                    type = lib.types.nullOr lib.types.port;
+                    default = null;
+                    description = ''
+                      Port the upstream exposes on `upstreamHost`. Set this
+                      for a proxied app; it is mutually exclusive with
+                      `staticRouteConfig`.
+                    '';
                   };
                   upstreamHost = lib.mkOption {
                     type = lib.types.str;
@@ -366,6 +371,18 @@
                       that consume authentik headers (translating an
                       X-authentik-* header into the Remote-* name an app
                       expects), or transport directives like omada's.
+                    '';
+                  };
+                  staticRouteConfig = lib.mkOption {
+                    type = lib.types.nullOr lib.types.lines;
+                    default = null;
+                    description = ''
+                      Caddy directives serving a static app after
+                      forward-auth. Set this instead of `port` for an app
+                      whose entire response is Caddy-served files rather than
+                      a local HTTP upstream. The generated Authentik provider,
+                      application, policy binding, and homepage tile remain
+                      identical to proxied apps.
                     '';
                   };
                   bypassAuthPaths = lib.mkOption {
@@ -776,6 +793,20 @@
         }
 
         (lib.mkIf (fwApps != { }) {
+          assertions = lib.mapAttrsToList (name: app: {
+            assertion =
+              (app.port != null) != (app.staticRouteConfig != null)
+              && (
+                app.staticRouteConfig == null
+                || (app.proxyConfig == "" && app.bypassAuthPaths == [ ] && app.upstreamBearerEnvVar == null)
+              );
+            message = ''
+              myAuthentik.forwardAuthApps.${name}: set exactly one of `port`
+              or `staticRouteConfig`; static routes cannot use upstream
+              proxy settings, bypass paths, or an upstream bearer token.
+            '';
+          }) fwApps;
+
           myAuthentik.extraBlueprints = [ fwBlueprintDir ];
 
           myCaddy.apps = lib.mapAttrs (
@@ -825,7 +856,12 @@
             {
               inherit (app) host;
               routeConfig =
-                if app.bypassAuthPaths == [ ] then
+                if app.staticRouteConfig != null then
+                  ''
+                    import authentik_forward_auth
+                    ${app.staticRouteConfig}
+                  ''
+                else if app.bypassAuthPaths == [ ] then
                   gatedBlock
                 else
                   # Split into two `handle` blocks: bypassAuthPaths reach

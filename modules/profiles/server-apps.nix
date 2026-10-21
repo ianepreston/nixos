@@ -30,6 +30,9 @@
       # Apps that ship on every server, dev and prod alike.
       commonApps = with inputs.self.modules.nixos; [
         actualbudget
+        # Static, client-side only; kept in the shared set because #834 is
+        # explicitly promoted to hpp-1 and amos1.
+        acb
         audiobookshelf
         # bambuddy — code kept but dormant; proxy-mode printing is blocked on
         # an upstream bambuddy<->OrcaSlicer bind bug. Re-add when fixed. See #298.
