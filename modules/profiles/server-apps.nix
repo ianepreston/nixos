@@ -62,6 +62,7 @@
         sonarr
         sparkyfitness
         tandoor
+        wealthfolio
         # Ships everywhere but is off unless a host sets
         # `myValheim.enable`, because the interesting question is not
         # which hosts import it but which run it and with which
