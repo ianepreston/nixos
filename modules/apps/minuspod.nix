@@ -37,7 +37,9 @@
 #
 # Auth. MinusPod has a single app password and no OIDC or proxy-header
 # login, so the UI sits behind authentik forward-auth, which is the only
-# login. The app password stays unset and MINUSPOD_REQUIRE_AUTH stays off:
+# login. It is single-tenant, and the binding is the Users group so every
+# user can subscribe to and listen to their own shows; the cost is that
+# each of them also gets the full settings UI. Accepted on purpose. The app password stays unset and MINUSPOD_REQUIRE_AUTH stays off:
 # with it on, all of /api/v1 returns 503 until a first password is set,
 # which only loopback or a setup token can do, and a second login behind
 # authentik buys nothing while the host port binds 127.0.0.1 only. Serving
@@ -112,6 +114,8 @@
         inherit port;
         displayName = "MinusPod";
         inherit iconUrl;
+        # Everyone, not admins only; see the header's "Auth." paragraph.
+        authentikGroup = "Users";
         # Feed surface only; everything else (/, /ui/*, /api/*) stays
         # behind forward-auth, the only UI login. All of these
         # 401 without the feed key while feed auth is on; see the header.
