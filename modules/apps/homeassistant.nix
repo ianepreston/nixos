@@ -163,7 +163,7 @@
           owner = "dahlb";
           repo = "ha_blueair";
           rev = "27452a9b693b34bb0b75f6da5d454cb85bc123f5";
-          hash = "sha256-mbI3MiDE528nvCj47azgmkYDeZTIkwnmlrwMun614Ww=";
+          hash = "sha256-iZnQLKuhUiJtGDhqv2uFTMRUGr2cMD25aQkpOnZqCBA=";
         };
         dependencies = [ blueair-api ];
       };
