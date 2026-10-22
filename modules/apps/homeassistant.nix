@@ -158,11 +158,11 @@
         # sync. The hash is regenerated in CI
         # (scripts/regen-fetch-hashes.sh, #625).
         # renovate: datasource=github-tags depName=dahlb/ha_blueair
-        version = "1.56.6";
+        version = "1.56.7";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
-          rev = "8d27f3bfcd7e63514834e6970eaeb8a2fdb4497c";
+          rev = "27452a9b693b34bb0b75f6da5d454cb85bc123f5";
           hash = "sha256-mbI3MiDE528nvCj47azgmkYDeZTIkwnmlrwMun614Ww=";
         };
         dependencies = [ blueair-api ];
