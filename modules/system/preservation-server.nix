@@ -46,7 +46,18 @@
           # ----- System / identity -----
           # nixos uid/gid allocation db; without this, dynamic users
           # reshuffle on every boot.
-          "/var/lib/nixos"
+          #
+          # inInitrd = true: with boot.initrd.systemd.enable, users are
+          # created by initrd-nixos-activation, before any stage-2 mount.
+          # Mounted in stage 2, the map arrives after allocation has
+          # already run from scratch against an empty /var/lib/nixos,
+          # so every auto-allocated uid is reassigned alphabetically
+          # and a user added by a live switch moves on the next reboot
+          # (#846: lubelogger's state ended up owned by wpa_supplicant).
+          {
+            directory = "/var/lib/nixos";
+            inInitrd = true;
+          }
           # systemd persistent state (boot counts, random seed, etc.).
           "/var/lib/systemd"
           # tailscale node identity; lose it and the host re-registers

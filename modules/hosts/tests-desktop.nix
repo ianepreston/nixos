@@ -67,7 +67,12 @@
           enable = true;
           preserveAt."/persist" = {
             directories = [
-              "/var/lib/nixos"
+              # In initrd, where users are created; see
+              # modules/system/preservation-server.nix (#846).
+              {
+                directory = "/var/lib/nixos";
+                inInitrd = true;
+              }
               "/var/lib/systemd"
             ];
             files = [
