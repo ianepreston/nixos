@@ -15,9 +15,16 @@
 # mangles, and wall-clock per episode on the host's cores is the number
 # #654 asks to measure before choosing a home for this.
 #
-# Ad detection goes to amos1's llama-server `text` alias over its
-# llm.<domain> route, the same endpoint wherever this container runs.
-# The `/v1/*` bypass on that route only applies when an Authorization
+# LLM routing. The primary slot (`llm-a`, seeded from the OPENAI_* env
+# below) points at terra's llama-server `text` alias over its
+# llm-terra.<domain> route, with amos1's own `text` alias configured in
+# the UI as that slot's failover. Both hosts publish the same alias, so
+# the model name is the same on either side. The secondary slot
+# (`llm-b`) is TypeSafe's Jev (a hosted "System One" model, #827), set up
+# in the UI; which stage uses which slot is a UI setting too. Nothing
+# here touches `llm-b`.
+#
+# The `/v1/*` bypass on both routes only applies when an Authorization
 # header is present (see modules/apps/llm-terra.nix), so OPENAI_API_KEY
 # carries the real shared key rather than upstream's `not-needed`
 # default — without it the request gets an authentik login redirect,
@@ -25,9 +32,29 @@
 # Parse failures are silent in general: the episode processes "normally"
 # with gaps in detection, so judge quality by listening, not by the run
 # log. Every run holds `text` resident, so with `--models-max 1` it
-# evicts `vision` and the next Tandoor/paperless image call cold-loads.
-# TypeSafe's Jev (a hosted "System One" model) is the alternative upstream
-# supports natively for detection and verification (#827).
+# evicts `vision` on whichever host serves it.
+#
+# Processing window. Whisper runs on amos1's CPU and the LLM calls load
+# a GPU, so new runs are only admitted between `windowStart` and
+# `windowEnd` (local time). The `minuspod-processing-window` timer flips
+# MinusPod's own durable pause at each boundary and, at the same time,
+# decides whether terra is allowed to serve:
+#
+#   open    unpause, cancel `llm-a` failover: terra serves. If terra is
+#           off, MinusPod's health probes fail over to amos1 on their own
+#           (two failed probes, 5 min apart) and back when it returns.
+#   closed  pause, *manually* trigger `llm-a` failover: amos1 serves.
+#           Manual failover is sticky against those probes, so a run
+#           started by hand outside the window never lands on terra's GPU
+#           mid-game even though terra answers.
+#
+# The pause gates every run, a single-episode "process now" included.
+# Manual overrides are the UI's own controls: unpause to process now, and
+# cancel the `llm-a` failover to let terra take it. Either lasts until the
+# next boundary resets it (`windowEnd`, for an override made in the day).
+# The timer reaches the API on loopback with no credentials, which only
+# works while the app password is unset (see "Auth." below); setting one
+# breaks the timer.
 #
 # Most settings below are *env-backed seeds*: MinusPod copies the env
 # value into its database on every boot until the matching control is
@@ -71,6 +98,7 @@
     {
       config,
       hostSpec,
+      pkgs,
       ...
     }:
     let
@@ -84,9 +112,23 @@
       # host port rather than claim it on the host.
       port = 8011;
       containerPort = 8000;
+      # Local hours; see the header's "Processing window" paragraph.
+      windowStart = 23;
+      windowEnd = 5;
+      processingWindow = pkgs.writeShellApplication {
+        name = "minuspod-processing-window";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.curl
+        ];
+        text = builtins.readFile ./_minuspod/processing-window.sh;
+      };
     in
     {
-      myObservability.monitoredSystemdUnits = [ "podman-minuspod" ];
+      myObservability.monitoredSystemdUnits = [
+        "podman-minuspod"
+        "minuspod-processing-window"
+      ];
 
       myRecovery.apps.minuspod = {
         kind = "sqlite";
@@ -193,7 +235,7 @@
           FEED_AUTH_ENABLED = "true";
 
           LLM_PROVIDER = "openai-compatible";
-          OPENAI_BASE_URL = "https://llm.amos.ipreston.net/v1";
+          OPENAI_BASE_URL = "https://llm-terra.amos.ipreston.net/v1";
           OPENAI_MODEL = "text";
 
           WHISPER_BACKEND = "local";
@@ -208,6 +250,38 @@
         "${stateDir}/.cache"
         "${stateDir}/import-staging"
       ];
+
+      systemd = {
+        services.minuspod-processing-window = {
+          description = "Open or close MinusPod's processing window";
+          after = [ "podman-minuspod.service" ];
+          wants = [ "podman-minuspod.service" ];
+          serviceConfig = {
+            Type = "oneshot";
+            DynamicUser = true;
+            ExecStart = "${processingWindow}/bin/minuspod-processing-window";
+            Environment = [
+              "MINUSPOD_URL=http://127.0.0.1:${toString port}"
+              "WINDOW_START=${toString windowStart}"
+              "WINDOW_END=${toString windowEnd}"
+            ];
+          };
+        };
+
+        timers.minuspod-processing-window = {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = [
+              "*-*-* ${toString windowStart}:00:00"
+              "*-*-* ${toString windowEnd}:00:00"
+            ];
+            # Catch up after the host was down across a boundary; the
+            # script reads the clock, so a late run still lands right.
+            Persistent = true;
+            Unit = "minuspod-processing-window.service";
+          };
+        };
+      };
 
       mySqliteQuiesce.apps.minuspod.databases = [ "${stateDir}/podcast.db" ];
     };
