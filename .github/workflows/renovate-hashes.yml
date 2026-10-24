@@ -17,10 +17,11 @@ name: renovate hashes
 # failure to catch:
 # the `check` jobs run on hpp-1, whose warm /nix/store by definition holds the
 # stale path. So instead of trying to make the mistake loud, this job removes
-# it — it recomputes every fetch hash in the files the branch touched. For the
+# it — it reconciles Home Assistant's manifest-pinned local Python libraries
+# and recomputes every fetch hash in the files the branch touched. For the
 # weekly flake.lock branch it also scans every build-derived `regen-hash:`
-# marker, then pushes a fixup commit, making the hash correct by construction.
-# scripts/regen-fetch-hashes.sh has the details of both regeneration paths.
+# marker, then pushes a fixup commit, making derived pins correct by
+# construction. The scripts carry the parsing and fail-closed details.
 #
 # Notes on the plumbing:
 #   * No fork-PR guard is needed here (unlike check.yml): `push` fires only for
@@ -74,6 +75,8 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+      - name: Test Home Assistant requirement reconciler
+        run: ./scripts/test-reconcile-ha-component-requirements.sh
       # Regenerating a hash that is only knowable by building (the caddy
       # plugin closure) evaluates a full nixosConfiguration, which pulls the
       # private nix-secrets flake input.
@@ -102,7 +105,7 @@ jobs:
       # one build that can answer what its vendor hash is now. A flake.lock
       # update can move a build-derived source indirectly, so include every
       # file with a regen-hash marker when the lock file changed.
-      - name: Regenerate the fetch hashes this branch moved
+      - name: Reconcile Home Assistant requirements and regenerate hashes
         run: |
           set -euo pipefail
           base="origin/${{ github.event.repository.default_branch }}...HEAD"
@@ -125,6 +128,9 @@ jobs:
             exit 0
           fi
           printf 'scanning %s\n' "${changed[@]}"
+          if printf '%s\n' "${changed[@]}" | grep --fixed-strings --quiet 'modules/apps/homeassistant.nix'; then
+            ./scripts/reconcile-ha-component-requirements.sh
+          fi
           ./scripts/regen-fetch-hashes.sh "${changed[@]}"
       - name: Push the fixup
         run: |
