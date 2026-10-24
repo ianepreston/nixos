@@ -213,6 +213,17 @@ tasks:
         for triple in {{.SWAPS}}; do
           IFS=":" read -r src dst owner <<<"\$triple"
           owner=\${owner//@env@/\$SERVER_USER}
+          # A glob live path (mySqliteQuiesce) resolves against the files
+          # restic just restored; it must name exactly one.
+          shopt -s nullglob
+          # shellcheck disable=SC2206
+          live=( \$dst )
+          shopt -u nullglob
+          if [ "\${#live[@]}" -ne 1 ]; then
+            echo "[!] \$dst matched \${#live[@]} files, expected 1" >&2
+            exit 1
+          fi
+          dst=\${live[0]}
           echo "[+] Swapping \$dst <- \$src (owner: \$owner)"
           install -o "\$owner" -g servers -m 0640 "\$src" "\$dst"
         done

@@ -17,10 +17,12 @@
 # The oneshot runs as root with `before = [restic-backups-server.service]`
 # and `wantedBy = [restic-backups-server.service]` (not requires) so a
 # failed quiesce doesn't abort the nightly restic run — the hot copy
-# still goes into the snapshot. Missing source files are silently
-# skipped: apps drop/rename auxiliary databases (e.g. jellyfin's old
-# `library.db`) across upgrades and we don't want every such change
-# to break backups.
+# still goes into the snapshot. Missing literal source files are
+# silently skipped: apps drop/rename auxiliary databases (e.g.
+# jellyfin's old `library.db`) across upgrades and we don't want every
+# such change to break backups. Glob entries are the exception — they
+# exist because the path isn't known at eval time, so a miss means the
+# app moved its database and the unit fails rather than hide it.
 _: {
   flake.modules.nixos.mySqliteQuiesce =
     {
@@ -32,6 +34,7 @@ _: {
     let
       inherit (config.mySqliteQuiesce) apps;
       stagingRoot = "/var/backup/sqlite";
+      isGlob = db: builtins.match ".*[*?[].*" db != null;
     in
     {
       options.mySqliteQuiesce.apps = lib.mkOption {
@@ -52,6 +55,10 @@ _: {
                 Absolute paths to SQLite files. The basename ends up
                 in /var/backup/sqlite/<name>/<basename>; basename
                 collisions across the list are the caller's problem.
+                An entry may be a glob for a path the app picks at
+                runtime (wealthfolio's per-profile directory); it must
+                match exactly one file, and the quiesce unit fails
+                otherwise. Recovery resolves the same glob on restore.
               '';
             };
           }
@@ -81,13 +88,27 @@ _: {
             };
             script = ''
               set -euo pipefail
-              ${lib.concatMapStringsSep "\n" (db: ''
-                src=${lib.escapeShellArg db}
-                if [ -f "$src" ]; then
-                  dst=${lib.escapeShellArg "${stagingRoot}/${name}"}/$(basename "$src")
-                  ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dst"
-                fi
-              '') app.databases}
+              shopt -s nullglob
+              dstdir=${lib.escapeShellArg "${stagingRoot}/${name}"}
+              ${lib.concatMapStringsSep "\n" (
+                db:
+                if isGlob db then
+                  ''
+                    srcs=( ${db} )
+                    if [ "''${#srcs[@]}" -ne 1 ]; then
+                      echo ${lib.escapeShellArg db}" matched ''${#srcs[@]} files, expected 1" >&2
+                      exit 1
+                    fi
+                    ${pkgs.sqlite}/bin/sqlite3 "''${srcs[0]}" ".backup $dstdir/$(basename "''${srcs[0]}")"
+                  ''
+                else
+                  ''
+                    src=${lib.escapeShellArg db}
+                    if [ -f "$src" ]; then
+                      ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dstdir/$(basename "$src")"
+                    fi
+                  ''
+              ) app.databases}
             '';
           }
         ) apps;
