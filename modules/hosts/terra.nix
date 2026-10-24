@@ -46,7 +46,7 @@
           # blocked upstream (see #298). Re-add when fixed.
           browser
           ssh-homelan
-          wealthfolio-import
+          wealthsimple-convert
         ];
 
         boot = {

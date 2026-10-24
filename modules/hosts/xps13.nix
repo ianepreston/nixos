@@ -38,7 +38,7 @@
             browser
             obsidian
             ssh-homelan
-            wealthfolio-import
+            wealthsimple-convert
           ];
 
           boot = {

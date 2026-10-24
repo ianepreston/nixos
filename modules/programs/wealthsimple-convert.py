@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert a Wealthsimple activities export for Wealthfolio and for acb.
 
-    wealthfolio-import export.csv [more.csv ...]
+    wealthsimple-convert export.csv [more.csv ...]
 
 Each INPUT.csv is written beside it as:
 
@@ -281,7 +281,7 @@ def write_csv(dest, fields, rows):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: wealthfolio-import <export.csv> [more.csv ...]")
+        sys.exit("usage: wealthsimple-convert <export.csv> [more.csv ...]")
     for src in map(Path, sys.argv[1:]):
         # Convert fully before opening any output so an unmapped type leaves
         # no partial file behind.
