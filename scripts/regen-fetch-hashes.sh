@@ -72,7 +72,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 fake_hash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-hash_re='sha256-[A-Za-z0-9+/=]\+'
+# POSIX basic regular expression: BSD sed does not implement GNU sed's `\+`.
+hash_re='sha256-[A-Za-z0-9+/=][A-Za-z0-9+/=]*'
 
 check_only=false
 files=()
@@ -118,8 +119,20 @@ note() { printf '%s\n' "$*" >&2; }
 
 # Rewrite the hash on one line of one file, in place.
 set_hash() {
-  local file=$1 lineno=$2 new=$3
-  sed -i "${lineno}s|${hash_re}|${new}|" "$file"
+  local file=$1 lineno=$2 new=$3 tmp
+
+  # BSD sed interprets the following argument to `-i` as its mandatory backup
+  # extension, while GNU sed accepts no extension.  This script is the local
+  # implementation behind `task hashes`, so make the replacement explicitly:
+  # a same-directory temporary file lets `mv` stay atomic, and `cp -p` carries
+  # the source's mode forward before sed replaces its contents.
+  tmp=$(mktemp "${file}.XXXXXX")
+  cp -p "$file" "$tmp"
+  if ! sed "${lineno}s|${hash_re}|${new}|" "$file" >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$file"
 }
 
 report() {
