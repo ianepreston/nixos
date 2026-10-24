@@ -111,6 +111,18 @@
     },
     {
       "customType": "regex",
+      "description": "Track SparkyFitness's release-tagged flake input without enabling Renovate's Nix manager for every flake input. The renovate-hashes workflow updates only this input's lock node on the Renovate PR branch, because the URL is declarative intent while flake.lock selects the source Nix evaluates.",
+      "managerFilePatterns": ["/^flake\\.nix$/"],
+      "matchStrings": [
+        "sparkyfitness\\.url\\s*=\\s*\"github:CodeWithCJ/SparkyFitness/v(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "CodeWithCJ/SparkyFitness",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Update the primary NixOS nixpkgs release channel in flake.nix",
       "managerFilePatterns": ["/^flake\\.nix$/"],
       "matchStrings": [

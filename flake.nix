@@ -73,11 +73,10 @@
     # never will be — the licence is a custom non-commercial,
     # source-available grant — but upstream ships its own flake with a
     # `services.sparkyfitness` NixOS module, so the native path is
-    # available anyway. Pinned to a release tag and bumped by hand:
-    # renovate.json disables the `nix` manager, so nothing tracks this
-    # automatically. Rewriting the tag WITHOUT running
-    # `nix flake update sparkyfitness` changes nothing — evaluation
-    # reads flake.lock, not the URL.
+    # available anyway. Renovate monitors the release tag and the
+    # renovate-hashes workflow follows its PR branch with a scoped
+    # `nix flake update sparkyfitness`. Rewriting the tag WITHOUT updating
+    # the lock changes nothing — evaluation reads flake.lock, not the URL.
     #
     # Not `inputs.follows`-ed onto our nixpkgs: same call as
     # authentik-nix. The packages are two pnpm builds against upstream's
