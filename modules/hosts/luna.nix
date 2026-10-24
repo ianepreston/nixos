@@ -43,6 +43,7 @@
             browser
             obsidian
             ssh-homelan
+            wealthfolio-import
             # Effectively a plugged-in workstation (the battery barely
             # holds a charge), so never suspend on idle — long-running
             # sessions die otherwise. Suspend stays manual (menu,
