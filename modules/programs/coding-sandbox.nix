@@ -5,7 +5,11 @@
 # an aarch64-linux builder.  The launcher is deliberately host-side runtime
 # configuration; a work item should not require a darwin rebuild just to pick a
 # VM or a network policy.
-_: {
+{ inputs, ... }:
+let
+  release = inputs.nixpkgs.lib.trivial.release;
+in
+{
   flake.modules.homeManager.coding-sandbox =
     { pkgs, ... }:
     let
@@ -21,9 +25,9 @@ _: {
           description = "Coding sandbox guest profile";
 
           inputs = {
-            nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+            nixpkgs.url = "github:NixOS/nixpkgs/nixos-${release}";
             home-manager = {
-              url = "github:nix-community/home-manager/release-26.05";
+              url = "github:nix-community/home-manager/release-${release}";
               inputs.nixpkgs.follows = "nixpkgs";
             };
           };
@@ -79,7 +83,9 @@ _: {
         text = ''
           export SANDBOX_GUEST_PROFILE=${guestProfile}
           export SANDBOX_POLICY_HELPER=${./coding-sandbox-policy.py}
-          ${builtins.readFile ./coding-sandbox.sh}
+          ${builtins.replaceStrings [ "@home-manager-release@" ] [ "release-${release}" ] (
+            builtins.readFile ./coding-sandbox.sh
+          )}
         '';
       };
     in
