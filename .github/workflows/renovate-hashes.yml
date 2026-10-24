@@ -81,6 +81,22 @@ jobs:
         uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      # Renovate's narrow regex manager advances the release tag in flake.nix,
+      # but Nix evaluates the immutable revision in flake.lock. Keep the lock
+      # update on the same Renovate branch; the existing fixup author is in
+      # renovate.json's gitIgnoredAuthors, so this does not freeze the PR.
+      # The weekly whole-lock updater deliberately does not take this path.
+      - name: Update the SparkyFitness flake lock
+        if: ${{ startsWith(github.ref_name, 'renovate/') }}
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.event.repository.default_branch }}...HEAD"
+          if ! git diff --unified=0 "$base" -- flake.nix | grep -Eq \
+            '^\+.*sparkyfitness\.url = "github:CodeWithCJ/SparkyFitness/v'; then
+            echo "branch did not change the SparkyFitness input URL"
+            exit 0
+          fi
+          nix flake update sparkyfitness
       # Scoped to the branch's own changes: a docker-digest branch touches no
       # hash pin and costs nothing, while a caddy-plugin branch pays for the
       # one build that can answer what its vendor hash is now. A flake.lock
