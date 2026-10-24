@@ -1,5 +1,6 @@
 { pkgs }:
 let
+  # renovate: datasource=github-tags depName=tsiemens/acb
   version = "0.26.04.2";
 
   src = pkgs.fetchFromGitHub {
