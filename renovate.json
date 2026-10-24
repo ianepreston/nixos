@@ -39,7 +39,7 @@
       "automerge": false
     },
     {
-      "description": "Home Assistant custom-component bumps get their fetchFromGitHub hash regenerated in CI (.github/workflows/renovate-hashes.yml), but a new component release can pin a different version of a python lib nixpkgs doesn't package (blueair-api, hoymiles-wifi in modules/apps/homeassistant.nix) — still a hand edit; keep manual and grouped.",
+      "description": "Home Assistant custom-component bumps are kept grouped and manual. CI reconciles the exact requirements of their locally packaged Python libraries and every source hash; an unsupported manifest shape fails for review.",
       "matchDepNames": [
         "greghesp/ha-bambulab",
         "suaveolent/ha-hoymiles-wifi",

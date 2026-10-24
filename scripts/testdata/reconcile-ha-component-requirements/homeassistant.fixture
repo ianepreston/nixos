@@ -1,0 +1,36 @@
+let
+  hoymiles-wifi = hapy.buildPythonPackage {
+    pname = "hoymiles-wifi";
+    version = "0.5.5";
+    src = pkgs.fetchFromGitHub {
+      owner = "suaveolent";
+      repo = "hoymiles-wifi";
+      tag = "v0.5.5";
+      hash = "sha256-hoymiles";
+    };
+  };
+  blueair-api = hapy.buildPythonPackage {
+    pname = "blueair-api";
+    version = "1.56.3";
+    src = pkgs.fetchPypi {
+      pname = "blueair_api";
+      version = "1.56.3";
+      hash = "sha256-blueair-old";
+    };
+  };
+  hoymiles_wifi = pkgs.buildHomeAssistantComponent {
+    src = pkgs.fetchFromGitHub {
+      owner = "suaveolent";
+      repo = "ha-hoymiles-wifi";
+      tag = "v0.5.1";
+      hash = "sha256-hoymiles";
+    };
+  };
+  ha_blueair = pkgs.buildHomeAssistantComponent {
+    src = pkgs.fetchFromGitHub {
+      owner = "dahlb";
+      repo = "ha_blueair";
+      rev = "0123456789abcdef";
+    };
+  };
+in { }

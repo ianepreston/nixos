@@ -51,10 +51,11 @@
 #    be trusted to tell us. Keep the file list scoped (CI passes only the
 #    files the branch touched) so this only fires when the pin actually moved.
 #
-# Deliberately out of scope: `fetchPypi` (blueair-api). Its version is an `==`
-# constraint from the component's own manifest.json, enforced at build time by
-# manifestRequirementsCheckHook — a wrong pin there fails loudly, which is the
-# property this script is trying to buy everywhere else.
+# Deliberately out of scope: `fetchPypi`. Home Assistant custom-component
+# dependencies use their component manifests as the source of truth and are
+# reconciled by reconcile-ha-component-requirements.sh before this script runs
+# in renovate-hashes.yml. Other fetchPypi pins need their own source-aware
+# update mechanism rather than an unsafe generic rewrite.
 set -euo pipefail
 
 # Every external tool below, checked up front. The parsers are consumed

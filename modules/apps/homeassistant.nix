@@ -61,11 +61,11 @@
       # Python libs the components require but nixpkgs doesn't package. Versions
       # are pinned to the component manifests' `requirements` — the
       # manifestRequirementsCheckHook fails the component build otherwise. These
-      # are intentionally NOT renovate-tracked: they must move in lockstep with
-      # the component (renovate bumps the component's `version` + `tag`/`rev`
-      # below and CI regenerates the fetch hash, so if the new manifest pins a
-      # different lib version, bump the lib version + hash here at the same
-      # time — the component build fails loudly until you do).
+      # are intentionally NOT independently renovate-tracked: they move in
+      # lockstep with their component. When Renovate moves a component source,
+      # renovate-hashes.yml runs reconcile-ha-component-requirements.sh, which
+      # reads its manifest's exact requirement and updates this source pin plus
+      # hash. An added, missing, or non-exact requirement fails CI for review.
       hoymiles-wifi = hapy.buildPythonPackage {
         pname = "hoymiles-wifi";
         version = "0.5.5";
