@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Convert a Wealthsimple activities export for Wealthfolio and for acb.
+"""Convert Wealthsimple or Shareworks activity exports for Wealthfolio/acb.
 
     wealthsimple-convert export.csv [more.csv ...]
 
@@ -17,10 +16,10 @@ Each INPUT.csv is written beside it as:
   Export every account together: acb must see all of a security's history.
 """
 
+import argparse
 import csv
 import datetime as dt
 import re
-import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -202,10 +201,19 @@ ACB_OUT = [
     "amount/share",
     "total amount",
     "currency",
+    "exchange rate",
     "commission",
     "affiliate",
     "memo",
 ]
+
+
+def money(v):
+    """Parse a Shareworks currency/quantity cell without using floats."""
+    v = v.strip().replace(",", "").replace("$", "")
+    if v.startswith("(") and v.endswith(")"):
+        v = f"-{v[1:-1]}"
+    return Decimal(v) if v else Decimal(0)
 
 
 def affiliate(r):
@@ -285,6 +293,149 @@ def acb_rows(path):
             yield out
 
 
+SHAREWORKS_HEADER = {
+    "Date",
+    "Type",
+    "Plan",
+    "Quantity",
+    "Price",
+    "Tax Payment Method",
+    "Net Share Proceeds",
+    "Net Cash Proceeds",
+}
+
+
+def shareworks_records(path):
+    """Yield Shareworks' Transaction History records, after its preamble."""
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        for header in reader:
+            header = [cell.strip().removeprefix("\ufeff") for cell in header]
+            if set(header) >= SHAREWORKS_HEADER:
+                break
+        else:
+            raise SystemExit(
+                f"{path}: expected a Shareworks Transaction History CSV with "
+                f"{', '.join(sorted(SHAREWORKS_HEADER))}"
+            )
+        for values in reader:
+            if not any(values):
+                continue
+            row = dict(zip(header, values, strict=False))
+            # The report's footer and totals are not transactions.
+            if not row.get("Date"):
+                continue
+            try:
+                shareworks_date(row)
+            except ValueError:
+                continue
+            yield row
+
+
+def shareworks_date(r):
+    month, day, year = (int(part) for part in r["Date"].split("/"))
+    return dt.date(year, month, day).isoformat()
+
+
+def shareworks_fee(r):
+    """Derive a sale's commission from its gross and net proceeds."""
+    net = money(r["Net Cash Proceeds"])
+    gross = abs(money(r["Quantity"]) * money(r["Price"]))
+    return gross - net if net else Decimal(0)
+
+
+def shareworks_kind(r):
+    """Return a canonical type, or None for a paired bookkeeping row."""
+    kind = r["Type"]
+    if r["Tax Payment Method"] == "Withhold to Cover":
+        # The report has the gross vested amount and shares delivered after the
+        # issuer remits the withholding. The net acquisition is equivalent to a
+        # gross buy plus a same-price withholding disposition, without creating
+        # a synthetic tax sale in either portfolio.
+        return "BUY"
+    if kind == "Sale":
+        return "SELL"
+    if kind in {"Released Shares", "Share Deposit"}:
+        # Release/deposit rows are represented by the Withhold to Cover row;
+        # another tax method needs explicit handling, never silent omission.
+        if r["Tax Payment Method"]:
+            raise SystemExit(
+                f"unsupported Shareworks tax method {r['Tax Payment Method']!r} "
+                f"on {r['Date']}; expected 'Withhold to Cover'"
+            )
+        return None
+    if kind in {"Share Withdrawal", "Check", "Wire"}:
+        # These are the cash legs of a Sale.
+        return None
+    raise SystemExit(f"unmapped Shareworks type {kind!r} on {r['Date']}: {r['Plan']}")
+
+
+def shareworks_rows(path, symbol, account):
+    for r in shareworks_records(path):
+        if (kind := shareworks_kind(r)) is None:
+            continue
+        qty = money(r["Net Share Proceeds"] if kind == "BUY" else r["Quantity"])
+        price = money(r["Price"])
+        if qty <= 0 or price <= 0:
+            raise SystemExit(
+                f"invalid Shareworks {kind} on {r['Date']}: "
+                f"quantity={qty}, price={price}"
+            )
+        fee = shareworks_fee(r) if kind == "SELL" else Decimal(0)
+        yield {
+            "date": shareworks_date(r),
+            "account": account,
+            "activityType": kind,
+            "symbol": symbol,
+            "quantity": qty,
+            "unitPrice": price,
+            "currency": "USD",
+            "fee": fee or "",
+            "amount": abs(money(r["Net Cash Proceeds"])) if kind == "SELL" else "",
+            "comment": f"{r['Plan']}: {r['Type']}",
+        }
+
+
+def shareworks_acb_rows(path, symbol):
+    for r in shareworks_records(path):
+        if (kind := shareworks_kind(r)) is None:
+            continue
+        qty = money(r["Net Share Proceeds"] if kind == "BUY" else r["Quantity"])
+        price = money(r["Price"])
+        if qty <= 0 or price <= 0:
+            raise SystemExit(
+                f"invalid Shareworks {kind} on {r['Date']}: "
+                f"quantity={qty}, price={price}"
+            )
+        yield {
+            "security": symbol,
+            "trade date": shareworks_date(r),
+            "settlement date": shareworks_date(r),
+            "action": kind.capitalize(),
+            "shares": qty,
+            "amount/share": price,
+            "currency": "USD",
+            "commission": shareworks_fee(r) if kind == "SELL" else "0",
+            "affiliate": "Default",
+            "memo": f"{r['Plan']}: {r['Type']}",
+        }
+
+
+def source(path):
+    """Identify the source from its headers without relying on its filename."""
+    with open(path, newline="") as f:
+        lines = list(csv.reader(f))
+    lines = [[cell.strip().removeprefix("\ufeff") for cell in row] for row in lines]
+    if lines and "effective_date" in lines[0]:
+        return "wealthsimple"
+    if any(set(row) >= SHAREWORKS_HEADER for row in lines):
+        return "shareworks"
+    raise SystemExit(
+        f"{path}: unsupported CSV; expected a Wealthsimple activities export "
+        "or a Shareworks Transaction History export"
+    )
+
+
 def write_csv(dest, fields, rows):
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fields, lineterminator="\n")
@@ -293,13 +444,31 @@ def write_csv(dest, fields, rows):
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit("usage: wealthsimple-convert <export.csv> [more.csv ...]")
-    for src in map(Path, sys.argv[1:]):
+    parser = argparse.ArgumentParser(
+        description="convert Wealthsimple or Shareworks exports for Wealthfolio/acb"
+    )
+    parser.add_argument(
+        "--shareworks-account",
+        default="Databricks RSU",
+        help="Wealthfolio account to name for Shareworks transactions",
+    )
+    parser.add_argument(
+        "--shareworks-symbol",
+        default="DATABRICKS-RSU",
+        help="manual asset symbol to use for Shareworks transactions (default: DATABRICKS-RSU)",
+    )
+    parser.add_argument("exports", nargs="+", type=Path, metavar="EXPORT.csv")
+    args = parser.parse_args()
+    for src in args.exports:
         # Convert fully before opening any output so an unmapped type leaves
         # no partial file behind.
-        wf = sorted(rows(src), key=lambda o: (o["account"], o["date"]))
-        acb = sorted(acb_rows(src), key=lambda o: (o["security"], o["trade date"]))
+        if source(src) == "wealthsimple":
+            wf, acb = rows(src), acb_rows(src)
+        else:
+            wf = shareworks_rows(src, args.shareworks_symbol, args.shareworks_account)
+            acb = shareworks_acb_rows(src, args.shareworks_symbol)
+        wf = sorted(wf, key=lambda o: (o["account"], o["date"]))
+        acb = sorted(acb, key=lambda o: (o["security"], o["trade date"]))
         parsed = src.with_name(f"{src.stem}-parsed.csv")
         acb_dest = src.with_name(f"{src.stem}-acb.csv")
         write_csv(parsed, OUT, wf)

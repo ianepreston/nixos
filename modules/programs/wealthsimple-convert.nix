@@ -1,13 +1,13 @@
 # Wealthsimple Convert - HM Simple Aspect
-# Converts Wealthsimple activity exports for Wealthfolio and for acb:
+# Converts Wealthsimple activities and Shareworks Transaction History exports
+# for Wealthfolio and acb:
 #
 #   wealthsimple-convert <export.csv> [more.csv ...]
 #
 # writes INPUT-parsed.csv (Wealthfolio's canonical import CSV; use its generic
-# CSV import, the columns map automatically) and INPUT-acb.csv (tsiemens/acb
-# transactions) next to each input. Wealthsimple's export dates date-only rows
-# a day early and its type codes don't fit Wealthfolio's built-in Wealthsimple
-# template; see wealthsimple-convert.py for the mapping.
+# CSV importer) and INPUT-acb.csv (tsiemens/acb transactions) next to each
+# input. See the colocated README for the reports to export and
+# wealthsimple-convert.py for the strict source mappings.
 _: {
   flake.modules.homeManager.wealthsimple-convert =
     { pkgs, ... }:
