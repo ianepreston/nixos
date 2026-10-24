@@ -20,17 +20,35 @@ from pathlib import Path
 # History is rewritten onto the new ticker and the paired rows are dropped.
 RENAMES = {"PZD": "ERTH"}
 
-# Wealthsimple symbol -> Wealthfolio symbol. Listing venue is not in the export;
-# anything absent is passed through bare (US listing). Extend as new
-# holdings appear. A wrong venue is NOT flagged at import: the asset is created,
+# Wealthsimple symbol -> Wealthfolio symbol. Listing venue is not in the export,
+# so every symbol must be listed; an unknown one is a hard error. A wrong venue
+# is NOT flagged by Wealthfolio at import: the asset is created,
 # its Yahoo quote 404s, and it silently values at zero (account valuation shows
-# PARTIAL_UNPRICED). Cboe Canada listings take .NE, not .TO.
+# PARTIAL_UNPRICED). A bare ticker can also resolve to the wrong security:
+# Yahoo's PSA is Public Storage, not Purpose's PSA.TO. Cboe Canada listings take
+# .NE, not .TO; BMO's hedged ".F" units are Yahoo's "-F.NE".
 SYMBOLS = {
     **{
         s: f"{s}.TO"
-        for s in ("XEN", "ZFL", "ZFM", "ZMP", "ZGB", "ZGLD", "WSRD", "WSRI")
+        for s in (
+            "PSA",
+            "XEN",
+            "ZBI",
+            "ZCS",
+            "ZFH",
+            "ZFL",
+            "ZFM",
+            "ZGB",
+            "ZGLD",
+            "ZMP",
+            "ZST",
+            "WSRD",
+            "WSRI",
+        )
     },
     **{s: f"{s}.NE" for s in ("QTIP", "WSGB")},
+    **{f"{s}.F": f"{s}-F.NE" for s in ("ZAAA", "ZBBZ")},
+    **{s: s for s in ("CLOZ", "CRBN", "ERTH", "GLDM", "VIDI")},  # US listings
 }
 
 EXECUTED = re.compile(r"executed at (\d{4}-\d{2}-\d{2})")
@@ -79,9 +97,21 @@ def convert(r):
             return "TAX", "WITHHOLDING", False
         case "MoneyMovement", "EFT":
             return ("DEPOSIT" if net > 0 else "WITHDRAWAL"), "", False
-        case "MoneyMovement", "TRANSFER_TF":
-            # Cash moved between Wealthsimple accounts, not an external flow.
+        case "MoneyMovement", "TRANSFER" | "TRANSFER_TF":
+            # Cash moved to/from another account. Wealthfolio's importer marks
+            # these external (portfolio contribution/withdrawal) unless the raw
+            # type says INTERNAL: right for the many whose other leg is an
+            # account not in the export; a pair inside it nets to zero.
             return ("TRANSFER_IN" if net > 0 else "TRANSFER_OUT"), "", False
+        case "Interest", _:
+            return "INTEREST", "", False
+        case "ReturnOfCapital" | "NonCashDistribution", _ if (
+            "Adjusted Cost Base Entry Only" in r["description"]
+        ):
+            # Book-cost-only: no cash or units move. Wealthfolio has no ACB
+            # adjustment yet; a plain ADJUSTMENT is a recorded no-op, so cost
+            # basis drifts from Wealthsimple's by these amounts.
+            return "ADJUSTMENT", "", True
         case "InternalSecurityTransfer", _:
             return ("TRANSFER_IN" if qty > 0 else "TRANSFER_OUT"), "", True
         case "AdministrativePayment", "MANAGEMENT_FEE_REFUND":
@@ -121,9 +151,16 @@ def rows(path):
                 "amount": abs(net) if r["net_cash_amount"] else "",
             }
             if use_asset:
-                out["symbol"] = SYMBOLS.get(sym, sym)
-            # A dividend's "quantity" in the export is its cash amount.
-            if use_asset and kind != "DIVIDEND":
+                if sym not in SYMBOLS:
+                    raise SystemExit(
+                        f"unmapped symbol {sym}: add its Yahoo listing to SYMBOLS"
+                    )
+                out["symbol"] = SYMBOLS[sym]
+            if kind == "ADJUSTMENT":
+                out["amount"] = ""
+            # A dividend's "quantity" in the export is its cash amount, and an
+            # ADJUSTMENT's is its book-cost change.
+            if use_asset and kind not in ("DIVIDEND", "ADJUSTMENT"):
                 out["quantity"] = abs(qty)
                 price = r["unit_price"]
                 if not price and net and qty:
