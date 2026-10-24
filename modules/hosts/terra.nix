@@ -46,6 +46,7 @@
           # blocked upstream (see #298). Re-add when fixed.
           browser
           ssh-homelan
+          wealthsimple-convert
         ];
 
         boot = {

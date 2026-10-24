@@ -38,6 +38,7 @@
             browser
             obsidian
             ssh-homelan
+            wealthsimple-convert
           ];
 
           boot = {

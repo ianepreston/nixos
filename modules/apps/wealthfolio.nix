@@ -68,7 +68,10 @@
         group = null;
       };
 
-      mySqliteQuiesce.apps.wealthfolio.databases = [ "${stateDir}/wealthfolio.db" ];
+      # 3.9 keeps one database per profile under a UUID it generates on first
+      # start; WF_DB_PATH only names a legacy file to adopt, which never existed
+      # here. Glob it so the quiesce follows whichever profile the host has.
+      mySqliteQuiesce.apps.wealthfolio.databases = [ "${stateDir}/profiles/*/app.db" ];
 
       myRecovery.apps.wealthfolio = {
         kind = "sqlite";
