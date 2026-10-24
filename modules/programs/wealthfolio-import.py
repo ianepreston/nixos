@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Normalize a Wealthsimple activities export into Wealthfolio's canonical CSV.
+"""Convert a Wealthsimple activities export for Wealthfolio and for acb.
 
     wealthfolio-import export.csv [more.csv ...]
 
-Each INPUT.csv is written to INPUT-parsed.csv beside it. Output columns are Wealthfolio's own import names, so the importer auto-maps
-them and the activityType values need no per-account mapping. Output is
-deterministic: Wealthfolio dedupes on (account, type, date, amounts, comment),
-so re-importing an overlapping export is a no-op for rows already imported.
+Each INPUT.csv is written beside it as:
+
+- INPUT-parsed.csv: Wealthfolio's canonical import CSV. Its column names are
+  Wealthfolio's own, so the importer auto-maps them and the activityType values
+  need no per-account mapping. Output is deterministic: Wealthfolio dedupes on
+  (account, type, date, amounts, comment), so re-importing an overlapping
+  export is a no-op for rows already imported.
+- INPUT-acb.csv: transactions for the acb ACB calculator. It is built from the
+  export directly, not via Wealthfolio, because Wealthfolio cannot hold the
+  ACB-only return-of-capital / reinvested-distribution entries acb needs.
+  Export every account together: acb must see all of a security's history.
 """
 
 import csv
@@ -169,19 +176,123 @@ def rows(path):
             yield out
 
 
+# acb (tsiemens/acb) affiliates are per taxpayer, not per account: ACB pools
+# across every non-registered account holding the same security, and the
+# registered ones exist only so acb can catch superficial losses against them.
+REGISTERED = {"TFSA", "RRSP", "FHSA", "RESP", "RRIF", "LIRA", "LIF", "RDSP"}
+ACB_OUT = [
+    "security",
+    "trade date",
+    "settlement date",
+    "action",
+    "shares",
+    "amount/share",
+    "total amount",
+    "currency",
+    "commission",
+    "affiliate",
+    "memo",
+]
+
+
+def affiliate(r):
+    if r["account_type"] == "Non-registered":
+        return "Default"
+    if r["account_type"] in REGISTERED:
+        return "Default (R)"
+    raise SystemExit(f"unknown account type {r['account_type']!r}: {r['account_id']}")
+
+
+def acb_rows(path):
+    """Share-moving and ACB-moving rows only; cash-only activity has no ACB."""
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            if not r.get("effective_date"):
+                continue
+            t, sub = r["activity_type"], r["activity_sub_type"]
+            net, qty = dec(r["net_cash_amount"]), dec(r["quantity"])
+            date = activity_date(r)
+            out = {
+                "security": RENAMES.get(r["symbol"], r["symbol"]),
+                "trade date": date,
+                "settlement date": r["settlement_date"] or date,
+                "currency": r["currency"] or "CAD",
+                "affiliate": affiliate(r),
+                "memo": r["description"],
+            }
+            match t, sub:
+                case "Trade", "BUY" | "SELL":
+                    out |= {
+                        "action": sub.capitalize(),
+                        "shares": abs(qty),
+                        "amount/share": r["unit_price"],
+                        "commission": r["commission"] or "0",
+                    }
+                case "InternalSecurityTransfer", _:
+                    # Shares crossing the export boundary. The other leg is an
+                    # account not in the export, so model it as a disposition /
+                    # acquisition at the transfer value. Right for a move into a
+                    # registered account (a deemed disposition); between your
+                    # own non-registered accounts ACB carries over instead, so
+                    # check these by hand.
+                    out |= {
+                        "action": "Buy" if qty > 0 else "Sell",
+                        "shares": abs(qty),
+                        "amount/share": abs(net / qty).quantize(Decimal("0.000001")),
+                        "commission": "0",
+                        "memo": f"TRANSFER, verify treatment: {r['description']}",
+                    }
+                case "ReturnOfCapital", _ if net < 0:
+                    out |= {"action": "RoC", "total amount": -net}
+                case "NonCashDistribution", _ if net > 0:
+                    # Reinvested capital-gains distribution: ACB up, no units.
+                    out |= {"action": "RiCGDist", "total amount": net}
+                case "ReturnOfCapital" | "NonCashDistribution", _:
+                    raise SystemExit(f"unexpected sign on {t}: {r['description']}")
+                case "LegacyCorporateAction", "NAME_CHANGE" if (
+                    r["symbol"] in RENAMES.values() | RENAMES.keys()
+                ):
+                    continue
+                case "LegacyCorporateAction", "NAME_CHANGE":
+                    if out["affiliate"] == "Default":
+                        # A share-count fix with no price would corrupt ACB.
+                        raise SystemExit(
+                            f"non-registered correction: {r['description']}"
+                        )
+                    out |= {
+                        "action": "Buy" if qty > 0 else "Sell",
+                        "shares": abs(qty),
+                        "amount/share": "0",
+                        "commission": "0",
+                    }
+                case _:
+                    # Every other type is cash-only. convert() is the
+                    # exhaustive check, run first, so nothing unknown gets here.
+                    continue
+            yield out
+
+
+def write_csv(dest, fields, rows):
+    with open(dest, "w", newline="") as f:
+        w = csv.DictWriter(f, fields, lineterminator="\n")
+        w.writeheader()
+        w.writerows(rows)
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: wealthfolio-import <export.csv> [more.csv ...]")
     for src in map(Path, sys.argv[1:]):
-        # Convert fully before opening the output so an unmapped type leaves
+        # Convert fully before opening any output so an unmapped type leaves
         # no partial file behind.
-        out = sorted(rows(src), key=lambda o: (o["account"], o["date"]))
-        dest = src.with_name(f"{src.stem}-parsed.csv")
-        with open(dest, "w", newline="") as f:
-            w = csv.DictWriter(f, OUT, lineterminator="\n")
-            w.writeheader()
-            w.writerows(out)
-        print(f"{src} -> {dest} ({len(out)} activities)")
+        wf = sorted(rows(src), key=lambda o: (o["account"], o["date"]))
+        acb = sorted(acb_rows(src), key=lambda o: (o["security"], o["trade date"]))
+        parsed = src.with_name(f"{src.stem}-parsed.csv")
+        acb_dest = src.with_name(f"{src.stem}-acb.csv")
+        write_csv(parsed, OUT, wf)
+        write_csv(acb_dest, ACB_OUT, acb)
+        print(f"{src} -> {parsed} ({len(wf)} activities)")
+        print(f"{src} -> {acb_dest} ({len(acb)} acb transactions)")
 
 
 if __name__ == "__main__":
