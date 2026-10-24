@@ -22,10 +22,15 @@ RENAMES = {"PZD": "ERTH"}
 
 # Wealthsimple symbol -> Wealthfolio symbol. Listing venue is not in the export;
 # anything absent is passed through bare (US listing). Extend as new
-# holdings appear; the preview step flags any symbol it can't resolve.
+# holdings appear. A wrong venue is NOT flagged at import: the asset is created,
+# its Yahoo quote 404s, and it silently values at zero (account valuation shows
+# PARTIAL_UNPRICED). Cboe Canada listings take .NE, not .TO.
 SYMBOLS = {
-    s: f"{s}.TO"
-    for s in ("XEN", "ZFL", "ZFM", "ZMP", "ZGB", "ZGLD", "QTIP", "WSGB", "WSRD", "WSRI")
+    **{
+        s: f"{s}.TO"
+        for s in ("XEN", "ZFL", "ZFM", "ZMP", "ZGB", "ZGLD", "WSRD", "WSRI")
+    },
+    **{s: f"{s}.NE" for s in ("QTIP", "WSGB")},
 }
 
 EXECUTED = re.compile(r"executed at (\d{4}-\d{2}-\d{2})")
@@ -117,6 +122,8 @@ def rows(path):
             }
             if use_asset:
                 out["symbol"] = SYMBOLS.get(sym, sym)
+            # A dividend's "quantity" in the export is its cash amount.
+            if use_asset and kind != "DIVIDEND":
                 out["quantity"] = abs(qty)
                 price = r["unit_price"]
                 if not price and net and qty:
