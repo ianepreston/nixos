@@ -15,9 +15,9 @@
 # Override per host with `.override { settings = …; }`.
 #
 # Sources are fixed versions with fixed hashes — never "latest" at container
-# start. Renovate does not track these; bump `version` by hand and run
-# `task hashes`, which rebuilds each `src` named by its `regen-hash` marker.
-# Record the result in the plugin table in README.md.
+# start. Renovate tracks their tagged release streams and the branch workflow
+# regenerates each `src` hash named by its `regen-hash` marker. Plugin PRs stay
+# manual: review the changelog and client requirements before deploying.
 { lib, pkgs }:
 let
   mkPlugin = lib.makeOverridable (
@@ -65,6 +65,7 @@ in
   # A single DLL with no dependency beyond the image's BepInExPack.
   betterNetworking10 = mkPlugin rec {
     pname = "better-networking10";
+    # renovate: datasource=github-releases depName=LabodiDavid/BetterNetworking10
     version = "1.2.0";
     guid = "DIT.BetterNetworking10";
     dir = "BetterNetworking_Valheim";
@@ -84,6 +85,7 @@ in
   # server never uses, so it is deliberately not packaged.
   firesGhettoNetworking = mkPlugin rec {
     pname = "fires-ghetto-networking";
+    # renovate: datasource=custom.thunderstore depName=VerdantsAscent/FiresGhettoNetworking
     version = "1.5.17";
     guid = "com.Fire.FiresGhettoNetworkMod";
     dir = "FiresGhettoNetworking";

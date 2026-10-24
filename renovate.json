@@ -13,6 +13,15 @@
   "nix": {
     "enabled": false
   },
+  "customDatasources": {
+    "thunderstore": {
+      "defaultRegistryUrlTemplate": "https://thunderstore.io/api/experimental/package/{{packageName}}/",
+      "format": "json",
+      "transformTemplates": [
+        "{\"releases\": [{\"version\": latest.version_number, \"releaseTimestamp\": latest.date_created}]}"
+      ]
+    }
+  },
   "lockFileMaintenance": {
     "enabled": false,
     "schedule": ["before 4am on monday"]
@@ -49,6 +58,15 @@
       "automerge": false
     },
     {
+      "description": "Valheim BepInEx plugins install executable game patches; FiresGhettoNetworking is enabled on both dev and prod, and its optional client half requires matching modded-client versions. Renovate discovers and groups updates, but a human must review the changelog and test compatibility on hpp-1 before production deployment.",
+      "matchDepNames": [
+        "LabodiDavid/BetterNetworking10",
+        "VerdantsAscent/FiresGhettoNetworking"
+      ],
+      "groupName": "Valheim BepInEx plugins",
+      "automerge": false
+    },
+    {
       "description": "Group Nix release-channel bumps and keep them manual.",
       "matchManagers": ["custom.regex"],
       "matchDatasources": ["git-refs"],
@@ -80,6 +98,18 @@
       "managerFilePatterns": ["/\\.nix$/"],
       "matchStrings": [
         "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*\"[^\"]+@(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Update annotated Valheim BepInEx plugin versions in their Nix package declarations and documentation table. The bounded table-row match includes BetterNetworking10's versioned release link, so autoReplaceGlobalMatch keeps it synchronized with the documented version. Source hashes deliberately stay outside the match: .github/workflows/renovate-hashes.yml regenerates them from the changed source.",
+      "managerFilePatterns": [
+        "/^modules\\/apps\\/_valheim\\/bepinex-plugins\\.nix$/",
+        "/^modules\\/apps\\/_valheim\\/README\\.md$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*version\\s*=\\s*\"(?<currentValue>[^\"]+)\";",
+        "\\|[^\\n|]+<!--\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+versioning=(?<versioning>\\S+))?\\s*-->\\s*\\|\\s*(?<currentValue>[^|\\s]+)\\s*\\|[^\\n]+\\|"
       ]
     },
     {
