@@ -7,7 +7,8 @@ Each INPUT.csv is written beside it as:
 
 - INPUT-parsed.csv: Wealthfolio's canonical import CSV. Its column names are
   Wealthfolio's own, so the importer auto-maps them and the activityType values
-  need no per-account mapping. Output is deterministic: Wealthfolio dedupes on
+  need no per-account mapping. Trade prices are backed out of the cash charged
+  (see trade_price). Output is deterministic: Wealthfolio dedupes on
   (account, type, date, amounts, comment), so re-importing an overlapping
   export is a no-op for rows already imported.
 - INPUT-acb.csv: transactions for the acb ACB calculator. It is built from the
@@ -87,6 +88,16 @@ def activity_date(r):
 
 def dec(v):
     return Decimal(v) if v else Decimal(0)
+
+
+def trade_price(r):
+    # Wealthsimple rounds a trade's cash to the cent but reports the unrounded
+    # execution price. Wealthfolio and acb both book quantity x price + fee, so
+    # the export's price drifts cash and cost by a fraction of a cent per trade.
+    # Back the price out of the cash actually charged instead.
+    net, qty, fee = dec(r["net_cash_amount"]), dec(r["quantity"]), dec(r["commission"])
+    gross = abs(net) - fee if r["activity_sub_type"] == "BUY" else abs(net) + fee
+    return (gross / abs(qty)).quantize(Decimal("1e-10"))
 
 
 def convert(r):
@@ -170,7 +181,9 @@ def rows(path):
             if use_asset and kind not in ("DIVIDEND", "ADJUSTMENT"):
                 out["quantity"] = abs(qty)
                 price = r["unit_price"]
-                if not price and net and qty:
+                if r["activity_type"] == "Trade":
+                    price = trade_price(r)
+                elif not price and net and qty:
                     price = abs(net / qty).quantize(Decimal("0.000001"))
                 out["unitPrice"] = price
             yield out
@@ -225,7 +238,7 @@ def acb_rows(path):
                     out |= {
                         "action": sub.capitalize(),
                         "shares": abs(qty),
-                        "amount/share": r["unit_price"],
+                        "amount/share": trade_price(r),
                         "commission": r["commission"] or "0",
                     }
                 case "InternalSecurityTransfer", _:
