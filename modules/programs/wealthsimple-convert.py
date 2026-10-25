@@ -416,7 +416,11 @@ def shareworks_rows(path, symbol, account):
         yield {
             "date": shareworks_date(r),
             "account": account,
-            "activityType": kind,
+            # An RSU release is compensation delivered from outside the
+            # account, not a cash-funded security purchase.  TRANSFER_IN
+            # creates the lot at its release-price cost basis without making
+            # the account's cash balance negative.
+            "activityType": "TRANSFER_IN" if kind == "BUY" else kind,
             "symbol": symbol,
             "quantity": qty,
             "unitPrice": price,
@@ -542,7 +546,9 @@ def shareworks_release_rows(path, symbol, account):
         yield {
             "date": shareworks_date_value(r["Release Date"]),
             "account": account,
-            "activityType": "BUY",
+            # See shareworks_rows: the shares arrive as compensation, with no
+            # cash purchase in this account.
+            "activityType": "TRANSFER_IN",
             "symbol": symbol,
             "quantity": money(r["Shares Received"]),
             "unitPrice": money(r["Release Price"]),

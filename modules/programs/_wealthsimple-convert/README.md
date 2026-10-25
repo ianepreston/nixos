@@ -62,6 +62,12 @@ avoiding a synthetic tax sale. A normal `Sale` becomes a sale with its
 commission derived from gross less net proceeds. An unfamiliar transaction type
 is an error, not a silently incomplete import.
 
+The Wealthfolio rows use `TRANSFER_IN`, rather than `BUY`: an RSU release is
+compensation received from outside the account, not a cash-funded purchase.
+That records the shares and their release-price cost basis without creating a
+negative cash balance. Wealthfolio reports the released value as an external
+portfolio contribution. The matching ACB rows remain `Buy` transactions.
+
 Import `*-parsed.csv` through Wealthfolio's generic CSV importer. Before
 filing, import the matching `*-acb.csv` through ACB's CSV import at
 `acb.ipreston.net`; it needs the complete Databricks position to calculate
