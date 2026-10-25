@@ -13,11 +13,22 @@ contains financial transactions and personal account information.
 ## Databricks RSUs (Shareworks)
 
 Use the **all-time Transaction History CSV** in Shareworks / Morgan Stanley at
-Work. In the Activity or Transactions view, set the date range to include every
-release and sale, then use the page's Download/Export CSV control. The parser
-identifies that report by its `Date`, `Type`, `Plan`, `Quantity`, `Price`, `Tax
-Payment Method`, `Net Share Proceeds`, and `Net Cash Proceeds` columns. It
-skips any title/footer lines in the report.
+Work when there have been releases and sales. In the Activity or Transactions
+view, set the date range to include every event, then use the page's
+Download/Export CSV control. The parser identifies that report by its `Date`,
+`Type`, `Plan`, `Quantity`, `Price`, `Tax Payment Method`, `Net Share
+Proceeds`, and `Net Cash Proceeds` columns. It skips any title/footer lines in
+the report.
+
+An all-time **RSU Release Summary CSV** also works when every event so far is a
+share-withheld release. It identifies the `Release Reference Number`, `Release
+Date`, `Release Price`, `Shares Released`, `Shares Net Withheld`, and `Shares
+Received` columns, and emits one net-share purchase per release. The report has
+repeated federal/provincial payroll detail rows; they do not become separate
+tax or sale activity, because the withheld shares are already accounted for by
+the net share balance. A non-zero cash settlement is a hard error for manual
+review. Switch to Transaction History once there is a sale or another type of
+event.
 
 Do not use the portfolio/holdings snapshot: it has today's position but cannot
 reconstruct the ACB. Also save each release confirmation and sale confirmation
@@ -28,6 +39,8 @@ Run:
 
 ```sh
 wealthsimple-convert shareworks-transaction-history.csv
+# or, for share-withheld releases only:
+wealthsimple-convert shareworks-rsu-release-summary.csv
 ```
 
 The defaults name the Wealthfolio account `Databricks RSU` and use the private,
