@@ -36,6 +36,7 @@ in
           inputs.self.modules.homeManager.coding-sandbox
           inputs.self.modules.homeManager.hammerspoon
           inputs.self.modules.homeManager.ghostty
+          inputs.self.modules.homeManager.wealthsimple-convert
           inputs.nix-secrets.homeManagerModules.work
         ];
 
