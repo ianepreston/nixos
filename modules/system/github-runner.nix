@@ -133,10 +133,17 @@ _: {
         #   parses fetchFromGitHub blocks with awk. Without it every run
         #   no-op'd while reporting success, and #678 merged a stale hash
         #   (#773).
+        # - diffutils, curl: renovate-hashes.yml's HA requirement
+        #   reconciler (and its self-test) need `cmp` and `curl`. Without
+        #   them the job died on its first step on every Renovate branch,
+        #   so the SparkyFitness lock sync never ran and #865 merged a
+        #   flake.nix ref with no matching flake.lock (#866).
         extraPackages = [
           pkgs.openssh
           pkgs.jq
           pkgs.gawk
+          pkgs.diffutils
+          pkgs.curl
         ];
         # Upstream ties the restart policy to `ephemeral`:
         #
