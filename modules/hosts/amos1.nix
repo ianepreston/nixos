@@ -223,6 +223,7 @@
             enable = true;
             crossplay = true;
             gamePort = 2456;
+            worldModifiers.raids = "none";
             bepinex = true;
             bepinexPlugins = [ config.myValheim.availablePlugins.firesGhettoNetworking ];
           };

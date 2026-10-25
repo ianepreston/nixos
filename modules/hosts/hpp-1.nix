@@ -92,6 +92,7 @@
             # not undo it — run one start on `"normal"` first. See the
             # option description and the README.
             worldModifiers.preset = "hard";
+            worldModifiers.raids = "none";
 
             # #671: FiresGhettoNetworking, the plugin amos1 runs too, so a
             # deploy here exercises exactly what prod gets on its next
