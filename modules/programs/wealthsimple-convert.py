@@ -59,6 +59,26 @@ SYMBOLS = {
 }
 
 EXECUTED = re.compile(r"executed at (\d{4}-\d{2}-\d{2})")
+SHAREWORKS_MONTHS = {
+    month: index
+    for index, month in enumerate(
+        (
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+        ),
+        start=1,
+    )
+}
 OUT = [
     "date",
     "account",
@@ -333,8 +353,19 @@ def shareworks_records(path):
 
 
 def shareworks_date(r):
-    month, day, year = (int(part) for part in r["Date"].split("/"))
-    return dt.date(year, month, day).isoformat()
+    return shareworks_date_value(r["Date"])
+
+
+def shareworks_date_value(value):
+    if "/" in value:
+        month, day, year = (int(part) for part in value.split("/"))
+        return dt.date(year, month, day).isoformat()
+    if re.fullmatch(r"\d{1,2}-[A-Za-z]{3}-\d{4}", value):
+        day, month, year = value.split("-")
+        return dt.date(
+            int(year), SHAREWORKS_MONTHS[month.title()], int(day)
+        ).isoformat()
+    return dt.date.fromisoformat(value).isoformat()
 
 
 def shareworks_fee(r):
@@ -421,6 +452,122 @@ def shareworks_acb_rows(path, symbol):
         }
 
 
+# A Shareworks RSU Release Summary has a report title row followed by a wide
+# header and three payroll-jurisdiction rows per release. Only the row carrying
+# the share counts represents the security acquisition. Federal/provincial tax
+# figures are deliberately not emitted: net-share acquisition at the release
+# price is equivalent to a gross acquisition and same-price tax disposition.
+SHAREWORKS_RELEASE_HEADER = {
+    "Release Reference Number",
+    "Release Date",
+    "Release Price",
+    "Release Method",
+    "Total RSU Value (USD)",
+    "Cash Settlement Amount",
+    "Shares Released",
+    "Shares Net Withheld",
+    "Shares Received",
+}
+WITHHOLD_TO_COVER = "Withhold shares to cover taxes, receive balance as shares and cash"
+
+
+def shareworks_release_records(path):
+    """Yield one share-settled release row per Shareworks release reference."""
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        for header in reader:
+            header = [cell.strip().removeprefix("\ufeff") for cell in header]
+            if set(header) >= SHAREWORKS_RELEASE_HEADER:
+                break
+        else:
+            raise SystemExit(
+                f"{path}: expected a Shareworks RSU Release Summary CSV with "
+                f"{', '.join(sorted(SHAREWORKS_RELEASE_HEADER))}"
+            )
+
+        seen = set()
+        for values in reader:
+            if len(values) != len(header) or not any(values):
+                continue
+            r = dict(zip(header, values, strict=False))
+            ref = r["Release Reference Number"].strip()
+            # The jurisdiction rows repeat payroll data but have no share
+            # counts. Blank reference/date rows are the report's footer.
+            if (
+                not ref
+                or not r["Release Date"].strip()
+                or not r["Shares Released"].strip()
+            ):
+                continue
+            if ref in seen:
+                raise SystemExit(f"duplicate Shareworks release reference {ref}")
+            seen.add(ref)
+
+            if r["Release Method"] != WITHHOLD_TO_COVER:
+                raise SystemExit(
+                    f"unsupported Shareworks release method {r['Release Method']!r} "
+                    f"for release {ref}"
+                )
+            released = money(r["Shares Released"])
+            withheld = money(r["Shares Net Withheld"])
+            received = money(r["Shares Received"])
+            price = money(r["Release Price"])
+            if released <= 0 or received <= 0 or price <= 0:
+                raise SystemExit(
+                    f"invalid Shareworks release {ref}: shares and price must be positive"
+                )
+            if released - withheld != received:
+                raise SystemExit(
+                    f"Shareworks release {ref}: released - withheld != received"
+                )
+            if money(r["Cash Settlement Amount"]) != 0:
+                raise SystemExit(
+                    f"Shareworks release {ref}: cash settlement needs manual review"
+                )
+            if abs(price * released - money(r["Total RSU Value (USD)"])) > Decimal(
+                "0.01"
+            ):
+                raise SystemExit(
+                    f"Shareworks release {ref}: price × shares != USD release value"
+                )
+            try:
+                shareworks_date_value(r["Release Date"])
+            except ValueError as error:
+                raise SystemExit(f"Shareworks release {ref}: {error}") from error
+            yield r
+
+
+def shareworks_release_rows(path, symbol, account):
+    for r in shareworks_release_records(path):
+        yield {
+            "date": shareworks_date_value(r["Release Date"]),
+            "account": account,
+            "activityType": "BUY",
+            "symbol": symbol,
+            "quantity": money(r["Shares Received"]),
+            "unitPrice": money(r["Release Price"]),
+            "currency": "USD",
+            "comment": f"Shareworks RSU release {r['Release Reference Number']}",
+        }
+
+
+def shareworks_release_acb_rows(path, symbol):
+    for r in shareworks_release_records(path):
+        date = shareworks_date_value(r["Release Date"])
+        yield {
+            "security": symbol,
+            "trade date": date,
+            "settlement date": date,
+            "action": "Buy",
+            "shares": money(r["Shares Received"]),
+            "amount/share": money(r["Release Price"]),
+            "currency": "USD",
+            "commission": "0",
+            "affiliate": "Default",
+            "memo": f"Shareworks RSU release {r['Release Reference Number']}",
+        }
+
+
 def source(path):
     """Identify the source from its headers without relying on its filename."""
     with open(path, newline="") as f:
@@ -430,9 +577,11 @@ def source(path):
         return "wealthsimple"
     if any(set(row) >= SHAREWORKS_HEADER for row in lines):
         return "shareworks"
+    if any(set(row) >= SHAREWORKS_RELEASE_HEADER for row in lines):
+        return "shareworks_release_summary"
     raise SystemExit(
         f"{path}: unsupported CSV; expected a Wealthsimple activities export "
-        "or a Shareworks Transaction History export"
+        "or a Shareworks Transaction History/RSU Release Summary export"
     )
 
 
@@ -462,11 +611,17 @@ def main():
     for src in args.exports:
         # Convert fully before opening any output so an unmapped type leaves
         # no partial file behind.
-        if source(src) == "wealthsimple":
+        import_source = source(src)
+        if import_source == "wealthsimple":
             wf, acb = rows(src), acb_rows(src)
-        else:
+        elif import_source == "shareworks":
             wf = shareworks_rows(src, args.shareworks_symbol, args.shareworks_account)
             acb = shareworks_acb_rows(src, args.shareworks_symbol)
+        else:
+            wf = shareworks_release_rows(
+                src, args.shareworks_symbol, args.shareworks_account
+            )
+            acb = shareworks_release_acb_rows(src, args.shareworks_symbol)
         wf = sorted(wf, key=lambda o: (o["account"], o["date"]))
         acb = sorted(acb, key=lambda o: (o["security"], o["trade date"]))
         parsed = src.with_name(f"{src.stem}-parsed.csv")
