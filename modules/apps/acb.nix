@@ -30,6 +30,7 @@ in
       myAuthentik.forwardAuthApps.acb = {
         host = acbHost;
         displayName = "ACB";
+        authentikGroup = "Users";
         staticRouteConfig = ''
           encode zstd gzip
           root * ${acbWeb}

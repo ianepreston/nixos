@@ -38,7 +38,7 @@
       myAuthentik.forwardAuthApps.wealthfolio = {
         inherit port;
         displayName = "Wealthfolio";
-        authentikGroup = "Users";
+        authentikGroup = "Home";
         homepage = {
           group = "Home";
           icon = "wealthfolio";
