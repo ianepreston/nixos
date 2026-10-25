@@ -57,6 +57,14 @@ jobs:
         uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      # system.autoUpgrade evaluates `github:ianepreston/nixos`, which is
+      # read-only, so a flake.nix input ref that flake.lock doesn't match
+      # is a hard eval failure on every host. This checkout is writable, so
+      # without the flag nix re-locks in place with only a warning and every
+      # job here goes green on a flake main can't evaluate — how #865
+      # merged and froze auto-upgrade on both servers (#866).
+      - name: Check flake.lock matches flake.nix
+        run: nix flake metadata --no-update-lock-file . >/dev/null
       # `nix flake check --all-systems` evaluates every config in
       # parallel and on Determinate Nix's Linux runner consistently
       # hits "path '...-source' is not valid" on filtered sub-paths
@@ -141,9 +149,12 @@ jobs:
         uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
+      # --no-update-lock-file: build the flake as committed, not a silently
+      # re-locked one (see "Check flake.lock matches flake.nix" above).
       - name: Build ${{ matrix.host }}
         run: |
           nix build \
+            --no-update-lock-file \
             --print-build-logs \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
   checks:
@@ -228,5 +239,6 @@ jobs:
       - name: Run pre-commit hooks
         run: |
           nix build \
+            --no-update-lock-file \
             --print-build-logs \
             ".#checks.x86_64-linux.pre-commit"
