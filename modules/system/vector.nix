@@ -306,6 +306,47 @@ _: {
                 }
               '';
             };
+
+            # Scrub credentials that programs echo in their own command
+            # lines before they are indexed. The case that prompted it:
+            # pfSense's Tailscale package logs its full `tailscale up`
+            # invocation, `--auth-key=tskey-auth-…` included, on every
+            # restart (2026-10-21, #876), and VictoriaLogs then kept the
+            # key for its 30-day retention. Same idea as caddy.nix's
+            # `redactCredentials`, which covers query strings and auth
+            # headers in access logs; this covers free-text messages.
+            #
+            # Two patterns, both checked against vector's `vrl` CLI:
+            # - any Tailscale key, wherever it appears (`tskey-auth-`,
+            #   `tskey-api-`, `tskey-client-`, …), since it is
+            #   self-identifying and never legitimately worth indexing;
+            # - the value after a credential-named CLI flag (`--auth-key=`,
+            #   `--password `, `-token=`, quoted values included). The flag
+            #   must start a whitespace-separated word, so `refresh-token
+            #   rotated` and prose like "token expired" are left alone.
+            #
+            # Filterlog skips this: it is positional firewall CSV and
+            # cannot carry a credential, and keeping it out leaves the
+            # PfsenseLogsAbsent counter on `pfsense_filterlog` untouched.
+            #
+            # This only cleans the indexed copy. The source keeps the
+            # original: pfSense's own /var/log/system.log until it rotates
+            # out (512 KB × 8, about a week at the October 2026 rate), and
+            # the local journal on the servers until journald's cap.
+            redact_credentials = {
+              type = "remap";
+              inputs = [
+                "journal_enrich"
+                "pfsense_route._unmatched"
+              ];
+              source = ''
+                if is_string(.message) {
+                  msg = string!(.message)
+                  msg = replace(msg, r'tskey-[a-z]+-[A-Za-z0-9-]+', "tskey-REDACTED")
+                  .message = replace(msg, r'(?i)((?:^|\s)--?(?:auth-?key|api-?key|client-?secret|password|passwd|secret|token)(?:=|\s+))(?:"[^"]*"|\x27[^\x27]*\x27|\S+)', "''${1}REDACTED")
+                }
+              '';
+            };
           };
 
           sinks = {
@@ -319,9 +360,8 @@ _: {
             victorialogs = {
               type = "elasticsearch";
               inputs = [
-                "journal_enrich"
+                "redact_credentials"
                 "pfsense_filterlog"
-                "pfsense_route._unmatched"
               ];
               endpoints = [
                 "http://127.0.0.1:${toString victorialogsPort}/insert/elasticsearch/"
