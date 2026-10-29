@@ -83,7 +83,7 @@
     # own pinned nixos-unstable (node 24 + pnpm 10), and repointing them
     # at our stable channel is the kind of change only upstream can test
     # — and upstream explicitly doesn't test the nix path at all.
-    sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.8.0";
+    sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.9.0";
     # Declarative state preservation across ephemeral root reboots.
     # See modules/system/preservation-server.nix and the server hosts'
     # disko configs (btrfs blank-snapshot rollback in initrd).
