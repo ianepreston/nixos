@@ -756,16 +756,16 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1791421230,
-        "narHash": "sha256-MoSfL7W2IgxFpbDZ3xKSldGMSHtM6wzMrQzhlpvJ71s=",
+        "lastModified": 1792544791,
+        "narHash": "sha256-OL08sDGOiQDMIZY//rdwLaz99Ip0zrcSoXL/V9JyCAU=",
         "owner": "CodeWithCJ",
         "repo": "SparkyFitness",
-        "rev": "28d32d8536877d765ad03ca3727409c679b847a7",
+        "rev": "5b19b859b477faf9b615231f3a5a2e20f7dfca27",
         "type": "github"
       },
       "original": {
         "owner": "CodeWithCJ",
-        "ref": "v1.8.0",
+        "ref": "v1.9.0",
         "repo": "SparkyFitness",
         "type": "github"
       }
