@@ -91,12 +91,12 @@
       # this moves in lockstep with the component below, not independently.
       blueair-api = hapy.buildPythonPackage {
         pname = "blueair-api";
-        version = "1.56.3";
+        version = "1.56.4";
         pyproject = true;
         src = pkgsUnstable.fetchPypi {
           pname = "blueair_api";
-          version = "1.56.3";
-          hash = "sha256-Jm4BfLqZd150Xc+K6vKz/jBwn0gnmf/25zq9cInMY2w=";
+          version = "1.56.4";
+          hash = "sha256-XkyTc9GvZC98CoYOg0Jo0nFbyOIfvmvHWqRld/ccTDk=";
         };
         build-system = [ hapy.setuptools ];
         dependencies = with hapy; [
@@ -163,7 +163,7 @@
           owner = "dahlb";
           repo = "ha_blueair";
           rev = "47e087fa62afb5dbf8fcbb9a2418cb7e88b8889f";
-          hash = "sha256-yqBGLjcXWuyZ7nWazL96A8QmeESA8siSKLprxNu5Z4o=";
+          hash = "sha256-uks1ogxPjXlBFFrT9J/c0RWJtpG88Y0WoJoo2KpH1ts=";
         };
         dependencies = [ blueair-api ];
       };
