@@ -629,7 +629,7 @@ anything worth a result goes through `bepinexPlugins`.
 | Plugin | Version | Source / licence | Dependencies | Clients | Status on hpp-1 |
 | --- | --- | --- | --- | --- | --- |
 | BetterNetworking10 (`DIT.BetterNetworking10`) <!-- renovate: datasource=github-releases depName=LabodiDavid/BetterNetworking10 --> | 1.2.0 | [GitHub release](https://github.com/LabodiDavid/BetterNetworking10/releases/tag/v1.2.0), MIT | image's BepInExPack | optional: compression only engages when both ends run it; the queue-size patch is server-side | packaged, not enabled (#671 alternative); load-verified |
-| FiresGhettoNetworking (`com.Fire.FiresGhettoNetworkMod`) <!-- renovate: datasource=custom.thunderstore depName=VerdantsAscent/FiresGhettoNetworking --> | 1.5.17 | [Thunderstore](https://thunderstore.io/c/valheim/p/VerdantsAscent/FiresGhettoNetworking/) ([source](https://github.com/fire-VA/FiresGhettoNetworking)), MIT | image's BepInExPack | optional for the server-side half; client half needs every client on the same version | **enabled on hpp-1 and amos1** (#671); load-verified |
+| FiresGhettoNetworking (`com.Fire.FiresGhettoNetworkMod`) <!-- renovate: datasource=custom.thunderstore depName=VerdantsAscent/FiresGhettoNetworking --> | 1.5.72 | [Thunderstore](https://thunderstore.io/c/valheim/p/VerdantsAscent/FiresGhettoNetworking/) ([source](https://github.com/fire-VA/FiresGhettoNetworking)), MIT | image's BepInExPack | optional for the server-side half; client half needs every client on the same version | **enabled on hpp-1 and amos1** (#671); load-verified |
 
 The two take **opposite** positions on the crossplay queue, which is what
 makes them an A/B rather than two tries at one idea. Both start from the
