@@ -86,7 +86,7 @@ in
   firesGhettoNetworking = mkPlugin rec {
     pname = "fires-ghetto-networking";
     # renovate: datasource=custom.thunderstore depName=VerdantsAscent/FiresGhettoNetworking
-    version = "1.5.17";
+    version = "1.5.72";
     guid = "com.Fire.FiresGhettoNetworkMod";
     dir = "FiresGhettoNetworking";
     src = pkgs.fetchzip {
