@@ -96,6 +96,6 @@ in
       # regen-hash: nixosConfigurations.hpp-1.config.myValheim.availablePlugins.firesGhettoNetworking.src
       hash = "sha256-N2ejWfoehNNE7r/HqvjrH3v6encViF14WCDDiQv8ZsU=";
     };
-    install = ''cp ${src}/VAGhettoNetworking.dll "$plugin/"'';
+    install = ''cp ${src}/plugins/FiresGhettoNetworking/VAGhettoNetworking.dll "$plugin/"'';
   };
 }
