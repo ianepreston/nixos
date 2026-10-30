@@ -693,6 +693,7 @@ Load results on hpp-1, Valheim `l-1.0.16`, BepInExPack 5.4.2351
 | --- | --- | --- | --- |
 | BetterNetworking10 1.2.0 | `Loading [Better Networking 1.0 Safe 1.2]`; chainloader 1 loaded, 0 failed | `Patch audit complete: 15 applied, 4 skipped, 0 failed. Mode=Balanced`, including `PATCH OK ZDO queue budget: ZDOMan.SendZDOs`. Skips: update rate (100% = off), new-connection buffer, force crossplay (vanilla), player limit | Warns that 1.0.16 is outside its audited 1.0.12–1.0.15 range; every patch still verified its IL pattern. Recheck the audit after each game update. |
 | FiresGhettoNetworking 1.5.17 | `Loading [FiresGhettoNetworkMod 1.5.17]`; chainloader 1 loaded, 0 failed; `Fires Ghetto Networking Loaded.` | `Running on DEDICATED SERVER`; server auto-tune picked tier Medium (Queue Size 48 KB); server-side sim off, delta + throttle + AI LOD + WearNTear on | Writes a ~60 KB `com.Fire.FiresGhettoNetworkMod.cfg` of its own (undeclared, so unmanaged). |
+| FiresGhettoNetworking 1.5.72 | `Loading [FiresGhettoNetworkMod 1.5.72]`; chainloader 1 loaded, 0 failed; `Fires Ghetto Networking Loaded.` | `Running on DEDICATED SERVER`; server auto-tune picked tier Medium | Later run: Valheim `l-1.0.21`, BepInExPack 5.4.2360 (2026-10-30). Crossplay session registered a join code. |
 
 Neither has had a multiplayer session yet, so neither has a #671 result.
 Swapping between them was exercised on the host: the materializer
