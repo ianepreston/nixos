@@ -214,7 +214,7 @@
 
       virtualisation.oci-containers.containers.minuspod = {
         # renovate: datasource=docker depName=ttlequals0/minuspod
-        image = "ttlequals0/minuspod:2.100.18-cpu";
+        image = "ttlequals0/minuspod:2.100.20-cpu";
         volumes = [ "${stateDir}:/app/data" ];
         # faster-whisper takes every core it can see for the length of an
         # episode. A relative weight rather than a cap: it costs nothing
