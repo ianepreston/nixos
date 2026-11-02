@@ -186,7 +186,7 @@ _: {
               "github.com/caddy-dns/cloudflare@v0.2.4"
             ];
             # regen-hash: nixosConfigurations.hpp-1.config.services.caddy.package.src
-            hash = "sha256-xRJ5evsAJ2akg47j3Bt6YDXJOgX88B/rKNP50KSVyNY=";
+            hash = "sha256-tubXIDCJnO2mvdnPlZclwDhNGaeeYLSt7lnni3+pXDo=";
           };
           globalConfig = ''
             acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
