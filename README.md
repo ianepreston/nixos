@@ -1004,6 +1004,16 @@ The 48 GB unified memory is shared with macOS and applications. Start at 32k;
 measure memory pressure and real client behavior before raising it. Linux
 throughput measurements below do not predict Mac performance.
 
+Validated on the M4 Pro with Chrome, Safari, Slack, Teams and Obsidian running:
+pi 0.80.3 completed a streamed request and a `read` tool-call/result round trip.
+A synthetic 4989-token prompt with 128 generated tokens measured **662 tok/s
+prefill and 58 tok/s generation**, with normal macOS memory pressure and zero
+swap. Logs confirm **25/25 layers on Metal** and a 32768-token slot context.
+These are one throughput sample, not a coding-quality comparison. A temporary
+5-second idle setting released GPU allocations and woke successfully; the
+configured timeout remains 600 seconds. A temporary small second model also
+verified eviction in both directions under the one-resident-model limit.
+
 Data survives rebuilds, agent restarts and Nix GC under
 `~/Library/Application Support/llama-cpp/` (`myLlamaCpp.dataDirectory`):
 
