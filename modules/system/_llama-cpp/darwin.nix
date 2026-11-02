@@ -12,25 +12,26 @@ let
   keyFile = "${cfg.dataDirectory}/api-key";
   cacheDirectory = "${cfg.dataDirectory}/models";
   runner = pkgs.writers.writePython3 "llama-cpp-local" { } (builtins.readFile ./serve.py);
+  piProvider = {
+    baseUrl = cfg.operator.baseUrl;
+    api = "openai-completions";
+    apiKey = "!cat ${lib.escapeShellArg keyFile}";
+    models = lib.concatLists (
+      lib.mapAttrsToList (
+        name: model:
+        map (alias: {
+          id = alias;
+          name = "${alias} (${name})";
+          reasoning = true;
+          input = [ "text" ];
+          contextWindow = model.ctxSize;
+          maxTokens = lib.min 8192 (model.ctxSize / 4);
+        }) (if model.aliases == [ ] then [ name ] else model.aliases)
+      ) cfg.models
+    );
+  };
   piModels = (pkgs.formats.json { }).generate "pi-local-models.json" {
-    providers.local = {
-      baseUrl = cfg.operator.baseUrl;
-      api = "openai-completions";
-      apiKey = "!cat ${lib.escapeShellArg keyFile}";
-      models = lib.concatLists (
-        lib.mapAttrsToList (
-          name: model:
-          map (alias: {
-            id = alias;
-            name = "${alias} (${name})";
-            reasoning = true;
-            input = [ "text" ];
-            contextWindow = model.ctxSize;
-            maxTokens = lib.min 8192 (model.ctxSize / 4);
-          }) (if model.aliases == [ ] then [ name ] else model.aliases)
-        ) cfg.models
-      );
-    };
+    providers.local = cfg.piProvider;
   };
   # Keep the existing prune algorithm and its keep-set/live-model guards.
   # Its GNU tools and Bash 4 features must not resolve to macOS /usr/bin.
@@ -41,15 +42,22 @@ in
     ./common.nix
     ./operator.nix
   ];
-  options.myLlamaCpp.dataDirectory = lib.mkOption {
-    type = lib.types.str;
-    default = "${home}/Library/Application Support/llama-cpp";
-    description = "User-owned persistent model data and local API credential; outside the Nix store.";
-  };
-  options.myLlamaCpp.operator.prunePackage = lib.mkOption {
-    type = lib.types.package;
-    readOnly = true;
-    description = "Darwin prune executable with the same algorithm and GNU runtime as Linux.";
+  options.myLlamaCpp = {
+    dataDirectory = lib.mkOption {
+      type = lib.types.str;
+      default = "${home}/Library/Application Support/llama-cpp";
+      description = "User-owned persistent model data and local API credential; outside the Nix store.";
+    };
+    piProvider = lib.mkOption {
+      type = lib.types.attrsOf (pkgs.formats.json { }).type;
+      readOnly = true;
+      description = "Published pi provider metadata for the local router; contains a runtime key-file reference.";
+    };
+    operator.prunePackage = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      description = "Darwin prune executable with the same algorithm and GNU runtime as Linux.";
+    };
   };
   config = lib.mkIf cfg.enable {
     assertions = [
@@ -66,6 +74,7 @@ in
         message = "myLlamaCpp.dataDirectory must be inside the primary user's home.";
       }
     ];
+    myLlamaCpp.piProvider = piProvider;
     myLlamaCpp.operator = {
       platform = "darwin";
       inherit cacheDirectory;
@@ -73,8 +82,7 @@ in
       apiKeyFormat = "raw";
       inherit prunePackage;
     };
-    # An example rather than a managed ~/.pi config: using local inference
-    # must not replace the workstation's unrelated providers or settings.
+    # The same published provider feeds Home Manager and this standalone example.
     environment.etc."llama-cpp/pi-models.json".source = piModels;
     system.activationScripts.preActivation.text = ''
       install -d -m 700 -o ${lib.escapeShellArg config.system.primaryUser} \

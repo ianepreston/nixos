@@ -7,18 +7,14 @@
 #
 # ## Why nixpkgs' `pi-coding-agent` and not lukasl-dev/pi.nix
 #
-# pi.nix is the only Nix packaging upstream points at, but nixpkgs has
-# `pi-coding-agent` and unstable tracks it closely — at the time of
-# writing unstable and pi.nix's `VERSION.json` pin the *same* upstream
-# rev (0.84.4), and the nixpkgs build is served by cache.nixos.org while
-# pi.nix's is served by pi.cachix.org (a substituter we'd have to trust
-# or build around). Stable lags harder (0.75.4), which is why this pulls
-# from `pkgsUnstable` alongside claude-code rather than plain `pkgs`.
+# The shared pi aspect uses nixpkgs-unstable's `pi-coding-agent` on both
+# Linux and Darwin, served by cache.nixos.org without another flake input.
+# This module composes that aspect and contributes the Linux providers.
 #
 # The only thing pi.nix offers that nixpkgs doesn't is its jail.nix
 # bubblewrap wrapper; its other options (rules, skills, themes, settings,
 # models) are thin wrappers over writing files into the agent dir, which
-# is what this module already does for Claude Code. Taking it would cost
+# is what our shared pi module already does. Taking it would cost
 # three transitive flake inputs (its own nixpkgs pin at unstable, bun2nix,
 # jail.nix) and a second update cadence. Lima is now the VM-grade sandbox
 # boundary (#539); this module deliberately remains host-only, so a guest
@@ -283,31 +279,29 @@ _: {
       # `!cmd` is pi's shell-command form for a credential; it runs per
       # request, so the key is never written into /nix/store (this file is
       # world-readable there) and rotation is picked up without a rebuild.
-      piModels = (pkgs.formats.json { }).generate "pi-models.json" {
-        providers = lib.mapAttrs (_hostName: host: {
-          baseUrl = llamaBaseUrl host;
-          api = "openai-completions";
-          apiKey = "!cat ${llamaKeyPath}";
-          models = lib.mapAttrsToList (
-            role: model:
-            {
-              id = role;
-              name = model.label;
-              reasoning = true;
-              contextWindow = model.ctxSize;
-              inherit (model) maxTokens;
-            }
-            # pi defaults `input` to ["text"], so this is only ever an
-            # addition.
-            // lib.optionalAttrs model.vision {
-              input = [
-                "text"
-                "image"
-              ];
-            }
-          ) host.models;
-        }) llamaHosts;
-      };
+      piProviders = lib.mapAttrs (_hostName: host: {
+        baseUrl = llamaBaseUrl host;
+        api = "openai-completions";
+        apiKey = "!cat ${llamaKeyPath}";
+        models = lib.mapAttrsToList (
+          role: model:
+          {
+            id = role;
+            name = model.label;
+            reasoning = true;
+            contextWindow = model.ctxSize;
+            inherit (model) maxTokens;
+          }
+          # pi defaults `input` to ["text"], so this is only ever an
+          # addition.
+          // lib.optionalAttrs model.vision {
+            input = [
+              "text"
+              "image"
+            ];
+          }
+        ) host.models;
+      }) llamaHosts;
 
       # `{file:...}` is opencode's equivalent of pi's `!cat`, resolved when
       # the config is read, and keeps the key out of the store for the same
@@ -352,18 +346,19 @@ _: {
           path = llamaKeyPath;
         };
 
-        home.file.".pi/agent/models.json".source = piModels;
+        myPi.providers = piProviders;
         xdg.configFile."opencode/opencode.json".source = opencodeConfig;
       };
     in
     {
-      imports = lib.optional hasSops localInference;
+      imports = [ inputs.self.modules.homeManager.pi ] ++ lib.optional hasSops localInference;
+
+      myPi.enable = true;
 
       home.packages = builtins.attrValues {
         inherit (pkgsUnstable)
           claude-code
           opencode
-          pi-coding-agent
           worktrunk
           ;
       };

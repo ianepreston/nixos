@@ -52,6 +52,13 @@ in
           inputs.self.modules.homeManager.hammerspoon
           inputs.self.modules.homeManager.ghostty
           inputs.self.modules.homeManager.wealthsimple-convert
+          inputs.self.modules.homeManager.pi
+          ({ osConfig, ... }: {
+            myPi = {
+              enable = true;
+              providers.local = osConfig.myLlamaCpp.piProvider;
+            };
+          })
           inputs.nix-secrets.homeManagerModules.work
         ];
 

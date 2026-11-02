@@ -997,7 +997,7 @@ there is no proxy, TLS, SSO or LAN listener.
 Initially `code` and `text` both select **gpt-oss-20b MXFP4**, at **32768**
 tokens with f16 KV cache, all layers on Metal and no CPU expert offload.
 Aliases, context and cache types come from `modules/hosts/work.nix` once;
-the preset and pi example are generated from that declaration. Only one
+the preset and local pi provider are generated from that declaration. Only one
 model is resident at a time, and it sleeps after 600 idle seconds. A first
 request downloads uncached weights; activation itself downloads no models.
 The 48 GB unified memory is shared with macOS and applications. Start at 32k;
@@ -1044,9 +1044,15 @@ to delete when the router is unreachable, a configured model is absent, or a
 candidate path holds a loaded configured model. It never prunes automatically.
 `HOST=terra` and `HOST=amos1` retain the existing remote SSH operations.
 
-The generated pi provider example is `/etc/llama-cpp/pi-models.json`. It uses
-the OpenAI completions API and resolves the key through `!cat <credential-path>`.
-Use an isolated agent directory to try it without replacing existing pi settings:
+Home Manager installs pi and combines the local provider with private work
+providers in `~/.pi/agent/models.json`. The local contribution consumes the
+published `myLlamaCpp.piProvider`; its aliases and limits are generated from
+the serving configuration. `settings.json`, authentication state and sessions
+remain writable and are not managed.
+
+The same local provider is available as `/etc/llama-cpp/pi-models.json` for
+standalone clients. It uses the OpenAI completions API and resolves the key
+through `!cat <credential-path>`. To try it with an isolated agent directory:
 
 ```sh
 mkdir -p "$HOME/.pi/local-llama"
@@ -1061,7 +1067,8 @@ streaming and a complete tool-call/result exchange; API resemblance alone is
 not a guarantee for every harness. No `vibes` import or fleet sops key is needed.
 
 To roll back, remove the Darwin `llama-cpp` import and `myLlamaCpp` block from
-`work.nix`, then rebuild. Remove any manually copied provider example separately.
+`work.nix`, including its `myPi.providers.local` contribution, then rebuild.
+Remove any manually copied provider example separately.
 Downloaded weights and the credential remain until explicitly deleted.
 
 ### Linux (terra and amos1)
@@ -1436,11 +1443,40 @@ lateral boundary, hardened/open modes, VM lifecycle, cache behaviour, and
 current limits are in the
 [macOS coding sandbox guide](docs/coding-sandbox.md).
 
-The workstation side of the same endpoints. `modules/programs/vibes.nix` (the
-home-manager aspect that carries Claude Code) also installs
-[pi](https://github.com/earendil-works/pi) and
-[opencode](https://github.com/sst/opencode), and writes each one's config so
-both can drive the fleet's own GPUs instead of a paid API:
+`modules/programs/pi.nix` owns pi's Nix package and the single
+`~/.pi/agent/models.json` writer on Linux and macOS. Enable it with
+`myPi.enable = true` and contribute providers through `myPi.providers`.
+Providers have typed URL, API, credential-reference and model fields, with
+extensible JSON metadata for each API's compatibility flags. Duplicate model
+IDs within a provider fail evaluation. Credentials are runtime references,
+never token values embedded in Nix.
+
+`vibes` imports this module and contributes the Linux inference providers;
+`work` imports it directly and contributes the local Metal provider. Internal
+work endpoints, model lists and OAuth helper commands live in the private
+`nix-secrets` work Home Manager module, which contributes to the same option.
+Each enabled host gets one Nix-managed pi installation, without pulling the
+rest of `vibes` into the Mac.
+
+For the first macOS activation, Home Manager backs up the existing regular
+`models.json` using the configured `.hm-backup` extension. Check that any
+existing providers have been migrated before switching. After a successful
+rebuild, remove the old global npm install so Homebrew's earlier PATH entry
+cannot shadow Nix's pi:
+
+```sh
+npm uninstall --global @earendil-works/pi-coding-agent
+rehash
+command -v pi
+pi --version
+```
+
+Use plain `pi` for the combined configuration. `ug pi` uses its own agent
+directory and generated provider overlay; it remains a separate launch mode.
+
+`modules/programs/vibes.nix` also carries Claude Code and
+[opencode](https://github.com/sst/opencode). Its pi and opencode providers can
+both drive the fleet's GPUs:
 
 | agent | config file | credential form |
 | --- | --- | --- |
@@ -1454,12 +1490,9 @@ attrset in that module rather than written twice. It mirrors each host's
 (`contextWindow` vs `limit.context`, `input` vs `modalities.input`) but not
 about the facts.
 
-Both come from `nixpkgs-unstable`, whose lag is small where stable's isn't
-(pi 0.84.4 vs 0.75.4, opencode 1.18.25 vs 1.15.10). pi is *not* taken from
-upstream's community flake ([lukasl-dev/pi.nix](https://github.com/lukasl-dev/pi.nix)):
-the two track the same rev, but nixpkgs' build is served by `cache.nixos.org`
-while pi.nix would add three transitive inputs and a cachix substituter for one
-feature we don't need (its bubblewrap jail).
+Both use the flake's pinned `nixpkgs-unstable` packages, served by
+`cache.nixos.org`. pi's community flake would add transitive inputs and a
+separate update cadence for features this setup does not need.
 
 Five things make this work, none of which needed a server-side change:
 
