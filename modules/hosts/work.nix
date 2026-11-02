@@ -19,9 +19,24 @@ in
       inputs.self.modules.darwin.desktop
       inputs.self.modules.darwin.homebrew
       inputs.self.modules.darwin.yubikey
+      inputs.self.modules.darwin.llama-cpp
       inputs.nix-secrets.darwinModules.work
       {
         system.primaryUser = hostSpec.username;
+
+        # One model on demand; 48 GB is shared with desktop applications.
+        # Keep the initial disk and context budget conservative (#884).
+        myLlamaCpp = {
+          enable = true;
+          sleepIdleSeconds = 600;
+          models."ggml-org/gpt-oss-20b-GGUF:MXFP4" = {
+            aliases = [
+              "code"
+              "text"
+            ];
+            ctxSize = 32768;
+          };
+        };
 
         # Corporate DNS can't see the homelab, but behemoth (pfSense)
         # answers LAN queries directly for the whole ipreston.net zone

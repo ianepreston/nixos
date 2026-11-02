@@ -3,4 +3,5 @@
 { inputs, ... }:
 {
   flake.modules.nixos.llama-cpp = import ./_llama-cpp/nixos.nix { inherit inputs; };
+  flake.modules.darwin.llama-cpp = import ./_llama-cpp/darwin.nix;
 }
