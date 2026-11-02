@@ -39,8 +39,8 @@
   [nixos-anywhere](https://github.com/nix-community/nixos-anywhere) and Taskfile
   tasks
 - Custom NixOS recovery/installer ISO
-- Local LLM inference (llama.cpp on CUDA) served from the workstation GPU and
-  fronted with TLS + SSO by the prod server
+- Local LLM inference: CUDA on Linux with TLS + SSO via the prod server,
+  and a loopback-only Apple Metal API on `work`
 - Theming via stylix
 - Task automation via [go-task](https://taskfile.dev/) (`Taskfile.yaml`)
 
@@ -980,6 +980,82 @@ entity_ids that exist on the target).
 
 ## Local LLM Inference
 
+The inference owner is `modules/system/llama-cpp.nix`, with a common typed
+model schema and preset renderer under `_llama-cpp/`. NixOS uses CUDA/systemd;
+Apple Silicon uses Metal/launchd. Platform operator tasks consume the published
+`myLlamaCpp.operator` contract (platform, cache, API URL, credential path and
+configured routing names), rather than reading private service settings.
+
+### Apple Silicon (`work`)
+
+The logged-in primary user's launchd agent serves **http://127.0.0.1:8080/v1**.
+`myLlamaCpp.port` is configurable; check availability with
+`lsof -nP -iTCP:8080 -sTCP:LISTEN` before changing/activating it. The bind is
+restricted to `127.0.0.1`, the bundled web UI is disabled (`--no-webui`), and
+there is no proxy, TLS, SSO or LAN listener.
+
+Initially `code` and `text` both select **gpt-oss-20b MXFP4**, at **32768**
+tokens with f16 KV cache, all layers on Metal and no CPU expert offload.
+Aliases, context and cache types come from `modules/hosts/work.nix` once;
+the preset and pi example are generated from that declaration. Only one
+model is resident at a time, and it sleeps after 600 idle seconds. A first
+request downloads uncached weights; activation itself downloads no models.
+The 48 GB unified memory is shared with macOS and applications. Start at 32k;
+measure memory pressure and real client behavior before raising it. Linux
+throughput measurements below do not predict Mac performance.
+
+Data survives rebuilds, agent restarts and Nix GC under
+`~/Library/Application Support/llama-cpp/` (`myLlamaCpp.dataDirectory`):
+
+- `models/`: downloaded GGUFs, outside the Nix store (about 12 GB for the initial model).
+- `api-key`: a separate local credential, generated on first launch with mode
+  `0600`, read into the server environment at runtime. It never appears in the
+  plist, server argv, or Nix store. Clients read the same file. Missing keys are
+  generated; malformed/insecure existing files cause startup to fail.
+
+Activate after reviewing the build with `task build_darwin:work`. Inspect and
+control the agent as the primary user in their GUI login session:
+
+```sh
+launchctl print "gui/$(id -u)/org.nixos.llama-cpp"
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/org.nixos.llama-cpp.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/org.nixos.llama-cpp.plist"
+tail -f "$HOME/Library/Logs/llama-cpp/server.log"
+
+task llm:models HOST=work                 # local status and cache listing; no SSH
+task llm:models:fetch HOST=work           # explicit sequential download/load, one token per model
+task llm:models:prune HOST=work           # dry run
+task llm:models:prune HOST=work APPLY=true
+```
+
+Prune uses the same algorithm as Linux, with pinned GNU tools on Darwin. Its
+keep-set includes **every configured model**, including idle ones. It refuses
+to delete when the router is unreachable, a configured model is absent, or a
+candidate path holds a loaded configured model. It never prunes automatically.
+`HOST=terra` and `HOST=amos1` retain the existing remote SSH operations.
+
+The generated pi provider example is `/etc/llama-cpp/pi-models.json`. It uses
+the OpenAI completions API and resolves the key through `!cat <credential-path>`.
+Use an isolated agent directory to try it without replacing existing pi settings:
+
+```sh
+mkdir -p "$HOME/.pi/local-llama"
+cp /etc/llama-cpp/pi-models.json "$HOME/.pi/local-llama/models.json"
+PI_CODING_AGENT_DIR="$HOME/.pi/local-llama" pi --provider local --model code
+```
+
+For another OpenAI-compatible harness, set its base URL to
+`http://127.0.0.1:8080/v1`, model to `code` (or `text`), context to 32768 and
+have it read the local key file at runtime. Compatibility requires checking
+streaming and a complete tool-call/result exchange; API resemblance alone is
+not a guarantee for every harness. No `vibes` import or fleet sops key is needed.
+
+To roll back, remove the Darwin `llama-cpp` import and `myLlamaCpp` block from
+`work.nix`, then rebuild. Remove any manually copied provider example separately.
+Downloaded weights and the credential remain until explicitly deleted.
+
+### Linux (terra and amos1)
+
 `llama-server` (llama.cpp's OpenAI-compatible HTTP API) runs on the host with
 the GPU, wired up by `modules/system/llama-cpp.nix` — a thin wrapper over
 nixpkgs' `services.llama-cpp` that adds a CUDA build, a sops-fed API key, and a
@@ -1094,7 +1170,7 @@ with a timeout that expects it.
 
 ### The CUDA build is local and unavoidable
 
-`pkgs.llama-cpp` in this flake is a CPU build — nothing sets
+On Linux, `pkgs.llama-cpp` in this flake is a CPU build — nothing sets
 `config.cudaSupport`. The module imports a second nixpkgs instance with CUDA on,
 which no binary cache serves (CUDA is unfree), so the first rebuild on a host
 compiles llama.cpp from scratch. Budget for it.

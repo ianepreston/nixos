@@ -19,8 +19,6 @@
 version: '3'
 set: [pipefail]
 shopt: [globstar]
-vars:
-  CACHE_DIR: /var/lib/llama-cpp/models
 tasks:
   radar:
     desc: 'Collect LLM leaderboard leads and draft deduplicated candidate issues. Vars: CANDIDATES=/path/to/evidenced-candidates.json'
@@ -44,7 +42,7 @@ tasks:
         echo "Dry-run report written to $radar_dir/drafts.json; no issue was created."
 
   models:
-    desc: 'List cached GGUFs on HOST against the configured set. Vars: HOST (default terra)'
+    desc: 'List cached GGUFs on HOST against the configured set (Darwin: local). Vars: HOST (default terra)'
     # The remote body is a heredoc; echoing it back drowns the listing.
     silent: true
     vars:
@@ -53,20 +51,27 @@ tasks:
     cmds:
       - |
         set -euo pipefail
+        platform=$(python3 scripts/llm-local.py --host "{{.HOST}}" platform)
+        if [ "$platform" = darwin ]; then
+          exec python3 scripts/llm-local.py --host "{{.HOST}}" models
+        fi
         configured=$(nix eval --raw \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
-          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)' 2>/dev/null || true)
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.models" \
+          --apply 'm: builtins.concatStringsSep " " m' 2>/dev/null || true)
         port=$(nix eval --raw --apply toString \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port" 2>/dev/null || echo 8080)
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.port" 2>/dev/null || echo 8080)
+        cache_dir=$(nix eval --raw ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.cacheDirectory")
+        key_file=$(nix eval --raw ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.apiKeyFile")
         echo -e "\x1B[32m[+] {{.HOST}} — configured models:\x1B[0m"
         for m in ${configured:-<none>}; do echo "      $m"; done
-        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} "sudo bash -se -- $port" <<'EOF'
+        ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} "sudo bash -se -- $port $cache_dir $key_file" <<'EOF'
         set -euo pipefail
         PORT=$1
-        CACHE={{.CACHE_DIR}}
+        CACHE=$2
+        ENV_FILE=$3
         [ -d "$CACHE" ] || { echo "no model cache at $CACHE"; exit 0; }
 
-        key=$(grep -oP 'LLAMA_API_KEY=\K.*' /run/secrets/rendered/llama-cpp.env 2>/dev/null || true)
+        key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
         # The router answers /v1/models without loading anything, and it
         # reports every model it would route to — the configured preset
         # *plus* whatever else is sitting in the cache. A name here that
@@ -112,7 +117,7 @@ tasks:
       - echo -e "\x1B[32m[+] prune what isn't configured with 'task llm:models:prune HOST={{.HOST}}'\x1B[0m"
 
   models:fetch:
-    desc: 'Pre-download every configured model on HOST by asking for one token each. Vars: HOST (default terra)'
+    desc: 'Pre-download every configured model on HOST (Darwin: local) by asking for one token each. Vars: HOST (default terra)'
     silent: true
     vars:
       HOST: '{{.HOST | default "terra"}}'
@@ -129,17 +134,22 @@ tasks:
       # is what forces the child to resolve, fetch and load the weights.
       - |
         set -euo pipefail
+        platform=$(python3 scripts/llm-local.py --host "{{.HOST}}" platform)
+        if [ "$platform" = darwin ]; then
+          exec python3 scripts/llm-local.py --host "{{.HOST}}" fetch
+        fi
         configured=$(nix eval --raw \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
-          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)')
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.models" \
+          --apply 'm: builtins.concatStringsSep " " m')
         port=$(nix eval --raw --apply toString \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port")
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.port")
+        key_file=$(nix eval --raw ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.apiKeyFile")
         echo -e "\x1B[32m[+] warming {{.HOST}} — this is slow only for models not yet cached\x1B[0m"
         ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} \
-          "sudo bash -se -- $port $configured" <<'EOF'
+          "sudo bash -se -- $port $key_file $configured" <<'EOF'
         set -euo pipefail
-        PORT=$1; shift
-        key=$(grep -oP 'LLAMA_API_KEY=\K.*' /run/secrets/rendered/llama-cpp.env 2>/dev/null || true)
+        PORT=$1; ENV_FILE=$2; shift 2
+        key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
         rc=0
         for m in "$@"; do
           printf '    %-52s ' "$m"
@@ -166,6 +176,10 @@ tasks:
     cmds:
       - |
         set -euo pipefail
+        platform=$(python3 scripts/llm-local.py --host "{{.HOST}}" platform)
+        if [ "$platform" = darwin ]; then
+          exec python3 scripts/llm-local.py --host "{{.HOST}}" prune --apply "{{.APPLY}}"
+        fi
         if [ "{{.APPLY}}" = "true" ]; then
           echo -e "\x1B[31m[!] APPLY=true — deleting unconfigured models on {{.HOST}}\x1B[0m"
         else
@@ -178,10 +192,12 @@ tasks:
         # router's /v1/models and aborts if they disagree, so a
         # half-applied switch can't turn into a deletion.
         configured=$(nix eval --raw \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.models" \
-          --apply 'm: builtins.concatStringsSep " " (builtins.attrNames m)')
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.models" \
+          --apply 'm: builtins.concatStringsSep " " m')
         port=$(nix eval --raw --apply toString \
-          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.port")
+          ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.port")
+        cache_dir=$(nix eval --raw ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.cacheDirectory")
+        key_file=$(nix eval --raw ".#nixosConfigurations.{{.HOST}}.config.myLlamaCpp.operator.apiKeyFile")
         ssh -oForwardAgent=yes {{.TARGET_USER}}@{{.HOST}} \
-          "sudo bash -s -- {{.CACHE_DIR}} $port /run/secrets/rendered/llama-cpp.env {{.APPLY}} $configured" \
+          "sudo bash -s -- $cache_dir $port $key_file {{.APPLY}} $configured" \
           < scripts/llm-prune-models.sh

@@ -73,6 +73,7 @@ in
 {
   imports = [
     ./common.nix
+    ./operator.nix
   ];
   options.myLlamaCpp = {
     allowedClients = lib.mkOption {
@@ -132,6 +133,12 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    myLlamaCpp.operator = {
+      platform = "linux";
+      cacheDirectory = "/var/lib/llama-cpp/models";
+      apiKeyFile = config.sops.templates."llama-cpp.env".path;
+      apiKeyFormat = "env";
+    };
     # Child model processes are not units; their state is collected by
     # llm-metrics. The router itself is a normal service worth monitoring.
     myObservability.monitoredSystemdUnits = [ "llama-cpp" ];
@@ -232,7 +239,7 @@ in
         # Keep the downloaded GGUF in the state directory. Upstream
         # points LLAMA_CACHE at CacheDirectory, which invites a
         # multi-GB re-download from anything that prunes caches.
-        Environment = lib.mkForce [ "LLAMA_CACHE=/var/lib/llama-cpp/models" ];
+        Environment = lib.mkForce [ "LLAMA_CACHE=${cfg.operator.cacheDirectory}" ];
 
         # The NVIDIA userspace driver maps writable-then-executable
         # pages when it JITs kernels; upstream's MemoryDenyWriteExecute
