@@ -73,7 +73,7 @@ in
       name = "DIT.BetterNetworking10.dll";
       url = "https://github.com/LabodiDavid/BetterNetworking10/releases/download/v${version}/DIT.BetterNetworking10.dll";
       # regen-hash: nixosConfigurations.hpp-1.config.myValheim.availablePlugins.betterNetworking10.src
-      hash = "sha256-J2XEowMF84v48KwAz4LgvmF6Zv70jrA7my2fHl5mJ0U=";
+      hash = "sha256-znAzREbC6DD/meD77F2+QfnWDZAb0hDzyJAvry901kA=";
     };
     install = ''cp ${src} "$plugin/DIT.BetterNetworking10.dll"'';
   };
