@@ -66,7 +66,7 @@ in
   betterNetworking10 = mkPlugin rec {
     pname = "better-networking10";
     # renovate: datasource=github-releases depName=LabodiDavid/BetterNetworking10
-    version = "1.2.0";
+    version = "1.3.1";
     guid = "DIT.BetterNetworking10";
     dir = "BetterNetworking_Valheim";
     src = pkgs.fetchurl {
