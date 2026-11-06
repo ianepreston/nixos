@@ -387,6 +387,28 @@
         "type": "github"
       }
     },
+    "home-manager_2": {
+      "inputs": {
+        "nixpkgs": [
+          "omnigent",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793979366,
+        "narHash": "sha256-7OoWDsYO9teiPxl0QdlS5lYE20Pue8/5mpscSL32FUA=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "2c0c1f01521469cf0271180c453c79782d53c2f6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "ref": "master",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
     "import-tree": {
       "locked": {
         "lastModified": 1788467110,
@@ -641,6 +663,28 @@
         "type": "github"
       }
     },
+    "omnigent": {
+      "inputs": {
+        "home-manager": "home-manager_2",
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794002766,
+        "narHash": "sha256-S2hxcL8JXaMYuK8GqtT/PHGoUaj89ZmUJVMxMHmGxGs=",
+        "owner": "ianepreston",
+        "repo": "omnigent-nix",
+        "rev": "1cf9a44acf301aa30249a3a44d9789255aaa2fc1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ianepreston",
+        "ref": "feat/initial-flake",
+        "repo": "omnigent-nix",
+        "type": "github"
+      }
+    },
     "preservation": {
       "locked": {
         "lastModified": 1792953443,
@@ -723,6 +767,7 @@
         "nixpkgs-darwin": "nixpkgs-darwin",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixpkgs-unstable": "nixpkgs-unstable",
+        "omnigent": "omnigent",
         "preservation": "preservation",
         "sops-nix": "sops-nix",
         "sparkyfitness": "sparkyfitness",

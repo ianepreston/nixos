@@ -77,6 +77,9 @@
       # prod is a move into `commonApps` (kapowarr, readeck and
       # ytdlp-web-player were removed from here in #700).
       devOnlyApps = with inputs.self.modules.nixos; [
+        # Imported on dev servers but off until a host sets
+        # `myOmnigent.enable`; see modules/apps/omnigent.nix.
+        omnigent
       ];
 
       # Apps that ship only on prod-environment servers — the mirror of
