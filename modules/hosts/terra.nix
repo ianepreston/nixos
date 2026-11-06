@@ -42,6 +42,8 @@
           freecad
           mesh-tools
           obsidian
+          # Desktop client only; no Omnigent host is started here.
+          omnigent
           # orca-slicer — code kept but dormant; printing through bambuddy is
           # blocked upstream (see #298). Re-add when fixed.
           browser
