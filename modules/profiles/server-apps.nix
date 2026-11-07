@@ -51,6 +51,9 @@
         miniflux
         minuspod
         mylar3
+        # Imported everywhere but off until a host sets `myOmnigent.enable`
+        # (hpp-1 as dev, amos1 as prod); see modules/apps/omnigent.nix.
+        omnigent
         paperless-ngx
         pinchflat
         profilarr
@@ -76,11 +79,7 @@
       # Apps that ship only on dev-environment servers. Promoting one to
       # prod is a move into `commonApps` (kapowarr, readeck and
       # ytdlp-web-player were removed from here in #700).
-      devOnlyApps = with inputs.self.modules.nixos; [
-        # Imported on dev servers but off until a host sets
-        # `myOmnigent.enable`; see modules/apps/omnigent.nix.
-        omnigent
-      ];
+      devOnlyApps = with inputs.self.modules.nixos; [ ];
 
       # Apps that ship only on prod-environment servers — the mirror of
       # `devOnlyApps`, for things whose subject only exists on prod.

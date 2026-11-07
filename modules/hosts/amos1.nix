@@ -239,6 +239,12 @@
           #     mac = "3a:3c:3e:21:8f:55";   # router: -> bambuddy-guest
           #   };
 
+          # Omnigent server (control plane for agent sessions), behind
+          # authentik OIDC; promoted from hpp-1, which keeps running it as
+          # dev. terra connects to this instance as a host. See
+          # modules/apps/omnigent.nix.
+          myOmnigent.enable = true;
+
           system.stateVersion = "25.11";
         }
       )
