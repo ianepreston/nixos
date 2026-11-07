@@ -18,8 +18,21 @@
 # and the desktop talk to the API with non-browser clients that cannot follow an
 # authentik redirect. The cookie secret is generated into the state directory on
 # first start (preserved and backed up via myAppState); no sops secret is
-# needed. The first account created becomes the administrator, so create it
-# right after enabling.
+# needed.
+#
+# First-account bootstrap. The first account registered becomes the
+# administrator, and the omnigent-nix flake exposes no way to pre-seed an admin
+# or close sign-up. So the route is closed until a human has
+# claimed that account from a trusted client:
+#   1. `myOmnigent.enable = true`, leave `bootstrapped = false`, and set
+#      `myOmnigent.bootstrapClients` to the address(es) of the machine you will
+#      register from. While `bootstrapped` is false Caddy proxies only those
+#      clients and answers 403 to everyone else (an empty list closes the route
+#      entirely).
+#   2. Deploy, open the public URL from that machine and create the admin
+#      account.
+#   3. Set `myOmnigent.bootstrapped = true` (and drop `bootstrapClients`) and
+#      deploy: the route is then open to every client, as for other apps here.
 { inputs, ... }:
 {
   flake.modules.nixos.omnigent =
@@ -40,9 +53,33 @@
         inputs.omnigent.nixosModules.postgresql
       ];
 
-      options.myOmnigent.enable = lib.mkEnableOption ''
-        the Omnigent server. Off by default; see the header of
-        modules/apps/omnigent.nix for what turning it on does'';
+      options.myOmnigent = {
+        enable = lib.mkEnableOption ''
+          the Omnigent server. Off by default; see the header of
+          modules/apps/omnigent.nix for what turning it on does'';
+
+        bootstrapped = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = ''
+            Whether the first (administrator) account has been created. While
+            false, the Caddy route only serves `bootstrapClients`, because the
+            first registrant becomes the administrator. Set true after
+            creating that account; see the header of this module.
+          '';
+        };
+
+        bootstrapClients = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "192.168.10.50" ];
+          description = ''
+            Client addresses or CIDRs (Caddy `remote_ip`) allowed to reach the
+            route while `bootstrapped` is false. Empty closes the route to
+            everyone. Ignored once `bootstrapped` is true.
+          '';
+        };
+      };
 
       config = lib.mkIf cfg.enable {
         services.omnigent = {
@@ -65,7 +102,7 @@
           kind = "postgres";
           order = 295;
           units = [ "omnigent.service" ];
-          database = "omnigent";
+          database = server.postgresql.name;
           paths = [ server.stateDir ];
           health.url = "${server.listenUrl}${server.healthPath}";
         };
@@ -73,11 +110,30 @@
         myCaddy.apps.omnigent = {
           host = omnigentHost;
           # Unbuffered so the UI's long-lived streaming connections work.
-          routeConfig = ''
-            reverse_proxy ${server.listenUrl} {
-              flush_interval -1
-            }
-          '';
+          routeConfig =
+            let
+              proxy = ''
+                reverse_proxy ${server.listenUrl} {
+                  flush_interval -1
+                }
+              '';
+            in
+            if cfg.bootstrapped then
+              proxy
+            else
+              ''
+                # Not bootstrapped: only the listed clients may reach the app,
+                # so a stranger cannot register the administrator account.
+                @bootstrap remote_ip ${
+                  if cfg.bootstrapClients == [ ] then "127.0.0.1" else lib.concatStringsSep " " cfg.bootstrapClients
+                }
+                handle @bootstrap {
+                  ${proxy}
+                }
+                handle {
+                  respond "Omnigent is not open yet" 403
+                }
+              '';
         };
       };
     };
