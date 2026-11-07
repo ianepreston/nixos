@@ -67,6 +67,30 @@ Frequently used:
 
 When in doubt: `task --list`.
 
+### Remote activation: verify the one host being changed
+
+Anything that activates a closure (`switch`, `boot`, `test`,
+`switch-to-configuration`, `task deploy:*`, or `nixos-rebuild*` with
+`--target-host`) runs as root on a live machine and can make it unbootable.
+Authorization is host-specific: never activate a host the user did not name for
+that step, and never treat a workstation as a build-and-activate scratch
+machine.
+
+- In the same command chain as the activation, assert that the closure name
+  matches `nixos-system-<host>-*` and that `hostname` on the target returns
+  `<host>`. Abort on either mismatch.
+- Set `NIX_SSHOPTS` or a global `ssh -o ControlPath=...` only when exactly one
+  remote host is involved and it is the control master's host. These options
+  apply to every SSH connection the tool opens, and ssh uses the first
+  `ControlPath` value it receives. A socket for host A can therefore route a
+  command intended for host B to host A.
+- Never use shared `NIX_SSHOPTS` when `--build-host` differs from
+  `--target-host`. Give each host its own explicit connection, build and copy
+  first, then activate in a separate single-host command after the identity
+  checks above.
+- If an activation command errors or the target stops answering, stop. Do not
+  retry, kill, or re-run anything; report what happened and wait.
+
 ### Never `task deploy` disko-affecting changes
 
 Disko-managed subvolumes/partitions only land at install time (when

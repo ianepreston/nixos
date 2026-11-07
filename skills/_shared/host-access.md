@@ -27,7 +27,9 @@ Free, no confirmation:
 - Read-only inspection of any host, prod included — `systemctl status`,
   `journalctl`, `ss`, reading config and metrics.
 - `task check`, `task build:<host>`, `nix build` of a host closure.
-- `nixos-rebuild switch` against **hpp-1** (dev).
+- `nixos-rebuild switch` against **hpp-1** (dev), after the identity checks
+  below. This authorization names hpp-1 only; it never extends to a build host
+  or another machine reached through SSH option reuse.
 
 Ask the user first, every time:
 
@@ -101,12 +103,32 @@ appends its own `-o ControlMaster=auto -o ControlPath=<fresh tmpdir>/ssh-%C`
 (`SSH_DEFAULT_OPTS` in `nixos_rebuild/process.py`), so it can never reuse the
 master and must authenticate fresh — which hangs with no tty. User opts from
 `NIX_SSHOPTS` are placed *before* those defaults and ssh takes the first value
-for each option, so pointing it at the existing master wins:
+for each option, so pointing it at the existing master wins.
+
+This recipe is only for a deployment with **exactly one remote host**, where
+that host is both the target and the control master's host. `NIX_SSHOPTS`
+applies to every SSH connection the tool opens. Never use it when
+`--build-host` differs from `--target-host`: the build host's socket can send
+the target's activation to the build host instead. In that case, use separate
+explicit per-host connections, build and copy first, and activate in a separate
+single-host command with these same identity checks.
+
+Set the expected host, derive the closure with the same input overrides, and
+abort unless both the closure name and the target's hostname match before
+running the activation:
 
 ```sh
-NIX_SSHOPTS="-o ControlPath=$HOME/.ssh/master-ipreston@<host>:22 -o ControlMaster=no" \
-  nixos-rebuild switch --flake .#<host> --target-host ipreston@<host> --sudo \
-    --override-input nix-secrets path:/home/ipreston/src/nix-secrets
+host=hpp-1
+closure=$(nix eval --raw ".#nixosConfigurations.${host}.config.system.build.toplevel.outPath" \
+  --override-input nix-secrets path:/home/ipreston/src/nix-secrets)
+case ${closure##*/} in
+  *-nixos-system-"$host"-*) ;;
+  *) printf 'refusing to activate unexpected closure: %s\n' "$closure" >&2; exit 1 ;;
+esac &&
+  ssh "ipreston@$host" "test \"\$(hostname)\" = '$host'" &&
+  NIX_SSHOPTS="-o ControlPath=$HOME/.ssh/master-ipreston@$host:22 -o ControlMaster=no" \
+    nixos-rebuild switch --flake ".#$host" --target-host "ipreston@$host" --sudo \
+      --override-input nix-secrets path:/home/ipreston/src/nix-secrets
 ```
 
 The `--override-input` must be absolute: `task deploy` hardcodes
@@ -121,6 +143,10 @@ ssh <host> 'ps -eo pid,etime,args | grep -E "[s]shd-session|[n]ix-store --serve"
 ```
 
 A stuck session sits in `[priv]` (pre-auth) with no `nix-store --serve`.
+
+If an activation errors or the target stops answering, stop and report. Do not
+retry or re-run the activation: first establish which host received the command
+and what state it is in.
 
 Don't pipe a deploy into `tail`/`head` — it hides the exit status and a failed
 deploy reads as success. Check `PIPESTATUS`, or don't pipe.
