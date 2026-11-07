@@ -75,6 +75,10 @@
           playerNotify = false;
         };
 
+        # Omnigent server (control plane for agent sessions), behind
+        # authentik OIDC. See modules/apps/omnigent.nix.
+        myOmnigent.enable = true;
+
         system.stateVersion = "25.11";
       }
 

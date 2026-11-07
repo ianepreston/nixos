@@ -387,6 +387,28 @@
         "type": "github"
       }
     },
+    "home-manager_2": {
+      "inputs": {
+        "nixpkgs": [
+          "omnigent",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793979366,
+        "narHash": "sha256-7OoWDsYO9teiPxl0QdlS5lYE20Pue8/5mpscSL32FUA=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "2c0c1f01521469cf0271180c453c79782d53c2f6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "ref": "master",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
     "import-tree": {
       "locked": {
         "lastModified": 1788467110,
@@ -461,10 +483,10 @@
     },
     "nix-secrets": {
       "locked": {
-        "lastModified": 1793721636,
-        "narHash": "sha256-VjhCKn2GZ3QbE3YUg25KN2cx0IsUXGN6HpGTRt5vkoU=",
+        "lastModified": 1794070465,
+        "narHash": "sha256-/6yWkJx8IntMrmDKBWfS3L7kiXQp83yBBv6J1PGwmbM=",
         "ref": "main",
-        "rev": "44b76d5d303d39c8112dfc3134ac36de48dbc74d",
+        "rev": "507601738ca8e9ac990e3c5acaa5c3d79aa201c0",
         "shallow": true,
         "type": "git",
         "url": "ssh://git@github.com/ianepreston/nix-secrets.git"
@@ -641,6 +663,27 @@
         "type": "github"
       }
     },
+    "omnigent": {
+      "inputs": {
+        "home-manager": "home-manager_2",
+        "nixpkgs": [
+          "nixpkgs-unstable"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794054782,
+        "narHash": "sha256-38z8PfUUPT3f9/9cj2IbH53ilNbfhD7k7PtROBzYBww=",
+        "owner": "ianepreston",
+        "repo": "omnigent-nix",
+        "rev": "737033acc74bc84572c9bb1319e13bf0162f8aaa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ianepreston",
+        "repo": "omnigent-nix",
+        "type": "github"
+      }
+    },
     "preservation": {
       "locked": {
         "lastModified": 1792953443,
@@ -723,6 +766,7 @@
         "nixpkgs-darwin": "nixpkgs-darwin",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixpkgs-unstable": "nixpkgs-unstable",
+        "omnigent": "omnigent",
         "preservation": "preservation",
         "sops-nix": "sops-nix",
         "sparkyfitness": "sparkyfitness",

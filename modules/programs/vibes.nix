@@ -353,16 +353,30 @@ _: {
     {
       imports = [ inputs.self.modules.homeManager.pi ] ++ lib.optional hasSops localInference;
 
-      myPi.enable = true;
-
-      home.packages = builtins.attrValues {
-        inherit (pkgsUnstable)
-          claude-code
-          opencode
-          worktrunk
-          ;
+      # Published so another HM module can run the *same* agent CLIs this
+      # aspect installs rather than a second copy from a different nixpkgs
+      # (the Omnigent host on terra, see modules/hosts/terra.nix).
+      options.myVibes.agentPackages = lib.mkOption {
+        type = lib.types.attrsOf lib.types.package;
+        readOnly = true;
+        description = "The coding-agent CLIs this aspect installs, keyed by name.";
       };
 
-      home.file.".claude/settings.json".source = settings;
+      config = {
+        myVibes.agentPackages = {
+          inherit (pkgsUnstable) claude-code opencode;
+          pi = config.myPi.package;
+        };
+
+        myPi.enable = true;
+
+        home.packages = [
+          config.myVibes.agentPackages.claude-code
+          config.myVibes.agentPackages.opencode
+          pkgsUnstable.worktrunk
+        ];
+
+        home.file.".claude/settings.json".source = settings;
+      };
     };
 }
