@@ -1,0 +1,76 @@
+version: 1
+metadata:
+  name: omnigent
+entries:
+  # As of authentik 2025.10 the default email scope mapping returns
+  # email_verified: false (goauthentik/authentik#16205). Omnigent identifies
+  # OIDC users by a *verified* email claim and refuses the login otherwise, so
+  # use a custom email scope that asserts true. Safe here because every
+  # authentik user is admin-provisioned (same call as komga / manyfold).
+  - model: authentik_providers_oauth2.scopemapping
+    id: scope-omnigent-email
+    identifiers:
+      name: "Omnigent email (verified)"
+    attrs:
+      scope_name: email
+      description: "Email scope returning email_verified: true for Omnigent"
+      expression: |
+        return {
+            "email": request.user.email,
+            "email_verified": True,
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: prov-omnigent
+    identifiers:
+      name: omnigent
+    attrs:
+      client_type: confidential
+      client_id: !Env OMNIGENT_OIDC_CLIENT_ID
+      client_secret: !Env OMNIGENT_OIDC_CLIENT_SECRET
+      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !KeyOf scope-omnigent-email
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      # authentik 2026.x added OAuth2Provider.grant_types (default empty); the
+      # authorize view rejects flows whose grant is not listed. Required so a
+      # provider created fresh on 2026.x is usable (see komga.yaml for detail).
+      grant_types:
+        - authorization_code
+        - refresh_token
+      redirect_uris:
+        - matching_mode: strict
+          url: https://omnigent.@serverDomain@/auth/callback
+      access_code_validity: minutes=1
+      access_token_validity: minutes=10
+      refresh_token_validity: days=30
+      sub_mode: hashed_user_id
+      issuer_mode: per_provider
+
+  # Admin-only: bound to Infrastructure, the group this repo gates its admin
+  # tools on (grafana, prometheus, alertmanager, the forward-auth default).
+  # Omnigent auto-provisions any user the IdP lets through, so this binding is
+  # the access control.
+  - model: authentik_core.application
+    id: app-omnigent
+    identifiers:
+      slug: omnigent
+    attrs:
+      name: Omnigent
+      provider: !KeyOf prov-omnigent
+      group: Infrastructure
+      open_in_new_tab: true
+      meta_launch_url: https://omnigent.@serverDomain@
+      policy_engine_mode: all
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-omnigent
+      order: 0
+    attrs:
+      group: !Find [authentik_core.group, [name, Infrastructure]]
+      enabled: true
