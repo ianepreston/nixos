@@ -671,11 +671,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794002766,
-        "narHash": "sha256-S2hxcL8JXaMYuK8GqtT/PHGoUaj89ZmUJVMxMHmGxGs=",
+        "lastModified": 1794010212,
+        "narHash": "sha256-38z8PfUUPT3f9/9cj2IbH53ilNbfhD7k7PtROBzYBww=",
         "owner": "ianepreston",
         "repo": "omnigent-nix",
-        "rev": "1cf9a44acf301aa30249a3a44d9789255aaa2fc1",
+        "rev": "c46994db71bb83c3b1208b053bf0a49d2772e5b2",
         "type": "github"
       },
       "original": {
