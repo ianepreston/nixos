@@ -42,7 +42,8 @@
           freecad
           mesh-tools
           obsidian
-          # Desktop client only; no Omnigent host is started here.
+          # Desktop client; the host half is enabled for the primary user
+          # below (programs.omnigent.host).
           omnigent
           # orca-slicer — code kept but dormant; printing through bambuddy is
           # blocked upstream (see #298). Re-add when fixed.
@@ -280,6 +281,52 @@
           # goes back to whatever else wants it.
           sleepIdleSeconds = 600;
         };
+
+        # Omnigent host: terra executes agent work for the prod Omnigent
+        # server on amos1. The desktop client comes from the `omnigent` HM
+        # aspect above; this turns on the host half for the primary user only
+        # (not a sharedModule), because a host runs agents with that user's
+        # files, network and credentials.
+        #
+        # The server URL is built from amos1's hostSpec plus the
+        # `omnigent.<serverDomain>` vhost convention of
+        # modules/apps/omnigent.nix. There is no cross-host published contract
+        # for a server's public URL (`config.services.omnigent.publicUrl` lives
+        # in amos1's evaluation, not terra's), so if that vhost name changes,
+        # change it here too. This resolves to
+        # https://omnigent.amos.ipreston.net.
+        #
+        # First run needs a one-time interactive login on terra before the
+        # unit can connect (a device-code flow against amos1's authentik):
+        #   omnigent login --server https://omnigent.amos.ipreston.net
+        # The token and host_id land in ~/.omnigent. terra is not impermanent
+        # (no preservation; plain btrfs root), so that survives reboots with
+        # nothing to declare. Until the login is done the unit fails and
+        # retries every 10s (Restart=on-failure).
+        #
+        # Harnesses: the host runs the same Claude Code, OpenCode and pi that
+        # the `vibes` aspect installs for interactive use, taken from its
+        # published `myVibes.agentPackages`, so there is one version of each.
+        # omnigent-nix's own `harnesses.*` toggles are all off on purpose:
+        # they bundle the HM `pkgs` copy (stable nixpkgs), which lags vibes'
+        # unstable pins, and they have no pi entry at all. Codex is off because
+        # terra doesn't use it (it is omnigent-nix's default). omnigent finds
+        # each CLI by name on the host's PATH, which `extraPackages` prefixes.
+        home-manager.users.${hostSpecs.terra.username} =
+          { config, ... }:
+          {
+            programs.omnigent.host = {
+              enable = true;
+              serverUrl = "https://omnigent.${hostSpecs.amos1.serverDomain}";
+              autoStart = true;
+              harnesses = {
+                codex.enable = false;
+                claude-code.enable = false;
+                opencode.enable = false;
+              };
+              extraPackages = builtins.attrValues config.myVibes.agentPackages;
+            };
+          };
 
         system.stateVersion = "25.05";
       }
