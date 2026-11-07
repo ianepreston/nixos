@@ -7,7 +7,8 @@
 #
 # Off by default: `myOmnigent.enable = true` in a host file turns it on. The
 # server never executes agent work and the machine must not be registered as a
-# host.
+# host; an assertion below fails the eval if any home-manager user here enables
+# `programs.omnigent.host`. Hosts are workstations (terra) pointed at a server.
 #
 # Postgres: the flake's `postgresql` adapter creates the `omnigent` database and
 # role and connects over the unix socket with peer auth (fixed user `omnigent`),
@@ -70,6 +71,17 @@
       };
 
       config = lib.mkIf cfg.enable {
+        # Server is never a host (see header). `or false` covers users that
+        # don't import the omnigent-nix HM module.
+        assertions = lib.mapAttrsToList (name: hm: {
+          assertion = !(hm.programs.omnigent.host.enable or false);
+          message = ''
+            myOmnigent: this machine runs the Omnigent server, so home-manager
+            user `${name}` must not enable programs.omnigent.host. Run the host
+            on a workstation and point it at this server instead.
+          '';
+        }) (config.home-manager.users or { });
+
         services.omnigent = {
           enable = true;
           listen.port = 8094;
