@@ -75,18 +75,9 @@
           playerNotify = false;
         };
 
-        # Omnigent server (control plane for agent sessions). Bootstrap is
-        # still open: only terra's desktop may reach the route until the admin
-        # account exists. Next: create it from terra, then set
-        # `bootstrapped = true`, drop `bootstrapClients` and deploy. See
-        # modules/apps/omnigent.nix.
-        myOmnigent = {
-          enable = true;
-          bootstrapped = false;
-          # terra over the LAN: the source address hpp-1's Caddy sees. DHCP
-          # (not declared in hostSpecs), so re-check it if the lease moves.
-          bootstrapClients = [ "192.168.10.35" ];
-        };
+        # Omnigent server (control plane for agent sessions), behind
+        # authentik OIDC. See modules/apps/omnigent.nix.
+        myOmnigent.enable = true;
 
         system.stateVersion = "25.11";
       }
