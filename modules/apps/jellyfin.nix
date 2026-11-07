@@ -43,7 +43,22 @@
 # naming, so valid folders are never touched. Run on demand with
 # `systemctl start jellyfin-trickplay-cleanup` or
 # `jellyfin-trickplay-cleanup --dry-run /mnt/content/Movies /mnt/content/TV`.
-_: {
+#
+# Version: the package is pinned to nixpkgs-unstable for the 12.x line.
+# Stable (26.05) freezes at 10.11, and Findroid 1.2.0 (Jellyfin SDK 1.9)
+# requires `MediaStream.IsOriginal`, which only 12.x servers send: the
+# app fails at startup deserializing the item list. The stable module drives
+# the 12.x package unchanged. The unstable module only differs in its
+# declarative transcoding options, which this module leaves unset (hardware
+# transcoding is configured in the UI). The package wraps its own matching
+# jellyfin-web and jellyfin-ffmpeg, so only `package` needs the pin.
+# Plugins are per-ABI: after an upgrade, the 10.11 builds under
+# /var/lib/jellyfin/plugins stay NotSupported until their 12.0 builds are
+# installed. Delete a superseded LDAP Authentication_23 directory once 24
+# is in: left in place, the plugin updater flips it back to Active and
+# reinstalls 24 (then asks for a restart) on every startup. Drop the pin
+# once the stable channel reaches 12.x.
+{ inputs, ... }: {
   flake.modules.nixos.jellyfin =
     {
       lib,
@@ -54,6 +69,10 @@ _: {
     let
       jellyfinHost = "jellyfin.${hostSpec.serverDomain}";
       jellyfinPort = 8096;
+      pkgsUnstable = import inputs.nixpkgs-unstable {
+        inherit (pkgs.stdenv.hostPlatform) system;
+        inherit (pkgs) config;
+      };
       mediaRoots = [
         "/mnt/content/Movies"
         "/mnt/content/TV"
@@ -113,6 +132,7 @@ _: {
 
       services.jellyfin = {
         enable = true;
+        package = pkgsUnstable.jellyfin;
         # Run as the shared server-env user so jellyfin can read media
         # off the NFS-mounted Synology share at /mnt/content. UIDs are
         # pinned to match the NAS (server-dev=1029, server-prod=1030,
