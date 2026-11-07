@@ -85,12 +85,12 @@
     # — and upstream explicitly doesn't test the nix path at all.
     sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.11.0";
     # Omnigent (agent control plane): server NixOS module and desktop HM module.
-    # Pinned to the unmerged feat/initial-flake branch of omnigent-nix PR #1
-    # until it lands on main. Follows nixpkgs-unstable because our `nixpkgs`
-    # (26.05) has no electron_45, which the desktop needs. Bump with
-    # `nix flake update omnigent` (renovate's nix manager is off).
+    # Tracks omnigent-nix main; the exact rev lives in flake.lock. Follows
+    # nixpkgs-unstable because our `nixpkgs` (26.05) has no electron_45, which
+    # the desktop needs. Bump with `nix flake update omnigent` (renovate's nix
+    # manager is off).
     omnigent = {
-      url = "github:ianepreston/omnigent-nix/feat/initial-flake";
+      url = "github:ianepreston/omnigent-nix";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
     # Declarative state preservation across ephemeral root reboots.
