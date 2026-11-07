@@ -6,7 +6,11 @@
 #   * OIDC        — the auth_oidc custom component (formerly hand-installed
 #                   via HACS) ships from nixpkgs and is configured entirely
 #                   in configuration.yaml below.
-#   * proxy       — http.trusted_proxies set here, not edited on first boot.
+#   * proxy       — NOT yaml any more. HA 2026.x migrated the http: block
+#                   into .storage/http (Settings > System > Network) and
+#                   ignores it from configuration.yaml; 2027.2 drops it. A
+#                   fresh instance must set use_x_forwarded_for + trusted
+#                   proxies 127.0.0.1/::1 (Caddy, host netns) in that UI.
 #   * DHCP        — native HA gets CAP_NET_RAW, so the dhcp integration works
 #                   instead of needing the default_config surgery (#201).
 #   * recorder    — native postgres over the unix socket (peer auth).
@@ -216,6 +220,16 @@
         restartUnits = [ "home-assistant.service" ];
       };
 
+      # Take the unstable module alongside the unstable package (AGENTS.md:
+      # "a per-package unstable pin may also need the unstable module"). The
+      # stable module declares http.server_host/server_port with defaults, so
+      # it always renders an http: block that current HA warns about and
+      # 2027.2 rejects; the unstable module dropped those options.
+      disabledModules = [ "services/home-automation/home-assistant.nix" ];
+      imports = [
+        "${inputs.nixpkgs-unstable}/nixos/modules/services/home-automation/home-assistant.nix"
+      ];
+
       services.home-assistant = {
         enable = true;
         package = pkgsUnstable.home-assistant;
@@ -329,16 +343,6 @@
           automation = "!include automations.yaml";
           script = "!include scripts.yaml";
           scene = "!include scenes.yaml";
-
-          http = {
-            use_x_forwarded_for = true;
-            # Caddy proxies to 127.0.0.1:8123 in the host netns — no podman
-            # bridge SNAT anymore, so HA sees real loopback as the source.
-            trusted_proxies = [
-              "127.0.0.1"
-              "::1"
-            ];
-          };
 
           recorder.db_url = "postgresql://@/hass";
 
