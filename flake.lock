@@ -671,16 +671,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1794010212,
+        "lastModified": 1794054782,
         "narHash": "sha256-38z8PfUUPT3f9/9cj2IbH53ilNbfhD7k7PtROBzYBww=",
         "owner": "ianepreston",
         "repo": "omnigent-nix",
-        "rev": "c46994db71bb83c3b1208b053bf0a49d2772e5b2",
+        "rev": "737033acc74bc84572c9bb1319e13bf0162f8aaa",
         "type": "github"
       },
       "original": {
         "owner": "ianepreston",
-        "ref": "feat/initial-flake",
         "repo": "omnigent-nix",
         "type": "github"
       }
