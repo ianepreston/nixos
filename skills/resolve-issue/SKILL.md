@@ -115,7 +115,10 @@ is free, and everything touching amos1, this workstation's own configuration,
 or `../nix-secrets` asks first.
 
 Deploy with the `NIX_SSHOPTS` invocation from host-access rather than
-`task deploy:hpp-1`, and don't pipe it.
+`task deploy:hpp-1` only when hpp-1 is the sole remote host and the control
+master's host. Never use it with distinct build and target hosts; follow
+host-access's separate build/copy and single-host activation steps, including
+the hostname and closure-name assertions. Don't pipe the activation.
 
 Then actually exercise the change on the target — `systemctl status`,
 `journalctl -u`, curl the endpoint, read the metric — rather than treating a
