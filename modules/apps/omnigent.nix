@@ -27,8 +27,13 @@
 #   1. `myOmnigent.enable = true`, leave `bootstrapped = false`, and set
 #      `myOmnigent.bootstrapClients` to the address(es) of the machine you will
 #      register from. While `bootstrapped` is false Caddy proxies only those
-#      clients and answers 403 to everyone else (an empty list closes the route
-#      entirely).
+#      clients and answers 403 to everyone else. An empty list fails closed: no
+#      allow rule is rendered and every request gets 403.
+#      List the address Caddy sees as the direct TCP peer: `remote_ip` ignores
+#      X-Forwarded-For, so behind a future proxy/CDN/NAT that would be the
+#      intermediary. Never allow-list a shared proxy.
+#      Gatus will report the endpoint unhealthy (403) during bootstrap; that is
+#      expected.
 #   2. Deploy, open the public URL from that machine and create the admin
 #      account.
 #   3. Set `myOmnigent.bootstrapped = true` (and drop `bootstrapClients`) and
@@ -120,13 +125,16 @@
             in
             if cfg.bootstrapped then
               proxy
+            else if cfg.bootstrapClients == [ ] then
+              ''
+                # Not bootstrapped and nobody allow-listed: fail closed.
+                respond "Omnigent is not open yet" 403
+              ''
             else
               ''
                 # Not bootstrapped: only the listed clients may reach the app,
                 # so a stranger cannot register the administrator account.
-                @bootstrap remote_ip ${
-                  if cfg.bootstrapClients == [ ] then "127.0.0.1" else lib.concatStringsSep " " cfg.bootstrapClients
-                }
+                @bootstrap remote_ip ${lib.concatStringsSep " " cfg.bootstrapClients}
                 handle @bootstrap {
                   ${proxy}
                 }
