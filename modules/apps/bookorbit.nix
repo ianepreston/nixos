@@ -146,7 +146,7 @@ _: {
         # too-new release can be held back by version instead of being
         # all-or-nothing. Still pinned to the digest for reproducibility.
         # renovate: datasource=docker depName=ghcr.io/bookorbit/bookorbit
-        image = "ghcr.io/bookorbit/bookorbit:3.7.0@sha256:0d5f4a31576a2bcd96afa77b8eac75c3b8df395f0f9b9215995de59236f22b95";
+        image = "ghcr.io/bookorbit/bookorbit:3.8.0@sha256:d318f7732f6f6330312e2c5f854f7899f858b54cc4b18a13cde1f43b5bea0515";
         # The image starts as root (caps below), repairs /data ownership,
         # then drops to PUID:PGID. Don't set `user` — it short-circuits
         # the entrypoint's permission fix.
