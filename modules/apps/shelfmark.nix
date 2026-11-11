@@ -16,10 +16,10 @@
 # requests for approval, which is the point of running it with real
 # identities instead of forward-auth.
 #
-# Volumes. `/books` is the ebook destination and points at the shared
-# ingest folder that bookorbit watches);
-# `/audiobooks` is the audiobookshelf library, selected per-user or
-# globally as the audiobook destination in Settings -> Downloads.
+# Volumes. `/books` is bookorbit's book-dock (the shared ingest folder
+# it watches) and is the destination for ebooks *and* audiobooks:
+# bookorbit is the single library for both, so nothing here writes to a
+# library directory directly and there is no `/audiobooks` mount.
 # `/mnt/content/Downloads` is mounted at its *host* path deliberately:
 # for torrent/usenet releases shelfmark has to open the exact path its
 # download client reports, and sabnzbd runs natively on the host, so
@@ -118,7 +118,6 @@
         volumes = [
           "/var/lib/containers/shelfmark/config:/config"
           "/mnt/content/books_intake:/books"
-          "/mnt/content/audiobooks:/audiobooks"
           # Same path inside and out — see the volumes note above.
           "/mnt/content/Downloads:/mnt/content/Downloads"
         ];
@@ -152,25 +151,27 @@
           SABNZBD_CATEGORY = "books";
           SABNZBD_CATEGORY_AUDIOBOOK = "audiobooks";
 
-          # Audiobooks get their own destination rather than inheriting the
-          # ebook one — left empty (the upstream default) they land in /books
-          # alongside the ebooks, where audiobookshelf never sees them and
-          # bookorbit tries to ingest them. Hardlinking is off for the same
-          # reason it should be off for any library folder: the destination is
-          # a live library, not a staging dir, and hardlinks would also
-          # suppress archive extraction for the zip/rar releases audiobooks
-          # frequently arrive as.
-          DESTINATION_AUDIOBOOK = "/audiobooks";
+          # Audiobooks go to the book-dock alongside ebooks, and bookorbit
+          # files them into its audiobook library on finalize. Pinned
+          # explicitly rather than left empty (which would also resolve to
+          # /books) so the UI can't point it back at a library directory.
+          # Hardlinking stays off: the dock is emptied by bookorbit as it
+          # finalizes, and hardlinks would also suppress archive extraction
+          # for the zip/rar releases audiobooks frequently arrive as.
+          DESTINATION_AUDIOBOOK = "/books";
           HARDLINK_TORRENTS_AUDIOBOOK = "false";
 
           # Upstream's default is `rename`, which renames single-file
           # downloads but leaves multi-file ones with their original names
           # and drops every part straight into the destination root — so a
           # 39-part MP3 audiobook lands as 39 loose files in the top level of
-          # the audiobookshelf library. `organize` is upstream's own
-          # recommendation for Audiobookshelf: it builds the folder tree from
-          # the template and assigns zero-padded part numbers across a
-          # multi-file release.
+          # the dock, indistinguishable from the next release's parts.
+          # `organize` keeps each release in its own folder with zero-padded
+          # part numbers, which is also the one-folder-per-audiobook layout
+          # bookorbit's scanner merges into a single book. Organize mode
+          # warns against ingest folders, and that is why ebooks stay on
+          # `rename` below; for audiobooks the per-book folder is the lesser
+          # evil.
           FILE_ORGANIZATION_AUDIOBOOK = "organize";
           # `{ (Year)}` and `{ - Part }{PartNumber}` are conditional blocks —
           # a brace block whose token resolves empty renders as nothing at
@@ -186,8 +187,8 @@
           # organize and quietly break the hand-off.
           FILE_ORGANIZATION = "rename";
 
-          # Header shortcuts to the libraries the downloads feed.
-          AUDIOBOOK_LIBRARY_URL = "https://audiobookshelf.${hostSpec.serverDomain}";
+          # Header shortcut to the library the downloads feed.
+          AUDIOBOOK_LIBRARY_URL = "https://bookorbit.${hostSpec.serverDomain}";
         };
         environmentFiles = [
           config.sops.templates."shelfmark.env".path
