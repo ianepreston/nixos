@@ -398,7 +398,7 @@ _: {
       # (`allowedUDPPorts`) emits a rule with no `-i` and no `-s`, which
       # here would also answer on tailscale0 and to any host on the mgmt
       # VLAN. Restricting by source IP keeps this interface-name-agnostic
-      # (the LAN NIC is enp1s0 on hpp-1, enp4s0 on amos1) and narrows the
+      # (the LAN NIC is enp1s0 on hpp-1, enp8s0 on amos1) and narrows the
       # sender to the one device that is actually configured to send.
       #
       # Note this is *not* what keeps the IoT VLAN out — vlan30 is

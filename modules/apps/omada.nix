@@ -407,7 +407,7 @@ _: {
         # flaresolverr is not a credentialed admin UI and this is.
         #
         # Source-CIDR rather than an interface name for the same reason
-        # as flaresolverr.nix: the LAN NIC is enp1s0 on hpp-1 and enp4s0
+        # as flaresolverr.nix: the LAN NIC is enp1s0 on hpp-1 and enp8s0
         # on amos1. IPv4-only — the LAN is v4.
         #
         # vlan30 stays out regardless: iot-network.nix inserts its deny
