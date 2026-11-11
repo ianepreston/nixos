@@ -18,7 +18,7 @@
 # host sits behind NAT anyway) and deliberately excludes the isolated
 # iot VLAN (192.168.30.0/24, see iot-network.nix). Restricting by source
 # CIDR keeps this interface-name-agnostic — the LAN NIC is enp1s0 on
-# hpp-1 but enp4s0 on amos1, and both live on 192.168.10.0/24. IPv4-only
+# hpp-1 but enp8s0 on amos1, and both live on 192.168.10.0/24. IPv4-only
 # (iptables); the LAN is v4, so no ip6tables rule is needed.
 _: {
   flake.modules.nixos.flaresolverr = {

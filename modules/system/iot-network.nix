@@ -26,7 +26,10 @@
 #                                           Printer is enabled.
 # The trunk NIC name varies per host (PCI-topology-dependent predictable
 # names) so it's threaded through hostSpec; on hpp-1 it's enp1s0, on
-# amos1 it's enp4s0. When the field is null (e.g. quickemu test VMs with
+# amos1 it's enp8s0 (an add-in I226-V 2.5G card; the onboard I211,
+# enp4s0, is unplugged and idle). It has to be the NIC actually cabled
+# to the trunk port: a VLAN on a carrier-less parent comes up
+# LOWERLAYERDOWN and silently strands HA off vlan30. When the field is null (e.g. quickemu test VMs with
 # no IoT VLAN) the whole stack is skipped — discovery / printer access is
 # lost, but everything still starts and stays probeable through Caddy.
 #
@@ -80,7 +83,7 @@ _: {
           # per-interface attrset only ever *adds* accepts, it can't subtract
           # the global ones. Scoping the globals the other way (moving every
           # port onto a named LAN interface) would mean threading enp1s0 /
-          # enp4s0 through every module that opens a port, and getting it
+          # enp8s0 through every module that opens a port, and getting it
           # wrong locks the host out. So: deny-list the one untrusted
           # interface, at the head of nixos-fw, before any accept can match.
           # Interface-name-agnostic, and it fails safe.
