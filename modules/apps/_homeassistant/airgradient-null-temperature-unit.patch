@@ -1,0 +1,14 @@
+--- a/src/airgradient/models.py
++++ b/src/airgradient/models.py
+@@ -364,7 +364,10 @@
+     pm_standard: PmStandard = field(metadata=field_options(alias="pmStandard"))
+     led_bar_mode: LedBarMode = field(metadata=field_options(alias="ledBarMode"))
+     abc_days: int = field(metadata=field_options(alias="abcDays"))
+-    temperature_unit: TemperatureUnit = field(
++    # Firmware 3.7.0 emits "temperatureUnit" twice in /config, the second
++    # time as null, and JSON keeps the last value. Accept the null the way
++    # _V1Config already does.
++    temperature_unit: TemperatureUnit | None = field(
+         metadata=field_options(alias="temperatureUnit")
+     )
+     configuration_control: ConfigurationControl = field(
