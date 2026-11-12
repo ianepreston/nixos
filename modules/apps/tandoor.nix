@@ -167,7 +167,6 @@ _: {
       config,
       hostSpec,
       lib,
-      pkgs,
       ...
     }:
     let
@@ -239,14 +238,6 @@ _: {
       services.tandoor-recipes = {
         enable = true;
         inherit address port;
-
-        # Sorting by favorite 500s on 2.6.13 — the sort key is annotated
-        # but missing from the ALLOWED_KEYS injection guard. kitshn (iOS)
-        # sorts its recipe list that way, so it's every request. See the
-        # patch header for the upstream issue and the drop condition.
-        package = pkgs.tandoor-recipes.overrideAttrs (old: {
-          patches = (old.patches or [ ]) ++ [ ./tandoor-favorite-sort.patch ];
-        });
 
         extraConfig = {
           GUNICORN_CMD_ARGS = "--bind=${address}:${toString port} --workers 3 --threads 2";
