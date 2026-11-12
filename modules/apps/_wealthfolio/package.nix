@@ -71,7 +71,7 @@ rustPlatform.buildRustPackage (
     src = fetchFromGitHub {
       owner = "wealthfolio";
       repo = "wealthfolio";
-      tag = "v${finalAttrs.version}";
+      tag = "v3.12.0";
       hash = "sha256-Z89ZF/BTa6fU/Ogi5V4KhDDlcHKQHIOhUv5if9QrPB8=";
     };
 
