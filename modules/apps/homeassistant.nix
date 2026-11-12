@@ -52,6 +52,24 @@
         inherit (pkgs) config;
       };
 
+      # Local fix for an upstream library bug, layered on HA's own python set
+      # (the module's extraComponents override keeps packageOverrides).
+      # AirGradient firmware 3.7.0 writes "temperatureUnit" twice in /config,
+      # the second time as null. airgradient 0.10.0's legacy parser requires
+      # a valid unit, so get_config() raises AirGradientParseError and the
+      # config flow cannot add the device. The patch makes the field optional,
+      # as the library's v1 parser and public Config already are. Drop it once
+      # either the firmware or the library is fixed.
+      homeAssistant = pkgsUnstable.home-assistant.override {
+        packageOverrides = _final: prev: {
+          airgradient = prev.airgradient.overridePythonAttrs (old: {
+            patches = (old.patches or [ ]) ++ [
+              ./_homeassistant/airgradient-null-temperature-unit.patch
+            ];
+          });
+        };
+      };
+
       secretsFile = config.sops.templates."homeassistant-secrets.yaml".path;
 
       # Custom components for devices with no core integration, packaged the
@@ -232,7 +250,7 @@
 
       services.home-assistant = {
         enable = true;
-        package = pkgsUnstable.home-assistant;
+        package = homeAssistant;
         configDir = "/var/lib/hass";
 
         # default_config pulls in the discovery/onboarding stack, but the
