@@ -32,21 +32,35 @@ RENAMES = {"PZD": "ERTH"}
 # is NOT flagged by Wealthfolio at import: the asset is created,
 # its Yahoo quote 404s, and it silently values at zero (account valuation shows
 # PARTIAL_UNPRICED). A bare ticker can also resolve to the wrong security:
-# Yahoo's PSA is Public Storage, not Purpose's PSA.TO. Cboe Canada listings take
-# .NE, not .TO; BMO's hedged ".F" units are Yahoo's "-F.NE".
+# Yahoo's PSA is Public Storage and PHR is Phreesia, not Purpose's PSA.TO and
+# PHR.TO. Cboe Canada listings take .NE, not .TO. BMO's hedged ".F" units are
+# Yahoo's "-F" plus the venue: Cboe-only ZAAA/ZBBZ are "-F.NE", TSX ZUAG "-F.TO".
 SYMBOLS = {
     **{
         s: f"{s}.TO"
         for s in (
+            "PDF",
+            "PHR",
             "PSA",
+            "QCN",
+            "QUU",
+            "VUS",
+            "XEF",
             "XEN",
+            "XIC",
+            "XSH",
+            "ZAG",
             "ZBI",
+            "ZCB",
             "ZCS",
+            "ZEA",
+            "ZEM",
             "ZFH",
             "ZFL",
             "ZFM",
             "ZGB",
             "ZGLD",
+            "ZHY",
             "ZMP",
             "ZST",
             "WSRD",
@@ -55,7 +69,23 @@ SYMBOLS = {
     },
     **{s: f"{s}.NE" for s in ("QTIP", "WSGB")},
     **{f"{s}.F": f"{s}-F.NE" for s in ("ZAAA", "ZBBZ")},
-    **{s: s for s in ("CLOZ", "CRBN", "ERTH", "GLDM", "VIDI")},  # US listings
+    **{f"{s}.F": f"{s}-F.TO" for s in ("ZUAG",)},
+    **{
+        s: s
+        for s in (
+            "ACWV",
+            "CLOZ",
+            "CRBN",
+            "EEMV",
+            "ERTH",
+            "GLDM",
+            "GSWO",
+            "IEFA",
+            "IEMG",
+            "VIDI",
+            "VTI",
+        )
+    },  # US listings
 }
 
 EXECUTED = re.compile(r"executed at (\d{4}-\d{2}-\d{2})")
