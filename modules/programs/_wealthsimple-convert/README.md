@@ -114,4 +114,15 @@ For Wealthsimple, export the all-time account Activities CSV and run the same
 command. The parser already handles the date and activity-code defects in
 Wealthsimple's built-in Wealthfolio template, and writes the matching ACB file.
 
+A split arrives as a pair of "Corrected quantity of shares" rows per account.
+The parser converts a known split (the `SPLITS` table) to a Wealthfolio
+`SPLIT`; any other correction is an error to add to that table after checking
+the issuer's announcement.
+
+Wealthfolio fetches each asset's price history once, from its earliest
+activity, and later syncs only forward. When an import adds activity older than
+what is already there (a second account's export, say), run **Settings → Market
+Data → Refresh full history** afterwards, or the earlier dates stay unpriced
+and show up as "price dates need review".
+
 [acb]: https://github.com/tsiemens/acb

@@ -27,6 +27,16 @@ from pathlib import Path
 # History is rewritten onto the new ticker and the paired rows are dropped.
 RENAMES = {"PZD": "ERTH"}
 
+# Splits Wealthsimple records as a LegacyCorporateAction/NAME_CHANGE pair per
+# account: "Corrected quantity of shares by" +post and -pre (the whole
+# pre-split position). (symbol, execution date) -> new shares per old share.
+# Converted to one Wealthfolio SPLIT whose ratio is the pair's own post/pre, so
+# the position matches Wealthsimple's rounded post-split quantity exactly; the
+# table is the check that the pair is a known split and not some other fix.
+# A TRANSFER_IN/OUT pair instead would drop the real lots and re-add the shares
+# at zero cost basis.
+SPLITS = {("GLDM", "2022-02-23"): Decimal("0.5")}  # 1-for-2 reverse split
+
 # Wealthsimple symbol -> Wealthfolio symbol. Listing venue is not in the export,
 # so every symbol must be listed; an unknown one is a hard error. A wrong venue
 # is NOT flagged by Wealthfolio at import: the asset is created,
@@ -191,13 +201,44 @@ def convert(r):
             r["symbol"] in RENAMES.values() | RENAMES.keys()
         ):
             return None
-        case "LegacyCorporateAction", "NAME_CHANGE":
-            # Quantity correction (e.g. GLDM 2022): holdings-only, no cash.
-            return ("TRANSFER_IN" if qty > 0 else "TRANSFER_OUT"), "", True
+        case "LegacyCorporateAction", "NAME_CHANGE" if (
+            r["symbol"],
+            activity_date(r),
+        ) in SPLITS:
+            return "SPLIT", "", True
     raise SystemExit(f"unmapped Wealthsimple type {t}/{sub}: {r['description']}")
 
 
+def split_row(legs):
+    """One SPLIT from a split's +post / -pre correction rows in one account."""
+    post = [r for r in legs if dec(r["quantity"]) > 0]
+    pre = [r for r in legs if dec(r["quantity"]) < 0]
+    if len(post) != 1 or len(pre) != 1:
+        raise SystemExit(
+            "split needs one +post and one -pre correction: "
+            + "; ".join(r["description"] for r in legs)
+        )
+    (post,), (pre,) = post, pre
+    date = activity_date(post)
+    nominal = SPLITS[(post["symbol"], date)]
+    ratio = (dec(post["quantity"]) / -dec(pre["quantity"])).quantize(Decimal("1e-10"))
+    if abs(ratio - nominal) > Decimal("1e-4"):
+        raise SystemExit(f"split ratio {ratio} is not {nominal}: {post['description']}")
+    return {
+        "date": date,
+        "account": post["account_id"],
+        "activityType": "SPLIT",
+        "subtype": "",
+        "symbol": SYMBOLS[post["symbol"]],
+        "currency": post["currency"] or "CAD",
+        "fee": "",
+        "amount": ratio,  # Wealthfolio's SPLIT ratio: new shares per old share
+        "comment": f"{post['description']} / {pre['description']}",
+    }
+
+
 def rows(path):
+    splits = {}  # (account, symbol, date) -> correction rows, paired at the end
     with open(path, newline="") as f:
         for r in csv.DictReader(f):
             if not r.get("effective_date"):  # trailing "As of ..." footer
@@ -205,6 +246,10 @@ def rows(path):
             if (conv := convert(r)) is None:
                 continue
             kind, subtype, use_asset = conv
+            if kind == "SPLIT":
+                key = (r["account_id"], r["symbol"], activity_date(r))
+                splits.setdefault(key, []).append(r)
+                continue
             net, qty = dec(r["net_cash_amount"]), dec(r["quantity"])
             sym = RENAMES.get(r["symbol"], r["symbol"])
             out = {
@@ -236,6 +281,8 @@ def rows(path):
                     price = abs(net / qty).quantize(Decimal("0.000001"))
                 out["unitPrice"] = price
             yield out
+    for legs in splits.values():
+        yield split_row(legs)
 
 
 # acb (tsiemens/acb) affiliates are per taxpayer, not per account: ACB pools
@@ -325,6 +372,10 @@ def acb_rows(path):
                 ):
                     continue
                 case "LegacyCorporateAction", "NAME_CHANGE":
+                    # A SPLITS pair, kept as its two zero-price legs: they give
+                    # Wealthsimple's exact post-split share count, which is all
+                    # a registered affiliate tracks. convert() rejects any other
+                    # correction before this runs.
                     if out["affiliate"] == "Default":
                         # A share-count fix with no price would corrupt ACB.
                         raise SystemExit(
