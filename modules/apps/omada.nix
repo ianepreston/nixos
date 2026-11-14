@@ -13,8 +13,8 @@
 # ## Container, not a nixpkgs module
 #
 # There is no `omada` package or `services.omada*` module in nixpkgs
-# (checked 25.11 and unstable), so this is a container per AGENTS.md's
-# "App packaging" fallback. `mbentley/omada-controller` is the image
+# (checked 25.11 and unstable), so this is a container per docs/agents/app-packaging.md's
+# container fallback. `mbentley/omada-controller` is the image
 # everyone uses; it bundles the controller JAR plus its embedded
 # MongoDB and is the only image upstream's own docs point at.
 #

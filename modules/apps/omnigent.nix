@@ -99,7 +99,7 @@
 
         # Admin roster (see header). The service reads it directly, so the
         # template is owned by the service's fixed user. restartUnits sits on
-        # the template only, per AGENTS.md.
+        # the template only, per docs/agents/app-state.md.
         sops = {
           secrets."omnigent/admin_email".sopsFile = hostSpec.sopsFile;
           templates."omnigent-admins" = {

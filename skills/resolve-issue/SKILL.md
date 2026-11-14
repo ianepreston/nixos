@@ -77,11 +77,11 @@ Two worktree gotchas:
 
 ## 4. Implement
 
-`AGENTS.md` is the authority on how this repo is built — module layout, native
-service vs container, NFS UID alignment, sops/`restartUnits` placement, the
-recovery-task and `expectedPreservedDirs` obligations for a new app. Read the
-section that covers what you're touching before writing it; most of it exists
-because something broke once.
+`AGENTS.md` and the topic guides it indexes under `docs/agents/` are the
+authority on how this repo is built — module layout, native service vs
+container, NFS UID alignment, sops/`restartUnits` placement, the recovery and
+`myAppState` obligations for a new app. Read the guide that covers what you're
+touching before writing it; most of it exists because something broke once.
 
 **Ask, don't guess.** Stop and ask the user whenever a choice is a trade-off
 rather than a detail:
@@ -128,7 +128,7 @@ Record what you ran; it becomes the PR's validation section.
 ## 6. Ancillary sweep
 
 A fix usually orphans something elsewhere: a comment describing the bug as
-open, a workaround now dead, an `AGENTS.md` gotcha that no longer applies, a
+open, a workaround now dead, an `AGENTS.md` or `docs/agents/` gotcha that no longer applies, a
 recovery task or `expectedPreservedDirs` entry that should move with it, a
 sibling module that copy-pasted the same mistake.
 
