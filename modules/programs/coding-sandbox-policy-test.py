@@ -21,6 +21,20 @@ POLICY = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = POLICY
 SPEC.loader.exec_module(POLICY)
 
+# What coding-sandbox.nix exports for each host platform.
+VZ_BACKEND = {
+    "SANDBOX_VM_TYPE": "vz",
+    "SANDBOX_VM_ARCH": "aarch64",
+    "SANDBOX_VM_MOUNT_TYPE": "virtiofs",
+    "SANDBOX_VM_DESCRIPTION": "Apple Virtualization (VZ)",
+}
+QEMU_BACKEND = {
+    "SANDBOX_VM_TYPE": "qemu",
+    "SANDBOX_VM_ARCH": "x86_64",
+    "SANDBOX_VM_MOUNT_TYPE": "9p",
+    "SANDBOX_VM_DESCRIPTION": "QEMU/KVM",
+}
+
 
 class PolicyTest(unittest.TestCase):
     def config(self, text: str) -> Path:
@@ -283,6 +297,7 @@ class PolicyTest(unittest.TestCase):
             "HOME": str(root),
             "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
             "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            **VZ_BACKEND,
         }
         template = subprocess.run(
             ["bash", str(SANDBOX_PATH), "template", str(root)],
@@ -340,6 +355,7 @@ class PolicyTest(unittest.TestCase):
             "HOME": str(root),
             "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
             "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            **VZ_BACKEND,
         }
 
         template_without_callbacks = subprocess.run(
@@ -390,6 +406,124 @@ class PolicyTest(unittest.TestCase):
                 text=True,
             ).stdout,
         )
+
+    def test_template_follows_the_build_time_vm_backend(self) -> None:
+        root = self.config("")
+        rendered = {}
+        for backend in (VZ_BACKEND, QEMU_BACKEND):
+            environment = {
+                **os.environ,
+                "HOME": str(root),
+                "XDG_STATE_HOME": str(root / "state"),
+                "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+                "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+                **backend,
+            }
+            rendered[backend["SANDBOX_VM_TYPE"]] = tuple(
+                subprocess.run(
+                    ["bash", str(SANDBOX_PATH), command, str(root)],
+                    check=True,
+                    capture_output=True,
+                    env=environment,
+                    text=True,
+                ).stdout
+                for command in ("template", "plan")
+            )
+
+        vz_template, vz_plan = rendered["vz"]
+        qemu_template, qemu_plan = rendered["qemu"]
+        self.assertIn("vmType: vz\narch: aarch64\nmountType: virtiofs\n", vz_template)
+        self.assertIn("rosetta:", vz_template)
+        self.assertIn("Ubuntu aarch64 under Apple Virtualization (VZ)", vz_plan)
+        self.assertIn("vmType: qemu\narch: x86_64\nmountType: 9p\n", qemu_template)
+        self.assertNotIn("rosetta", qemu_template)
+        self.assertNotIn("vmOpts:", qemu_template)
+        self.assertIn("Ubuntu x86_64 under QEMU/KVM", qemu_plan)
+        # 9p checks access against the host uid, so the agent takes it and the
+        # privileged transport account moves aside; VZ keeps Lima's defaults.
+        self.assertIn("  uid: 64000\n", qemu_template)
+        self.assertIn(f"--shell /bin/bash --uid {os.getuid()} agent", qemu_template)
+        self.assertNotIn("uid: 64000", vz_template)
+        self.assertIn("--shell /bin/bash  agent", vz_template)
+        self.assertNotIn("agent_uid_flag", vz_template + qemu_template)
+        # Open mode renders its own provision script; it must map the uid too.
+        qemu_open = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "template", "--network", "open", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        self.assertIn(f"--shell /bin/bash --uid {os.getuid()} agent", qemu_open)
+        self.assertIn("fec0::/10 (site-local)", qemu_plan)
+        for template in (vz_template, qemu_template):
+            # DNS goes only to the resolver(s) discovered on the default-route
+            # link, never to the gateway by assumption.
+            self.assertIn("ip daddr { $resolver_set } udp dport 53 accept", template)
+            self.assertIn("ip daddr { $resolver_set } tcp dport 53 accept", template)
+            self.assertNotIn("ip daddr $gateway", template)
+            # QEMU's site-local fec0::2 gateway reaches the host's loopback.
+            self.assertIn("elements = { fc00::/7, fec0::/10, fe80::/10 }", template)
+
+    def test_failed_worktree_creation_stops_the_launcher(self) -> None:
+        # Two network modes of one project are separate instances wanting the
+        # same branch; Git refuses the second worktree. That failure happens
+        # inside a command substitution and must stop the launcher rather
+        # than render an empty directory as the /workspace mount.
+        root = self.config("")
+        git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run([*git, "init", "-q", str(root)], check=True)
+        subprocess.run(
+            [*git, "-C", str(root), "commit", "-q", "--allow-empty", "-m", "init"],
+            check=True,
+        )
+        (root / ".sandbox.toml").write_text(
+            '[[mounts]]\npath = "."\nbranch = "sandbox/shared"\nmount_point = "/workspace"\n'
+        )
+        environment = {
+            **os.environ,
+            "HOME": str(root),
+            "XDG_STATE_HOME": str(root / "state"),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            **QEMU_BACKEND,
+        }
+
+        def template(mode: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["bash", str(SANDBOX_PATH), "template", "--network", mode, str(root)],
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+        first = template("public")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = template("open")
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("sandbox/shared", second.stderr)
+        self.assertNotIn("mountPoint: /workspace", second.stdout)
+
+    def test_launcher_requires_the_wrapper_backend(self) -> None:
+        root = self.config("")
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("SANDBOX_VM_")
+        }
+        environment.update(
+            HOME=str(root),
+            SANDBOX_GUEST_PROFILE="/nix/store/fixed-sandbox-profile",
+            SANDBOX_POLICY_HELPER=str(POLICY_PATH),
+        )
+        result = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(root)],
+            capture_output=True,
+            env=environment,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SANDBOX_VM_TYPE", result.stderr)
 
 
 if __name__ == "__main__":

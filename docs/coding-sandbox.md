@@ -1,17 +1,33 @@
-# macOS coding sandboxes
+# Coding sandboxes
 
-The `work` Darwin host provides `sandbox`, a Lima launcher for a disposable
-Ubuntu VM with an explicit, project-owned mount and profile specification. This
-is the first macOS-only slice of the broader [coding-sandbox issue](https://github.com/ianepreston/nixos/issues/539).
-NixOS support remains intentionally unimplemented.
+The `work` Darwin host and the `terra` and `luna` NixOS workstations provide
+`sandbox`, a Lima launcher for a disposable Ubuntu VM with an explicit,
+project-owned mount and profile specification. It is part of the broader
+[coding-sandbox issue](https://github.com/ianepreston/nixos/issues/539).
+
+| Host | VM backend | Guest | Host directory sharing |
+| --- | --- | --- | --- |
+| Apple Silicon macOS (`work`) | Apple Virtualization.framework (VZ) | `aarch64` Ubuntu, Rosetta for amd64 binaries | virtiofs |
+| NixOS workstation (`terra`, `luna`) | QEMU with KVM | Ubuntu on the host's own CPU (`x86_64`) | 9p |
+
+The backend is fixed when the Home Manager configuration is built, so one
+`.sandbox.toml` works unchanged on either kind of host. Everything else below
+(mounts, network modes, profiles, caches, callbacks, and lifecycle) behaves the
+same on both.
 
 ## Install and define a project
 
-Apply the `work` configuration to put `sandbox` on `PATH`:
+Apply the host's configuration to put `sandbox` on `PATH`:
 
 ```sh
-task build_darwin:work
+task build_darwin:work   # macOS
+task rebuild             # on a NixOS workstation
 ```
+
+On Linux, `sandbox doctor` also checks that `/dev/kvm` is read-writable by
+your user. NixOS's default udev rule makes it world read-writable; without KVM
+QEMU would fall back to software emulation, which is too slow to build a guest
+profile.
 
 `sandbox` is a normal Home Manager package, rather than a per-repository
 install. The visible `.sandbox.toml` at a project's root declares every host
@@ -50,8 +66,7 @@ host prerequisites, mount boundary, network policy, and exact rendered
 Lima template before creating the VM. `sandbox template` prints that YAML when
 more detail is useful.
 
-The guest is an `aarch64` Ubuntu VM under Apple Virtualization.framework. It
-has only the declared mounts, a fixed store-built Home Manager base profile,
+The guest is an Ubuntu VM on the host's CPU architecture. It has only the declared mounts, a fixed store-built Home Manager base profile,
 and a read-only copy of the active specification at
 `/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
 credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
@@ -135,6 +150,11 @@ Once clean or committed, remove one using the path printed by `sandbox plan`:
 ```sh
 git -C /path/to/repository worktree remove /private/tmp/coding-sandbox-worktrees/...
 ```
+
+On macOS these worktrees live under `$TMPDIR`. On Linux they live under
+`${XDG_STATE_HOME:-~/.local/state}/coding-sandbox/` instead, because NixOS ages
+out `/tmp` entries untouched for 10 days and other distributions mount it as
+tmpfs. Either would silently discard uncommitted guest work.
 
 The configuration is deliberately not hidden. It remains visible in a source
 mount when that source contains it, and is always mounted read-only at
@@ -250,7 +270,7 @@ sandbox cache purge
 only command that deletes a persistent cache disk; `destroy` deliberately
 leaves it intact for the next VM. When that VM is running, `destroy` first
 flushes and shuts it down normally before deleting it, so an ext4 cache disk
-does not survive a forced VZ termination with an incomplete Nix-store write.
+does not survive a forced VM termination with an incomplete Nix-store write.
 
 ## Network modes
 
@@ -263,14 +283,20 @@ sandbox shell
 
 Public internet is available without maintaining a registry-by-registry
 allowlist. Its security boundary is lateral movement: nftables denies RFC1918
-IPv4, CGNAT/Tailscale, IPv4 link-local, IPv6 unique-local, and IPv6 link-local
-destinations unless the selected project explicitly grants them. The policy is
-IP based, so DNS rebinding or a client connecting directly by IP cannot bypass
-it.
+IPv4, CGNAT/Tailscale, IPv4 link-local, IPv6 unique-local, IPv6 site-local, and
+IPv6 link-local destinations unless the selected project explicitly grants
+them. The policy is IP based, so DNS rebinding or a client connecting directly
+by IP cannot bypass it. Site-local `fec0::/10` is listed because QEMU's
+user-mode network uses `fec0::/64`, and its `fec0::2` gateway reaches the host
+machine's own loopback, exactly as `192.168.5.2` does over IPv4.
 
 The only automatic private-network exception is narrowly infrastructure-only:
-DHCP plus DNS on TCP/UDP port 53 to Lima's discovered NAT resolver. It is not a
-general permit for the gateway or its subnet. `sandbox plan` prints this
+DHCP plus DNS on TCP/UDP port 53 to Lima's NAT resolver(s). The guest permits
+exactly the IPv4 resolvers DHCP gave its default-route link, and refuses to
+provision if one is reached through a router. Under VZ the resolver is the
+gateway itself; QEMU's user-mode network answers DNS on a separate address
+beside the gateway (192.168.5.3 next to 192.168.5.2). It is not a general
+permit for the gateway or its subnet. `sandbox plan` prints this
 boundary and every resolved grant before a VM is created.
 
 ### Per-project network grants
@@ -341,7 +367,7 @@ sandbox exec --network restricted -- bash -lc \
 
 `open` is separate and deliberately not a convenience escape hatch. It removes
 both the public allowlist and the lateral boundary, so it can reach LAN,
-tailnet, host-side, and other internal targets reachable from the Mac. Use it
+tailnet, host-side, and other internal targets reachable from the host. Use it
 only for explicit troubleshooting:
 
 ```sh
@@ -374,7 +400,7 @@ sandbox exec -- curl --connect-timeout 10 -I http://dev.example.internal/
 ```
 
 The agent account cannot inspect or replace firewall rules with `sudo`; prove
-that with `sandbox exec -- sudo -n nft list ruleset` (it must fail). The Mac
+that with `sandbox exec -- sudo -n nft list ruleset` (it must fail). The host
 operator may inspect the VM's rendered rules through Lima's privileged
 transport account when diagnosing a policy: `limactl shell INSTANCE sudo nft
 list ruleset`, where `INSTANCE` comes from `sandbox plan`. The sandbox has no
@@ -405,12 +431,12 @@ sandbox start
 
 For each declared range, Lima dynamically forwards guest TCP listeners to the
 same port range on `127.0.0.1` only. A redirect to
-`http://localhost:8020/...` in the Mac browser therefore reaches the guest's
+`http://localhost:8020/...` in the host browser therefore reaches the guest's
 `localhost:8020` listener. No listener or host-port reservation exists merely
 because the range is declared: Lima creates the host listener when a guest
 program starts listening, and removes it when that guest listener closes.
 
-If another Mac process already owns a declared port when the guest CLI opens
+If another host process already owns a declared port when the guest CLI opens
 its listener, Lima cannot forward that callback. Stop the conflicting process
 or use another port already declared by the CLI's callback range; the launcher
 does not silently remap a redirect port. `sandbox plan` and `sandbox validate`
@@ -456,7 +482,7 @@ Stopping a VM preserves its complete guest disk, including `/nix`, by default.
 That gives each work item a warm, isolated Nix cache on the next start.
 Destroying an `instance` cache removes it; destroying a `persistent` cache
 leaves its dedicated Lima disk for the next VM. Do not mount a shared writable
-`/nix` store from macOS or another sandbox: Nix's store database and locks are
+`/nix` store from the host or another sandbox: Nix's store database and locks are
 not a safe multi-guest cache, exposing it would give untrusted guest code a
 host filesystem boundary to attack, and a Darwin host store is not a substitute
 for Linux guest outputs. A future shared-cache design should instead use a
@@ -464,7 +490,8 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 
 ## Current limits
 
-- The implementation is Apple-Silicon macOS only.
+- Hosts are Apple Silicon macOS (VZ) and Linux with KVM (QEMU). The guest is
+  always the host's CPU architecture; there is no cross-architecture guest.
 - `.sandbox.toml` covers mount/network policy plus portable Home Manager
   modules and agent-only startup scripts. Credentials, agent selection, and UI
   settings remain out of scope.

@@ -1,8 +1,20 @@
 # shellcheck shell=bash
 # This file is embedded in the store-managed `sandbox` wrapper by
-# coding-sandbox.nix. Keep it POSIX-ish Bash: it runs on macOS before the VM
-# exists, not in the Linux guest.
+# coding-sandbox.nix. Keep it POSIX-ish Bash: it runs on the macOS or NixOS
+# host before the VM exists, not in the Linux guest.
 set -euo pipefail
+# Command substitutions must inherit errexit: launcher helpers such as
+# prepare_git_worktree run inside $(...), and without this a failed `git
+# worktree add` returned its destination anyway, so Lima mounted an empty
+# directory at /workspace instead of refusing to start.
+shopt -s inherit_errexit
+
+# coding-sandbox.nix fixes the VM backend for the host platform at build time:
+# vz/aarch64/virtiofs on Apple Silicon, qemu/<host cpu>/9p on Linux.
+: "${SANDBOX_VM_TYPE:?set by the coding-sandbox wrapper}"
+: "${SANDBOX_VM_ARCH:?set by the coding-sandbox wrapper}"
+: "${SANDBOX_VM_MOUNT_TYPE:?set by the coding-sandbox wrapper}"
+: "${SANDBOX_VM_DESCRIPTION:?set by the coding-sandbox wrapper}"
 
 die() {
   printf 'sandbox: %s\n' "$*" >&2
@@ -137,12 +149,11 @@ parse_target() {
     guest_workdir=/workspace
   fi
   # Lima performs --workdir before sudo switches from its transport account to
-  # agent.  agent's private home is deliberately 0700, so use lima's home for
-  # that handoff and change directory only after the privilege drop.
-  transport_workdir="$guest_workdir"
-  if [[ "$guest_workdir" == /home/agent ]]; then
-    transport_workdir=/home/lima
-  fi
+  # agent. Always hand off from lima's own home and change directory only
+  # after the privilege drop: agent's home is deliberately 0700, and under
+  # QEMU a 9p mount is checked against host modes, where the moved transport
+  # account (uid 64000) is "other" and may not enter a private host directory.
+  transport_workdir=/home/lima
   instance_id=$(printf '%s' "$project:$network_mode" | sha256sum | cut -c1-12)
   # Lima's per-instance Unix sockets live beneath its state directory. Keep
   # the readable part short enough for macOS's 104-byte socket-path limit;
@@ -155,9 +166,17 @@ parse_target() {
   # bytes. Keep the opaque disk name to 11 bytes while retaining 40 bits of
   # the per-project/per-network instance identity.
   nix_store_disk="s${instance_id:0:10}"
-  policy_record="$HOME/.local/state/coding-sandbox/$instance.policy.json"
-  temporary_root="${TMPDIR:-/tmp}"
-  temporary_root="${temporary_root%/}"
+  state_root="${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox"
+  policy_record="$state_root/$instance.policy.json"
+  if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
+    temporary_root="${TMPDIR:-/tmp}"
+    temporary_root="${temporary_root%/}"
+  else
+    # Linux distributions age out /tmp (NixOS's tmpfiles rule removes entries
+    # untouched for 10 days) and may mount it as tmpfs. Generated worktrees
+    # carry uncommitted guest work, so keep them in per-user state instead.
+    temporary_root="$state_root"
+  fi
   mount_root="$temporary_root/coding-sandbox-worktrees/$instance"
   spec_mount_root="$temporary_root/coding-sandbox-specs/$instance"
 }
@@ -172,27 +191,58 @@ load_policy() {
   network_mode=$(jq -r '.mode' <<<"$policy_json")
 }
 
+# Print one line describing whether this host can run the built-in VM backend,
+# returning non-zero when it cannot. `uname -m` says arm64 on macOS and
+# aarch64 on Linux; Lima (and the wrapper) say aarch64 for both.
+host_platform_check() {
+  local os cpu
+  os=$(uname -s)
+  cpu=$(uname -m)
+  [[ "$cpu" == arm64 ]] && cpu=aarch64
+  case "$SANDBOX_VM_TYPE" in
+    vz)
+      if [[ "$os" == Darwin && "$cpu" == "$SANDBOX_VM_ARCH" ]]; then
+        printf 'PASS  Apple Silicon macOS: %s %s\n' "$(sw_vers -productVersion)" "$cpu"
+        return 0
+      fi
+      printf 'FAIL  This launcher was built for Apple Silicon macOS (found %s %s)\n' "$os" "$cpu"
+      ;;
+    qemu)
+      if [[ "$os" != Linux || "$cpu" != "$SANDBOX_VM_ARCH" ]]; then
+        printf 'FAIL  This launcher was built for %s Linux (found %s %s)\n' "$SANDBOX_VM_ARCH" "$os" "$cpu"
+      elif [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+        # Without KVM, QEMU falls back to software emulation: technically a
+        # VM, but far too slow for a Nix-built guest profile.
+        printf 'FAIL  /dev/kvm is missing or not read-writable by %s; enable KVM\n' "$(id -un)"
+      else
+        printf 'PASS  %s Linux with KVM\n' "$cpu"
+        return 0
+      fi
+      ;;
+    *)
+      printf 'FAIL  Unknown VM type %s\n' "$SANDBOX_VM_TYPE"
+      ;;
+  esac
+  return 1
+}
+
 check_host() {
-  [[ "$(uname -s)" == Darwin ]] || die 'this first implementation supports macOS only'
-  [[ "$(uname -m)" == arm64 ]] || die 'this first implementation requires Apple Silicon'
-  command -v limactl >/dev/null || die 'Lima is not installed; apply the Darwin configuration, then run sandbox doctor again'
+  local result
+  result=$(host_platform_check) || die "${result#FAIL  }"
+  command -v limactl >/dev/null || die 'Lima is not installed; apply the Home Manager configuration, then run sandbox doctor again'
 }
 
 doctor() {
-  local failures=0
+  local failures=0 result
 
   printf 'Coding sandbox doctor\n\n'
-  if [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]]; then
-    printf '  PASS  Apple Silicon macOS: %s %s\n' "$(sw_vers -productVersion)" "$(uname -m)"
-  else
-    printf '  FAIL  Requires Apple Silicon macOS (found %s %s)\n' "$(uname -s)" "$(uname -m)"
-    failures=1
-  fi
+  result=$(host_platform_check) || failures=1
+  printf '  %s\n' "$result"
 
   if command -v limactl >/dev/null; then
     printf '  PASS  Lima: %s\n' "$(limactl --version)"
   else
-    printf '  FAIL  Lima is not on PATH. Apply the Darwin configuration that installs it.\n'
+    printf '  FAIL  Lima is not on PATH. Apply the Home Manager configuration that installs it.\n'
     failures=1
   fi
 
@@ -215,7 +265,6 @@ EOF
 Ready. Next safe gate: `sandbox plan /path/to/project`.
 EOF
 }
-
 list_instances() {
   check_host
   local instances
@@ -241,7 +290,7 @@ show_plan() {
 Coding sandbox plan
 
   Instance:     $instance
-  VM:           Ubuntu aarch64 under Apple Virtualization (VZ)
+  VM:           Ubuntu $SANDBOX_VM_ARCH under $SANDBOX_VM_DESCRIPTION
   Project:      $project
   Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
   Base profile: fixed store-built profile (read-only)
@@ -318,7 +367,7 @@ EOF
   Protected destinations denied unless explicitly granted:
     IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
           100.64.0.0/10 (CGNAT/Tailscale), 169.254.0.0/16
-    IPv6: fc00::/7 (unique local), fe80::/10 (link-local)
+    IPv6: fc00::/7 (unique local), fec0::/10 (site-local), fe80::/10 (link-local)
 
   Internal grants:
 EOF
@@ -334,7 +383,7 @@ EOF
     fi
     cat <<'EOF'
 
-  Lima infrastructure: DHCP only; DNS only to the discovered NAT resolver on
+  Lima infrastructure: DHCP only; DNS only to the discovered NAT resolver(s) on
   TCP/UDP port 53. No general gateway or private-subnet exception exists.
 EOF
   fi
@@ -347,8 +396,8 @@ EOF
   cat <<'EOF'
 
 No host credentials, SSH agent, or directories outside the declared mounts are
-available in the VM. Git mount worktrees are retained under the temporary
-directory after VM deletion so uncommitted guest work is never discarded.
+available in the VM. Git mount worktrees are retained under the launcher-owned
+directory above after VM deletion so uncommitted guest work is never discarded.
 EOF
 }
 
@@ -453,9 +502,9 @@ minimumLimaVersion: 2.0.0
 base:
 - template:_images/ubuntu-lts
 
-vmType: vz
-arch: aarch64
-mountType: virtiofs
+YAML
+    printf '%s\n' "vmType: $SANDBOX_VM_TYPE" "arch: $SANDBOX_VM_ARCH" "mountType: $SANDBOX_VM_MOUNT_TYPE"
+    cat <<'YAML'
 propagateProxyEnv: false
 containerd:
   system: false
@@ -463,18 +512,35 @@ containerd:
 ssh:
   forwardAgent: false
   loadDotSSHPubKeys: false
+YAML
+    if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
+      # Rosetta runs the occasional amd64-only binary on Apple Silicon. A
+      # Linux host's guest already matches the host CPU and emulates nothing.
+      cat <<'YAML'
 vmOpts:
   vz:
     rosetta:
       enabled: true
       binfmt: true
+YAML
+    fi
+    cat <<'YAML'
 user:
-  # Do not derive an account name or home from macOS: the operator's account
+  # Do not derive an account name or home from the host: the operator's account
   # name may be invalid on Linux, and the fixed Home Manager profile owns this
   # precise guest home.
   name: lima
   home: /home/lima
   shell: /bin/bash
+YAML
+    if [[ "$SANDBOX_VM_TYPE" == qemu ]]; then
+      # 9p presents shared files with their host uid, and the guest kernel
+      # checks access against that uid. Give the unprivileged agent the host
+      # uid (see agent_uid_option) and move this transport account out of the
+      # way, so a read-write mount is writable by agent and nobody else.
+      printf '  uid: %s\n' "$lima_transport_uid"
+    fi
+    cat <<'YAML'
 
 # Lima evaluates port-forwarding rules in order. Explicit callback rules are
 # deliberately dynamic: Lima creates their host listener only after the guest
@@ -691,6 +757,10 @@ append_protected_provision() {
     # Squid must use the exact addresses reviewed into strict_v4/strict_v6,
     # rather than independently selecting another address from a CDN-backed
     # name.  Otherwise nftables correctly drops that unreviewed connection.
+    # Each line carries its own YAML block indentation, so the template below
+    # places this variable at column 0. An extra indent on the first line
+    # survives into the guest file, where Squid rejects it ("Bad IP address")
+    # and silently leaves the first bootstrap domain unpinned.
     strict_hosts=$(jq -r '.strict_domains[] | .name as $name | .addresses[] | "\(.) \($name)"' <<<"$policy_json" | sed 's/^/    /')
     use_proxy=true
   else
@@ -711,7 +781,7 @@ provision:
     # Lima is the privileged transport/bootstrap account. Untrusted commands
     # run only as agent, which has no sudo or administrative group membership.
     if ! id -u agent >/dev/null 2>&1; then
-      useradd --create-home --user-group --shell /bin/bash agent
+      useradd --create-home --user-group --shell /bin/bash $agent_uid_flag agent
     fi
     gpasswd -d agent sudo 2>/dev/null || true
     ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
@@ -730,11 +800,30 @@ YAML
   append_persistent_nix_store_provision
   cat >>"$template" <<YAML
 
-    # Lima NAT normally supplies this IPv4 default gateway as both router and
-    # resolver. Refuse an unfamiliar topology rather than allowing a private
-    # subnet or gateway generally.
+    # Lima's NAT supplies the default route and the resolver. Under VZ the
+    # gateway is both; QEMU's user-mode network answers DNS on a separate
+    # on-link address (192.168.5.3 beside the 192.168.5.2 gateway). Permit
+    # exactly the IPv4 resolvers DHCP handed the default-route link, refuse
+    # one reached through a router, and fall back to the gateway only when
+    # the link reports none. That is never a private-subnet exception.
     gateway="\$(ip -4 route show default | awk '/default/ { print \$3; exit }')"
+    default_link="\$(ip -4 route show default | awk '/default/ { print \$5; exit }')"
     test -n "\$gateway"
+    test -n "\$default_link"
+    resolvers=()
+    for resolver in \$(resolvectl dns "\$default_link" 2>/dev/null | sed 's/^[^:]*://'); do
+      [[ \$resolver =~ ^[0-9]+(\\.[0-9]+){3}\$ ]] || continue
+      resolver_route="\$(ip -4 route get "\$resolver")"
+      if [[ \$resolver_route == *" via "* || \$resolver_route != *" dev \$default_link "* ]]; then
+        echo "resolver \$resolver is not on-link via \$default_link: \$resolver_route" >&2
+        exit 1
+      fi
+      resolvers+=("\$resolver")
+    done
+    if test "\${#resolvers[@]}" -eq 0; then
+      resolvers=("\$gateway")
+    fi
+    resolver_set="\$(IFS=,; printf '%s' "\${resolvers[*]}")"
     install -d /etc/coding-sandbox
     cat >/etc/coding-sandbox/policy.json <<'POLICY'
     $policy_json
@@ -747,10 +836,18 @@ YAML
     # its connections to this inspectable, plan-time address set.  Squid's
     # hosts_file prevents a separate CDN DNS answer from escaping that set.
     cat >/etc/squid/coding-sandbox.hosts <<HOSTS
-    $strict_hosts
+$strict_hosts
     HOSTS
+    # A guest with no global IPv6 address cannot use a pinned IPv6 answer.
+    # QEMU's user-mode network advertises an IPv6 default route but only a
+    # site-local fec0::/64 address, and Squid 7 returns 503 after that first
+    # IPv6 failure instead of trying the pinned IPv4 answer. Pin IPv4 only
+    # there; nftables still holds exactly the reviewed address sets.
+    if test -z "\$(ip -6 addr show scope global)"; then
+      sed -i '/:/d' /etc/squid/coding-sandbox.hosts
+    fi
     cat >/etc/squid/squid.conf <<SQUID
-    dns_nameservers \$gateway
+    dns_nameservers \${resolvers[*]}
     hosts_file /etc/squid/coding-sandbox.hosts
     http_port 127.0.0.1:3128
     acl allowed_domains dstdomain $strict_domains
@@ -796,7 +893,10 @@ YAML
       set protected_v6 {
         type ipv6_addr
         flags interval
-        elements = { fc00::/7, fe80::/10 }
+        # fec0::/10 is the deprecated site-local range. QEMU's user-mode
+        # network uses fec0::/64, and its fec0::2 gateway reaches the host's
+        # own loopback, so it is a host-side destination like 192.168.5.2.
+        elements = { fc00::/7, fec0::/10, fe80::/10 }
       }
       set granted_v4 {
         type ipv4_addr
@@ -826,11 +926,11 @@ YAML
         # the protected-destination drop because the peer is on Lima's
         # private NAT subnet; it never authorizes a new guest connection.
         ct state established,related accept
-        # Lima infrastructure only: DHCP and DNS to the one discovered NAT
-        # gateway. It is not a general private-gateway exception.
+        # Lima infrastructure only: DHCP, and DNS to the discovered NAT
+        # resolver(s). It is not a general private-gateway exception.
         ip daddr 255.255.255.255 udp sport 68 udp dport 67 accept
-        ip daddr \$gateway udp dport 53 accept
-        ip daddr \$gateway tcp dport 53 accept
+        ip daddr { \$resolver_set } udp dport 53 accept
+        ip daddr { \$resolver_set } tcp dport 53 accept
         # Permit only IPv6 neighbour discovery / DHCPv6 control messages, then
         # deny all IPv6 multicast and link-local application traffic below.
         ip6 daddr ff02::/16 icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } accept
@@ -872,7 +972,8 @@ append_restricted_provision() {
 }
 
 append_open_provision() {
-  cat >>"$template" <<'YAML'
+  {
+    cat <<'YAML'
 provision:
 - mode: system
   script: |
@@ -882,7 +983,9 @@ provision:
     apt-get update
     apt-get install -y ca-certificates curl git jq unzip
     if ! id -u agent >/dev/null 2>&1; then
-      useradd --create-home --user-group --shell /bin/bash agent
+YAML
+    printf '%s\n' "      useradd --create-home --user-group --shell /bin/bash $agent_uid_flag agent"
+    cat <<'YAML'
     fi
     gpasswd -d agent sudo 2>/dev/null || true
     ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
@@ -893,11 +996,28 @@ provision:
         | sh -s -- install --no-confirm
     fi
 YAML
+  } >>"$template"
   append_persistent_nix_store_provision
   append_profile_provision false
 }
 
+# Guest uids are guest-local, so reusing the host's uid for agent grants it
+# nothing on the host. Under VZ, virtiofs already makes shared files writable
+# by the accessing guest account and both accounts keep Lima's defaults.
+lima_transport_uid=64000
+agent_uid_option() {
+  local host_uid
+  [[ "$SANDBOX_VM_TYPE" == qemu ]] || return 0
+  host_uid=$(id -u)
+  [[ "$host_uid" != 0 && "$host_uid" != "$lima_transport_uid" ]] ||
+    die "cannot map host uid $host_uid onto the guest agent account"
+  printf -- '--uid %s' "$host_uid"
+}
+
 make_template() {
+  # Interpolated into the provision scripts; never a substitution over the
+  # rendered template, which also embeds project-owned policy data.
+  agent_uid_flag=$(agent_uid_option)
   template=$(mktemp "${TMPDIR:-/tmp}/coding-sandbox.XXXXXX.yaml")
   append_common_template
   case "$network_mode" in
@@ -949,7 +1069,7 @@ EOF
 
 WARNING: Network mode: open
 This VM may reach public internet, LAN, tailnet, host-side services, and other
-internal targets reachable from the Mac. No lateral network boundary applies.
+internal targets reachable from this host. No lateral network boundary applies.
 EOF
       ;;
   esac
@@ -1179,7 +1299,7 @@ destroy() {
     [[ "$response" == destroy ]] || die 'not destroyed'
   fi
   if [[ "$instance_nix_store_mode" == persistent ]] && [[ $(limactl list --format '{{.Status}}' "$instance") == Running ]]; then
-    # `limactl delete --force` terminates VZ immediately. Flush and stop a VM
+    # `limactl delete --force` kills the VM immediately. Flush and stop a VM
     # with a persistent ext4 cache disk first so its Nix database and store do
     # not survive a torn write.
     note "flushing persistent Nix cache disk $nix_store_disk"
