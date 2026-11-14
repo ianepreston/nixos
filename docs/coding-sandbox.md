@@ -283,10 +283,12 @@ sandbox shell
 
 Public internet is available without maintaining a registry-by-registry
 allowlist. Its security boundary is lateral movement: nftables denies RFC1918
-IPv4, CGNAT/Tailscale, IPv4 link-local, IPv6 unique-local, and IPv6 link-local
-destinations unless the selected project explicitly grants them. The policy is
-IP based, so DNS rebinding or a client connecting directly by IP cannot bypass
-it.
+IPv4, CGNAT/Tailscale, IPv4 link-local, IPv6 unique-local, IPv6 site-local, and
+IPv6 link-local destinations unless the selected project explicitly grants
+them. The policy is IP based, so DNS rebinding or a client connecting directly
+by IP cannot bypass it. Site-local `fec0::/10` is listed because QEMU's
+user-mode network uses `fec0::/64`, and its `fec0::2` gateway reaches the host
+machine's own loopback, exactly as `192.168.5.2` does over IPv4.
 
 The only automatic private-network exception is narrowly infrastructure-only:
 DHCP plus DNS on TCP/UDP port 53 to Lima's NAT resolver(s). The guest permits

@@ -445,13 +445,25 @@ class PolicyTest(unittest.TestCase):
         self.assertIn(f"--shell /bin/bash --uid {os.getuid()} agent", qemu_template)
         self.assertNotIn("uid: 64000", vz_template)
         self.assertIn("--shell /bin/bash  agent", vz_template)
-        self.assertNotIn("@agent-uid-option@", vz_template + qemu_template)
+        self.assertNotIn("agent_uid_flag", vz_template + qemu_template)
+        # Open mode renders its own provision script; it must map the uid too.
+        qemu_open = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "template", "--network", "open", str(root)],
+            check=True,
+            capture_output=True,
+            env=environment,
+            text=True,
+        ).stdout
+        self.assertIn(f"--shell /bin/bash --uid {os.getuid()} agent", qemu_open)
+        self.assertIn("fec0::/10 (site-local)", qemu_plan)
         for template in (vz_template, qemu_template):
             # DNS goes only to the resolver(s) discovered on the default-route
             # link, never to the gateway by assumption.
             self.assertIn("ip daddr { $resolver_set } udp dport 53 accept", template)
             self.assertIn("ip daddr { $resolver_set } tcp dport 53 accept", template)
             self.assertNotIn("ip daddr $gateway", template)
+            # QEMU's site-local fec0::2 gateway reaches the host's loopback.
+            self.assertIn("elements = { fc00::/7, fec0::/10, fe80::/10 }", template)
 
     def test_failed_worktree_creation_stops_the_launcher(self) -> None:
         # Two network modes of one project are separate instances wanting the

@@ -149,12 +149,11 @@ parse_target() {
     guest_workdir=/workspace
   fi
   # Lima performs --workdir before sudo switches from its transport account to
-  # agent.  agent's private home is deliberately 0700, so use lima's home for
-  # that handoff and change directory only after the privilege drop.
-  transport_workdir="$guest_workdir"
-  if [[ "$guest_workdir" == /home/agent ]]; then
-    transport_workdir=/home/lima
-  fi
+  # agent. Always hand off from lima's own home and change directory only
+  # after the privilege drop: agent's home is deliberately 0700, and under
+  # QEMU a 9p mount is checked against host modes, where the moved transport
+  # account (uid 64000) is "other" and may not enter a private host directory.
+  transport_workdir=/home/lima
   instance_id=$(printf '%s' "$project:$network_mode" | sha256sum | cut -c1-12)
   # Lima's per-instance Unix sockets live beneath its state directory. Keep
   # the readable part short enough for macOS's 104-byte socket-path limit;
@@ -167,7 +166,8 @@ parse_target() {
   # bytes. Keep the opaque disk name to 11 bytes while retaining 40 bits of
   # the per-project/per-network instance identity.
   nix_store_disk="s${instance_id:0:10}"
-  policy_record="$HOME/.local/state/coding-sandbox/$instance.policy.json"
+  state_root="${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox"
+  policy_record="$state_root/$instance.policy.json"
   if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
     temporary_root="${TMPDIR:-/tmp}"
     temporary_root="${temporary_root%/}"
@@ -175,7 +175,7 @@ parse_target() {
     # Linux distributions age out /tmp (NixOS's tmpfiles rule removes entries
     # untouched for 10 days) and may mount it as tmpfs. Generated worktrees
     # carry uncommitted guest work, so keep them in per-user state instead.
-    temporary_root="${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox"
+    temporary_root="$state_root"
   fi
   mount_root="$temporary_root/coding-sandbox-worktrees/$instance"
   spec_mount_root="$temporary_root/coding-sandbox-specs/$instance"
@@ -236,12 +236,8 @@ doctor() {
   local failures=0 result
 
   printf 'Coding sandbox doctor\n\n'
-  if result=$(host_platform_check); then
-    printf '  %s\n' "$result"
-  else
-    printf '  %s\n' "$result"
-    failures=1
-  fi
+  result=$(host_platform_check) || failures=1
+  printf '  %s\n' "$result"
 
   if command -v limactl >/dev/null; then
     printf '  PASS  Lima: %s\n' "$(limactl --version)"
@@ -371,7 +367,7 @@ EOF
   Protected destinations denied unless explicitly granted:
     IPv4: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
           100.64.0.0/10 (CGNAT/Tailscale), 169.254.0.0/16
-    IPv6: fc00::/7 (unique local), fe80::/10 (link-local)
+    IPv6: fc00::/7 (unique local), fec0::/10 (site-local), fe80::/10 (link-local)
 
   Internal grants:
 EOF
@@ -785,7 +781,7 @@ provision:
     # Lima is the privileged transport/bootstrap account. Untrusted commands
     # run only as agent, which has no sudo or administrative group membership.
     if ! id -u agent >/dev/null 2>&1; then
-      useradd --create-home --user-group --shell /bin/bash @agent-uid-option@ agent
+      useradd --create-home --user-group --shell /bin/bash $agent_uid_flag agent
     fi
     gpasswd -d agent sudo 2>/dev/null || true
     ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
@@ -897,7 +893,10 @@ YAML
       set protected_v6 {
         type ipv6_addr
         flags interval
-        elements = { fc00::/7, fe80::/10 }
+        # fec0::/10 is the deprecated site-local range. QEMU's user-mode
+        # network uses fec0::/64, and its fec0::2 gateway reaches the host's
+        # own loopback, so it is a host-side destination like 192.168.5.2.
+        elements = { fc00::/7, fec0::/10, fe80::/10 }
       }
       set granted_v4 {
         type ipv4_addr
@@ -973,7 +972,8 @@ append_restricted_provision() {
 }
 
 append_open_provision() {
-  cat >>"$template" <<'YAML'
+  {
+    cat <<'YAML'
 provision:
 - mode: system
   script: |
@@ -983,7 +983,9 @@ provision:
     apt-get update
     apt-get install -y ca-certificates curl git jq unzip
     if ! id -u agent >/dev/null 2>&1; then
-      useradd --create-home --user-group --shell /bin/bash @agent-uid-option@ agent
+YAML
+    printf '%s\n' "      useradd --create-home --user-group --shell /bin/bash $agent_uid_flag agent"
+    cat <<'YAML'
     fi
     gpasswd -d agent sudo 2>/dev/null || true
     ! id -nG agent | tr ' ' '\n' | grep -Fxq sudo
@@ -994,6 +996,7 @@ provision:
         | sh -s -- install --no-confirm
     fi
 YAML
+  } >>"$template"
   append_persistent_nix_store_provision
   append_profile_provision false
 }
@@ -1012,8 +1015,9 @@ agent_uid_option() {
 }
 
 make_template() {
-  local uid_option
-  uid_option=$(agent_uid_option)
+  # Interpolated into the provision scripts; never a substitution over the
+  # rendered template, which also embeds project-owned policy data.
+  agent_uid_flag=$(agent_uid_option)
   template=$(mktemp "${TMPDIR:-/tmp}/coding-sandbox.XXXXXX.yaml")
   append_common_template
   case "$network_mode" in
@@ -1021,7 +1025,6 @@ make_template() {
     restricted) append_restricted_provision ;;
     open) append_open_provision ;;
   esac
-  sed -i "s|@agent-uid-option@|$uid_option|" "$template"
 }
 
 show_template() {
