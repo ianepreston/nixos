@@ -16,7 +16,7 @@
 #   * recorder    — native postgres over the unix socket (peer auth).
 #
 # Version currency: HA ships ~monthly and the stable channel freezes its
-# snapshot for a year (e.g. 2026.5.x on nixos-26.05). Per AGENTS.md
+# snapshot for a year (e.g. 2026.5.x on nixos-26.05). Per docs/agents/app-packaging.md
 # ("prefer nixpkgs services" + "wire a per-package overlay rather than
 # flipping the whole flake to unstable"), the HA package and its custom
 # component are pinned to nixpkgs-unstable so integrations stay current;
@@ -238,7 +238,7 @@
         restartUnits = [ "home-assistant.service" ];
       };
 
-      # Take the unstable module alongside the unstable package (AGENTS.md:
+      # Take the unstable module alongside the unstable package (docs/agents/app-packaging.md:
       # "a per-package unstable pin may also need the unstable module"). The
       # stable module declares http.server_host/server_port with defaults, so
       # it always renders an http: block that current HA warns about and
@@ -379,7 +379,7 @@
 
       # Recorder role: peer auth on the unix socket, role == system user
       # `hass` == db name, so there's no password to plumb (mirrors mealie's
-      # createLocally pattern per AGENTS.md). Merges into the shared cluster
+      # createLocally pattern per docs/agents/app-packaging.md). Merges into the shared cluster
       # from modules/system/postgresql.nix.
       services.postgresql = {
         ensureDatabases = [ "hass" ];
