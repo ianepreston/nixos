@@ -1,6 +1,6 @@
-# Static policy tests for the macOS-only Lima launcher.  They run on every
-# supported evaluation platform because TOML parsing and policy rendering are
-# host-side, with no Lima VM required.
+# Static policy tests for the Lima launcher, covering both the macOS VZ and the
+# Linux QEMU backends.  They run on every supported evaluation platform because
+# TOML parsing and policy rendering are host-side, with no Lima VM required.
 _: {
   perSystem =
     { pkgs, ... }:

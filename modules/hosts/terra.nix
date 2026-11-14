@@ -37,6 +37,7 @@
       {
         home-manager.sharedModules = with inputs.self.modules.homeManager; [
           vibes
+          coding-sandbox
           adb
           calibre
           freecad

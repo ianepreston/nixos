@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Parse and render a coding-sandbox project policy.
 
-This runs on the macOS host.  It intentionally uses only the Python standard
-library plus Git: a project-owned TOML file is data, never shell input.
+This runs on the macOS or NixOS host.  It intentionally uses only the Python
+standard library plus Git: a project-owned TOML file is data, never shell input.
 """
 
 from __future__ import annotations

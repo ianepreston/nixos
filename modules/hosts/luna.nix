@@ -39,6 +39,7 @@
         {
           home-manager.sharedModules = with inputs.self.modules.homeManager; [
             vibes
+            coding-sandbox
             moonlight
             browser
             obsidian
