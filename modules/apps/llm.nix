@@ -68,24 +68,19 @@
       };
 
       # DynamicUser + StateDirectory, so the real storage is the private
-      # path — same shape as authentik's entry. Keep the explicit root
-      # ownership and mode inherited by the previous bare preservation entry;
-      # systemd changes it to its id-mapped sentinel before startup.
+      # path — same shape as authentik's entry.
       #
-      # A preservation bindmount hands the unit a root:root 0700 directory
-      # on a fresh boot, which looks alarming for a DynamicUser service.
-      # It isn't: systemd chowns an existing StateDirectory to the on-disk
-      # sentinel (nobody:nogroup 0755) before ExecStart and the unit writes
-      # through the idmapped mount normally. Verified directly with a
-      # throwaway DynamicUser unit against a pre-created root:root 0700
-      # dir. No ExecStartPre chown is needed here — authentik's is healing
-      # a different hazard (stale files literally owned by the dynamic uid,
-      # written before idmapped mounts existed).
+      # systemd chowns an existing StateDirectory to the on-disk sentinel
+      # (nobody:nogroup 0755) before ExecStart, but only then: a tmpfiles
+      # re-setup on a later switch re-applies whatever owner preservation
+      # declares, under the running unit. dynamicUser declares the
+      # sentinel so the two agree (#949). No ExecStartPre chown is needed
+      # here — authentik's is healing a different hazard (stale files
+      # literally owned by the dynamic uid, written before idmapped
+      # mounts existed).
       myAppState.llama-cpp = {
         stateDir = "/var/lib/private/llama-cpp";
-        user = "root";
-        group = "root";
-        mode = "0755";
+        dynamicUser = true;
         backup = false;
       };
     };

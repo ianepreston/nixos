@@ -19,6 +19,15 @@ _: {
       alertmanagerPort = 9093;
     in
     {
+      # Silences + notification log, persisted so a silence survives the
+      # nightly upgrade reboot; not backed up. DynamicUser state at the
+      # private path, systemd's default StateDirectoryMode (0755) (#949).
+      myAppState.alertmanager = {
+        stateDir = "/var/lib/private/alertmanager";
+        dynamicUser = true;
+        backup = false;
+      };
+
       sops.secrets = {
         "discord/alerts_webhook" = {
           inherit (hostSpec) sopsFile;
