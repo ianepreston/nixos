@@ -7,7 +7,15 @@ entries:
     identifiers:
       name: paperless-ngx
     attrs:
-      client_type: confidential
+      # Public, not confidential: Swift Paperless (iOS) takes this provider's
+      # client_id from paperless's headless config and redeems the code at the
+      # token endpoint itself, with S256 PKCE and no client_secret. authentik
+      # enforces the secret only for confidential clients
+      # (providers/oauth2/token/base.py), so confidential fails it with
+      # invalid_client. The web UI (allauth) still sends the secret below,
+      # which a public provider ignores, and also uses PKCE
+      # (OAUTH_PKCE_ENABLED), so both real clients stay PKCE-bound (#948).
+      client_type: public
       client_id: !Env PAPERLESS_NGX_OIDC_CLIENT_ID
       client_secret: !Env PAPERLESS_NGX_OIDC_CLIENT_SECRET
       authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
@@ -27,6 +35,15 @@ entries:
       redirect_uris:
         - matching_mode: strict
           url: https://paperless-ngx.@serverDomain@/accounts/oidc/authentik/login/callback/
+        # Swift Paperless (iOS) callback, handed to the IdP via
+        # ASWebAuthenticationSession. Fixed in the app binary, so it is the
+        # same on every host and takes no per-host domain placeholder —
+        # deliberately not spelled here, because renderedBlueprintDir
+        # substitutes that literal in comments too. Strict, not regex: it is a
+        # fixed literal. authentik also checks it at the token endpoint, so
+        # this one entry covers both steps (#948).
+        - matching_mode: strict
+          url: x-paperless://oidc-callback
       access_code_validity: minutes=1
       access_token_validity: minutes=10
       refresh_token_validity: days=30
