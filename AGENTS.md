@@ -18,9 +18,11 @@ task, so anything needed only for specific work goes in a topic guide below.
 | Cross-cutting features, option surfaces, refactors                      | [docs/agents/architecture.md](docs/agents/architecture.md)                   |
 
 Canonical repository workflows live under `skills/` (agent-neutral). The
-discovery adapters are thin: `.claude/skills/<name>/SKILL.md` imports the
-workflow for Claude Code, `.agents/skills/<name>` is a directory symlink for
-Codex. Add or update both when adding a workflow; never duplicate the body.
+discovery adapters are thin: `.claude/skills/<name>/SKILL.md` carries a verbatim
+copy of the canonical frontmatter (Claude Code reads `name`/`description` from
+it) followed by an `@` import of the workflow, and `.agents/skills/<name>` is a
+directory symlink for Codex. Add or update both when adding a workflow or
+changing its description; never duplicate the body.
 Local runner state (settings, caches, worktrees) stays untracked.
 
 ## PII never goes in git or GitHub
