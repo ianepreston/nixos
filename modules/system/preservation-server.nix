@@ -131,20 +131,16 @@
           # reset history to zero (which also re-armed every long-`for:`
           # alert). Alertmanager was never listed at all.
           #
-          # All three units are DynamicUser + StateDirectory, so the
-          # real storage is the /var/lib/private path and /var/lib/<name>
-          # is only a symlink — same shape as the authentik and
-          # llama-cpp entries, and bare strings for the same reason:
-          # ownership is systemd's to manage, not ours. A preservation
-          # bindmount hands the unit a root:root 0700 dir on a fresh
-          # boot; systemd chowns an existing StateDirectory to the
-          # on-disk sentinel (nobody:nogroup) before ExecStart and the
-          # unit writes through the idmapped mount normally. No
-          # user/group/mode pin (unlike /var/lib/mysql above, where
-          # tmpfiles fights us).
-          "/var/lib/private/victoriametrics"
-          "/var/lib/private/victorialogs"
-          "/var/lib/private/alertmanager"
+          # All three units are DynamicUser + StateDirectory, so the real
+          # storage is the /var/lib/private path. Each is declared as
+          # `myAppState.<unit>` with `dynamicUser = true` and
+          # `backup = false` in its own module (victoriametrics.nix,
+          # victorialogs.nix, alertmanager.nix), so preservation renders
+          # systemd's on-disk owner instead of root. Until #949 these were
+          # bare strings here, rendering root:root; each tmpfiles re-setup
+          # on a switch then left alertmanager unable to write its
+          # nflog/silences snapshots and victoriametrics unable to remove
+          # its unclean-shutdown marker.
         ];
 
         files = [

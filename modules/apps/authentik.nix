@@ -621,14 +621,13 @@
           # Postgres dump covers blueprint-managed objects; this is the
           # gap closer. Restic doesn't follow symlinks, so /var/lib/authentik
           # (a symlink) would capture only the link. Closes #120.
-          # Keep the explicit root ownership and mode that the former bare
-          # preservation entry inherited. DynamicUser changes the directory
-          # to its id-mapped sentinel before startup.
+          # dynamicUser pins the preservation entry to systemd's on-disk
+          # sentinel (nobody:nogroup 0755) so a tmpfiles re-setup on switch
+          # can't hand the top-level directory back to root under the
+          # running stack (#949).
           myAppState.authentik = {
             stateDir = "/var/lib/private/authentik";
-            user = "root";
-            group = "root";
-            mode = "0755";
+            dynamicUser = true;
           };
 
           # authentik-nix hardcodes DynamicUser=true across server/worker/

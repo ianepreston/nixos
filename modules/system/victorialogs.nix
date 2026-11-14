@@ -26,6 +26,16 @@ _: {
       vlPort = 9428;
     in
     {
+      # Persisted across reboots so the retention window means what it
+      # says; not backed up (derived, rebuildable from sources). nixpkgs
+      # sets StateDirectoryMode=0700, so the preserved mode follows (#949).
+      myAppState.victorialogs = {
+        stateDir = "/var/lib/private/victorialogs";
+        dynamicUser = true;
+        mode = "0700";
+        backup = false;
+      };
+
       services.victorialogs = {
         enable = true;
         # Loopback-only — Caddy proxies the UI for human access;

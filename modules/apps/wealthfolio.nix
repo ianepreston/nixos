@@ -60,12 +60,13 @@
         corsAllowOrigins = "https://${wealthfolioHost}";
       };
 
-      # DynamicUser + StateDirectory stores data at the private path. Leave
-      # ownership to systemd's id-mapped mount, as with matter-server.
+      # DynamicUser + StateDirectory stores data at the private path.
+      # dynamicUser makes the preservation entry match systemd's on-disk
+      # owner (nobody:nogroup 0755) rather than resetting it to root 0700
+      # under the running service on every tmpfiles re-setup (#949).
       myAppState.wealthfolio = {
         inherit stateDir;
-        user = null;
-        group = null;
+        dynamicUser = true;
       };
 
       # 3.9 keeps one database per profile under a UUID it generates on first

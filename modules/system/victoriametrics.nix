@@ -1051,6 +1051,15 @@ _: {
       };
     in
     {
+      # TSDB, persisted across reboots so the retention window means what
+      # it says; not backed up (derived). nixpkgs sets
+      # StateDirectoryMode=0700, so the preserved mode follows (#949).
+      myAppState.victoriametrics = {
+        stateDir = "/var/lib/private/victoriametrics";
+        dynamicUser = true;
+        mode = "0700";
+        backup = false;
+      };
 
       # Textfile collector directory. World-readable so node_exporter's
       # DynamicUser can traverse it; root-writable for the oneshots that

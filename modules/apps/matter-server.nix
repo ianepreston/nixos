@@ -42,12 +42,11 @@ _: {
 
     # DynamicUser puts state under /var/lib/private/<service>; the public
     # /var/lib/matter-server is a symlink. Preserve the actual storage
-    # path (same pattern as authentik). user/group left null so the
-    # preservation entry omits them (DynamicUser manages ownership).
+    # path (same pattern as authentik). dynamicUser makes the preservation
+    # entry match systemd's on-disk owner rather than resetting it (#949).
     myAppState.matter-server = {
       stateDir = "/var/lib/private/matter-server";
-      user = null;
-      group = null;
+      dynamicUser = true;
     };
   };
 }
