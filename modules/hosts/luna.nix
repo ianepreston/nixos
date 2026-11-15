@@ -26,6 +26,7 @@
       flatpak
       gaming
       keyd
+      nix-cache-client
       nvidia-gtx1060
       printing
       smbclient

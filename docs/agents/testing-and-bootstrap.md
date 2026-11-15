@@ -17,6 +17,13 @@ key into `/persist/etc/ssh/`; without it sshd can't load a host key after the
 first rollback (preservation bind-mounts an empty file) and the host comes up
 unreachable.
 
+Reinstalling **hpp-1** without `SSH_HOST_KEY_FILE` gives it a new host key, and
+`hostKey` in `modules/system/nix-cache.nix` has to follow. Otherwise
+amos1/terra/luna quietly stop substituting from it and go back to building
+everything locally. Adding a new cache consumer means adding its
+`ssh/ed25519` public key to `consumerKeys` in the same file. The client's
+assertion names the fix.
+
 ## Local VM sandbox (`task vm:*`)
 
 `taskfiles/vm.yaml` drives one quickemu VM at a time under `~/vms/nixos-vm/`,

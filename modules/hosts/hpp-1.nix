@@ -25,6 +25,8 @@
       # Imported here rather than via a profile so a future move to a
       # dedicated runner box is a one-line change. See #180.
       github-runner
+      # Serves this store, CI outputs included, to the other hosts (#936).
+      nix-cache-server
     ])
     ++ [
       {

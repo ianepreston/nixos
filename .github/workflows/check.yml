@@ -16,9 +16,17 @@ name: check
 # trusted-user nix daemon. Daemon settings come from the host config
 # (modules/profiles/base.nix sets experimental-features). Only the
 # ubuntu-latest `lint` job still installs Nix, where it is a real install.
+#
+# PRs only, no run on push to main. Branch protection requires the branch to
+# be up to date with main (`strict`) and requires every job below, so the tree
+# that lands on main is the one the PR run already built. A main run would
+# rebuild only etc/activate/the toplevel, and it would hold the single
+# self-hosted runner, queueing PR checks behind it. Note the PR run builds
+# GitHub's test-merge commit, so its toplevel differs from the one a host
+# evaluates from main (the config embeds the commit). Every heavy path is
+# shared, and that's what hosts pull from hpp-1's cache
+# (modules/system/nix-cache.nix).
 on:
-  push:
-    branches: [main]
   pull_request:
 # Cancel superseded runs on the same ref to avoid wasting minutes when
 # pushing rapid follow-ups.
@@ -114,9 +122,10 @@ jobs:
     # so unchanged closures rebuild in seconds. See #180 for the design.
     #
     # PR-from-fork guard: a fork PR can edit this workflow and run
-    # arbitrary code on our host. Restrict the build job to push events
-    # and to PRs whose head branch lives in this repo. Fork PRs still
-    # get `flake-check` above (cloud runner, no host access).
+    # arbitrary code on our host. Restrict the build job to PRs whose head
+    # branch lives in this repo; the `event_name` clause only matters if a
+    # non-PR trigger is ever added back. Fork PRs still get the `lint`
+    # job (cloud runner, no host access, no deploy key).
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, nixos]
