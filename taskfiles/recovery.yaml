@@ -27,9 +27,14 @@
 # ## Verification drill (recovery:test:full)
 #
 # Spins up a tests-server quickemu VM, reinstalls it from this flake,
-# restores bookorbit + miniflux + jellyfin from SOURCE_HOST's restic repo
-# (exercising the three app shapes), and tears the VM down. Quarterly
+# restores bookorbit + miniflux + jellyfin + paperless-ngx from
+# SOURCE_HOST's restic repo (exercising the three app shapes, plus the
+# document archive as the one restore that can't be rebuilt from
+# anywhere else), and tears the VM down. Quarterly
 # cadence — see issue #135 for the rationale.
+#
+#   task recovery:test:full                     # SOURCE_HOST=hpp-1
+#   task recovery:test:full SOURCE_HOST=amos1   # prod data, via /mnt/prod-backups
 version: '3'
 set: [pipefail]
 shopt: [globstar]
@@ -335,25 +340,55 @@ tasks:
             task recovery:app APP="$app" HOST="{{.HOST}}" MANIFEST_HOST="{{.MANIFEST_HOST}}" MANIFEST_FILE="$manifest_file" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}" </dev/null
           done
   # ---------------------------------------------------------------------------
-  # End-to-end drill: VM up → install → restore three shapes → teardown
+  # End-to-end drill: VM up → install → restore four apps → teardown
   # ---------------------------------------------------------------------------
   # Confirms last night's restic snapshot is actually replayable into a
   # working app for each of the three app shapes (containerized + pg,
-  # native + pg only, native + sqlite-quiesce). Quarterly. See issue
-  # #135 for the rationale.
+  # native + pg only, native + sqlite-quiesce). paperless-ngx is a
+  # fourth: native + pg with on-disk documents, several consumer units
+  # and a backup-excluded subtree, and the one dataset that can't be
+  # rebuilt from anywhere else (#944). Quarterly. See issue #135 for
+  # the rationale.
   #
   # VM lifecycle (up/install/down/sops-authorize) lives under `task vm:*`
   # in taskfiles/vm.yaml — generic enough to also drive tests-desktop
   # iteration and not tied to the restore drill.
   test:full:
-    desc: Quarterly end-to-end drill — VM up, reinstall, restore bookorbit/miniflux/jellyfin from SOURCE_HOST, teardown
+    desc: Quarterly end-to-end drill — VM up, reinstall, restore bookorbit/miniflux/jellyfin/paperless-ngx from SOURCE_HOST, teardown
     vars:
       SOURCE_HOST: '{{.SOURCE_HOST | default "hpp-1"}}'
       SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+      # The VM decrypts its own hostSpec's sopsFile (hpp-1.yaml) whatever
+      # SOURCE_HOST is, so that is the file to authorize, not SOURCE_HOST's.
+      VM_SOPS_TARGET:
+        sh: basename "$(nix eval --raw .#nixosConfigurations.tests-server._module.specialArgs.hostSpec.sopsFile)" .yaml
+      # tests-server mounts its own environment's share at /mnt/backups and
+      # the other one at /mnt/<otherEnv>-backups (nfsclient.nix), so a
+      # source in the other environment (e.g. SOURCE_HOST=amos1) is read
+      # through the cross-mount.
+      #
+      # The VM's NFS traffic leaves through the workstation's user-mode NAT
+      # from an unprivileged source port, so the source share's NFS rule
+      # must allow that (`insecure`; DSM "Allow connections from
+      # non-privileged ports"). server-dev-backups allows it for the /24;
+      # server-prod-backups only for the workstation's own IP. Without it
+      # the mount fails with "access denied by server" and restic retries
+      # `stat .../config: no such device` indefinitely.
+      #
+      # Jellyfin cannot restore across environments: its state is owned by
+      # server-<env> (uid 1029 dev, 1030 prod), so a prod snapshot leaves
+      # it unreadable to server-dev and the health probe times out.
+      # Until that is fixed (#958), SOURCE_HOST=amos1 stops at jellyfin;
+      # restore paperless-ngx on its own with `task recovery:app`.
+      REPO_MOUNT:
+        sh: |
+          src=$(nix eval --raw .#nixosConfigurations.{{.SOURCE_HOST}}._module.specialArgs.hostSpec.serverEnvironment)
+          vm=$(nix eval --raw .#nixosConfigurations.tests-server._module.specialArgs.hostSpec.serverEnvironment)
+          if [ "$src" = "$vm" ]; then echo /mnt/backups; else echo "/mnt/$src-backups"; fi
     cmds:
       - task: :vm:up
       - task: :vm:sops-authorize
-        vars: {TARGET: '{{.SOURCE_HOST}}'}
+        vars: {TARGET: '{{.VM_SOPS_TARGET}}'}
       # bootstrap:install with LOCAL_SECRETS=true pre-builds against local
       # repo state, so the installed system already carries the
       # uncommitted sops envelope edits the previous step just made. Not
@@ -390,22 +425,31 @@ tasks:
         # restore can't wipe the unbacked-up metadata/ tree, and
         # --delete only reaches inside an included path. A sentinel on
         # the parent therefore always survives and asserts nothing.
+        #
+        # paperless-ngx gets two. The llm_index/ one is the point: the
+        # vector store is excluded from backup (#558), so the module
+        # relies on --delete to clear a stale index on restore.
         echo -e "\x1B[32m[+] Seeding sentinel files to verify clean-restore semantics\x1B[0m"
         ssh -p {{.SSH_PORT}} -o StrictHostKeyChecking=accept-new ipreston@127.0.0.1 \
           'sudo bash -se' <<'EOF'
         set -euo pipefail
-        mkdir -p /var/lib/containers/bookorbit /var/lib/jellyfin/data /var/backup/sqlite/jellyfin
+        mkdir -p /var/lib/containers/bookorbit /var/lib/jellyfin/data /var/backup/sqlite/jellyfin \
+          /var/lib/paperless-ngx/llm_index
         touch /var/lib/containers/bookorbit/.recovery-overlay-sentinel
         touch /var/lib/jellyfin/data/.recovery-overlay-sentinel
         touch /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel
+        touch /var/lib/paperless-ngx/.recovery-overlay-sentinel
+        touch /var/lib/paperless-ngx/llm_index/.recovery-overlay-sentinel
         echo "[+] sentinels placed"
         EOF
       - task: app
-        vars: {APP: bookorbit, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: bookorbit, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - task: app
-        vars: {APP: miniflux, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: miniflux, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - task: app
-        vars: {APP: jellyfin, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: jellyfin, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
+      - task: app
+        vars: {APP: paperless-ngx, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Asserting sentinels were removed by --delete\x1B[0m"
@@ -415,7 +459,9 @@ tasks:
         for f in \
           /var/lib/containers/bookorbit/.recovery-overlay-sentinel \
           /var/lib/jellyfin/data/.recovery-overlay-sentinel \
-          /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel; do
+          /var/backup/sqlite/jellyfin/.recovery-overlay-sentinel \
+          /var/lib/paperless-ngx/.recovery-overlay-sentinel \
+          /var/lib/paperless-ngx/llm_index/.recovery-overlay-sentinel; do
           if [ -e "$f" ]; then
             echo "[!] OVERLAY REGRESSION: $f survived restore"
             failed=1
@@ -430,7 +476,7 @@ tasks:
         echo ""
         echo -e "\x1B[32m========================================================\x1B[0m"
         echo -e "\x1B[32m  Full restore drill PASSED (tests-server VM, source {{.SOURCE_HOST}})\x1B[0m"
-        echo -e "\x1B[32m  Bootstrap + all three app shapes restored cleanly.\x1B[0m"
+        echo -e "\x1B[32m  Bootstrap + all four drill apps restored cleanly.\x1B[0m"
         echo -e "\x1B[32m========================================================\x1B[0m"
         echo -e "\x1B[33m  Reminder: ../nix-secrets/ now has uncommitted sops envelope changes\x1B[0m"
         echo -e "\x1B[33m  authorizing the VM key. \`cd ../nix-secrets && git restore .\` to revoke,\x1B[0m"

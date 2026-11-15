@@ -95,14 +95,16 @@
       myRecovery.apps.paperless-ngx = {
         kind = "postgres";
         order = 180;
-        units = [
-          "paperless-scheduler.service"
-          "paperless-task-queue.service"
-          "paperless-consumer.service"
-          "paperless-web.service"
-        ];
+        units = paperlessUnits;
         paths = [ "/var/lib/paperless-ngx" ];
         database = "paperless_ngx";
+        # The deepest unauthenticated check. Every template render, the login
+        # page included, runs `documents.context_processors.settings`, which
+        # counts users and documents, so a missing schema fails it; so does
+        # the data-dir ownership check (see myAppState below) keeping the web
+        # unit down. /api/status/ would also cover redis and celery, but it
+        # needs a token.
+        health.url = "http://127.0.0.1:${toString port}/accounts/login/";
       };
 
       # The 3.x package needs the 3.x module (see the header comment).
@@ -372,9 +374,10 @@
         # chat would break with no fallback. An absent index is the only damaged
         # state paperless can actually detect.
         #
-        # Restoring clears it rather than leaving it stale: `recovery:paperless-ngx`
-        # goes through `_restore-pg`, whose `restic restore --delete` removes
-        # target files that the snapshot does not contain.
+        # Restoring clears it rather than leaving it stale: `recovery:app
+        # APP=paperless-ngx` goes through `_restore-pg`, whose `restic restore
+        # --delete` removes target files that the snapshot does not contain.
+        # `recovery:test:full` asserts this with a sentinel in llm_index/.
         #
         # `hf_cache` deliberately stays *in* the backup despite being equally
         # re-downloadable — `--delete` would wipe it too, and the re-embed this
