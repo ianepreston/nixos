@@ -366,6 +366,20 @@ tasks:
       # the other one at /mnt/<otherEnv>-backups (nfsclient.nix), so a
       # source in the other environment (e.g. SOURCE_HOST=amos1) is read
       # through the cross-mount.
+      #
+      # The VM's NFS traffic leaves through the workstation's user-mode NAT
+      # from an unprivileged source port, so the source share's NFS rule
+      # must allow that (`insecure`; DSM "Allow connections from
+      # non-privileged ports"). server-dev-backups allows it for the /24;
+      # server-prod-backups only for the workstation's own IP. Without it
+      # the mount fails with "access denied by server" and restic retries
+      # `stat .../config: no such device` indefinitely.
+      #
+      # Jellyfin cannot restore across environments: its state is owned by
+      # server-<env> (uid 1029 dev, 1030 prod), so a prod snapshot leaves
+      # it unreadable to server-dev and the health probe times out.
+      # Until that is fixed (#958), SOURCE_HOST=amos1 stops at jellyfin;
+      # restore paperless-ngx on its own with `task recovery:app`.
       REPO_MOUNT:
         sh: |
           src=$(nix eval --raw .#nixosConfigurations.{{.SOURCE_HOST}}._module.specialArgs.hostSpec.serverEnvironment)
