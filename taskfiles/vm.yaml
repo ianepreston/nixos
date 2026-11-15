@@ -93,10 +93,13 @@ tasks:
           nix shell nixpkgs#qemu-utils -c qemu-img create -f qcow2 "$disk" "{{.DISK_SIZE}}"
         fi
 
-        # quickemu conf
-        if [ ! -f "$vm_conf" ]; then
-          echo -e "\x1B[32m[+] Writing quickemu conf $vm_conf\x1B[0m"
-          cat > "$vm_conf" <<EOF
+        # quickemu conf. Rewritten every run: it is derived entirely from
+        # the vars above, and a write-once conf pins `iso` to whichever
+        # checkout first ran this, so a run from another worktree (or after
+        # that checkout's result/ is collected) boots a dangling ISO path
+        # and qemu exits immediately.
+        echo -e "\x1B[32m[+] Writing quickemu conf $vm_conf\x1B[0m"
+        cat > "$vm_conf" <<EOF
         guest_os="linux"
         disk_img="$disk"
         iso="$iso_path"
@@ -104,7 +107,6 @@ tasks:
         ram="{{.RAM}}"
         cpu_cores="{{.CPU_CORES}}"
         EOF
-        fi
 
         # Already running?
         if [ -f "$vm_dir/nixos-vm.pid" ] && kill -0 "$(cat "$vm_dir/nixos-vm.pid")" 2>/dev/null; then
@@ -125,6 +127,13 @@ tasks:
                  root@127.0.0.1 true 2>/dev/null; then
             echo -e "\x1B[32m[+] VM SSH up\x1B[0m"
             exit 0
+          fi
+          # quickemu reports a qemu that failed to start in its log and
+          # returns; don't spend the full window waiting on a dead VM.
+          if grep -q "Process:  ERROR" "$vm_dir/quickemu.log" 2>/dev/null; then
+            echo -e "\x1B[31m[!] quickemu failed to start the VM\x1B[0m"
+            tail -n 3 "$vm_dir/quickemu.log"
+            exit 1
           fi
           sleep 3
         done
