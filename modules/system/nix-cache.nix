@@ -9,6 +9,11 @@
 # 8h of CPU across two failed attempts reproducing a toplevel hpp-1 already
 # held).
 #
+# CI runs on PRs only and builds GitHub's test-merge commit. The toplevel
+# embeds the commit, so the host's own toplevel, `etc` and `activate` never
+# hit this cache and are built locally: a handful of trivial derivations.
+# Everything expensive below them has the same hash and comes from hpp-1.
+#
 # Two halves, both owned here so the public key, the address and the authorized
 # consumer keys are declared exactly once:
 #
