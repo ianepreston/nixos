@@ -14,6 +14,7 @@ _:
       size = 10000;
     };
     initContent = ''
+      setopt INTERACTIVE_COMMENTS
       alias vim="nvim"
       alias vi="nvim"
       # Can probably get rid of this with some better config but whatever
