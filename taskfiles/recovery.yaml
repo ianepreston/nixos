@@ -32,6 +32,9 @@
 # document archive as the one restore that can't be rebuilt from
 # anywhere else), and tears the VM down. Quarterly
 # cadence — see issue #135 for the rationale.
+#
+#   task recovery:test:full                     # SOURCE_HOST=hpp-1
+#   task recovery:test:full SOURCE_HOST=amos1   # prod data, via /mnt/prod-backups
 version: '3'
 set: [pipefail]
 shopt: [globstar]
@@ -355,10 +358,23 @@ tasks:
     vars:
       SOURCE_HOST: '{{.SOURCE_HOST | default "hpp-1"}}'
       SSH_PORT: '{{.SSH_PORT | default "22322"}}'
+      # The VM decrypts its own hostSpec's sopsFile (hpp-1.yaml) whatever
+      # SOURCE_HOST is, so that is the file to authorize, not SOURCE_HOST's.
+      VM_SOPS_TARGET:
+        sh: basename "$(nix eval --raw .#nixosConfigurations.tests-server._module.specialArgs.hostSpec.sopsFile)" .yaml
+      # tests-server mounts its own environment's share at /mnt/backups and
+      # the other one at /mnt/<otherEnv>-backups (nfsclient.nix), so a
+      # source in the other environment (e.g. SOURCE_HOST=amos1) is read
+      # through the cross-mount.
+      REPO_MOUNT:
+        sh: |
+          src=$(nix eval --raw .#nixosConfigurations.{{.SOURCE_HOST}}._module.specialArgs.hostSpec.serverEnvironment)
+          vm=$(nix eval --raw .#nixosConfigurations.tests-server._module.specialArgs.hostSpec.serverEnvironment)
+          if [ "$src" = "$vm" ]; then echo /mnt/backups; else echo "/mnt/$src-backups"; fi
     cmds:
       - task: :vm:up
       - task: :vm:sops-authorize
-        vars: {TARGET: '{{.SOURCE_HOST}}'}
+        vars: {TARGET: '{{.VM_SOPS_TARGET}}'}
       # bootstrap:install with LOCAL_SECRETS=true pre-builds against local
       # repo state, so the installed system already carries the
       # uncommitted sops envelope edits the previous step just made. Not
@@ -413,13 +429,13 @@ tasks:
         echo "[+] sentinels placed"
         EOF
       - task: app
-        vars: {APP: bookorbit, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: bookorbit, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - task: app
-        vars: {APP: miniflux, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: miniflux, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - task: app
-        vars: {APP: jellyfin, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: jellyfin, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - task: app
-        vars: {APP: paperless-ngx, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}'}
+        vars: {APP: paperless-ngx, HOST: tests-server, DEST: 127.0.0.1, SSH_PORT: '{{.SSH_PORT}}', SOURCE_HOST: '{{.SOURCE_HOST}}', REPO_MOUNT: '{{.REPO_MOUNT}}'}
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Asserting sentinels were removed by --delete\x1B[0m"
