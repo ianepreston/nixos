@@ -28,9 +28,8 @@
       };
     in
     {
-      # Stable has only the Tauri desktop package. Its server module appeared
-      # after the stable branch. The local server package carries 3.12.0's
-      # AWS-LC build fix until nixos-unstable advances past 3.11.0.
+      # Stable has only the Tauri desktop package. Its server module and
+      # server package appeared after the stable branch.
       imports = [ "${inputs.nixpkgs-unstable}/nixos/modules/services/web-apps/wealthfolio.nix" ];
 
       myObservability.monitoredSystemdUnits = [ "wealthfolio" ];
@@ -53,7 +52,7 @@
 
       services.wealthfolio = {
         enable = true;
-        package = pkgsUnstable.callPackage ./_wealthfolio/package.nix { };
+        package = pkgsUnstable.wealthfolio-server;
         inherit port;
         secretKeyFile = config.sops.secrets."wealthfolio/secret_key".path;
         authRequired = false;
