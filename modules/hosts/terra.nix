@@ -25,6 +25,7 @@
       keyd
       llama-cpp
       moonshine
+      nix-cache-client
       nvidia-rtx5080
       printing
       rgb

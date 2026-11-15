@@ -26,6 +26,8 @@
       # amos1's *own* llama-server: the daemon plus its route.
       llama-cpp
       llm
+      # Substitute CI-built paths from hpp-1's store (#936).
+      nix-cache-client
     ])
     ++ [
       (

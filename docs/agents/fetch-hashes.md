@@ -26,3 +26,10 @@ Deliberately manual: `fetchPypi` pins (blueair-api's version comes from the
 component's `manifest.json` and is enforced at build time by
 `manifestRequirementsCheckHook`), and `automerge: false` on the caddy and
 HA-component renovate rules.
+
+**Hosts don't catch a stale hash either.** amos1, terra and luna substitute
+from hpp-1's store (`modules/system/nix-cache.nix`, #936), and that's the store
+CI just built into. A host that doesn't already hold the stale path (newly
+enabled app, GC'd store) used to fail loudly fetching a mismatched source.
+Now it pulls hpp-1's validly signed copy of the old content. The regen workflow and `task hashes -- --check` are the only
+guard, so don't count on a host-side mismatch to notice.

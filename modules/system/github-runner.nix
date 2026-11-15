@@ -32,8 +32,14 @@
 # settings from the client, not to receive them: `experimental-features`
 # comes from `modules/profiles/base.nix` via /etc/nix/nix.conf and applies
 # to every user. There is no `nixConfig` block in flake.nix for
-# `accept-flake-config` to accept, and no custom substituters anywhere in
-# this repo. If CI ever does need a setting, declare it system-wide in
+# `accept-flake-config` to accept. The one custom substituter in this repo
+# (`modules/system/nix-cache.nix`, #936) points the *other* hosts at this
+# store; this side of it is daemon config (`secret-key-files` signs
+# whatever the daemon builds, whoever asked), so it needs no runner trust
+# either. It does widen what a malicious same-repo workflow can reach: its
+# build outputs are now signed with a key amos1, terra and luna trust, so
+# the build job's `if:` gate protects those hosts as well as this one. If
+# CI ever does need a setting, declare it system-wide in
 # `nix.settings` (or, for caches specifically, `trusted-substituters` —
 # a pre-approved list an untrusted user may opt into) rather than handing
 # the runner blanket override rights.
