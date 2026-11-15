@@ -283,7 +283,7 @@ Use them for the fast path:
 task bootstrap:reinstall HOST=<host> DEST=<ip>      # reinstall NixOS
 task recovery:all HOST=<host> [SOURCE_HOST=<other>] # restore everything
 # or, scoped to one app:
-task recovery:mealie HOST=<host>
+task recovery:app APP=<app> HOST=<host>
 ```
 
 `SOURCE_HOST` defaults to `HOST` (in-place restore); set it to a different host
@@ -358,7 +358,8 @@ clears a stale lock, which is what the dispatchers do automatically.
 The catastrophic rebuild restores everything. To recover just one app without
 touching the rest of the host, scope both the restic include and the postgres
 replay. The three apps in this repo each illustrate a different shape — pick the
-one that matches what you're restoring.
+one that matches what you're restoring. Paperless-ngx, the highest-value
+restore, has its own section after them.
 
 The postgres examples below replay the _current_ on-disk dump at
 `/var/backup/postgresql/all.sql.gz` (refreshed nightly at 02:00). To restore
@@ -503,6 +504,31 @@ source paths to overwrite (e.g. sonarr →
 `/var/lib/sonarr/.config/ NzbDrone/{sonarr,logs}.db`, bazarr →
 `/var/lib/bazarr/db/bazarr.db`). Match the file owner to the service's
 user/group (`server-${env}: servers` for the NFS-aligned apps).
+
+##### Document archive (paperless-ngx)
+
+Paperless holds the household document archive, the one dataset here that can't
+be rebuilt from anywhere else, so it is the restore to get right. It is part of
+the quarterly `recovery:test:full` drill. Use the dispatcher:
+
+```bash
+task recovery:app APP=paperless-ngx HOST=<host> [SOURCE_HOST=<other>]
+```
+
+It is the mealie shape on a native service. It stops all four units
+(`paperless-{scheduler,task-queue,consumer,web}`), restores `/var/lib/paperless-ngx`
+(original and archived documents under `media/`, the Tantivy search index, the
+model cache) with `--delete`, and replays the `paperless_ngx` database from the
+same snapshot. Then it starts the units and waits for `/accounts/login/` on
+`127.0.0.1:8010` to return 200. Restore the files and the database together,
+because document rows point at files in `media/`. NixOS provides the role, and
+sops provides the secret key and OIDC client credentials, so the restore doesn't
+touch either.
+
+The vector store (`llm_index/`) is excluded from backup on purpose (#558).
+`--delete` removes the old one, so AI suggestions and chat have no index to
+retrieve from until the 07:10 index task re-embeds every document. To skip the
+wait, rebuild it by hand: `sudo paperless-manage document_llmindex rebuild`.
 
 #### Cross-host recovery testing (prod → dev)
 
@@ -1676,9 +1702,9 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task bootstrap:secrets HOST=x DEST=ip`          | Add host age key to nix-secrets, create host secrets, commit                     |
 | `task bootstrap:sync HOST=x DEST=ip`             | Rsync nixos and nix-secrets to target                                            |
 | `task bootstrap:rebuild HOST=x DEST=ip`          | Run nixos-rebuild switch on target                                               |
-| `task recovery:<app> HOST=x [SOURCE_HOST=other]` | Restore a single app from restic; see `task --list` for the full app menu        |
+| `task recovery:app APP=x HOST=y [SOURCE_HOST=z]` | Restore a single app from restic, driven by the generated recovery manifest      |
 | `task recovery:all HOST=x`                       | Catastrophic restore: every per-app dispatcher in sequence                       |
-| `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore three shapes, teardown        |
+| `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore four apps, teardown           |
 | `task secrets:oidc APP=x [HOST=y]`               | Generate OIDC `client_id` + `client_secret` for an app on a host                 |
 | `task secrets:dbpw APP=x [HOST=y]`               | Generate a postgres `db_password` for an app on a host                           |
 | `task secrets:secret APP=x KEY=k`                | Generic high-entropy hex secret at `<app>.<key>`                                 |
