@@ -9,8 +9,17 @@
 # that enrolment will work. libfido2 ships etc/udev/rules.d/70-u2f.rules,
 # which services.udev.packages picks up.
 #
-# FIDO2 talks to the key over hidraw directly; pcscd is only needed for
-# the PIV/OpenPGP applets, which nothing here uses.
+# FIDO2 talks to the key over hidraw directly and needs no daemon. The
+# PIV applet is different: age-plugin-yubikey (the hardware-backed sops
+# operator identity, #503) reaches it over PC/SC, so pcscd has to run or
+# `age-plugin-yubikey --list` finds nothing even with the token plugged
+# in. The libfido2 udev rules do not cover that path.
+#
+# pcscd runs as the unprivileged `pcscd` user and reaches the token through
+# ccid's udev rule, which sets GROUP="pcscd" on `add` events only. A token
+# already plugged in when pcscd is first switched on keeps its root-owned
+# node, so pcscd logs `LIBUSB_ERROR_ACCESS` and ykman reports "Failed to
+# connect". Replug it once (or `udevadm trigger --action=add` on the node).
 #
 # home-manager half: distributes the two enrolled credentials' *stub*
 # files and points ssh at them. See the `tokens` comment below.
@@ -43,7 +52,11 @@ in
     { pkgs, ... }:
     {
       services.udev.packages = [ pkgs.libfido2 ];
-      environment.systemPackages = [ pkgs.yubikey-manager ];
+      services.pcscd.enable = true;
+      environment.systemPackages = [
+        pkgs.yubikey-manager
+        pkgs.age-plugin-yubikey
+      ];
 
       home-manager.sharedModules = [ inputs.self.modules.homeManager.yubikey ];
     };
