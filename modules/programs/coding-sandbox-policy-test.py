@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import ipaddress
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -503,6 +506,298 @@ class PolicyTest(unittest.TestCase):
         self.assertNotEqual(second.returncode, 0)
         self.assertIn("sandbox/shared", second.stderr)
         self.assertNotIn("mountPoint: /workspace", second.stdout)
+
+    def test_github_grant_is_strict_normalized_and_optional(self) -> None:
+        self.assertNotIn("github", POLICY.render_policy(self.config(""), None))
+        root = self.config(
+            '[github]\nrepository = "ianepreston/nixos"\n\n'
+            '[github.permissions]\npull_requests = "write"\ncontents = "read"\n'
+        )
+        self.assertEqual(
+            POLICY.render_policy(root, None)["github"],
+            {
+                "repository": "ianepreston/nixos",
+                "permissions": {"contents": "read", "pull_requests": "write"},
+            },
+        )
+        for text in (
+            'github = "ianepreston/nixos"\n',
+            '[github]\nrepository = "ianepreston/nixos"\n',
+            '[github]\nrepository = "ianepreston/nixos"\npermissions = {}\n',
+            '[github]\nrepository = "ianepreston"\npermissions = { contents = "read" }\n',
+            '[github]\nrepository = "a/b/c"\npermissions = { contents = "read" }\n',
+            '[github]\nrepository = "-bad/repo"\npermissions = { contents = "read" }\n',
+            '[github]\nrepository = "'
+            + "-".join("abcdefghijklmnopqrstu")
+            + '/r"\npermissions = { contents = "read" }\n',
+            '[github]\nrepository = "owner/.."\npermissions = { contents = "read" }\n',
+            '[github]\nrepository = "o/r"\npermissions = { issues = "write" }\n',
+            '[github]\nrepository = "o/r"\npermissions = { administration = "read" }\n',
+            '[github]\nrepository = "o/r"\npermissions = { contents = "admin" }\n',
+            '[github]\nrepository = "o/r"\ntoken = "x"\npermissions = { contents = "read" }\n',
+        ):
+            with self.subTest(text=text), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(self.config(text), None)
+
+    def test_github_grant_reserves_credential_environment_names(self) -> None:
+        grant = '[github]\nrepository = "o/r"\npermissions = { contents = "read" }\n'
+        for name in ("GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GIT_CONFIG_COUNT"):
+            with self.subTest(name=name), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(
+                    self.config(f'{grant}\n[environment]\n{name} = "x"\n'), None
+                )
+        # Without a grant the names stay ordinary literal environment.
+        self.assertEqual(
+            POLICY.render_policy(
+                self.config('[environment]\nGH_HOST = "github.com"\n'), None
+            )["environment"],
+            {"GH_HOST": "github.com"},
+        )
+
+    def test_github_session_token_reaches_only_the_new_agent_process(self) -> None:
+        sentinel = "ghs_SENTINELtoken0123456789"
+        installation = "918273645"
+        bash = subprocess.run(
+            ["sh", "-c", "command -v bash"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        bin_dir, logs, shm, agent_home, project = (
+            base / "bin",
+            base / "logs",
+            base / "shm",
+            base / "agent",
+            base / "project",
+        )
+        for directory in (bin_dir, logs, shm, agent_home, project):
+            directory.mkdir()
+        (agent_home / ".config/coding-sandbox").mkdir(parents=True)
+        (agent_home / ".config/coding-sandbox/environment.sh").write_text("")
+        key, app_id = base / "app.pem", base / "app-id"
+        subprocess.run(
+            ["openssl", "genrsa", "-out", str(key), "2048"],
+            check=True,
+            capture_output=True,
+        )
+        app_id.write_text("123456\n")
+
+        # limactl stand-in: runs the guest command locally with /dev/shm and
+        # /home/agent mapped into the test directory, and logs every argv.
+        (bin_dir / "limactl").write_text(
+            f"""#!{bash}
+set -euo pipefail
+printf '%s\\n' "$*" >>"$FAKE_LOGS/argv"
+case "$1" in
+  list) printf '%s\\n' "$FAKE_INSTANCE" ;;
+  shell)
+    shift 3
+    while [[ "$1" != -- ]]; do shift; done
+    shift
+    args=()
+    for arg in "$@"; do
+      case "$arg" in
+        /dev/shm) arg=$FAKE_SHM ;;
+        /dev/shm/*) arg="$FAKE_SHM/${{arg#/dev/shm/}}" ;;
+        /home/agent) arg=$FAKE_AGENT_HOME ;;
+      esac
+      args+=("$arg")
+    done
+    HOME=$FAKE_AGENT_HOME "${{args[@]}}" | sed "s#$FAKE_SHM#/dev/shm#g"
+    exit "${{PIPESTATUS[0]}}"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+        )
+        # curl stand-in: answers from its stdin config, and logs argv/config.
+        (bin_dir / "curl").write_text(
+            f"""#!{bash}
+set -euo pipefail
+printf '%s\\n' "$*" >>"$FAKE_LOGS/argv"
+config=$(cat)
+printf '%s\\n' "$config" >>"$FAKE_LOGS/curl-config"
+case "$config" in
+  *'/repos/ianepreston/nixos/installation"'*) printf '{{"id":{installation}}}' ;;
+  *'/app/installations/{installation}/access_tokens"'*) cat "$FAKE_TOKEN_RESPONSE" ;;
+  *) printf '{{"message":"Not Found"}}'; exit 22 ;;
+esac
+"""
+        )
+        for tool in ("limactl", "curl"):
+            (bin_dir / tool).chmod(0o755)
+
+        (project / ".sandbox.toml").write_text(
+            '[github]\nrepository = "ianepreston/nixos"\n\n'
+            '[github.permissions]\ncontents = "write"\npull_requests = "write"\n'
+        )
+
+        def token_response(permissions: dict[str, str]) -> Path:
+            path = base / "token.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "token": sentinel,
+                        "expires_at": "2026-11-16T13:00:00Z",
+                        "permissions": {"metadata": "read", **permissions},
+                        "repositories": [{"full_name": "ianepreston/nixos"}],
+                    }
+                )
+            )
+            return path
+
+        environment = {
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(base),
+            "XDG_STATE_HOME": str(base / "state"),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            "SANDBOX_GITHUB_APP_ID_FILE": str(app_id),
+            "SANDBOX_GITHUB_APP_KEY_FILE": str(key),
+            "FAKE_LOGS": str(logs),
+            "FAKE_SHM": str(shm),
+            "FAKE_AGENT_HOME": str(agent_home),
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_ASKPASS": "false",
+            "SSH_ASKPASS": "false",
+            **QEMU_BACKEND,
+        }
+        # Run the real launcher functions with only the host-platform probe
+        # stubbed, recording the policy as `sandbox start` would.
+        harness = (
+            f"source <(sed '$d' \"{SANDBOX_PATH}\")\n"
+            "host_platform_check() { :; }\n"
+            'parse_target "$2"; export FAKE_INSTANCE="$instance"; record_policy\n'
+            'main "$@"\n'
+        )
+        guest_command = [
+            "bash",
+            "-c",
+            'printf "token=%s\\n" "${GH_TOKEN-unset}"; '
+            'printf "protocol=https\\nhost=github.com\\n\\n" | git credential fill; '
+            "exit 7",
+        ]
+
+        def launch(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [bash, "-c", harness, "sandbox-test", *arguments],
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+        environment["FAKE_TOKEN_RESPONSE"] = str(
+            token_response({"contents": "write", "pull_requests": "write"})
+        )
+        result = launch("exec", str(project), "--", *guest_command)
+        self.assertEqual(result.returncode, 7, result.stderr + result.stdout)
+        self.assertIn(f"token={sentinel}\n", result.stdout)
+        self.assertIn(f"password={sentinel}\n", result.stdout)
+        self.assertIn("username=x-access-token\n", result.stdout)
+        self.assertEqual(list(shm.iterdir()), [], "staged credential was not removed")
+
+        # The App JWT is RS256-signed by the host key, for this App, and
+        # short-lived; it travelled only inside curl's stdin config.
+        config = (logs / "curl-config").read_text()
+        jwt = re.search(r"Authorization: Bearer ([^\"]+)", config).group(1)
+        header, payload, signature = jwt.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=="))
+        self.assertEqual(claims["iss"], 123456)
+        self.assertLessEqual(claims["exp"] - claims["iat"], 600)
+        public_key, signed, signature_file = (
+            base / "app.pub",
+            base / "signed",
+            base / "sig",
+        )
+        subprocess.run(
+            ["openssl", "rsa", "-in", str(key), "-pubout", "-out", str(public_key)],
+            check=True,
+            capture_output=True,
+        )
+        signed.write_text(f"{header}.{payload}")
+        signature_file.write_bytes(base64.urlsafe_b64decode(signature + "=="))
+        subprocess.run(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-verify",
+                str(public_key),
+                "-signature",
+                str(signature_file),
+                str(signed),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        self.assertIn(
+            '"repositories":["nixos"]', config.replace('\\"', '"').replace(" ", "")
+        )
+
+        # No secret in any process argument, the policy record, or output.
+        argv = (logs / "argv").read_text()
+        for secret in (sentinel, jwt, installation):
+            self.assertNotIn(secret, argv)
+            self.assertNotIn(secret, result.stderr)
+        for record in (base / "state/coding-sandbox").iterdir():
+            self.assertNotIn(sentinel, record.read_text())
+        for subcommand in ("plan", "template"):
+            output = subprocess.run(
+                ["bash", str(SANDBOX_PATH), subcommand, str(project)],
+                capture_output=True,
+                env=environment,
+                text=True,
+                check=True,
+            ).stdout
+            self.assertNotIn(sentinel, output)
+            self.assertNotIn(str(key), output)
+        plan = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(project)],
+            capture_output=True,
+            env=environment,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertIn("repository: ianepreston/nixos", plan)
+        self.assertIn("permissions: contents:write, pull_requests:write", plan)
+        self.assertIn("expiry: one hour; guest renewal unavailable", plan)
+        self.assertNotIn("NOT READY", plan)
+
+        # A token broader than the reviewed grant is refused before any
+        # guest session starts.
+        (logs / "argv").write_text("")
+        environment["FAKE_TOKEN_RESPONSE"] = str(
+            token_response(
+                {"contents": "write", "pull_requests": "write", "issues": "write"}
+            )
+        )
+        refused = launch("exec", str(project), "--", "true")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("does not match the declared grant", refused.stderr)
+        self.assertNotIn("sandbox-agent-exec", (logs / "argv").read_text())
+
+        # A credential-free sandbox never contacts GitHub or stages anything.
+        (logs / "argv").write_text("")
+        (logs / "curl-config").unlink()
+        (project / ".sandbox.toml").write_text("")
+        free = launch("exec", str(project), "--", *guest_command)
+        self.assertEqual(free.returncode, 7, free.stderr)
+        self.assertIn("token=unset\n", free.stdout)
+        argv = (logs / "argv").read_text()
+        self.assertFalse((logs / "curl-config").exists())
+        self.assertNotIn("sandbox-github-stage", argv)
+
+        # Without provisioned App credentials, a grant fails closed.
+        (project / ".sandbox.toml").write_text(
+            '[github]\nrepository = "ianepreston/nixos"\n'
+            'permissions = { contents = "read" }\n'
+        )
+        del environment["SANDBOX_GITHUB_APP_KEY_FILE"]
+        missing = launch("exec", str(project), "--", "true")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("does not provision GitHub App credentials", missing.stderr)
 
     def test_launcher_requires_the_wrapper_backend(self) -> None:
         root = self.config("")

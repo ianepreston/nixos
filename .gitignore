@@ -19,3 +19,6 @@ lazy-lock.json
 # canonical agent-neutral workflow content lives under skills/.
 .claude/*
 !.claude/skills/
+
+# Python bytecode from running colocated test scripts locally
+__pycache__/

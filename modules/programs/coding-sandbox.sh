@@ -65,6 +65,10 @@ account. The Lima transport account retains passwordless sudo only to bootstrap
 the guest and switch to that account. SSH keys, credential agents, and the
 rest of HOME are never forwarded or mounted.
 
+A [github] table grants one repository and a small permission set. Each shell
+or exec session then receives a fresh one-hour GitHub App token as GH_TOKEN
+plus an HTTPS Git credential helper; the guest can never mint or renew one.
+
 The default storage.nix_store = "instance" keeps /nix only for the lifetime of
 one VM. storage.nix_store = "persistent" keeps a separate 50 GiB Lima disk
 for this project and network mode; inspect it with `sandbox cache status` and
@@ -75,6 +79,156 @@ EOF
 json_string() {
   jq -cn --arg value "$1" '$value'
 }
+
+# --- GitHub session credential ([github]) ---------------------------------
+#
+# The host mints a GitHub App installation token immediately before each
+# `shell`/`exec` and hands it only to that new agent process. The App key,
+# JWT, installation ID and token never appear in a process argument on the
+# host or in the guest: curl takes its whole request (URL included, because
+# the URL names the installation) as a config file on stdin, and the token
+# crosses into the guest over stdin. coding-sandbox.nix sets the two
+# credential paths on hosts that provision them through sops-nix.
+
+github_grant_declared() {
+  jq -e '.github != null' <<<"$policy_json" >/dev/null
+}
+
+# "contents:write, pull_requests:write" — shared by plan and confirmation so
+# both always describe the same grant.
+github_grant_permissions() {
+  jq -r '.github.permissions | to_entries | map("\(.key):\(.value)") | join(", ")' <<<"$policy_json"
+}
+
+github_credentials_status() {
+  if [[ -z "${SANDBOX_GITHUB_APP_ID_FILE:-}" || -z "${SANDBOX_GITHUB_APP_KEY_FILE:-}" ]]; then
+    printf 'this host does not provision GitHub App credentials'
+    return 1
+  fi
+  if [[ ! -r "$SANDBOX_GITHUB_APP_ID_FILE" || ! -r "$SANDBOX_GITHUB_APP_KEY_FILE" ]]; then
+    printf 'GitHub App credentials are not readable at %s and %s; apply the Home Manager configuration' \
+      "$SANDBOX_GITHUB_APP_ID_FILE" "$SANDBOX_GITHUB_APP_KEY_FILE"
+    return 1
+  fi
+  printf 'GitHub App credentials are provisioned'
+}
+
+base64url() {
+  openssl base64 -A | tr '+/' '-_' | tr -d '='
+}
+
+# A ten-minute App JWT (GitHub's maximum), backdated a minute for clock skew.
+github_app_jwt() {
+  local app_id now header payload signature
+  app_id=$(tr -d '[:space:]' <"$SANDBOX_GITHUB_APP_ID_FILE")
+  [[ "$app_id" =~ ^[0-9]+$ ]] || die "GitHub App ID in $SANDBOX_GITHUB_APP_ID_FILE is not numeric"
+  now=$(date +%s)
+  header=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | base64url)
+  payload=$(jq -cn --argjson iss "$app_id" --argjson now "$now" \
+    '{ iat: ($now - 60), exp: ($now + 540), iss: $iss }' | base64url)
+  signature=$(printf '%s.%s' "$header" "$payload" |
+    openssl dgst -sha256 -binary -sign "$SANDBOX_GITHUB_APP_KEY_FILE" | base64url) ||
+    die "cannot sign a GitHub App JWT with $SANDBOX_GITHUB_APP_KEY_FILE"
+  printf '%s.%s.%s' "$header" "$payload" "$signature"
+}
+
+# github_api LABEL METHOD PATH BEARER [JSON-BODY]; prints the response body.
+# Only printf (a builtin) touches PATH and BEARER: both reach curl inside its
+# stdin config, never in an argument list. LABEL is the non-secret wording
+# for an error, because PATH may name the installation.
+github_api() {
+  local label="$1" method="$2" path="$3" bearer="$4" body="${5:-}" response
+  if ! response=$(
+    {
+      printf 'url = "https://api.github.com%s"\n' "$path"
+      printf 'request = "%s"\n' "$method"
+      printf 'header = "Authorization: Bearer %s"\n' "$bearer"
+      printf '%s\n' \
+        'header = "Accept: application/vnd.github+json"' \
+        'header = "X-GitHub-Api-Version: 2022-11-28"' \
+        'user-agent = "coding-sandbox"' \
+        'silent' 'show-error' 'fail-with-body'
+      if [[ -n "$body" ]]; then
+        body="${body//\\/\\\\}"
+        printf 'header = "Content-Type: application/json"\n'
+        printf 'data = "%s"\n' "${body//\"/\\\"}"
+      fi
+    } | curl --config -
+  ); then
+    die "GitHub API: cannot $label: $(jq -r '.message? // empty' <<<"$response" 2>/dev/null || true)"
+  fi
+  printf '%s' "$response"
+}
+
+# Sets github_token and github_token_expiry.
+mint_github_token() {
+  local status repository owner name jwt installation request response
+  status=$(github_credentials_status) || die "$status, but $(jq -r '.config_path' <<<"$policy_json") declares [github]"
+  repository=$(jq -r '.github.repository' <<<"$policy_json")
+  owner="${repository%%/*}"
+  name="${repository#*/}"
+  jwt=$(github_app_jwt)
+  # github_api reports its own failure; only a malformed answer needs a
+  # second message here.
+  response=$(github_api "find the App installation for $repository" \
+    GET "/repos/$owner/$name/installation" "$jwt")
+  installation=$(jq -er '.id' <<<"$response") ||
+    die "GitHub returned no installation ID for $repository"
+  request=$(jq -c --arg name "$name" '{ repositories: [$name], permissions: .github.permissions }' \
+    <<<"$policy_json")
+  response=$(github_api "mint a token for $repository" \
+    POST "/app/installations/$installation/access_tokens" "$jwt" "$request")
+  unset jwt installation
+  # GitHub always adds metadata:read. Refuse anything else it did not echo
+  # back exactly: a token must never carry more than the reviewed grant.
+  jq -e --arg repository "$repository" --argjson policy "$policy_json" '
+    (.repositories | map(.full_name | ascii_downcase)) == [$repository | ascii_downcase]
+    and (.permissions | del(.metadata)) == $policy.github.permissions
+    and ((.permissions.metadata // "read") == "read")
+    and (.token | type == "string" and length > 0)
+  ' <<<"$response" >/dev/null || die "GitHub returned a token that does not match the declared grant; refusing to use it"
+  github_token=$(jq -r '.token' <<<"$response")
+  github_token_expiry=$(jq -r '.expires_at' <<<"$response")
+}
+
+# Writes the token into a fresh 0700 tmpfs directory owned by agent, over
+# stdin, and sets github_stage to its path. The session deletes it before
+# running anything else; the launcher deletes it again afterwards in case the
+# session never started.
+stage_github_token() {
+  # The command below is evaluated by the guest shell, not this launcher.
+  # shellcheck disable=SC2016
+  github_stage=$(printf '%s' "$github_token" | limactl shell --workdir "$transport_workdir" "$instance" \
+    sudo -H -u agent -- bash -c \
+    'umask 077; stage=$(mktemp -d "$1/coding-sandbox-github.XXXXXXXX"); cat >"$stage/token"; printf "%s\n" "$stage"' \
+    sandbox-github-stage /dev/shm) || die 'could not stage the GitHub session credential in the guest'
+  unset github_token
+  [[ "$github_stage" =~ ^/dev/shm/coding-sandbox-github\.[A-Za-z0-9]{8}$ ]] ||
+    die 'could not stage the GitHub session credential in the guest'
+}
+
+remove_github_stage() {
+  [[ -n "${github_stage:-}" ]] || return 0
+  limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
+    rm -rf -- "$github_stage" >/dev/null 2>&1 || true
+}
+
+# Guest-side prelude shared by shell and exec. "$2" is the staged credential
+# directory, or empty for a credential-free sandbox. The token lives only in
+# this process's environment from here on; git reads it through an
+# environment-only credential helper, so no guest config file names it.
+# shellcheck disable=SC2016
+github_session_prelude='
+if [[ -n "$2" ]]; then
+  GH_TOKEN=$(<"$2/token")
+  rm -rf -- "$2"
+  export GH_TOKEN
+  export GIT_CONFIG_COUNT=2
+  export GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0=
+  export GIT_CONFIG_KEY_1=credential.https://github.com.helper
+  export GIT_CONFIG_VALUE_1="!f() { test \"\$1\" = get || return 0; echo username=x-access-token; echo \"password=\$GH_TOKEN\"; }; f"
+fi
+'
 
 parse_target() {
   network_mode_override=''
@@ -253,6 +407,13 @@ doctor() {
     failures=1
   fi
 
+  # Optional: only a policy with [github] needs App credentials.
+  if result=$(github_credentials_status); then
+    printf '  PASS  %s.\n' "$result"
+  else
+    printf '  INFO  [github] grants unavailable: %s.\n' "$result"
+  fi
+
   printf '\n'
   if ((failures)); then
     cat <<'EOF'
@@ -300,6 +461,7 @@ Coding sandbox plan
   Network:      $network_mode ($(jq -r '.mode_source' <<<"$policy_json"))
 EOF
 
+  show_github_grant
   show_callbacks
 
   case "$nix_store_mode" in
@@ -393,12 +555,38 @@ EOF
     jq -r '.strict_domains[] | "    \(.name) -> \(.addresses | join(", "))"' <<<"$policy_json"
   fi
 
-  cat <<'EOF'
+  if github_grant_declared; then
+    cat <<'EOF'
+
+No SSH agent, host credential file, or directory outside the declared mounts is
+available in the VM. The only credential is the GitHub session token above,
+held in the environment of each shell/exec process. Git mount worktrees are
+retained under the launcher-owned directory above after VM deletion so
+uncommitted guest work is never discarded.
+EOF
+  else
+    cat <<'EOF'
 
 No host credentials, SSH agent, or directories outside the declared mounts are
 available in the VM. Git mount worktrees are retained under the launcher-owned
 directory above after VM deletion so uncommitted guest work is never discarded.
 EOF
+  fi
+}
+
+show_github_grant() {
+  if ! github_grant_declared; then
+    printf '%s\n' '  GitHub credential: none'
+    return
+  fi
+  local status
+  printf '%s\n' '  GitHub credential:'
+  printf '    repository: %s\n' "$(jq -r '.github.repository' <<<"$policy_json")"
+  printf '    permissions: %s\n' "$(github_grant_permissions)"
+  printf '%s\n' \
+    '    delivery: fresh GitHub App token for each shell/exec session' \
+    '    expiry: one hour; guest renewal unavailable'
+  status=$(github_credentials_status) || printf '    host: NOT READY: %s\n' "$status"
 }
 
 show_callbacks() {
@@ -1080,6 +1268,12 @@ The selected Home Manager modules activate as the unprivileged agent account.
 After activation, every selected startup script executes as that same account.
 EOF
 
+  if github_grant_declared; then
+    confirmation+=' WITH GITHUB'
+    printf '\nGitHub credential: every shell/exec session receives a fresh one-hour token for\n%s with %s.\nCode in the guest can read and copy that token until it expires.\n' \
+      "$(jq -r '.github.repository' <<<"$policy_json")" "$(github_grant_permissions)"
+  fi
+
   "$assume_yes" && return
   printf 'Type %s to create this VM: ' "$confirmation"
   read -r response
@@ -1229,43 +1423,56 @@ instance_action() {
     die "$instance does not exist; run sandbox start first"
   fi
   policy_matches_instance
+  local session_status=0
+  local -a proxy_environment=()
+  github_stage=''
   case "$action" in
-    shell)
-      if [[ "$network_mode" == restricted ]]; then
-        # /etc/profile.d supplies the loopback proxy for the normal interactive
-        # path.  Use a login shell explicitly: Lima's raw SSH shell need not
-        # source the system profile. Lima is only the transport account; the
-        # interactive agent process has no administrative privilege.
-        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-          bash -c "cd \"\$1\"; exec bash --login" sandbox-agent-shell "$guest_workdir"
-      else
-        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-          bash -c "cd \"\$1\"; exec bash --login" sandbox-agent-shell "$guest_workdir"
+    shell | exec)
+      [[ "$action" == shell ]] || ((${#command[@]})) || die 'sandbox exec needs a command after --'
+      if github_grant_declared; then
+        mint_github_token
+        # Before staging, so an interrupt or failure after the guest has
+        # written the token still removes it.
+        trap remove_github_stage EXIT
+        stage_github_token
+        printf 'sandbox: GitHub token for %s expires %s; re-enter through sandbox %s for a fresh one\n' \
+          "$(jq -r '.github.repository' <<<"$policy_json")" "$github_token_expiry" "$action" >&2
       fi
       ;;
+  esac
+  case "$action" in
+    shell)
+      # /etc/profile.d supplies the loopback proxy for the normal interactive
+      # path in restricted mode.  Use a login shell explicitly: Lima's raw SSH
+      # shell need not source the system profile. Lima is only the transport
+      # account; the interactive agent process has no administrative privilege.
+      # The command below is evaluated by the guest shell, not this launcher.
+      # shellcheck disable=SC2016
+      limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
+        bash -c "$github_session_prelude"'cd "$1"; exec bash --login' \
+        sandbox-agent-shell "$guest_workdir" "$github_stage" || session_status=$?
+      ;;
     exec)
-      ((${#command[@]})) || die 'sandbox exec needs a command after --'
       if [[ "$network_mode" == restricted ]]; then
         # Unlike an interactive login shell, an arbitrary command never reads
         # /etc/profile.d.  Inject only the guest-local proxy endpoints, never
-        # a host proxy or credential, so `sandbox exec -- curl …` has the
-        # documented allowlisted path while direct connections stay default-drop.
-        # The command below is evaluated by the guest shell, not this launcher.
-        # shellcheck disable=SC2016
-        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- env \
-          HTTP_PROXY=http://127.0.0.1:3128 \
-          HTTPS_PROXY=http://127.0.0.1:3128 \
-          ALL_PROXY=http://127.0.0.1:3128 \
-          NO_PROXY=127.0.0.1,localhost \
-          http_proxy=http://127.0.0.1:3128 \
-          https_proxy=http://127.0.0.1:3128 \
-          bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
-      else
-        # The command below is evaluated by the guest shell, not this launcher.
-        # shellcheck disable=SC2016
-        limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-          bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"; cd "$1"; shift; exec "$@"' sandbox-agent-exec "$guest_workdir" "${command[@]}"
+        # a host proxy, so `sandbox exec -- curl …` has the documented
+        # allowlisted path while direct connections stay default-drop.
+        proxy_environment=(
+          HTTP_PROXY=http://127.0.0.1:3128
+          HTTPS_PROXY=http://127.0.0.1:3128
+          ALL_PROXY=http://127.0.0.1:3128
+          NO_PROXY="127.0.0.1,localhost"
+          http_proxy=http://127.0.0.1:3128
+          https_proxy=http://127.0.0.1:3128
+        )
       fi
+      # The command below is evaluated by the guest shell, not this launcher.
+      # shellcheck disable=SC2016
+      limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- env \
+        "${proxy_environment[@]}" \
+        bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"'"$github_session_prelude"'cd "$1"; shift 2; exec "$@"' \
+        sandbox-agent-exec "$guest_workdir" "$github_stage" "${command[@]}" || session_status=$?
       ;;
     status)
       limactl list "$instance"
@@ -1275,6 +1482,9 @@ instance_action() {
       note "stopped. State remains until sandbox destroy."
       ;;
   esac
+  # The guest command's own status, as before; the EXIT trap still removes a
+  # staged credential that the session never consumed.
+  return "$session_status"
 }
 
 destroy() {

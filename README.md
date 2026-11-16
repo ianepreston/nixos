@@ -1465,8 +1465,8 @@ the thing to fix when the sops files get split more finely.
 
 `work` (macOS, VZ) and the `terra` and `luna` workstations (NixOS, QEMU/KVM)
 carry a Lima launcher for isolated coding and demo projects. Its visible per-project mount specification, network grants and
-lateral boundary, hardened/open modes, VM lifecycle, cache behaviour, and
-current limits are in the
+lateral boundary, hardened/open modes, per-session GitHub credential grants,
+VM lifecycle, cache behaviour, and current limits are in the
 [coding sandbox guide](docs/coding-sandbox.md).
 
 `modules/programs/pi.nix` owns pi's Nix package and the single
