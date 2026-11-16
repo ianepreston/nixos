@@ -146,7 +146,7 @@
           owner = "greghesp";
           repo = "ha-bambulab";
           tag = "v2.3.0";
-          hash = "sha256-9KsIzem7BjImUW+BTnAUYJ7CnU5bFpet7D2HhmOwTbA=";
+          hash = "sha256-FqN+CKS17fv3f3AoqUxEGhjLXvTIWRcDPmrOHWLEpiI=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
       };
