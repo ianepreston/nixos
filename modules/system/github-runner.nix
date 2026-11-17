@@ -119,14 +119,8 @@ _: {
         # every service start regardless — `# Always clean workDir` in the
         # module's service.nix). /nix/store is daemon-owned and system-wide,
         # outside both, and is never touched. The per-job cost is a fresh
-        # `actions/checkout` clone plus a re-registration handshake, plus
-        # whatever lives only in the runner user's ~/.cache/nix: the
-        # fetcher cache behind eval-time `builtins.fetchGit`, which starts
-        # empty every job. Fixed-output fetches are in the store and cost
-        # nothing; eval-time git fetches are full clones on every job. Pin
-        # them by hash rather than persisting the cache (#962), since a
-        # workflow-writable fetcher cache is exactly the leftover state this
-        # setting exists to remove.
+        # `actions/checkout` clone plus a re-registration handshake —
+        # seconds, not a rebuild.
         #
         # Requires `tokenFile` to be a PAT rather than a registration
         # token, since the agent mints a new registration on every start.

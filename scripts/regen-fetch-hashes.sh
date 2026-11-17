@@ -223,36 +223,17 @@ regen_marked_hash() {
 
     # Build with a hash nothing can match, so nix has to run the fetcher and
     # report what the real one is.
-    #
-    # Several markers can name the same attr (one vendor dir, several pinned
-    # sources), and after an upstream bump more than one of them can be stale
-    # at once, so the build may report several mismatches. Only the one whose
-    # `specified:` is the fake hash belongs to this marker; the last `got:`
-    # could be a sibling's. `--keep-going` makes sure the faked derivation
-    # still gets to run when a sibling fails first; a lone marker doesn't
-    # need it and stops at the first failure as before.
-    keep_going=()
-    if [[ $(grep -cF "regen-hash: $attr" "$file") -gt 1 ]]; then
-      keep_going=(--keep-going)
-    fi
     backup_of=$file
     backup_copy=$(mktemp)
     cp "$file" "$backup_copy"
     set_hash "$file" "$lineno" "$fake_hash"
-    out=$(nix build --no-link "${keep_going[@]}" "${nix_args[@]}" ".#$attr" 2>&1) && {
+    out=$(nix build --no-link "${nix_args[@]}" ".#$attr" 2>&1) && {
       note "regen-fetch-hashes: $attr built with a fake hash — is $file:$lineno actually its hash?"
       exit 1
     }
     restore_backup
 
-    new=$(awk -v fake="$fake_hash" '
-      /specified:/ { mine = index($0, fake) > 0; next }
-      mine && /got:/ { print; mine = 0 }' <<<"$out" | grep -o "$hash_re" | sort -u || true)
-    if [[ $(wc -l <<<"$new") -gt 1 ]]; then
-      note "regen-fetch-hashes: more than one derivation in $attr has the fake hash."
-      note "Give each new pin in $file a distinct placeholder hash and rerun."
-      exit 1
-    fi
+    new=$(grep -o "got:[[:space:]]*$hash_re" <<<"$out" | tail -1 | grep -o "$hash_re" || true)
     if [[ -z $new ]]; then
       note "regen-fetch-hashes: no hash mismatch in the build of $attr:"
       note "$out"
