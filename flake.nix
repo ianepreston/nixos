@@ -83,7 +83,7 @@
     # own pinned nixos-unstable (node 24 + pnpm 10), and repointing them
     # at our stable channel is the kind of change only upstream can test
     # — and upstream explicitly doesn't test the nix path at all.
-    sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.11.0";
+    sparkyfitness.url = "github:CodeWithCJ/SparkyFitness/v1.12.1";
     # Omnigent (agent control plane): server NixOS module and desktop HM module.
     # Tracks omnigent-nix main; the exact rev lives in flake.lock. Follows
     # nixpkgs-unstable because our `nixpkgs` (26.05) has no electron_45, which
