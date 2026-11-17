@@ -18,6 +18,12 @@
     # See also 'stable-packages' and 'unstable-packages' overlays at 'overlays/default.nix"
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Home Assistant alone is held at this rev: auth_oidc 1.2.1 fails its tests
+    # against HA 2026.11.1 (PersonData API change; upstream hass-oidc-auth#459).
+    # A pinned rev is skipped by `nix flake update`, so this will not move on
+    # its own. Remove it, and point modules/apps/homeassistant.nix back at
+    # nixpkgs-unstable, once a fixed auth_oidc reaches nixpkgs-unstable.
+    nixpkgs-unstable-ha.url = "github:NixOS/nixpkgs/d4f25a3e562008648d45bcf2d70bcc7422cad84e";
     nix-darwin.url = "github:nix-darwin/nix-darwin/nix-darwin-26.05";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs-darwin";
     hardware.url = "github:nixos/nixos-hardware";

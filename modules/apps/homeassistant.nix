@@ -19,7 +19,7 @@
 # snapshot for a year (e.g. 2026.5.x on nixos-26.05). Per docs/agents/app-packaging.md
 # ("prefer nixpkgs services" + "wire a per-package overlay rather than
 # flipping the whole flake to unstable"), the HA package and its custom
-# component are pinned to nixpkgs-unstable so integrations stay current;
+# component are pinned to nixpkgs-unstable-ha (see flake.nix) so integrations stay current;
 # the rest of the system stays on stable.
 #
 # Operator first-boot steps that remain (UI/.storage-owned, not yaml):
@@ -47,7 +47,7 @@
 
       # Pin just the HA package + its custom component (which must share the
       # same python interpreter, see nixpkgs#341366) to unstable.
-      pkgsUnstable = import inputs.nixpkgs-unstable {
+      pkgsUnstable = import inputs.nixpkgs-unstable-ha {
         inherit (pkgs.stdenv.hostPlatform) system;
         inherit (pkgs) config;
       };
@@ -245,7 +245,7 @@
       # 2027.2 rejects; the unstable module dropped those options.
       disabledModules = [ "services/home-automation/home-assistant.nix" ];
       imports = [
-        "${inputs.nixpkgs-unstable}/nixos/modules/services/home-automation/home-assistant.nix"
+        "${inputs.nixpkgs-unstable-ha}/nixos/modules/services/home-automation/home-assistant.nix"
       ];
 
       services.home-assistant = {
