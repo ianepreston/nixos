@@ -595,7 +595,7 @@
         "type": "github"
       }
     },
-    "nixpkgs-unstable-ha": {
+    "nixpkgs-unstable-held": {
       "locked": {
         "lastModified": 1794386569,
         "narHash": "sha256-x9sADJvoVG0L6RejZB+/BB4YiGZFBZrfTlhF4uBq1tQ=",
@@ -800,7 +800,7 @@
         "nixpkgs-darwin": "nixpkgs-darwin",
         "nixpkgs-stable": "nixpkgs-stable",
         "nixpkgs-unstable": "nixpkgs-unstable",
-        "nixpkgs-unstable-ha": "nixpkgs-unstable-ha",
+        "nixpkgs-unstable-held": "nixpkgs-unstable-held",
         "omnigent": "omnigent",
         "preservation": "preservation",
         "sops-nix": "sops-nix",

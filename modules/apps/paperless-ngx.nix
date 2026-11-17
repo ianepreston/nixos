@@ -30,14 +30,14 @@
 # Version currency: nixos-26.05 pins 2.20.15, the tail of the old
 # major, while upstream is on 3.x. Per docs/agents/app-packaging.md ("wire a per-package
 # overlay rather than flipping the whole flake to unstable") the
-# package comes from nixpkgs-unstable. The 2.x -> 3.x module changed
+# package comes from nixpkgs-unstable-held (see flake.nix). The 2.x -> 3.x module changed
 # in lockstep with the package (Whoosh → Tantivy index with its own
 # tmpfiles dir and a `reindex --if-needed` migration, the secret-key
 # service above, `passthru.dependencies` instead of
 # `propagatedBuildInputs` for the web unit's PYTHONPATH), so the
 # stable module cannot drive a 3.x package — disabledModules swaps in
 # the unstable module to match. Both track the flake's
-# nixpkgs-unstable input, which the flake-update workflow bumps.
+# nixpkgs-unstable-held input, which is pinned (see flake.nix).
 #
 # Upgrade notes (2.20.15 → 3.x, #526): the scheduler preStart runs
 # `migrate` then `document_index reindex --if-needed`, which converts
@@ -73,7 +73,7 @@
       # Pin just the paperless package (and, via disabledModules below,
       # its NixOS module) to unstable; the rest of the system stays on
       # stable.
-      pkgsUnstable = import inputs.nixpkgs-unstable {
+      pkgsUnstable = import inputs.nixpkgs-unstable-held {
         inherit (pkgs.stdenv.hostPlatform) system;
         inherit (pkgs) config;
       };
@@ -109,7 +109,7 @@
 
       # The 3.x package needs the 3.x module (see the header comment).
       disabledModules = [ "services/misc/paperless.nix" ];
-      imports = [ "${inputs.nixpkgs-unstable}/nixos/modules/services/misc/paperless.nix" ];
+      imports = [ "${inputs.nixpkgs-unstable-held}/nixos/modules/services/misc/paperless.nix" ];
 
       myPostgresApp.paperless-ngx.consumerService = paperlessUnits;
 
