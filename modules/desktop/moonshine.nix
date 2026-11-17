@@ -7,69 +7,12 @@
 { inputs, ... }:
 {
   flake.modules.nixos.moonshine =
-    {
-      hostSpec,
-      lib,
-      pkgs,
-      ...
-    }:
-    let
-      # Upstream builds with `cargoLock.allowBuiltinFetchGit`, which turns
-      # every git dependency into an eval-time `builtins.fetchGit` (a full
-      # clone of all refs). Its only cache is the evaluating user's
-      # ~/.cache/nix, which the ephemeral CI runner wipes after every job, so
-      # each job that evaluates terra re-cloned them from GitHub: about 3.5
-      # minutes per run, and 44 minutes once when GitHub served pixelforge
-      # at ~90 KiB/s (#962). A hash pin swaps the clone for a fixed-output
-      # `fetchgit`, which is fetched once and then served from /nix/store.
-      #
-      # Only ash (with its Vulkan-Headers submodule) and pixelforge are
-      # pinned. Upstream's package.nix still calls `builtins.fetchGit` itself
-      # for inputtino and ferriscope, and builds ferriscope-wsi (which pulls
-      # smithay) from ferriscope's own lockfile. None of that can be
-      # overridden from here, so pinning those crates wouldn't remove a clone.
-      #
-      # Keyed by crate name. The version comes from upstream's Cargo.lock, so
-      # a version bump doesn't need an edit here. A name that isn't a git
-      # dependency in that lockfile (a typo, or the crate moved to crates.io)
-      # fails evaluation: a pin that silently matched nothing would leave its
-      # clone in place and break the regen script's fake-hash build. A rev bump
-      # changes the hash; the `regen-hash` markers let renovate-hashes.yml
-      # recompute it on the flake.lock update branch.
-      lockFile = "${inputs.moonshine}/Cargo.lock";
-      lockPackages = (lib.importTOML lockFile).package;
-      pinGitCrates = lib.concatMapAttrs (
-        name: hash:
-        let
-          entry =
-            lib.findFirst (p: p.name == name && lib.hasPrefix "git+" (p.source or ""))
-              (throw "moonshine: '${name}' is not a git dependency in upstream's Cargo.lock; drop its pin in modules/desktop/moonshine.nix")
-              lockPackages;
-        in
-        {
-          "${name}-${entry.version}" = hash;
-        }
-      );
-    in
+    { hostSpec, pkgs, ... }:
     {
       imports = [ inputs.moonshine.nixosModules.default ];
 
       services.moonshine = {
         enable = true;
-        package = (pkgs.callPackage "${inputs.moonshine}/nix/package.nix" { }).overrideAttrs {
-          # buildRustPackage turns `cargoLock` into `cargoDeps` and drops it
-          # before overrideAttrs sees it, so restate upstream's cargoLock here.
-          cargoDeps = pkgs.rustPlatform.importCargoLock {
-            inherit lockFile;
-            allowBuiltinFetchGit = true;
-            outputHashes = pinGitCrates {
-              # regen-hash: nixosConfigurations.terra.config.services.moonshine.package.cargoDeps
-              ash = "sha256-moPoBR+XXfM9vXZQWxmM7QpLg2dJEwloy6FEY//kEF8=";
-              # regen-hash: nixosConfigurations.terra.config.services.moonshine.package.cargoDeps
-              pixelforge = "sha256-hurNUU9XA1n9vH1XgL/YSUUWcT39drbOybek9GZeOzU=";
-            };
-          };
-        };
         user = hostSpec.username;
         # The user's uid is allocated, not declared (base.nix doesn't pin
         # one), so the module can't derive it from users.users.<user>.uid.

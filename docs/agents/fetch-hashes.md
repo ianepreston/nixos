@@ -20,11 +20,7 @@ hand, run `task hashes` (or `task hashes -- --check` to only report).
   `# regen-hash: <flake attr>` comment on the line directly above the `hash`.
   The script swaps in `lib.fakeHash`, builds that attribute, and reads the real
   hash off the mismatch. Add that one line for any new `cargoHash` /
-  `npmDepsHash` / vendor pin. Several markers may name the same attr (the
-  `cargoLock` `outputHashes` in `modules/desktop/moonshine.nix`); that build
-  then runs `--keep-going` and the script keeps only the mismatch whose
-  `specified:` is the fake hash. When writing such pins by hand, give each one
-  a different placeholder, because two identical fakes can't be told apart.
+  `npmDepsHash` / vendor pin.
 
 Deliberately manual: `fetchPypi` pins (blueair-api's version comes from the
 component's `manifest.json` and is enforced at build time by
