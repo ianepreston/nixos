@@ -70,7 +70,7 @@ The guest is an Ubuntu VM on the host's CPU architecture. It has only the declar
 and a read-only copy of the active specification at
 `/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
 credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
-direnv/nix-direnv, curl, git, and jq. Public and open VMs also run the upstream
+direnv/nix-direnv, curl, gh, git, and jq. Public and open VMs also run the upstream
 Databricks CLI and uv install scripts at first boot, placing both in
 `/usr/local/bin` for the unprivileged agent; destroy and recreate a VM to pick
 up a newer upstream release. Restricted VMs do not fetch those unrestricted
@@ -229,6 +229,89 @@ for the VM. An unchanged VM does not rerun setup after stop/start. Any change
 to a selected module, startup script, source location, or profile declaration
 changes the effective policy: inspect `sandbox plan`, then destroy and recreate
 the VM before it can run.
+
+### GitHub session credential
+
+A project may grant each agent session a short-lived GitHub credential for one
+repository. The grant is visible, non-secret policy:
+
+```toml
+[github]
+repository = "ianepreston/nixos"
+
+[github.permissions]
+contents = "write"      # clone, fetch, push
+pull_requests = "write" # gh pr create / edit
+```
+
+Version one accepts only `contents` and `pull_requests`, each `"read"` or
+`"write"`. Other permissions (issues, Actions, administration, …) are rejected,
+and adding one is separate work.
+
+Immediately before each `sandbox shell` or `sandbox exec`, the host launcher
+signs a GitHub App JWT with the App private key, finds the App's installation
+for the declared repository, and requests an installation token restricted to
+that one repository and the declared permissions. If GitHub returns a token
+for anything broader, the launcher refuses to use it. The token is handed only
+to the new `agent` process:
+
+- `GH_TOKEN` for `gh` (installed in the base profile).
+- An HTTPS Git credential helper for `https://github.com`, supplied through
+  `GIT_CONFIG_*` environment variables, so no guest config file names the
+  token.
+
+The token crosses into the guest over stdin into a private tmpfs file, which
+the session deletes before running anything else. The launcher deletes it
+again afterwards in case the session never started. The App key, JWT,
+installation ID, and token never appear in `.sandbox.toml`, `plan`,
+`validate`, `template`, the recorded policy, guest profile state, a log, or a
+process argument on the host or in the guest. While a grant is declared,
+`[environment]` may not set `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST`, or any
+`GIT_CONFIG*` name.
+
+`sandbox start` provisions the normal credential-free VM; nothing during
+provisioning or startup scripts has a token. Because a grant can push code,
+its start confirmation is distinct: `START PUBLIC WITH GITHUB`,
+`START RESTRICTED WITH GITHUB`, or `OPEN NETWORK WITH GITHUB`. Changing the
+grant changes the effective policy, so destroy and recreate the VM.
+
+GitHub expires every installation token after one hour, and the guest cannot
+mint or renew one. When GitHub calls start failing, leave and re-enter through
+`sandbox shell` or `sandbox exec`; worktree changes survive. `stop` and
+`destroy` prevent further tokens. A token that guest code has already copied
+elsewhere stays usable until its hour runs out, so treat a grant as giving the
+guest that much reach.
+
+Restricted mode already allows `github.com`, `api.github.com`, and
+`codeload.github.com`, so a grant adds no network exception.
+
+#### Host credentials and revocation
+
+The GitHub App's ID and private key come from the private `nix-secrets` input
+(`sops/coding-sandbox.yaml`, keys `github_app.app_id` and
+`github_app.private_key`). Home Manager sops-nix decrypts them on hosts that
+have a sops age identity, currently `terra` and `luna`. The `work` Mac has
+none yet, so its launcher reports `[github]` as unavailable and `sandbox
+shell`/`exec` refuse a policy that declares one. `sandbox doctor` and
+`sandbox plan` show whether this host can mint tokens.
+
+Register the App with only the Contents and Pull requests repository
+permissions, no webhook, installable only on the owner's account. Install it
+only on the repositories sandboxes should be able to request. The App's own
+permissions and installation scope cap any grant, whatever `.sandbox.toml`
+says.
+
+To revoke access:
+
+1. Remove the `[github]` table (or the repository from the App installation).
+   No further tokens can be minted for it.
+2. For immediate containment, suspend or uninstall the App installation in
+   GitHub's settings. That invalidates every outstanding token.
+3. Otherwise, any already-issued token expires within one hour.
+
+Rotating the private key means generating a new key on the App's settings
+page, replacing `github_app.private_key` in `nix-secrets`, and deleting the
+old key in GitHub.
 
 ### Nix cache lifecycle
 
@@ -404,8 +487,9 @@ that with `sandbox exec -- sudo -n nft list ruleset` (it must fail). The host
 operator may inspect the VM's rendered rules through Lima's privileged
 transport account when diagnosing a policy: `limactl shell INSTANCE sudo nft
 list ruleset`, where `INSTANCE` comes from `sandbox plan`. The sandbox has no
-host credentials or forwarded SSH agent, and this iteration does not add
-GitHub credentials, SSH forwarding, or a web UI.
+host credentials or forwarded SSH agent. The only credential it can hold is a
+declared [GitHub session token](#github-session-credential); there is no SSH
+forwarding or web UI.
 
 ### Browser OAuth callbacks
 
@@ -493,10 +577,13 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 - Hosts are Apple Silicon macOS (VZ) and Linux with KVM (QEMU). The guest is
   always the host's CPU architecture; there is no cross-architecture guest.
 - `.sandbox.toml` covers mount/network policy plus portable Home Manager
-  modules and agent-only startup scripts. Credentials, agent selection, and UI
-  settings remain out of scope.
-- No GitHub token/deploy key, host SSH forwarding, web UI, or general service
-  publishing is available. Lima guest port forwarding is denied by default
+  modules, agent-only startup scripts, and one-repository GitHub session
+  grants. Other credentials, agent selection, and UI settings remain out of
+  scope.
+- GitHub grants support only `contents` and `pull_requests`, and only on hosts
+  that provision the App credentials (`terra` and `luna`, not yet `work`).
+- No deploy key, long-lived token, host SSH forwarding, web UI, or general
+  service publishing is available. Lima guest port forwarding is denied by default
   except for explicitly declared loopback-only TCP browser callbacks.
 - Public mode is the default for ordinary registries and external gateways;
   `restricted` mode requires declaring each additional public hostname.

@@ -15,6 +15,7 @@ _: {
               pkgs.gawk
               pkgs.gnused
               pkgs.jq
+              pkgs.openssl
               pkgs.python3
             ];
           }

@@ -16,13 +16,28 @@ let
 in
 {
   flake.modules.homeManager.coding-sandbox =
-    { lib, pkgs, ... }:
+    {
+      config,
+      lib,
+      pkgs,
+      hostSpec,
+      ...
+    }@args:
     let
       inherit (pkgs.stdenv) hostPlatform;
       # Lima's architecture names (aarch64, x86_64) match the Nix CPU names
       # for every platform this module supports.
       cpu = hostPlatform.parsed.cpu.name;
       guestSystem = "${cpu}-linux";
+      # The GitHub App behind [github] session grants (#780). Only a NixOS host's
+      # Home Manager has the sops module and an age identity (the same test as
+      # vibes.nix): the work Mac has neither yet, so its launcher reports
+      # [github] as unavailable.
+      githubApp = (args ? osConfig) && !hostSpec.isDarwin;
+      githubAppSecret = key: {
+        sopsFile = "${inputs.nix-secrets}/sops/coding-sandbox.yaml";
+        key = "github_app/${key}";
+      };
       vm =
         if hostPlatform.isDarwin then
           {
@@ -71,6 +86,7 @@ in
                       bashInteractive
                       coreutils
                       curl
+                      gh
                       git
                       jq
                     ];
@@ -98,12 +114,14 @@ in
         name = "sandbox";
         runtimeInputs = with pkgs; [
           coreutils
+          curl
           git
           gawk
           gnugrep
           gnused
           jq
           lima
+          openssl
           python3
         ];
         text = ''
@@ -113,6 +131,14 @@ in
           export SANDBOX_VM_ARCH=${cpu}
           export SANDBOX_VM_MOUNT_TYPE=${vm.mountType}
           export SANDBOX_VM_DESCRIPTION=${lib.escapeShellArg vm.description}
+          ${lib.optionalString githubApp ''
+            export SANDBOX_GITHUB_APP_ID_FILE=${
+              lib.escapeShellArg config.sops.secrets."coding-sandbox/github_app_id".path
+            }
+            export SANDBOX_GITHUB_APP_KEY_FILE=${
+              lib.escapeShellArg config.sops.secrets."coding-sandbox/github_app_private_key".path
+            }
+          ''}
           ${builtins.replaceStrings [ "@home-manager-release@" ] [ "release-${release}" ] (
             builtins.readFile ./coding-sandbox.sh
           )}
@@ -120,6 +146,13 @@ in
       };
     in
     {
+      imports = lib.optional githubApp {
+        sops.secrets = {
+          "coding-sandbox/github_app_id" = githubAppSecret "app_id";
+          "coding-sandbox/github_app_private_key" = githubAppSecret "private_key";
+        };
+      };
+
       home.packages = [
         pkgs.lima
         launcher

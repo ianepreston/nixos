@@ -48,6 +48,26 @@ DOMAIN_RE = re.compile(
 )
 STARTUP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 ENVIRONMENT_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+# GitHub's own owner and repository name rules: an owner is 1-39
+# alphanumerics or single interior hyphens; a repository name is 1-100 of
+# [A-Za-z0-9._-] and is never "." or "..".
+GITHUB_OWNER_RE = re.compile(r"[A-Za-z0-9](?:-?[A-Za-z0-9])*\Z")
+GITHUB_REPOSITORY_RE = re.compile(r"[A-Za-z0-9._-]{1,100}\Z")
+# Version one of the credential grant deliberately supports only what a
+# normal clone/push/PR workflow needs.  Adding a permission is separate work:
+# it widens what a token copied out of the guest can do for its hour.
+GITHUB_PERMISSIONS = ("contents", "pull_requests")
+GITHUB_ACCESS = ("read", "write")
+# A project's literal [environment] is sourced by every agent shell after the
+# launcher exports the session credential, so these names would silently
+# replace or redirect it.  Every GIT_CONFIG* name is reserved as well.
+GITHUB_RESERVED_ENVIRONMENT = (
+    "GH_ENTERPRISE_TOKEN",
+    "GH_HOST",
+    "GH_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+    "GITHUB_TOKEN",
+)
 
 
 class PolicyError(Exception):
@@ -354,6 +374,53 @@ def parse_environment(value: Any) -> dict[str, str]:
     return dict(sorted(environment.items()))
 
 
+def parse_github(value: Any) -> dict[str, Any] | None:
+    """Parse the visible, non-secret description of a GitHub credential grant.
+
+    The grant names what the host launcher may request for each agent
+    session.  The App credentials and every minted token stay on the host.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        fail("github must be a table")
+    unknown = set(value) - {"repository", "permissions"}
+    if unknown:
+        fail(f"unknown github key(s): {', '.join(sorted(unknown))}")
+
+    repository = value.get("repository")
+    if not isinstance(repository, str):
+        fail('github.repository must be a string of the form "owner/name"')
+    owner, separator, name = repository.partition("/")
+    if (
+        not separator
+        or len(owner) > 39
+        or not GITHUB_OWNER_RE.fullmatch(owner)
+        or not GITHUB_REPOSITORY_RE.fullmatch(name)
+        or name in {".", ".."}
+    ):
+        fail(
+            f'github.repository {repository!r} must name exactly one "owner/name" repository'
+        )
+
+    permissions = value.get("permissions")
+    if not isinstance(permissions, dict) or not permissions:
+        fail("github.permissions must be a non-empty table")
+    unknown = set(permissions) - set(GITHUB_PERMISSIONS)
+    if unknown:
+        fail(
+            f"unsupported github permission(s): {', '.join(sorted(unknown))}"
+            f" (supported: {', '.join(GITHUB_PERMISSIONS)})"
+        )
+    for permission, access in permissions.items():
+        if access not in GITHUB_ACCESS:
+            fail(f'github.permissions.{permission} must be "read" or "write"')
+    return {
+        "repository": repository,
+        "permissions": dict(sorted(permissions.items())),
+    }
+
+
 def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     if value is None:
         return {"port_ranges": []}
@@ -406,6 +473,7 @@ def parse_config(project: Path) -> dict[str, Any]:
                 "digest": file_digest_data({"modules": [], "startup": []}),
             },
             "startup": [],
+            "github": None,
             "config_path": None,
             "config_root": project,
         }
@@ -425,6 +493,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         "mounts",
         "profile",
         "startup",
+        "github",
     }
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
@@ -443,6 +512,19 @@ def parse_config(project: Path) -> dict[str, Any]:
         fail(f"unknown network key(s): {', '.join(sorted(unknown))}")
     callbacks = parse_callbacks(config.get("callbacks"))
     environment = parse_environment(config.get("environment"))
+    github = parse_github(config.get("github"))
+    if github is not None:
+        reserved = [
+            name
+            for name in environment
+            if name in GITHUB_RESERVED_ENVIRONMENT or name.startswith("GIT_CONFIG")
+        ]
+        if reserved:
+            fail(
+                "environment must not set "
+                + ", ".join(reserved)
+                + " when [github] grants a session credential"
+            )
     storage = config.get("storage", {})
     if not isinstance(storage, dict):
         fail("storage must be a table")
@@ -467,6 +549,7 @@ def parse_config(project: Path) -> dict[str, Any]:
         "mounts": mounts,
         "profile": profile,
         "startup": startup,
+        "github": github,
         "config_path": config_path,
         "config_root": config_path.parent,
     }
@@ -569,7 +652,7 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         key=lambda address: int(ipaddress.ip_address(address)),
     )
 
-    return {
+    policy = {
         "version": 1,
         "mode": mode,
         "mode_source": "command line"
@@ -605,6 +688,11 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         "strict_v4": strict_v4,
         "strict_v6": strict_v6,
     }
+    # Emitted only when declared: a policy recorded before [github] existed
+    # must keep matching an unchanged, credential-free specification.
+    if config["github"] is not None:
+        policy["github"] = config["github"]
+    return policy
 
 
 def main() -> None:
