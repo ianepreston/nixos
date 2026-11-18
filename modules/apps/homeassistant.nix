@@ -141,11 +141,11 @@
         # it is replaced. The span deliberately stops short of `hash`, which
         # is regenerated in CI (scripts/regen-fetch-hashes.sh, #625).
         # renovate: datasource=github-releases depName=greghesp/ha-bambulab
-        version = "2.3.0";
+        version = "2.4.0";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "greghesp";
           repo = "ha-bambulab";
-          tag = "v2.3.0";
+          tag = "v2.4.0";
           hash = "sha256-FqN+CKS17fv3f3AoqUxEGhjLXvTIWRcDPmrOHWLEpiI=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
@@ -158,11 +158,11 @@
         owner = "suaveolent";
         domain = "hoymiles_wifi";
         # renovate: datasource=github-releases depName=suaveolent/ha-hoymiles-wifi
-        version = "0.5.1";
+        version = "0.6.0";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
-          tag = "v0.5.1";
+          tag = "v0.6.0";
           hash = "sha256-6NxsnRAo8KjlKYfyqosdS0Q34j0KBNNRUWbZmQOvxJk=";
         };
         dependencies = [ hoymiles-wifi ];
