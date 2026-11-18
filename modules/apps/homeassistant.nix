@@ -90,13 +90,13 @@
       # hash. An added, missing, or non-exact requirement fails CI for review.
       hoymiles-wifi = hapy.buildPythonPackage {
         pname = "hoymiles-wifi";
-        version = "0.5.5";
+        version = "0.7.0";
         pyproject = true;
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "hoymiles-wifi";
-          tag = "v0.5.5";
-          hash = "sha256-lI6uEAXhzxQMz2jZ9oDLTnICOc0+ECbWK2MNuK/aUOw=";
+          tag = "v0.7.0";
+          hash = "sha256-mHHgQMVjlRL0ZcSZsf/UhRlI1RfQBsNFS0g9uqAaOAQ=";
         };
         build-system = [ hapy.setuptools ];
         dependencies = with hapy; [
@@ -146,7 +146,7 @@
           owner = "greghesp";
           repo = "ha-bambulab";
           tag = "v2.4.0";
-          hash = "sha256-FqN+CKS17fv3f3AoqUxEGhjLXvTIWRcDPmrOHWLEpiI=";
+          hash = "sha256-en/2UJ19JJ7HRNHIft7QMN8cQVVJ3tFpmyTjnsZRD5I=";
         };
         dependencies = [ hapy.beautifulsoup4 ];
       };
@@ -163,7 +163,7 @@
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
           tag = "v0.6.0";
-          hash = "sha256-6NxsnRAo8KjlKYfyqosdS0Q34j0KBNNRUWbZmQOvxJk=";
+          hash = "sha256-yzqgkOIcvFScNj0cq2c57SapBDIxLyt4wF8LR3gbE8w=";
         };
         dependencies = [ hoymiles-wifi ];
       };
