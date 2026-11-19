@@ -90,13 +90,13 @@
       # hash. An added, missing, or non-exact requirement fails CI for review.
       hoymiles-wifi = hapy.buildPythonPackage {
         pname = "hoymiles-wifi";
-        version = "0.7.0";
+        version = "0.7.1";
         pyproject = true;
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "hoymiles-wifi";
-          tag = "v0.7.0";
-          hash = "sha256-mHHgQMVjlRL0ZcSZsf/UhRlI1RfQBsNFS0g9uqAaOAQ=";
+          tag = "v0.7.1";
+          hash = "sha256-sVIwD82fnnkm0rqyz+qYvZCCmSE8riqo9MyjlIQTqT4=";
         };
         build-system = [ hapy.setuptools ];
         dependencies = with hapy; [
@@ -163,7 +163,7 @@
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
           tag = "v0.6.1";
-          hash = "sha256-yzqgkOIcvFScNj0cq2c57SapBDIxLyt4wF8LR3gbE8w=";
+          hash = "sha256-cTeykFaf0x0A5K6FVN831p/4q0GTp/15oM8kgyrrMWY=";
         };
         dependencies = [ hoymiles-wifi ];
       };
