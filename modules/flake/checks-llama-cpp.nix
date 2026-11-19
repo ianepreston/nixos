@@ -18,8 +18,9 @@ _: {
             touch "$out"
           '';
 
-      # Scorer for `task llm:eval` (#555). Synthetic cases only; the real
-      # fixtures are private and never enter the store.
+      # Scorer and gate checks for `task llm:eval` / `task llm:gate`
+      # (#555). Synthetic cases only; the real fixtures are private and
+      # never enter the store.
       checks.llm-eval =
         pkgs.runCommand "llm-eval-tests"
           {

@@ -251,9 +251,10 @@
             };
           };
 
-          # Evaluation-facing contract for `task llm:radar`. The module
-          # publishes this with the active context/KV/offload settings, so
-          # radar code need not read the router's private model preset.
+          # Evaluation-facing contract for `task llm:radar` and
+          # `task llm:gate`. The module publishes this with the active
+          # context/KV/offload settings, so eval code need not read the
+          # router's private model preset.
           evaluation = {
             residentBudgetMiB = 15360;
             targets = {
