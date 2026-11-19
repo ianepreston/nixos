@@ -41,6 +41,62 @@ tasks:
           --candidates "$candidates" >"$radar_dir/drafts.json"
         echo "Dry-run report written to $radar_dir/drafts.json; no issue was created."
 
+  # Tier-1 eval harness (#555). Replays the private fixtures in
+  # ../nix-eval-fixtures against one router name on one host and writes
+  # scored results back into that repo's results/ — never into this one.
+  # Absent checkout is a warning, not a failure. On the target host itself
+  # it talks to loopback; elsewhere it adds a port forward to the existing
+  # ssh master (and fails fast without one, rather than prompting for a
+  # FIDO touch). The key is read with sudo from the rendered env file, the
+  # same source `llm:models` uses.
+  eval:
+    desc: 'Replay private fixtures against MODEL on HOST and score them. Vars: HOST (default terra), MODEL (router name or alias, default text), FEATURE, TRIALS (default 1), FIXTURES (default ../nix-eval-fixtures)'
+    silent: true
+    vars:
+      HOST: '{{.HOST | default "terra"}}'
+      MODEL: '{{.MODEL | default "text"}}'
+      FEATURE: '{{.FEATURE | default ""}}'
+      TRIALS: '{{.TRIALS | default "1"}}'
+      FIXTURES: '{{.FIXTURES | default "../nix-eval-fixtures"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        fixtures="{{.FIXTURES}}"
+        if [ ! -d "$fixtures" ]; then
+          echo "warning: no fixtures checkout at $fixtures; skipping" >&2
+          exit 0
+        fi
+        host="{{.HOST}}"
+        port=$(nix eval --raw --apply toString ".#nixosConfigurations.$host.config.myLlamaCpp.operator.port")
+        key_file=$(nix eval --raw ".#nixosConfigurations.$host.config.myLlamaCpp.operator.apiKeyFile")
+        if [ "$(hostname)" = "$host" ]; then
+          endpoint="http://127.0.0.1:$port"
+          LLAMA_API_KEY=$(sudo grep -oP 'LLAMA_API_KEY=\K.*' "$key_file")
+        else
+          ssh -O check "$host" 2>/dev/null || {
+            echo "no ssh master for $host; open one first (ssh $host)" >&2
+            exit 1
+          }
+          lport=$((20000 + RANDOM % 10000))
+          ssh -O forward -L "$lport:127.0.0.1:$port" "$host"
+          trap 'ssh -O cancel -L "$lport:127.0.0.1:$port" "$host" 2>/dev/null || true' EXIT
+          endpoint="http://127.0.0.1:$lport"
+          LLAMA_API_KEY=$(ssh "$host" "sudo grep -oP 'LLAMA_API_KEY=\K.*' $key_file")
+        fi
+        export LLAMA_API_KEY
+        feature="{{.FEATURE}}"
+        nix shell --inputs-from . nixpkgs#python3 -c python3 scripts/llm-eval.py run \
+          --fixtures "$fixtures" --endpoint "$endpoint" --host "$host" \
+          --model "{{.MODEL}}" --trials "{{.TRIALS}}" ${feature:+--feature "$feature"}
+
+  eval:compare:
+    desc: 'Markdown comparison of eval runs. Vars: RUNS="<run dir> <run dir> ..." (under ../nix-eval-fixtures/results)'
+    silent: true
+    requires:
+      vars: [RUNS]
+    cmds:
+      - nix shell --inputs-from . nixpkgs#python3 -c python3 scripts/llm-eval.py compare {{.RUNS}}
+
   models:
     desc: 'List cached GGUFs on HOST against the configured set (Darwin: local). Vars: HOST (default terra)'
     # The remote body is a heredoc; echoing it back drowns the listing.
