@@ -167,5 +167,114 @@ class ScoreCase(unittest.TestCase):
             )
 
 
+def chat(content: str = "", tool_calls=None, finish: str = "stop", usage=None) -> dict:
+    message = {"content": content}
+    if tool_calls is not None:
+        message["tool_calls"] = tool_calls
+    out = {"choices": [{"message": message, "finish_reason": finish}]}
+    if usage is not None:
+        out["usage"] = usage
+    return out
+
+
+def weather_call(args) -> list[dict]:
+    raw = args if isinstance(args, str) else json.dumps(args)
+    return [{"id": "c1", "function": {"name": "get_weather", "arguments": raw}}]
+
+
+class Gates(unittest.TestCase):
+    def test_tool_call_pass(self):
+        g, call = llm_eval.check_tool_call(
+            chat(tool_calls=weather_call({"city": "Calgary, AB", "unit": "celsius"}))
+        )
+        self.assertTrue(g["pass"], g)
+        self.assertEqual(call["id"], "c1")
+
+    def test_tool_call_failures(self):
+        cases = {
+            "no tool_calls": chat("It is cold.", finish="stop"),
+            "not JSON": chat(tool_calls=weather_call('{"city": "Calgary"')),
+            "unit=": chat(tool_calls=weather_call({"city": "Calgary", "unit": "C"})),
+            "called": chat(
+                tool_calls=[{"function": {"name": "lookup", "arguments": "{}"}}]
+            ),
+        }
+        for why, response in cases.items():
+            g, call = llm_eval.check_tool_call(response)
+            self.assertFalse(g["pass"], why)
+            self.assertIn(why, g["detail"])
+            self.assertIsNone(call)
+
+    def test_round_trip(self):
+        ok = llm_eval.check_round_trip(chat("It's -17°C and snowing in Calgary."))
+        self.assertTrue(ok["pass"])
+        self.assertFalse(llm_eval.check_round_trip(chat("It's 170 degrees."))["pass"])
+        again = llm_eval.check_round_trip(chat(tool_calls=weather_call({})))
+        self.assertIn("again", again["detail"])
+        empty = llm_eval.check_round_trip(chat("", finish="length"))
+        self.assertIn("finish_reason=length", empty["detail"])
+
+    def test_modalities(self):
+        entry = {"architecture": {"input_modalities": ["text"]}}
+        self.assertTrue(llm_eval.check_modalities(entry, ["text"])["pass"])
+        missing = llm_eval.check_modalities(entry, ["text", "image"])
+        self.assertEqual(missing["detail"], "missing image")
+        self.assertFalse(llm_eval.check_modalities({}, ["text"])["pass"])
+
+    def test_context_plan_leaves_headroom(self):
+        # 50 tokens of question, 15 tokens per filler line.
+        lines, headroom = llm_eval.context_plan(16384, 50, 50 + 15 * 200)
+        self.assertEqual(headroom, 2048)
+        self.assertLessEqual(50 + lines * 15, 16384 - 2048)
+        self.assertGreater(50 + (lines + 1) * 15, 16384 - 2048)
+        _, big = llm_eval.context_plan(131072, 50, 3050)
+        self.assertEqual(big, 13107)
+
+    def test_context_prompt_places_needle(self):
+        text = llm_eval.context_prompt(100)
+        self.assertEqual(text.count(llm_eval.NEEDLE), 1)
+        self.assertLess(text.index(llm_eval.NEEDLE), len(text) // 5)
+        self.assertTrue(text.endswith(llm_eval.NEEDLE_ASK))
+
+    def test_check_context(self):
+        usage = {"prompt_tokens": 14000}
+        ok = chat(f"The code is {llm_eval.NEEDLE}.", usage=usage)
+        self.assertTrue(llm_eval.check_context(ok, 16384, 14336)["pass"])
+        miss = llm_eval.check_context(chat("unknown", usage=usage), 16384, 14336)
+        self.assertIn("needle not recalled", miss["detail"])
+        short = chat(llm_eval.NEEDLE, usage={"prompt_tokens": 9000})
+        self.assertIn(
+            "under the", llm_eval.check_context(short, 16384, 14336)["detail"]
+        )
+
+    def test_gpu_usage_matches_the_model_child(self):
+        ps = (
+            "  PID ARGS\n"
+            " 1360 /nix/store/x/bin/llama-server --port 8091 --models-preset p.ini\n"
+            " 2001 /nix/store/x/bin/llama-server --port 5 --alias org/a-GGUF:Q4_K_M --ctx-size 1\n"
+            " 2002 /nix/store/x/bin/llama-server --port 6 --alias org/b-GGUF:Q8_0\n"
+            " 3000 electron --type=gpu-process\n"
+        )
+        csv = "2001, 6208\n2002, 900\n3000, 45\n"
+        self.assertEqual(llm_eval.gpu_usage(csv, ps, "org/a-GGUF:Q4_K_M"), 6208)
+        self.assertIsNone(llm_eval.gpu_usage(csv, ps, "org/c-GGUF:Q4_K_M"))
+        self.assertFalse(llm_eval.check_vram(6208, 6200, 16384, 16384)["pass"])
+        self.assertTrue(llm_eval.check_vram(6000, 6200, 16384, 16384)["pass"])
+        self.assertFalse(llm_eval.check_vram(6000, 6200, None, 16384)["pass"])
+        small = llm_eval.check_vram(4000, 6200, 8192, 16384)
+        self.assertFalse(small["pass"])
+        self.assertIn("served at 8192", small["detail"])
+
+    def test_image_colour(self):
+        self.assertTrue(llm_eval.check_image(chat("Crimson."))["pass"])
+        self.assertTrue(llm_eval.check_image(chat("Red"))["pass"])
+        self.assertFalse(llm_eval.check_image(chat("Reddish-blue? No: blue."))["pass"])
+
+    def test_solid_png_is_a_png(self):
+        png = llm_eval.solid_png((255, 0, 0), size=4)
+        self.assertTrue(png.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertTrue(png.endswith(b"IEND\xaeB`\x82"))
+
+
 if __name__ == "__main__":
     unittest.main()

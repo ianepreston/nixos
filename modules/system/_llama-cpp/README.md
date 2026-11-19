@@ -11,7 +11,7 @@ entry next to the rest of the app fleet, and terra (a workstation, no
 caddy/authentik/tailscale) is fronted by a route on amos1 instead. See
 `modules/hosts/amos1.nix` for that side.
 
-Router mode (#519)
+## Router mode (#519)
 
 llama-server runs as a **router**: the main process holds no model and
 instead spawns one child llama-server per model on a loopback ephemeral
@@ -73,7 +73,7 @@ Swapping is not uniformly cheap across the set, though: a model with
 `nCpuMoeLayers` set also has to stream its offloaded expert weights
 back into host RAM, so terra's `code` is the slow one to bring up.
 
-Model files
+## Model files
 
 GGUFs are gigabytes and are not nix-store material, so they are *not*
 fetched by nix. Each `models.<name>` attribute name is the `<repo>:<tag>`
@@ -96,7 +96,7 @@ in the same router — verified at b9190, where a text-only model in the
 same preset reports `input_modalities: ["text"]` while the vision model
 reports `["text","image"]`.
 
-CUDA build
+## CUDA build
 
 `pkgs.llama-cpp` in this flake is a CPU build (nothing sets
 `config.cudaSupport`), so a separate nixpkgs instance is imported with
@@ -109,7 +109,7 @@ CUDA is unfree and no binary cache serves it, so this always builds
 locally the first time. Budget for it — it is not a `nixos-rebuild`
 you want to start five minutes before you need the machine.
 
-Evaluation (#555)
+## Evaluation (#555)
 
 Model selection is decided per **alias** on one host: a candidate is
 challenger-vs-incumbent for `text`, `vision` or `code`, never "is this
@@ -144,3 +144,51 @@ model does. Bodies are captured with a packet capture on amos1, where the
 production apps run: every hop to a llama-server is plain HTTP (amos1's
 loopback `:8091`, terra's LAN `:8080`), whether it goes through Caddy or,
 like paperless, straight to terra.
+
+### Running it
+
+Every task takes one host and one router name:
+
+- **`task llm:gate HOST=<host> ALIAS=<alias> [MODEL=<router name>]`**
+  is tier 0. It runs pass/fail probes of `MODEL` (default: the alias's
+  incumbent) against what `ALIAS` needs on that host:
+  - `tool-call`: a synthetic tool call comes back parseable and honours
+    the schema's enum.
+  - `tool-round-trip`: once the tool result is sent back, the model
+    answers with it.
+  - `image-input`: only checked for aliases that need images.
+  - `context`: the alias's full `contextTokens`, less room for the
+    answer, is filled and a needle placed early is recalled.
+  - `modalities`: what the server reports against the target.
+  - `vram`: the model's own llama-server child, measured with
+    `nvidia-smi` after the long request, against `residentBudgetMiB`.
+    It fails if the model is served at a smaller context than the
+    target, because the KV cache it would need wasn't allocated.
+
+  Every probe is synthetic, so the table it prints can go straight
+  into an issue. It needs no fixtures and exits non-zero on any failure.
+- **`task llm:eval HOST=<host> MODEL=<router name> TRIALS=3 [FEATURE=…]`**
+  is tier 1. It replays the private fixtures and writes scored results
+  into the fixtures repo's `results/`. Per-case spread is about ±3
+  checks out of 40, so `TRIALS=3` is the minimum for a comparison.
+- **`task llm:eval:compare RUNS="<run dir> …"`** renders runs side by
+  side.
+
+### Evaluating a candidate
+
+1. **Serve it as a temporary peer.** Add a `models."<repo>:<tag>"`
+   entry with its own alias (`aliases = [ "text-next" ]`) and the
+   context, KV types and offload the target needs, then deploy. Don't
+   point the alias at it yet: the incumbent stays routable for the
+   comparison. And don't rely on a GGUF that's only in the cache, since
+   that runs with llama.cpp defaults (see the cache section above).
+2. **`task llm:models:fetch HOST=<host>`** downloads it ahead of the
+   first request.
+3. **`task llm:gate HOST=<host> ALIAS=text MODEL=text-next`** must pass.
+   A model that can't hold the alias's context fails `context` and
+   `vram` here.
+4. **`task llm:eval`** runs the candidate and the incumbent with
+   `TRIALS=3` each. Then run `task llm:eval:compare`.
+5. **Adopt or drop it.** To adopt, move the alias onto the candidate's
+   entry, and remove the old entry or keep it as a named peer. To drop,
+   delete the entry. Either way, run `task llm:models:prune` afterwards.
