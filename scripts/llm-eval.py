@@ -52,7 +52,7 @@ LIST_RULE_KEYS = {"must", "must_not", "want", "may_be_empty", "link", "ignore", 
 def norm(value: object) -> str:
     """Compare names loosely: case, hyphens/underscores and spacing don't matter.
 
-    "36 Riverwood" and "36-riverwood" are the same *name*. Whether the model
+    "Home Office" and "home-office" are the same *name*. Whether the model
     also linked it to the existing object is a separate `link` check.
     """
     text = str(value).lower().replace("-", " ").replace("_", " ")
@@ -961,7 +961,7 @@ def expected_values(fixtures: Path) -> tuple[set[str], list[str]]:
 
 def loose_pattern(value: str) -> re.Pattern:
     """Match value the way norm() compares names: case, `-`, `_` and spacing
-    are interchangeable, so "36 Riverwood" finds `36-riverwood`."""
+    are interchangeable, so "Home Office" finds `home-office`."""
     words = [re.escape(w) for w in norm(value).split(" ")]
     return re.compile(r"(?<![^\W_])" + r"[\s_-]+".join(words) + r"(?![^\W_])", re.I)
 

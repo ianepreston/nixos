@@ -387,7 +387,7 @@ class Audit(unittest.TestCase):
         self.fx = Path(self.tmp.name)
         for name, expected in [
             ("widget-manual", EXPECTED),
-            ("invoice", {"tags": {"must": ["Furnace Invoice", "HR"]}}),
+            ("widget", {"tags": {"must": ["Blue Widget", "HR"]}}),
         ]:
             case = self.fx / "paperless-classify" / name
             case.mkdir(parents=True)
@@ -402,7 +402,7 @@ class Audit(unittest.TestCase):
     def test_qualified_case_ids_are_public(self):
         clean = "paperless-classify/widget-manual: 8.0/10, `tags:must` ×2"
         self.assertEqual(self.hits(clean), [])
-        self.assertEqual(self.hits("paperless-classify/invoice 3/3"), [])
+        self.assertEqual(self.hits("paperless-classify/widget 3/3"), [])
 
     def test_matches_names_the_way_the_scorer_does(self):
         for text in ("missed home-office", "missed Home Office", "missed home_office"):
@@ -412,8 +412,8 @@ class Audit(unittest.TestCase):
         self.assertEqual(self.hits("Manually re-run"), [])
 
     def test_bare_case_name_does_not_mask_a_value(self):
-        # `invoice` is a case name; "Furnace Invoice" is still a value.
-        self.assertEqual(self.hits("it missed Furnace Invoice"), ["Furnace Invoice"])
+        # `widget` is a case name; "Blue Widget" is still a value.
+        self.assertEqual(self.hits("it missed Blue Widget"), ["Blue Widget"])
 
     def test_short_values_are_checked(self):
         self.assertEqual(self.hits("tagged it HR"), ["HR"])
