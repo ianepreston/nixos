@@ -108,3 +108,39 @@ build. Scoping to one cuts the compile by roughly that factor.
 CUDA is unfree and no binary cache serves it, so this always builds
 locally the first time. Budget for it — it is not a `nixos-rebuild`
 you want to start five minutes before you need the machine.
+
+Evaluation (#555)
+
+Model selection is decided per **alias** on one host: a candidate is
+challenger-vs-incumbent for `text`, `vision` or `code`, never "is this
+model good". Two pieces feed that:
+
+**`myLlamaCpp.evaluation`** is the published contract for eval tooling:
+the host's resident VRAM budget, plus each alias's role and modalities,
+with the active context, KV-cache types and MoE offload filled in from
+`models.<name>`. `task llm:radar` (the `model-radar` skill) reads it.
+Eval code reads that export and never the router's private preset.
+
+**Fixtures live in the private sibling checkout `../nix-eval-fixtures`**
+(`ianepreston/nix-eval-fixtures`). Like `../nix-secrets` it sits next to
+this repo, but unlike it it is *not* a flake input: the harness reads it
+at runtime, so adding a fixture needs no `flake.lock` bump or rebuild,
+and the harness skips the fixture tiers when the checkout is absent.
+Its README is authoritative for layout, `meta.toml`, and capture.
+
+The privacy rule is stricter than this repo's PII rule, because a
+published fixture also stops working as an eval once it's in a training
+corpus. Nothing from a fixture goes in this repo, its issues or its PRs:
+not source documents, captured request bodies, prompts, expected values,
+or raw responses. Fixture IDs, hashes, schemas, aggregate and per-field
+scores, and the adoption verdict are fine.
+
+Fixtures are organised per *app feature*, one directory per LLM call
+an app actually makes (`tandoor-image-import`, `paperless-classify`,
+`minuspod-ads`, …), and each case replays the app's real
+`/v1/chat/completions` body. That's because the app's own system
+prompt, JSON schema and tool list affect the result as much as the
+model does. Bodies are captured with a packet capture on amos1, where the
+production apps run: every hop to a llama-server is plain HTTP (amos1's
+loopback `:8091`, terra's LAN `:8080`), whether it goes through Caddy or,
+like paperless, straight to terra.

@@ -16,6 +16,7 @@ task, so anything needed only for specific work goes in a topic guide below.
 | Editing a version/hash pin, renovate branches                           | [docs/agents/fetch-hashes.md](docs/agents/fetch-hashes.md)                   |
 | VM sandbox, bootstrap/reinstall, `LOCAL_SECRETS`, disko changes         | [docs/agents/testing-and-bootstrap.md](docs/agents/testing-and-bootstrap.md) |
 | Cross-cutting features, option surfaces, refactors                      | [docs/agents/architecture.md](docs/agents/architecture.md)                   |
+| LLM model selection, evals, `../nix-eval-fixtures`                      | [modules/system/_llama-cpp/README.md](modules/system/_llama-cpp/README.md)   |
 
 Canonical repository workflows live under `skills/` (agent-neutral). The
 discovery adapters are thin: `.claude/skills/<name>/SKILL.md` carries a verbatim
