@@ -132,6 +132,24 @@ class ScoreCase(unittest.TestCase):
         self.assertEqual(broken["passed"], 0)
         self.assertLess(broken["passed"], empty["passed"])
 
+    def test_broken_answer_has_the_same_total_as_a_valid_one(self):
+        valid = llm_eval.score_case(EXPECTED, tool_response({"title": "x"}))
+        broken = llm_eval.score_case(EXPECTED, tool_response("{not json"))
+        self.assertEqual(valid["total"], broken["total"])
+
+    def test_out_of_tokens_is_explained(self):
+        resp = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": "", "reasoning_content": "..."},
+                }
+            ]
+        }
+        r = llm_eval.score_case(EXPECTED, resp)
+        parses = next(c for c in r["checks"] if c["check"] == "parses")
+        self.assertIn("finish_reason=length", parses["detail"])
+
     def test_missing_response(self):
         r = llm_eval.score_case(EXPECTED, {})
         self.assertEqual(r["passed"], 0)

@@ -141,10 +141,16 @@ def score_list_field(field: str, rule: dict, args: dict) -> list[dict]:
 
 def score_case(expected: dict, response: dict) -> dict:
     args, error = extract_arguments(response)
+    finish = ((response.get("choices") or [{}])[0] or {}).get("finish_reason")
+    if error and finish == "length":
+        # Typically a reasoning model that thought until the context ran out.
+        error = f"{error} (finish_reason=length: ran out of tokens)"
     checks = [check("*", "parses", args is not None, error or "")]
     if args is None:
         # Every other check fails too, so a broken answer can't score above
-        # an empty-but-valid one by skipping its checks.
+        # an empty-but-valid one by skipping its checks, and its total
+        # matches a valid answer's.
+        checks.append(check("*", "clean-items", False, "no answer"))
         for field, rule in expected.items():
             if field == "title":
                 checks.append(check(field, "present", False))
@@ -390,6 +396,7 @@ def render(runs: list[dict]) -> str:
             failed = sorted(
                 {
                     f"{c['field']}:{c['check']}"
+                    + (f" ({c['detail']})" if c["check"] == "parses" else "")
                     for t in rec["trials"]
                     for c in t["checks"]
                     if not c["pass"]
