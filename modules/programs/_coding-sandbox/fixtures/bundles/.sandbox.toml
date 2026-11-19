@@ -1,0 +1,23 @@
+# Credential-free acceptance fixture for the platform bundle catalog (#787).
+# It mounts nothing from the host and selects every initial bundle, so a fresh
+# VM proves each one realizes at its pinned store path. No workspace, token,
+# callback, or model provider is declared.
+#
+#   cd modules/programs/_coding-sandbox/fixtures/bundles
+#   sandbox plan
+#   sandbox start
+version = 1
+
+[network]
+mode = "public"
+
+[profile]
+bundles = [
+  "databricks-cli",
+  "uv",
+  "nodejs",
+  "agent-pi",
+  "agent-claude-code",
+  "agent-opencode",
+  "unity-gateway",
+]

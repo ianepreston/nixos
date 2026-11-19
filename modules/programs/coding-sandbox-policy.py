@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
 import re
 import socket
 import subprocess
@@ -286,14 +287,55 @@ def profile_path(
     fail(f"{field} path {value!r} must be beneath a declared mount")
 
 
+def load_catalog(path: str | None) -> dict[str, Any]:
+    """Read the workstation's trusted bundle catalog (coding-sandbox.nix)."""
+    if not path:
+        return {"pins": None, "bundles": {}}
+    try:
+        with open(path, encoding="utf-8") as catalog_file:
+            catalog = json.load(catalog_file)
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read bundle catalog {path}: {error}")
+    return {"pins": catalog.get("pins"), "bundles": catalog.get("bundles", {})}
+
+
+def parse_bundles(value: Any, catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    """Resolve project-selected names to the workstation's own bundles.
+
+    A name is the whole interface: a path, URL, or package attribute is never
+    accepted, so a project cannot turn its policy file into a package
+    specification.
+    """
+    if not isinstance(value, list):
+        fail("profile.bundles must be an array of bundle names")
+    available = catalog["bundles"]
+    resolved: list[dict[str, Any]] = []
+    for index, name in enumerate(value):
+        field = f"profile.bundles[{index}]"
+        if not isinstance(name, str):
+            fail(f"{field} must be a bundle name string")
+        if name not in available:
+            fail(
+                f"{field} {name!r} is not a platform bundle"
+                f" (available: {', '.join(sorted(available)) or 'none'})"
+            )
+        if any(entry["name"] == name for entry in resolved):
+            fail(f"{field} {name!r} duplicates another bundle")
+        resolved.append({"name": name, **available[name]})
+    return resolved
+
+
 def parse_profile(
-    value: Any, config_root: Path, mounts: list[dict[str, Any]]
+    value: Any,
+    config_root: Path,
+    mounts: list[dict[str, Any]],
+    catalog: dict[str, Any],
 ) -> dict[str, Any]:
     if value is None:
         return {"modules": [], "digest": file_digest_data([])}
     if not isinstance(value, dict):
         fail("profile must be a table")
-    unknown = set(value) - {"modules"}
+    unknown = set(value) - {"modules", "bundles"}
     if unknown:
         fail(f"unknown profile key(s): {', '.join(sorted(unknown))}")
     modules = value.get("modules", [])
@@ -303,10 +345,16 @@ def parse_profile(
         profile_path(module, f"profile.modules[{index}]", config_root, mounts)
         for index, module in enumerate(modules)
     ]
-    return {
+    profile: dict[str, Any] = {
         "modules": resolved_modules,
         "digest": file_digest_data(resolved_modules),
     }
+    bundles = parse_bundles(value.get("bundles", []), catalog)
+    # Emitted only when declared: a policy recorded before bundles existed
+    # must keep matching an unchanged specification.
+    if bundles:
+        profile["bundles"] = bundles
+    return profile
 
 
 def file_digest_data(value: Any) -> str:
@@ -458,7 +506,7 @@ def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     return {"port_ranges": normalized}
 
 
-def parse_config(project: Path) -> dict[str, Any]:
+def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
     config_path = find_config_path(project)
     if config_path is None:
         return {
@@ -535,11 +583,17 @@ def parse_config(project: Path) -> dict[str, Any]:
     if nix_store not in {"instance", "persistent"}:
         fail('storage.nix_store must be "instance" or "persistent"')
     mounts = parse_mounts(config.get("mounts"), config_path.parent)
-    profile = parse_profile(config.get("profile"), config_path.parent, mounts)
+    profile = parse_profile(config.get("profile"), config_path.parent, mounts, catalog)
     startup = parse_startup(config.get("startup"), config_path.parent, mounts)
-    profile["digest"] = file_digest_data(
-        {"modules": profile["modules"], "startup": startup}
-    )
+    digest_input: dict[str, Any] = {"modules": profile["modules"], "startup": startup}
+    if "bundles" in profile:
+        # Name and source digest only: store paths follow the workstation's
+        # lock and are verified in the guest rather than compared.
+        digest_input["bundles"] = [
+            {"name": bundle["name"], "digest": bundle["digest"]}
+            for bundle in profile["bundles"]
+        ]
+    profile["digest"] = file_digest_data(digest_input)
     return {
         "version": 1,
         "network": network,
@@ -555,8 +609,13 @@ def parse_config(project: Path) -> dict[str, Any]:
     }
 
 
-def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
-    config = parse_config(project)
+def render_policy(
+    project: Path,
+    override_mode: str | None,
+    catalog: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    catalog = catalog or {"pins": None, "bundles": {}}
+    config = parse_config(project, catalog)
     network = config["network"]
     requested_mode = network.get("mode", "public")
     if requested_mode not in {"public", "restricted", "open"}:
@@ -579,6 +638,23 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
         fail(
             "network.public_domains is valid only when the effective network mode is restricted"
         )
+    if mode == "restricted":
+        # A bundle the guest must build names the hosts its fetches use.
+        # Restricted mode never widens on its own, so the project declares
+        # them, and the plan fails before VM creation rather than mid-build.
+        allowed = {*BASE_RESTRICTED_DOMAINS, *public_domains}
+        for bundle in config["profile"].get("bundles", []):
+            missing = [
+                domain
+                for domain in bundle.get("fetch_domains", [])
+                if domain not in allowed
+            ]
+            if missing:
+                fail(
+                    f"bundle {bundle['name']} builds in the guest and needs "
+                    + ", ".join(missing)
+                    + " in network.public_domains for restricted mode"
+                )
 
     grants_v4: set[str] = set()
     grants_v6: set[str] = set()
@@ -692,6 +768,10 @@ def render_policy(project: Path, override_mode: str | None) -> dict[str, Any]:
     # must keep matching an unchanged, credential-free specification.
     if config["github"] is not None:
         policy["github"] = config["github"]
+    # The guest flake's locked revisions, recorded for display. Like the
+    # strict-domain addresses, they are excluded from the compared contract.
+    if catalog["pins"] is not None:
+        policy["guest_pins"] = catalog["pins"]
     return policy
 
 
@@ -701,7 +781,11 @@ def main() -> None:
     parser.add_argument("--network", choices=("public", "restricted", "open"))
     arguments = parser.parse_args()
     try:
-        policy = render_policy(arguments.project.resolve(), arguments.network)
+        policy = render_policy(
+            arguments.project.resolve(),
+            arguments.network,
+            load_catalog(os.environ.get("SANDBOX_BUNDLE_CATALOG")),
+        )
     except PolicyError as error:
         print(f"sandbox policy: {error}", file=sys.stderr)
         raise SystemExit(1) from error

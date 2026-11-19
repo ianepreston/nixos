@@ -1464,7 +1464,7 @@ the thing to fix when the sops files get split more finely.
 #### Coding sandboxes
 
 `work` (macOS, VZ) and the `terra` and `luna` workstations (NixOS, QEMU/KVM)
-carry a Lima launcher for isolated coding and demo projects. Its visible per-project mount specification, network grants and
+carry a Lima launcher for isolated coding and demo projects. Its visible per-project mount specification, pinned tool and agent bundles, network grants and
 lateral boundary, hardened/open modes, per-session GitHub credential grants,
 VM lifecycle, cache behaviour, and current limits are in the
 [coding sandbox guide](docs/coding-sandbox.md).

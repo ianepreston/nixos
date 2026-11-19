@@ -39,6 +39,39 @@ QEMU_BACKEND = {
 }
 
 
+def bundle_catalog(uv_digest: str = "a", uv_path: str = "uv-0.13.7") -> dict:
+    """The shape coding-sandbox.nix renders into SANDBOX_BUNDLE_CATALOG."""
+    return {
+        "pins": {
+            "nixpkgs": {"rev": "b349185bb79c7cf7ad8e", "narHash": "sha256-x"},
+            "nixpkgs-unstable": {"rev": "d5cc6833999746cffdfe", "narHash": "sha256-y"},
+            "home-manager": {"rev": "6eb2d33d1d0c95a37ef6", "narHash": "sha256-z"},
+        },
+        "bundles": {
+            "uv": {
+                "description": "uv Python tool manager",
+                "commands": ["uv", "uvx"],
+                "digest": f"sha256:{uv_digest}",
+                "packages": [
+                    {"name": "uv", "version": "0.13.7", "path": f"/nix/store/{uv_path}"}
+                ],
+            },
+            "agent-pi": {
+                "description": "Pi coding-agent client only",
+                "commands": ["pi"],
+                "digest": "sha256:b",
+                "packages": [
+                    {
+                        "name": "pi-coding-agent",
+                        "version": "1.5.2",
+                        "path": "/nix/store/pi-coding-agent-1.5.2",
+                    }
+                ],
+            },
+        },
+    }
+
+
 class PolicyTest(unittest.TestCase):
     def config(self, text: str) -> Path:
         temporary = tempfile.TemporaryDirectory()
@@ -280,6 +313,184 @@ class PolicyTest(unittest.TestCase):
                 with self.assertRaises(POLICY.PolicyError):
                     POLICY.render_policy(root, None)
 
+    def test_bundles_resolve_only_from_the_platform_catalog(self) -> None:
+        catalog = bundle_catalog()
+        root = self.config('[profile]\nbundles = ["agent-pi", "uv"]\n')
+        policy = POLICY.render_policy(root, None, catalog)
+        self.assertEqual(
+            [bundle["name"] for bundle in policy["profile"]["bundles"]],
+            ["agent-pi", "uv"],
+        )
+        self.assertEqual(policy["profile"]["bundles"][1]["commands"], ["uv", "uvx"])
+        self.assertEqual(policy["guest_pins"], catalog["pins"])
+
+        for value in (
+            '"unknown"',
+            '"uv", "uv"',
+            '"./bundles/uv.nix"',
+            '"/nix/store/uv-0.13.7"',
+            '"https://example.com/uv.nix"',
+            '"pkgs.uv"',
+            '"github:astral-sh/uv"',
+            "1",
+        ):
+            with self.subTest(value=value), self.assertRaises(POLICY.PolicyError):
+                POLICY.render_policy(
+                    self.config(f"[profile]\nbundles = [{value}]\n"), None, catalog
+                )
+        with self.assertRaises(POLICY.PolicyError):
+            POLICY.render_policy(
+                self.config('[profile]\nbundles = "uv"\n'), None, catalog
+            )
+        # Without a catalog (an older launcher), no name is accepted.
+        with self.assertRaises(POLICY.PolicyError):
+            POLICY.render_policy(root, None)
+
+    def test_restricted_mode_requires_declared_bundle_fetch_domains(self) -> None:
+        catalog = bundle_catalog()
+        catalog["bundles"]["uv"]["fetch_domains"] = ["proxy.golang.org"]
+        original_resolve = POLICY.resolve
+        self.addCleanup(setattr, POLICY, "resolve", original_resolve)
+        POLICY.resolve = lambda domain: [ipaddress.ip_address("203.0.113.10")]
+
+        root = self.config('[profile]\nbundles = ["uv"]\n')
+        POLICY.render_policy(root, None, catalog)  # public: nothing to declare
+        with self.assertRaisesRegex(POLICY.PolicyError, "proxy.golang.org"):
+            POLICY.render_policy(root, "restricted", catalog)
+
+        root = self.config(
+            '[network]\npublic_domains = ["proxy.golang.org"]\n\n'
+            '[profile]\nbundles = ["uv"]\n'
+        )
+        policy = POLICY.render_policy(root, "restricted", catalog)
+        self.assertIn(
+            "proxy.golang.org", [entry["name"] for entry in policy["strict_domains"]]
+        )
+
+    def test_bundle_source_digest_is_policy_but_store_paths_are_not(self) -> None:
+        root = self.config('[profile]\nbundles = ["uv"]\n')
+        digest = POLICY.render_policy(root, None, bundle_catalog())["profile"]["digest"]
+        self.assertEqual(
+            POLICY.render_policy(root, None, bundle_catalog(uv_path="uv-0.14.0"))[
+                "profile"
+            ]["digest"],
+            digest,
+        )
+        self.assertNotEqual(
+            POLICY.render_policy(root, None, bundle_catalog(uv_digest="changed"))[
+                "profile"
+            ]["digest"],
+            digest,
+        )
+
+    def test_no_bundle_profiles_keep_their_recorded_shape(self) -> None:
+        root = self.config('[network]\nmode = "public"\n')
+        without = POLICY.render_policy(root, None)
+        with_catalog = POLICY.render_policy(root, None, bundle_catalog())
+        self.assertNotIn("bundles", with_catalog["profile"])
+        self.assertEqual(with_catalog["profile"], without["profile"])
+        self.assertEqual(
+            {key: value for key, value in with_catalog.items() if key != "guest_pins"},
+            without,
+        )
+
+    def test_existing_vm_rejects_changed_bundle_source_only(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        project = base / "project"
+        project.mkdir()
+        (project / ".sandbox.toml").write_text('[profile]\nbundles = ["uv"]\n')
+        catalog = base / "catalog.json"
+        environment = {
+            **os.environ,
+            "HOME": str(base),
+            "XDG_STATE_HOME": str(base / "state"),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            "SANDBOX_BUNDLE_CATALOG": str(catalog),
+            **QEMU_BACKEND,
+        }
+
+        def run(step: str) -> subprocess.CompletedProcess[str]:
+            harness = (
+                f"source <(sed '$d' \"{SANDBOX_PATH}\")\n"
+                f'parse_target "{project}"\n{step}\n'
+            )
+            return subprocess.run(
+                ["bash", "-c", harness],
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+        catalog.write_text(json.dumps(bundle_catalog()))
+        recorded = run("record_policy")
+        self.assertEqual(recorded.returncode, 0, recorded.stderr)
+
+        # A flake.lock bump moves pins and store paths: the VM keeps its own.
+        moved = bundle_catalog(uv_path="uv-0.14.0")
+        moved["pins"]["nixpkgs"]["rev"] = "0123456789abcdef0123"
+        catalog.write_text(json.dumps(moved))
+        result = run(
+            'policy_matches_instance; jq -r ".profile.bundles[0].packages[0].path" <<<"$policy_json"'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "/nix/store/uv-0.13.7")
+
+        # A changed bundle definition is a policy change.
+        catalog.write_text(json.dumps(bundle_catalog(uv_digest="changed")))
+        result = run("policy_matches_instance")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("effective policy changed", result.stderr)
+
+    def test_start_fails_when_guest_provisioning_did_not_finish(self) -> None:
+        root = self.config("")
+        environment = {
+            **os.environ,
+            "HOME": str(root),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            **QEMU_BACKEND,
+        }
+
+        def check(guest_state: str) -> subprocess.CompletedProcess[str]:
+            # limactl stand-in: answers the readiness probe, `sudo cat` and
+            # `sudo tail` from the named guest state.
+            harness = (
+                f"source <(sed '$d' \"{SANDBOX_PATH}\")\n"
+                f'parse_target "{root}"\n'
+                "limactl() {\n"
+                f"  [[ {guest_state!r} != unreachable ]] || return 255\n"
+                "  shift 4; shift  # shell --workdir DIR INSTANCE sudo\n"
+                '  case "$1 $2" in\n'
+                f'    "sh -c") [[ {guest_state!r} == ready ]] && echo ready || echo pending ;;\n'
+                f'    "cat "*) [[ {guest_state!r} == startup ]] && echo bootstrap || return 1 ;;\n'
+                '    "tail -n") echo "log tail for ${@: -1}" ;;\n'
+                "  esac\n"
+                "}\n"
+                "check_provisioned\n"
+            )
+            return subprocess.run(
+                ["bash", "-c", harness], capture_output=True, env=environment, text=True
+            )
+
+        self.assertEqual(check("ready").returncode, 0)
+        failed = check("activation")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("activation did not complete", failed.stderr)
+        self.assertIn("home-manager.log", failed.stderr)
+        self.assertIn("did not finish provisioning", failed.stderr)
+        failed = check("startup")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("startup entry bootstrap failed", failed.stderr)
+        self.assertIn("startup-bootstrap.log", failed.stderr)
+        # A transport failure is not reported as a broken guest.
+        failed = check("unreachable")
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("cannot inspect", failed.stderr)
+        self.assertNotIn("destroy and recreate", failed.stderr)
+
     def test_template_composes_and_verifies_selected_profile_sources(self) -> None:
         root = self.config("")
         source = root / "sandbox"
@@ -328,13 +539,12 @@ class PolicyTest(unittest.TestCase):
         self.assertIn(
             "apt-get install -y ca-certificates curl git jq nftables unzip", template
         )
-        self.assertIn(
-            "https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh",
-            template,
-        )
-        self.assertIn("UV_UNMANAGED_INSTALL=/usr/local/bin sh", template)
-        self.assertIn("databricks -v", template)
-        self.assertIn("uv --version", template)
+        # Tools come only from pinned bundles: no latest-at-boot installer.
+        self.assertNotIn("databricks/setup-cli", template)
+        self.assertNotIn("astral.sh/uv/install.sh", template)
+        self.assertNotIn("github:nix-community/home-manager", template)
+        self.assertIn('nix run "$profile#home-manager" -- switch', template)
+        self.assertIn("sandbox-bundles.json", template)
         self.assertIn(
             "export UV_INDEX_URL='https://pypi-proxy.cloud.databricks.com/simple'",
             template,
@@ -345,11 +555,54 @@ class PolicyTest(unittest.TestCase):
             template.index("ip daddr @protected_v4 drop"),
         )
         self.assertIn("Selected profile: sha256:", plan)
+        self.assertIn("bundles: none", plan)
+        self.assertIn("Guest pins:   not recorded", plan)
         self.assertIn("startup: bootstrap: /sandbox/bootstrap.sh", plan)
         self.assertIn("Nix store:    persistent Lima disk", plan)
         self.assertIn(
             'UV_INDEX_URL="https://pypi-proxy.cloud.databricks.com/simple"', plan
         )
+
+    def test_plan_and_template_show_and_verify_selected_bundles(self) -> None:
+        root = self.config('[profile]\nbundles = ["uv", "agent-pi"]\n')
+        catalog = root / "catalog.json"
+        catalog.write_text(json.dumps(bundle_catalog()))
+        environment = {
+            **os.environ,
+            "HOME": str(root),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            "SANDBOX_BUNDLE_CATALOG": str(catalog),
+            **QEMU_BACKEND,
+        }
+
+        def launcher(command: str) -> str:
+            return subprocess.run(
+                ["bash", str(SANDBOX_PATH), command, str(root)],
+                check=True,
+                capture_output=True,
+                env=environment,
+                text=True,
+            ).stdout
+
+        plan = launcher("plan")
+        self.assertIn(
+            "Guest pins:   home-manager 6eb2d33d1d0c, nixpkgs b349185bb79c,"
+            " nixpkgs-unstable d5cc68339997",
+            plan,
+        )
+        self.assertIn("    bundle: uv [sha256:a]\n", plan)
+        self.assertIn("      commands: uv, uvx\n", plan)
+        self.assertIn("      uv 0.13.7 /nix/store/uv-0.13.7\n", plan)
+        self.assertIn(
+            "      pi-coding-agent 1.5.2 /nix/store/pi-coding-agent-1.5.2\n", plan
+        )
+        self.assertLess(plan.index("bundle: uv"), plan.index("bundle: agent-pi"))
+
+        template = launcher("template")
+        self.assertIn('"/nix/store/uv-0.13.7"', template)
+        self.assertIn("bundle store path missing from the agent profile", template)
+        self.assertIn(".local/state/nix/profiles/home-manager", template)
 
     def test_template_allows_only_declared_loopback_callback_ranges(self) -> None:
         root = self.config("")
