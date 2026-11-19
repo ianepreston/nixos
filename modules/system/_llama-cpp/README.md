@@ -118,8 +118,9 @@ model good". Two pieces feed that:
 **`myLlamaCpp.evaluation`** is the published contract for eval tooling:
 the host's resident VRAM budget, plus each alias's role and modalities,
 with the active context, KV-cache types and MoE offload filled in from
-`models.<name>`. `task llm:radar` (the `model-radar` skill) reads it.
-Eval code reads that export and never the router's private preset.
+`models.<name>`. It's rendered read-only as `myLlamaCpp.evalTargets`,
+which `task llm:radar` (the `model-radar` skill) and `task llm:gate`
+read. Eval code reads that export and never the router's private preset.
 
 **Fixtures live in the private sibling checkout `../nix-eval-fixtures`**
 (`ianepreston/nix-eval-fixtures`). Like `../nix-secrets` it sits next to
@@ -167,14 +168,25 @@ Every task takes one host and one router name:
 
   Every probe is synthetic, so the table it prints can go straight
   into an issue. It needs no fixtures and exits non-zero on any failure.
-- **`task llm:eval HOST=<host> MODEL=<router name> TRIALS=3 [FEATURE=…]`**
+- **`task llm:eval HOST=<host> MODEL=<router name> TRIALS=3 [ALIAS=…] [FEATURE=…]`**
   is tier 1. It replays the private fixtures and writes scored results
-  into the fixtures repo's `results/`. Per-case spread is about ±3
+  into the fixtures repo's `results/`. `ALIAS` limits the run to cases
+  whose `meta.toml` targets that alias. Per-case spread is about ±3
   checks out of 40, so `TRIALS=3` is the minimum for a comparison.
-- **`task llm:eval:compare RUNS="<run dir> …"`** renders runs side by
-  side.
+- **`task llm:eval:compare RUNS="<run dir> …" [PUBLIC=true]`** renders
+  runs side by side. Without `PUBLIC=true` the output is private: its
+  failed-check labels (`tags:must:<name>`) carry expected values.
+  `PUBLIC=true` reduces them to field and rule kind.
+- **`task llm:eval:audit FILE=<draft>`** fails if a draft comment or PR
+  body names any expected value. Run it before anything eval-derived
+  goes on GitHub, since hand-written prose is the one path `PUBLIC=true`
+  doesn't cover.
 
 ### Evaluating a candidate
+
+The `llm-eval` skill (`skills/llm-eval/SKILL.md`) runs this procedure
+from an `llm-candidate` issue through to a sanitized verdict comment and
+the adopt/drop PR. The steps:
 
 1. **Serve it as a temporary peer.** Add a `models."<repo>:<tag>"`
    entry with its own alias (`aliases = [ "text-next" ]`) and the
@@ -187,8 +199,9 @@ Every task takes one host and one router name:
 3. **`task llm:gate HOST=<host> ALIAS=text MODEL=text-next`** must pass.
    A model that can't hold the alias's context fails `context` and
    `vram` here.
-4. **`task llm:eval`** runs the candidate and the incumbent with
-   `TRIALS=3` each. Then run `task llm:eval:compare`.
+4. **`task llm:eval ALIAS=<alias>`** runs the candidate and the
+   incumbent with `TRIALS=3` each. Then run `task llm:eval:compare`, and
+   `PUBLIC=true` for anything headed to the issue.
 5. **Adopt or drop it.** To adopt, move the alias onto the candidate's
    entry, and remove the old entry or keep it as a named peer. To drop,
    delete the entry. Either way, run `task llm:models:prune` afterwards.
