@@ -42,8 +42,35 @@ let
     map (lib.removeSuffix ".nix") (
       builtins.attrNames (lib.filterAttrs isBundle (builtins.readDir bundleDir))
     );
+  # The guest's package sets for one Linux system. The workstation evaluates
+  # them only to name store paths; the guest flake imports the same file to
+  # build them.
+  guestSets =
+    system:
+    import ./_coding-sandbox/guest-pkgs.nix {
+      inherit (inputs) nixpkgs nixpkgs-unstable;
+      inherit system;
+    };
+  importBundle =
+    sets: name:
+    import (bundleDir + "/${name}.nix") {
+      inherit (sets) pkgs pkgsUnstable;
+      inherit (inputs.nixpkgs) lib;
+    };
 in
 {
+  # Each bundle's fixed-output sources (an optional `sources` attribute), so
+  # a `# regen-hash:` marker in a bundle names a flake attribute that
+  # scripts/regen-fetch-hashes.sh can build. A fixed-output path depends only
+  # on its name and hash, so one builder regenerates every guest system's.
+  perSystem =
+    { system, lib, ... }:
+    {
+      legacyPackages.coding-sandbox-bundle-sources = lib.genAttrs bundleNames (
+        name: (importBundle (guestSets system) name).sources or { }
+      );
+    };
+
   flake.modules.homeManager.coding-sandbox =
     {
       config,
@@ -83,13 +110,9 @@ in
             mountType = "9p";
             description = "QEMU/KVM";
           };
-      # The guest's package sets, evaluated here only to name each bundle's
-      # store paths. Nothing Linux is built on the workstation: the paths
+      # Nothing Linux is built on the workstation: each bundle's store paths
       # lose their string context before they reach the launcher.
-      guestSets = import ./_coding-sandbox/guest-pkgs.nix {
-        inherit (inputs) nixpkgs nixpkgs-unstable;
-        system = guestSystem;
-      };
+      guestBundle = importBundle (guestSets guestSystem);
       # The trusted catalog a project selects from by name. Each bundle's
       # source digest is policy (changing it requires recreating a VM); its
       # store paths follow the lock and are displayed and verified, not
@@ -101,10 +124,7 @@ in
             name:
             let
               source = bundleDir + "/${name}.nix";
-              bundle = import source {
-                inherit (guestSets) pkgs pkgsUnstable;
-                inherit lib;
-              };
+              bundle = guestBundle name;
             in
             {
               inherit (bundle) description commands;

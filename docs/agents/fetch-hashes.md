@@ -20,7 +20,11 @@ hand, run `task hashes` (or `task hashes -- --check` to only report).
   `# regen-hash: <flake attr>` comment on the line directly above the `hash`.
   The script swaps in `lib.fakeHash`, builds that attribute, and reads the real
   hash off the mismatch. Add that one line for any new `cargoHash` /
-  `npmDepsHash` / vendor pin.
+  `npmDepsHash` / vendor pin. Coding-sandbox bundles aren't flake attributes,
+  so a bundle returns its pinned sources in `sources` and the marker names
+  `legacyPackages.x86_64-linux.coding-sandbox-bundle-sources.<bundle>.<key>`.
+  A fixed-output path depends only on its name and hash, so the x86_64 runner
+  regenerates other systems' hashes too (see `databricks-cli.nix`).
 
 Deliberately manual: `fetchPypi` pins (blueair-api's version comes from the
 component's `manifest.json` and is enforced at build time by

@@ -206,18 +206,24 @@ cache unstable's build, and building it from source runs out of memory in a
 default guest, so `agent-opencode` uses stable until the cache serves it.
 Unfree bundles (`databricks-cli`, `agent-claude-code`) and `unity-gateway` are
 never in cache.nixos.org, so each new VM builds them. They are small builds.
+`databricks-cli` is upstream's statically linked release binary rather than
+nixpkgs' source build: as an unfree package that build would run in the guest
+and fetch its Go modules from `proxy.golang.org`, which the work Mac's network
+policy blocks for its guests too.
 
 A bundle that builds in the guest declares the hosts its build fetches from,
 and the plan shows them. In `restricted` mode the plan refuses until the
-project lists each one in `network.public_domains`: `proxy.golang.org` and
-`storage.googleapis.com` for `databricks-cli`, and `downloads.claude.ai` for
-`agent-claude-code`. The other bundles need nothing beyond the fixed bootstrap
-domains. `storage.googleapis.com` serves every public GCS bucket, not just the
-Go proxy's, so allowing it widens a restricted VM's egress well beyond Go
-modules. A tool missing from nixpkgs is packaged in
-its bundle from a fixed tag and hash. Unity Gateway is packaged like this and
-is tracked by Renovate. Adding a bundle means adding one file; the catalog is
-the directory listing.
+project lists each one in `network.public_domains`:
+`release-assets.githubusercontent.com` for `databricks-cli` (its download
+starts at `github.com`, already a bootstrap domain, which redirects there), and
+`downloads.claude.ai` for `agent-claude-code`. The other bundles need nothing
+beyond the fixed bootstrap domains. A tool missing from nixpkgs, or one whose
+nixpkgs build can't run in a guest, is packaged in its bundle from a fixed tag
+or release and its hash. Unity Gateway and the Databricks CLI are packaged like
+this and tracked by Renovate; CI regenerates their hashes (the Databricks
+CLI's through `regen-hash:` markers, see
+[fetch hashes](agents/fetch-hashes.md)). Adding a bundle means adding one
+file; the catalog is the directory listing.
 
 `sandbox plan` shows each selected bundle with its source digest, commands,
 and exact package versions and store paths. After Home Manager activation the
