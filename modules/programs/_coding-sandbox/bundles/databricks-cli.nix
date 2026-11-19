@@ -9,7 +9,7 @@
 { pkgsUnstable, lib, ... }:
 let
   # renovate: datasource=github-releases depName=databricks/cli
-  version = "1.22.1";
+  version = "1.26.0";
   release =
     { arch, hash }:
     pkgsUnstable.fetchurl {
@@ -22,12 +22,12 @@ let
     aarch64-linux = release {
       arch = "arm64";
       # regen-hash: legacyPackages.x86_64-linux.coding-sandbox-bundle-sources.databricks-cli.aarch64-linux
-      hash = "sha256-pDIAdrjl62z1cA0vIaRPLY5/nrogWOwZua+dtUcOiUU=";
+      hash = "sha256-4ckkqVgZ18eS9xpBwhbSqtlVAMrtqbhY3uZ2gwd6WgY=";
     };
     x86_64-linux = release {
       arch = "amd64";
       # regen-hash: legacyPackages.x86_64-linux.coding-sandbox-bundle-sources.databricks-cli.x86_64-linux
-      hash = "sha256-kaDlhQlY4+rYqhEQFV94WWtaA6adYKXckd4hC/FzQOU=";
+      hash = "sha256-UiSIhClyoGk2IHpQNCatNk2AYdouMwY22mD0RKMoQPU=";
     };
   };
   databricks-cli = pkgsUnstable.stdenvNoCC.mkDerivation {
