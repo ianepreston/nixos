@@ -12,9 +12,65 @@
 # host CPU, so nothing is emulated and the guest builds its own closure.
 { inputs, ... }:
 let
-  release = inputs.nixpkgs.lib.trivial.release;
+  # The guest flake's inputs are this flake's locked revisions, so a
+  # workstation revision identifies the guest's tool bytes. A lock bump
+  # reaches new VMs only; an existing VM keeps what it was built from.
+  pin = name: {
+    inherit (inputs.${name}) rev narHash;
+  };
+  guestPins = {
+    nixpkgs = pin "nixpkgs";
+    nixpkgs-unstable = pin "nixpkgs-unstable";
+    home-manager = pin "home-manager";
+  };
+  # A literal attrset in the rendered flake: flake inputs cannot be computed.
+  githubInput = owner: repo: name: extra: ''
+    {
+          type = "github";
+          owner = "${owner}";
+          repo = "${repo}";
+          rev = "${guestPins.${name}.rev}";
+          narHash = "${guestPins.${name}.narHash}";
+          ${extra}
+        }'';
+  bundleDir = ./_coding-sandbox/bundles;
+  bundleNames =
+    let
+      inherit (inputs.nixpkgs) lib;
+      isBundle = name: type: type == "regular" && lib.hasSuffix ".nix" name;
+    in
+    map (lib.removeSuffix ".nix") (
+      builtins.attrNames (lib.filterAttrs isBundle (builtins.readDir bundleDir))
+    );
+  # The guest's package sets for one Linux system. The workstation evaluates
+  # them only to name store paths; the guest flake imports the same file to
+  # build them.
+  guestSets =
+    system:
+    import ./_coding-sandbox/guest-pkgs.nix {
+      inherit (inputs) nixpkgs nixpkgs-unstable;
+      inherit system;
+    };
+  importBundle =
+    sets: name:
+    import (bundleDir + "/${name}.nix") {
+      inherit (sets) pkgs pkgsUnstable;
+      inherit (inputs.nixpkgs) lib;
+    };
 in
 {
+  # Each bundle's fixed-output sources (an optional `sources` attribute), so
+  # a `# regen-hash:` marker in a bundle names a flake attribute that
+  # scripts/regen-fetch-hashes.sh can build. A fixed-output path depends only
+  # on its name and hash, so one builder regenerates every guest system's.
+  perSystem =
+    { system, lib, ... }:
+    {
+      legacyPackages.coding-sandbox-bundle-sources = lib.genAttrs bundleNames (
+        name: (importBundle (guestSets system) name).sources or { }
+      );
+    };
+
   flake.modules.homeManager.coding-sandbox =
     {
       config,
@@ -54,60 +110,116 @@ in
             mountType = "9p";
             description = "QEMU/KVM";
           };
+      # Nothing Linux is built on the workstation: each bundle's store paths
+      # lose their string context before they reach the launcher.
+      guestBundle = importBundle (guestSets guestSystem);
+      # The trusted catalog a project selects from by name. Each bundle's
+      # source digest is policy (changing it requires recreating a VM); its
+      # store paths follow the lock and are displayed and verified, not
+      # compared.
+      bundleCatalog = pkgs.writeText "coding-sandbox-bundles.json" (
+        builtins.toJSON {
+          pins = guestPins;
+          bundles = lib.genAttrs bundleNames (
+            name:
+            let
+              source = bundleDir + "/${name}.nix";
+              bundle = guestBundle name;
+            in
+            {
+              inherit (bundle) description commands;
+              fetch_domains = bundle.fetchDomains;
+              digest = "sha256:${builtins.hashFile "sha256" source}";
+              packages = map (package: {
+                name = lib.getName package;
+                version = lib.getVersion package;
+                path = builtins.unsafeDiscardStringContext package.outPath;
+              }) bundle.packages;
+            }
+          );
+        }
+      );
       # This is the deliberately small, fixed first profile. It contains no
       # coding agent, model endpoint, or model credential: work demos often
       # need a separately installed agent pointed at their own AI gateway.
       # Project tools are supplied by a declared project's devShell when one
-      # is mounted. A sandbox may also deliberately have no host mounts, so
-      # this source remains separate from project code and cannot be altered
-      # by an untrusted checkout.
-      guestProfile = pkgs.writeTextDir "flake.nix" ''
+      # is mounted, platform bundles, or portable project modules. A sandbox
+      # may also deliberately have no host mounts, so this source remains
+      # separate from project code and cannot be altered by an untrusted
+      # checkout.
+      guestFlake = pkgs.writeText "flake.nix" ''
         {
           description = "Coding sandbox guest profile";
 
           inputs = {
-            nixpkgs.url = "github:NixOS/nixpkgs/nixos-${release}";
-            home-manager = {
-              url = "github:nix-community/home-manager/release-${release}";
-              inputs.nixpkgs.follows = "nixpkgs";
+            nixpkgs = ${githubInput "NixOS" "nixpkgs" "nixpkgs" ""};
+            nixpkgs-unstable = ${githubInput "NixOS" "nixpkgs" "nixpkgs-unstable" ""};
+            home-manager = ${
+              githubInput "nix-community" "home-manager" "home-manager" ''inputs.nixpkgs.follows = "nixpkgs";''
             };
           };
 
-          outputs = { nixpkgs, home-manager, ... }: {
-            homeConfigurations.agent = home-manager.lib.homeManagerConfiguration {
-              pkgs = nixpkgs.legacyPackages.${guestSystem};
-              modules = [
-                {
-                  home = {
-                    username = "agent";
-                    homeDirectory = "/home/agent";
-                    stateVersion = "26.05";
-                    packages = with nixpkgs.legacyPackages.${guestSystem}; [
-                      bashInteractive
-                      coreutils
-                      curl
-                      gh
-                      git
-                      jq
-                    ];
-                  };
+          outputs = { nixpkgs, nixpkgs-unstable, home-manager, ... }:
+            let
+              system = "${guestSystem}";
+              inherit (nixpkgs) lib;
+              sets = import ./guest-pkgs.nix { inherit nixpkgs nixpkgs-unstable system; };
+              # `coding-sandbox.sh` writes the names the host policy
+              # validated against this same catalog.
+              selected = builtins.fromJSON (builtins.readFile ./sandbox-bundles.json);
+              bundle = name: import (./bundles + "/''${name}.nix") {
+                inherit (sets) pkgs pkgsUnstable;
+                inherit lib;
+              };
+            in
+            {
+              # Activation uses this flake's own pinned Home Manager rather
+              # than resolving a release branch at first boot.
+              packages.''${system}.home-manager = home-manager.packages.''${system}.home-manager;
 
-                  programs = {
-                    direnv = {
-                      enable = true;
-                      nix-direnv.enable = true;
+              homeConfigurations.agent = home-manager.lib.homeManagerConfiguration {
+                inherit (sets) pkgs;
+                modules = [
+                  {
+                    home = {
+                      username = "agent";
+                      homeDirectory = "/home/agent";
+                      stateVersion = "26.05";
+                      packages = with sets.pkgs; [
+                        bashInteractive
+                        coreutils
+                        curl
+                        gh
+                        git
+                        jq
+                      ];
                     };
-                  };
-                }
-                # `coding-sandbox.sh` creates this ordinary Home Manager
-                # module from the reviewed per-worktree profile before the
-                # guest evaluates the flake. It imports only guest paths that
-                # the host policy resolved beneath declared mounts.
-                ./sandbox-profile.nix
-              ];
+
+                    programs = {
+                      direnv = {
+                        enable = true;
+                        nix-direnv.enable = true;
+                      };
+                    };
+                  }
+                  { home.packages = lib.concatMap (name: (bundle name).packages) selected; }
+                  # `coding-sandbox.sh` creates this ordinary Home Manager
+                  # module from the reviewed per-worktree profile before the
+                  # guest evaluates the flake. It imports only guest paths that
+                  # the host policy resolved beneath declared mounts.
+                  ./sandbox-profile.nix
+                ];
+              };
             };
-          };
         }
+      '';
+      # A real directory, not symlinks: Lima mounts it into the guest, where
+      # the workstation's store paths do not exist.
+      guestProfile = pkgs.runCommand "coding-sandbox-guest-profile" { } ''
+        mkdir -p "$out/bundles"
+        cp ${guestFlake} "$out/flake.nix"
+        cp ${./_coding-sandbox/guest-pkgs.nix} "$out/guest-pkgs.nix"
+        cp ${bundleDir}/*.nix "$out/bundles/"
       '';
 
       launcher = pkgs.writeShellApplication {
@@ -127,6 +239,7 @@ in
         text = ''
           export SANDBOX_GUEST_PROFILE=${guestProfile}
           export SANDBOX_POLICY_HELPER=${./coding-sandbox-policy.py}
+          export SANDBOX_BUNDLE_CATALOG=${bundleCatalog}
           export SANDBOX_VM_TYPE=${vm.type}
           export SANDBOX_VM_ARCH=${cpu}
           export SANDBOX_VM_MOUNT_TYPE=${vm.mountType}
@@ -139,9 +252,7 @@ in
               lib.escapeShellArg config.sops.secrets."coding-sandbox/github_app_private_key".path
             }
           ''}
-          ${builtins.replaceStrings [ "@home-manager-release@" ] [ "release-${release}" ] (
-            builtins.readFile ./coding-sandbox.sh
-          )}
+          ${builtins.readFile ./coding-sandbox.sh}
         '';
       };
     in

@@ -70,15 +70,24 @@ The guest is an Ubuntu VM on the host's CPU architecture. It has only the declar
 and a read-only copy of the active specification at
 `/sandbox-spec/.sandbox.toml`. The remainder of the host home directory, host
 credentials, and SSH agent are absent. The base profile supplies Nix, Bash,
-direnv/nix-direnv, curl, gh, git, and jq. Public and open VMs also run the upstream
-Databricks CLI and uv install scripts at first boot, placing both in
-`/usr/local/bin` for the unprivileged agent; destroy and recreate a VM to pick
-up a newer upstream release. Restricted VMs do not fetch those unrestricted
-installer domains after their exact-domain egress policy is active. The base
-profile deliberately does not install Pi, OpenCode, Claude Code, local-model
-configuration, or model credentials. A project may compose extra portable HM
-modules and unprivileged startup scripts as described below, or use a project
-`nix develop` for its declared tools.
+direnv/nix-direnv, curl, gh, git, and jq, and nothing else: no Databricks CLI,
+uv, Node, coding agent, local-model configuration, or model credential. Tools
+come from three places, each with a different owner:
+
+| Layer | Owner | Selected by | Use for |
+| --- | --- | --- | --- |
+| Base profile | this flake | always present | the minimal shell above |
+| [Platform bundles](#platform-bundles) | this flake | `[profile].bundles` names | reusable clients and tools: Databricks CLI, uv, Node, agents, Unity Gateway |
+| [Project profile](#per-worktree-profile-and-startup) | the project | `[profile].modules`, `[[startup]]` paths | a project-specific Home Manager adjustment |
+
+A project's own dependencies still belong in its `nix develop` devShell, which
+the guest realizes natively.
+
+The guest flake's `nixpkgs`, `nixpkgs-unstable`, and Home Manager inputs are
+this flake's own locked revisions (with their NAR hashes), so a workstation
+revision identifies the guest's bytes. `sandbox plan` prints them as `Guest
+pins`. Home Manager itself runs from that pinned input; nothing resolves a
+moving release branch at first boot.
 
 A project may intentionally expose no host paths at all. Omit `[[mounts]]`
 from the visible specification; the agent then starts in its private
@@ -161,6 +170,80 @@ mount when that source contains it, and is always mounted read-only at
 `/sandbox-spec/.sandbox.toml`. Treat it as reviewable project policy; changing
 it requires destroying and recreating the affected VM.
 
+### Platform bundles
+
+A bundle is a named, store-pinned tool set that this flake owns. A project
+selects bundles by exact name; it never names a path, URL, or package
+attribute:
+
+```toml
+[profile]
+bundles = ["databricks-cli", "uv", "agent-pi", "unity-gateway"]
+```
+
+| Bundle | Provides | Does not provide |
+| --- | --- | --- |
+| `databricks-cli` | `databricks` | a profile, workspace, or token |
+| `uv` | `uv`, `uvx` | a project environment or dependencies |
+| `nodejs` | `node`, `npm`, `npx` | npm-installed global tools |
+| `agent-pi` | `pi` | a provider, model, or credential |
+| `agent-claude-code` | `claude` | a login, API key, or permission bypass |
+| `agent-opencode` | `opencode` | a provider, model, or credential |
+| `unity-gateway` | `ug`, `ucode` | a workspace, OAuth state, or token |
+
+Bundles contain executables only. `ug` launches whichever agent bundles are
+also selected; it finds them on `PATH`. Databricks U2M login stays a human step
+inside the guest: declare the CLI's callback range (see
+[Browser OAuth callbacks](#browser-oauth-callbacks)) and choose the workspace
+explicitly.
+
+Definitions live in `modules/programs/_coding-sandbox/bundles/<name>.nix`;
+each returns a description, its commands, and its packages from the guest's
+`pkgs` (stable) or `pkgsUnstable` set (`_coding-sandbox/guest-pkgs.nix`, which
+also owns the guest's short unfree allowlist). The fast-moving clients use
+unstable, as on the workstations. The exception is OpenCode: Hydra doesn't
+cache unstable's build, and building it from source runs out of memory in a
+default guest, so `agent-opencode` uses stable until the cache serves it.
+Unfree bundles (`databricks-cli`, `agent-claude-code`) and `unity-gateway` are
+never in cache.nixos.org, so each new VM builds them. They are small builds.
+`databricks-cli` is upstream's statically linked release binary rather than
+nixpkgs' source build: as an unfree package that build would run in the guest
+and fetch its Go modules from `proxy.golang.org`, which the work Mac's network
+policy blocks for its guests too.
+
+A bundle that builds in the guest declares the hosts its build fetches from,
+and the plan shows them. In `restricted` mode the plan refuses until the
+project lists each one in `network.public_domains`:
+`release-assets.githubusercontent.com` for `databricks-cli` (its download
+starts at `github.com`, already a bootstrap domain, which redirects there), and
+`downloads.claude.ai` for `agent-claude-code`. The other bundles need nothing
+beyond the fixed bootstrap domains. A tool missing from nixpkgs, or one whose
+nixpkgs build can't run in a guest, is packaged in its bundle from a fixed tag
+or release and its hash. Unity Gateway and the Databricks CLI are packaged like
+this and tracked by Renovate; CI regenerates their hashes (the Databricks
+CLI's through `regen-hash:` markers, see
+[fetch hashes](agents/fetch-hashes.md)). Adding a bundle means adding one
+file; the catalog is the directory listing.
+
+`sandbox plan` shows each selected bundle with its source digest, commands,
+and exact package versions and store paths. After Home Manager activation the
+guest checks that every one of those store paths is in the agent's profile,
+and fails provisioning if not. Two kinds of change behave differently:
+
+- **Editing a bundle's definition** changes its source digest, so it is a
+  policy change. An existing VM refuses to start or run until it is destroyed
+  and recreated.
+- **A `flake.lock` bump** changes the pins and store paths but not the policy.
+  An existing VM keeps the tools it was built with, and `sandbox plan` for it
+  shows what it recorded. Destroy and recreate it to pick up the new pins.
+  The launcher roots each VM's guest-profile store path (the
+  `<instance>.guest-profile` link beside its recorded policy), so garbage
+  collection can't remove a path an existing VM still mounts. `destroy` and
+  `delete` remove the root.
+
+`modules/programs/_coding-sandbox/fixtures/bundles/.sandbox.toml` is a
+credential-free fixture that selects every bundle and mounts nothing.
+
 ### Per-worktree profile and startup
 
 `[profile].modules` accepts ordinary, portable Home Manager module files.
@@ -225,7 +308,10 @@ PATH, so `uv tool install` entrypoints work immediately without running
 Activation output is recorded in
 `~/.local/state/coding-sandbox/home-manager.log`; each startup entry gets
 `startup-<name>.log` there, and `profile.json` records the sources/digests used
-for the VM. An unchanged VM does not rerun setup after stop/start. Any change
+for the VM. If activation or any startup entry fails, `sandbox start` fails
+too, and prints the failed entry's log tail (or the end of
+`home-manager.log`). Lima alone would still report the VM ready. An unchanged
+VM does not rerun setup after stop/start. Any change
 to a selected module, startup script, source location, or profile declaration
 changes the effective policy: inspect `sandbox plan`, then destroy and recreate
 the VM before it can run.
@@ -576,10 +662,10 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 
 - Hosts are Apple Silicon macOS (VZ) and Linux with KVM (QEMU). The guest is
   always the host's CPU architecture; there is no cross-architecture guest.
-- `.sandbox.toml` covers mount/network policy plus portable Home Manager
-  modules, agent-only startup scripts, and one-repository GitHub session
-  grants. Other credentials, agent selection, and UI settings remain out of
-  scope.
+- `.sandbox.toml` covers mount/network policy plus platform bundles, portable
+  Home Manager modules, agent-only startup scripts, and one-repository GitHub
+  session grants. Other credentials, a `sandbox agent` launcher, and UI
+  settings remain out of scope.
 - GitHub grants support only `contents` and `pull_requests`, and only on hosts
   that provision the App credentials (`terra` and `luna`, not yet `work`).
 - No deploy key, long-lived token, host SSH forwarding, web UI, or general

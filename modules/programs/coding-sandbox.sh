@@ -59,8 +59,10 @@ Only paths declared in .sandbox.toml are mounted. Git repository paths are
 checked out into launcher-owned temporary worktrees; direct paths are mounted
 read-only unless their declaration explicitly requests read-write. The fixed,
 store-built guest profile and the project specification are separately mounted
-read-only. [profile].modules and [[startup]] sources must be files under one of
-those declared mounts; they are activated and run as the unprivileged `agent`
+read-only. [profile].bundles selects named, store-pinned platform tool bundles
+from this workstation's catalog (see `sandbox plan` for each one's contents).
+[profile].modules and [[startup]] sources must be files under one of those
+declared mounts; they are activated and run as the unprivileged `agent`
 account. The Lima transport account retains passwordless sudo only to bootstrap
 the guest and switch to that account. SSH keys, credential agents, and the
 rest of HOME are never forwarded or mounted.
@@ -322,6 +324,7 @@ parse_target() {
   nix_store_disk="s${instance_id:0:10}"
   state_root="${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox"
   policy_record="$state_root/$instance.policy.json"
+  guest_profile_root="$state_root/$instance.guest-profile"
   if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
     temporary_root="${TMPDIR:-/tmp}"
     temporary_root="${temporary_root%/}"
@@ -446,6 +449,14 @@ Use `sandbox destroy [PROJECT]` while the project still exists, or
 EOF
 }
 
+guest_pins_summary() {
+  jq -r '
+    if .guest_pins == null then "not recorded"
+    else .guest_pins | to_entries | map("\(.key) \(.value.rev[0:12])") | join(", ")
+    end
+  ' <<<"$policy_json"
+}
+
 show_plan() {
   cat <<EOF
 Coding sandbox plan
@@ -455,6 +466,7 @@ Coding sandbox plan
   Project:      $project
   Spec:         $(jq -r '.config_path // "none (legacy secondary-worktree mode)"' <<<"$policy_json")
   Base profile: fixed store-built profile (read-only)
+  Guest pins:   $(guest_pins_summary)
   Guest commands: unprivileged agent account (no sudo)
   Guest working directory: $guest_workdir
   SSH agent:    not forwarded
@@ -488,6 +500,14 @@ EOF
   fi
 
   printf '\n  Selected profile: sha256:%s\n' "$(jq -r '.profile.digest | sub("sha256:"; "")' <<<"$policy_json")"
+  if [[ $(jq '.profile.bundles // [] | length' <<<"$policy_json") -eq 0 ]]; then
+    printf '%s\n' '    bundles: none'
+  else
+    jq -r '.profile.bundles[] |
+      "    bundle: \(.name) [\(.digest)]\n      \(.description)\n      commands: \(.commands | join(", "))",
+      (select((.fetch_domains // []) | length > 0) | "      builds in the guest; fetches from: \(.fetch_domains | join(", "))"),
+      (.packages[] | "      \(.name) \(.version) \(.path)")' <<<"$policy_json"
+  fi
   if [[ $(jq '.profile.modules | length' <<<"$policy_json") -eq 0 ]]; then
     printf '%s\n' '    modules: none'
   else
@@ -818,20 +838,8 @@ append_profile_provision() {
     if test -e "$marker"; then
       exit 0
     fi
-    # These are guest-only developer tools. Install them through their
-    # upstream bootstrap scripts rather than putting a host package closure in
-    # the VM boundary. Restricted mode intentionally does not fetch arbitrary
-    # installer domains after its exact-domain egress policy becomes active.
-    if [[ ! -r /etc/coding-sandbox/policy.json || $(jq -r .mode /etc/coding-sandbox/policy.json) != restricted ]]; then
-      if ! command -v databricks >/dev/null; then
-        curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-      fi
-      if ! command -v uv >/dev/null; then
-        curl -LsSf https://astral.sh/uv/install.sh | env UV_UNMANAGED_INSTALL=/usr/local/bin sh
-      fi
-      databricks -v
-      uv --version
-    fi
+    # A previous boot's failure must not be reported for this attempt.
+    rm -f "$agent_home/.local/state/coding-sandbox/failed-startup"
     state_dir="$agent_home/.local/state/coding-sandbox"
     install -d -m 0700 -o agent -g agent \
       "$agent_home/.local/share/coding-sandbox/profile" \
@@ -872,8 +880,13 @@ YAML
       ];
     }
     PROFILE_MODULE
+    # The guest flake imports exactly these catalog names; it reads nothing
+    # else from the policy.
+    jq -c '[.profile.bundles // [] | .[].name]' "$state_dir/profile.json" \
+      >"$agent_home/.local/share/coding-sandbox/profile/sandbox-bundles.json"
     chown agent:agent "$state_dir/profile.json" \
-      "$agent_home/.local/share/coding-sandbox/profile/sandbox-profile.nix"
+      "$agent_home/.local/share/coding-sandbox/profile/sandbox-profile.nix" \
+      "$agent_home/.local/share/coding-sandbox/profile/sandbox-bundles.json"
 
     verify_source() {
       local guest_path="$1" expected_digest="$2" actual_digest
@@ -903,9 +916,26 @@ YAML
     cat <<'YAML'
     runuser -u agent -- env HOME="$agent_home" "${proxy_environment[@]}" bash -lc '
       source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-      nix run github:nix-community/home-manager/@home-manager-release@ -- switch --impure --flake "$HOME/.local/share/coding-sandbox/profile#agent"
+      profile="$HOME/.local/share/coding-sandbox/profile"
+      nix run "$profile#home-manager" -- switch --impure --flake "$profile#agent"
     ' >"$state_dir/home-manager.log" 2>&1
     chown agent:agent "$state_dir/home-manager.log"
+
+    # Each selected bundle must have realized the exact store paths the host
+    # displayed in `sandbox plan`; a guest that resolved different bytes fails
+    # provisioning instead of silently running them.
+    bundle_closure=$(runuser -u agent -- env HOME="$agent_home" bash -lc '
+      source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+      nix-store --query --requisites "$HOME/.local/state/nix/profiles/home-manager"
+    ')
+    while IFS= read -r bundle_path; do
+      [[ -n "$bundle_path" ]] || continue
+      if ! grep -Fxq "$bundle_path" <<<"$bundle_closure"; then
+        printf 'bundle store path missing from the agent profile: %s\n' "$bundle_path" |
+          tee -a "$state_dir/home-manager.log" >&2
+        exit 1
+      fi
+    done < <(jq -r '.profile.bundles // [] | .[].packages[].path' "$state_dir/profile.json")
 
     startup_count=$(jq '.startup | length' "$state_dir/profile.json")
     agent_profile_path="$agent_home/.nix-profile/bin:$PATH"
@@ -1282,6 +1312,12 @@ EOF
 
 policy_matches_instance() {
   local recorded current_contract recorded_contract
+  # Guest pins and bundle store paths follow the workstation's flake.lock;
+  # a VM keeps what it was built from. Bundle names and source digests stay
+  # in the contract.
+  local policy_contract='
+    del(.strict_domains, .strict_v4, .strict_v6, .guest_pins)
+    | if .profile.bundles then .profile.bundles |= map(del(.packages)) else . end'
   [[ -r "$policy_record" ]] || die \
     "existing $instance has no recorded policy; destroy it before using this network-policy version"
   recorded=$(jq -ce '.policy' "$policy_record") ||
@@ -1291,8 +1327,8 @@ policy_matches_instance() {
   # contract without those derived addresses and retain the recorded policy
   # for all actions and plan output against this existing VM.  Internal grants
   # remain in the compared contract and still require recreation on change.
-  current_contract=$(jq -cS 'del(.strict_domains, .strict_v4, .strict_v6)' <<<"$policy_json")
-  recorded_contract=$(jq -cS 'del(.strict_domains, .strict_v4, .strict_v6)' <<<"$recorded")
+  current_contract=$(jq -cS "$policy_contract" <<<"$policy_json")
+  recorded_contract=$(jq -cS "$policy_contract" <<<"$recorded")
   [[ "$recorded_contract" == "$current_contract" ]] || die \
     "effective policy changed for $instance; inspect sandbox plan, then destroy and recreate the VM"
   policy_json="$recorded"
@@ -1392,6 +1428,37 @@ cache_command() {
   esac
 }
 
+# The VM's Lima configuration mounts this store path for its whole life, and
+# a flake.lock bump moves the current one. Root it so garbage collection
+# cannot remove a mount an existing VM still needs.
+root_guest_profile() {
+  nix-store --add-root "$guest_profile_root" --realise "$SANDBOX_GUEST_PROFILE" >/dev/null
+}
+
+# Lima reports an instance ready even when a provision script failed, so
+# confirm the guest profile and every startup entry completed.
+check_provisioned() {
+  local state_dir=/home/agent/.local/state/coding-sandbox state failed
+  # One probe that always prints, so a transport failure is not mistaken for
+  # an unprovisioned guest.
+  state=$(limactl shell --workdir "$transport_workdir" "$instance" \
+    sudo sh -c "if test -e '$state_dir/profile-ready'; then echo ready; else echo pending; fi") ||
+    die "cannot inspect $instance; check it with sandbox status before changing it"
+  [[ "$state" == pending ]] || return 0
+  failed=$(limactl shell --workdir "$transport_workdir" "$instance" \
+    sudo cat "$state_dir/failed-startup" 2>/dev/null || true)
+  if [[ -n "$failed" ]]; then
+    printf 'sandbox: startup entry %s failed; last lines of startup-%s.log:\n' "$failed" "$failed" >&2
+    limactl shell --workdir "$transport_workdir" "$instance" \
+      sudo tail -n 20 "$state_dir/startup-$failed.log" >&2 || true
+  else
+    printf '%s\n' 'sandbox: guest profile activation did not complete; last lines of home-manager.log:' >&2
+    limactl shell --workdir "$transport_workdir" "$instance" \
+      sudo tail -n 20 "$state_dir/home-manager.log" >&2 || true
+  fi
+  die "$instance did not finish provisioning; fix the profile, then destroy and recreate it"
+}
+
 start() {
   check_host
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
@@ -1402,6 +1469,7 @@ start() {
 
   if limactl list --format '{{.Name}}' | grep -Fxq "$instance"; then
     limactl start "$instance"
+    check_provisioned
     note "ready. Run: sandbox shell --network $network_mode $project"
     return
   fi
@@ -1412,6 +1480,8 @@ start() {
   note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the selected guest profile"
   limactl start --tty=false --name="$instance" "$template"
   record_policy
+  root_guest_profile
+  check_provisioned
   note "ready. Run: sandbox shell --network $network_mode $project"
 }
 
@@ -1522,7 +1592,7 @@ destroy() {
   else
     limactl delete --force "$instance"
   fi
-  rm -f "$policy_record"
+  rm -f "$policy_record" "$guest_profile_root"
   if [[ "$instance_nix_store_mode" == persistent ]]; then
     note "deleted VM. Persistent Nix cache disk $nix_store_disk was retained."
   else
@@ -1568,6 +1638,7 @@ delete_instance() {
     [[ "$response" == "delete $instance_to_delete" ]] || die 'not deleted'
   fi
   limactl delete --force "$instance_to_delete"
+  rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox/$instance_to_delete.guest-profile"
   note 'deleted. No declared host path was changed.'
 }
 
