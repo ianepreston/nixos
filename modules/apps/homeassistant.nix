@@ -158,11 +158,11 @@
         owner = "suaveolent";
         domain = "hoymiles_wifi";
         # renovate: datasource=github-releases depName=suaveolent/ha-hoymiles-wifi
-        version = "0.6.0";
+        version = "0.6.1";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "suaveolent";
           repo = "ha-hoymiles-wifi";
-          tag = "v0.6.0";
+          tag = "v0.6.1";
           hash = "sha256-yzqgkOIcvFScNj0cq2c57SapBDIxLyt4wF8LR3gbE8w=";
         };
         dependencies = [ hoymiles-wifi ];
