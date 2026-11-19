@@ -41,7 +41,7 @@ tasks:
           --candidates "$candidates" >"$radar_dir/drafts.json"
         echo "Dry-run report written to $radar_dir/drafts.json; no issue was created."
 
-  # Eval harness (#555). Both tasks reach HOST through
+  # Eval harness (#555; the llm-eval skill drives it). gate and eval reach HOST through
   # scripts/llm-eval-connect.sh: loopback on the host itself, otherwise a
   # port forward on the existing ssh master (fails fast without one).
   #
@@ -71,12 +71,13 @@ tasks:
   # and writes scored results back into that repo's results/ — never into
   # this one. Absent checkout is a warning, not a failure.
   eval:
-    desc: 'Replay private fixtures against MODEL on HOST and score them. Vars: HOST (default terra), MODEL (router name or alias, default text), FEATURE, TRIALS (default 1), FIXTURES (default ../nix-eval-fixtures)'
+    desc: 'Replay private fixtures against MODEL on HOST and score them. Vars: HOST (default terra), MODEL (router name or alias, default text), FEATURE, ALIAS (cases targeting this alias), TRIALS (default 1), FIXTURES (default ../nix-eval-fixtures)'
     silent: true
     vars:
       HOST: '{{.HOST | default "terra"}}'
       MODEL: '{{.MODEL | default "text"}}'
       FEATURE: '{{.FEATURE | default ""}}'
+      ALIAS: '{{.ALIAS | default ""}}'
       TRIALS: '{{.TRIALS | default "1"}}'
       FIXTURES: '{{.FIXTURES | default "../nix-eval-fixtures"}}'
     cmds:
@@ -88,16 +89,49 @@ tasks:
           exit 0
         fi
         feature="{{.FEATURE}}"
+        alias="{{.ALIAS}}"
         scripts/llm-eval-connect.sh "{{.HOST}}" run --fixtures "$fixtures" \
-          --model "{{.MODEL}}" --trials "{{.TRIALS}}" ${feature:+--feature "$feature"}
+          --model "{{.MODEL}}" --trials "{{.TRIALS}}" ${feature:+--feature "$feature"} \
+          ${alias:+--alias "$alias"}
 
+  # PUBLIC=true redacts the expected values that failed-check labels carry
+  # (`tags:must:<name>` becomes `tags:must`), so the output can go in an
+  # llm-candidate issue. Without it the output is private, like results/.
   eval:compare:
-    desc: 'Markdown comparison of eval runs. Vars: RUNS="<run dir> <run dir> ..." (under ../nix-eval-fixtures/results)'
+    desc: 'Markdown comparison of eval runs. Vars: RUNS="<run dir> <run dir> ..." (under ../nix-eval-fixtures/results), PUBLIC (true: safe for issue comments)'
     silent: true
     requires:
       vars: [RUNS]
+    vars:
+      PUBLIC: '{{.PUBLIC | default "false"}}'
     cmds:
-      - nix shell --inputs-from . nixpkgs#python3 -c python3 scripts/llm-eval.py compare {{.RUNS}}
+      - |
+        set -euo pipefail
+        case "{{.PUBLIC}}" in
+          true) public=--public ;;
+          false) public= ;;
+          *) echo "PUBLIC must be true or false, not '{{.PUBLIC}}'" >&2; exit 1 ;;
+        esac
+        nix shell --inputs-from . nixpkgs#python3 -c python3 scripts/llm-eval.py compare $public {{.RUNS}}
+
+  # The last check before anything eval-derived goes on GitHub: fails if
+  # FILE names any value an expected.json scores against. Case IDs are
+  # allowed (they're public by contract). Prose written by hand is the one
+  # path --public can't cover.
+  eval:audit:
+    desc: 'Fail if FILE (a draft issue comment or PR body) contains private fixture values. Vars: FILE, FIXTURES (default ../nix-eval-fixtures)'
+    silent: true
+    requires:
+      vars: [FILE]
+    vars:
+      FIXTURES: '{{.FIXTURES | default "../nix-eval-fixtures"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        file="{{.FILE}}"
+        case $file in /*) ;; *) file="{{.USER_WORKING_DIR}}/$file" ;; esac
+        nix shell --inputs-from . nixpkgs#python3 -c python3 scripts/llm-eval.py audit \
+          --fixtures "{{.FIXTURES}}" "$file"
 
   models:
     desc: 'List cached GGUFs on HOST against the configured set (Darwin: local). Vars: HOST (default terra)'

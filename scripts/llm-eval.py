@@ -17,7 +17,9 @@ Subcommands:
            private.
   run      replay every case against --model at --endpoint and write a run dir
   rescore  re-score a run's saved responses against the current expected.json
-  compare  render a markdown comparison of two or more run dirs
+  compare  render a markdown comparison of two or more run dirs; --public
+           drops the expected values that check labels carry
+  audit    fail if a draft bound for a public issue contains an expected value
 """
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ LIST_RULE_KEYS = {"must", "must_not", "want", "may_be_empty", "link", "ignore", 
 def norm(value: object) -> str:
     """Compare names loosely: case, hyphens/underscores and spacing don't matter.
 
-    "36 Riverwood" and "36-riverwood" are the same *name*. Whether the model
+    "Home Office" and "home-office" are the same *name*. Whether the model
     also linked it to the existing object is a separate `link` check.
     """
     text = str(value).lower().replace("-", " ").replace("_", " ")
@@ -191,7 +193,9 @@ def summarize(checks: list[dict]) -> dict:
 # --------------------------------------------------------------------------
 
 
-def load_cases(fixtures: Path, feature: str | None) -> list[dict]:
+def load_cases(
+    fixtures: Path, feature: str | None, alias: str | None = None
+) -> list[dict]:
     cases = []
     for request in sorted(fixtures.glob("*/*/request.json")):
         case_dir = request.parent
@@ -201,6 +205,13 @@ def load_cases(fixtures: Path, feature: str | None) -> list[dict]:
         meta_path = case_dir / "meta.toml"
         meta = tomllib.loads(meta_path.read_text()) if meta_path.exists() else {}
         if meta.get("retired"):
+            continue
+        if alias and meta.get("alias") != alias:
+            if not meta.get("alias"):
+                print(
+                    f"skip {feat}/{case_dir.name}: no alias in meta.toml",
+                    file=sys.stderr,
+                )
             continue
         expected_path = case_dir / "expected.json"
         if not expected_path.exists():
@@ -267,7 +278,7 @@ def cmd_run(ns: argparse.Namespace) -> int:
     if not fixtures.is_dir():
         print(f"warning: no fixtures checkout at {fixtures}; skipping", file=sys.stderr)
         return 0
-    cases = load_cases(fixtures, ns.feature)
+    cases = load_cases(fixtures, ns.feature, ns.alias)
     if not cases:
         print("no cases matched", file=sys.stderr)
         return 1
@@ -289,6 +300,7 @@ def cmd_run(ns: argparse.Namespace) -> int:
         "resolved_model": resolved,
         "endpoint": endpoint,
         "trials": ns.trials,
+        "filter": {"alias": ns.alias, "feature": ns.feature},
         "started": stamp,
         "fixtures_commit": git_head(fixtures),
         "harness_commit": git_head(Path(__file__).resolve().parent),
@@ -793,13 +805,52 @@ def case_score(record: dict) -> tuple[float, int]:
     return passed, trials[0]["total"] if trials else 0
 
 
-def render(runs: list[dict]) -> str:
+def failed_labels(record: dict, public: bool) -> list[str]:
+    """Distinct failed checks across a case's trials.
+
+    A list rule's check label embeds the expected value (`must:<name>`,
+    `link:<name>`), which is fixture content. `public` keeps only the field
+    and the rule kind, with a count, so the output can go in a public issue.
+    """
+    failed = {
+        (c["field"], c["check"], c["detail"] if c["check"] == "parses" else "")
+        for t in record["trials"]
+        for c in t["checks"]
+        if not c["pass"]
+    }
+    if not public:
+        return sorted(
+            f"{field}:{name}" + (f" ({detail})" if detail else "")
+            for field, name, detail in failed
+        )
+    counts: dict[str, int] = {}
+    for field, name, detail in failed:
+        # A parse error's detail is the harness's own message, not fixture text.
+        key = f"{field}:{name.split(':', 1)[0]}" + (f" ({detail})" if detail else "")
+        counts[key] = counts.get(key, 0) + 1
+    return [f"{k} ×{n}" if n > 1 else k for k, n in sorted(counts.items())]
+
+
+def render(runs: list[dict], public: bool = False) -> str:
     lines = ["# " + " vs ".join(label(r) for r in runs), ""]
     for r in runs:
         lines.append(
             f"- {label(r)} = `{r['resolved_model']}`, {r['trials']} trial(s), "
             f"started {r['started']}, fixtures `{r['fixtures_commit']}`"
         )
+    case_sets = {frozenset((c["feature"], c["case"]) for c in r["cases"]) for r in runs}
+    if len(case_sets) > 1:
+        # Totals are each run's own denominator, so they aren't comparable.
+        lines += [
+            "",
+            "> **Warning:** these runs cover different cases (filters: "
+            + ", ".join(
+                f"{label(r)} {json.dumps(r.get('filter') or {}, sort_keys=True)}"
+                for r in runs
+            )
+            + "). Compare per-case rows, not totals; re-run with the same "
+            "`ALIAS`/`FEATURE`.",
+        ]
     lines += ["", "## Scores", ""]
     lines.append("| case | " + " | ".join(label(r) for r in runs) + " |")
     lines.append("| --- |" + " --- |" * len(runs))
@@ -836,15 +887,7 @@ def render(runs: list[dict]) -> str:
             )
             if rec is None:
                 continue
-            failed = sorted(
-                {
-                    f"{c['field']}:{c['check']}"
-                    + (f" ({c['detail']})" if c["check"] == "parses" else "")
-                    for t in rec["trials"]
-                    for c in t["checks"]
-                    if not c["pass"]
-                }
-            )
+            failed = failed_labels(rec, public)
             cells.append(
                 f"  - {label(r)}: " + (", ".join(f"`{f}`" for f in failed) or "none")
             )
@@ -892,7 +935,68 @@ def cmd_rescore(ns: argparse.Namespace) -> int:
 
 def cmd_compare(ns: argparse.Namespace) -> int:
     runs = [json.loads((Path(d) / "run.json").read_text()) for d in ns.runs]
-    sys.stdout.write(render(runs))
+    sys.stdout.write(render(runs, public=ns.public))
+    return 0
+
+
+def expected_values(fixtures: Path) -> tuple[set[str], list[str]]:
+    """Every name an expected.json scores against, and the public case IDs.
+
+    The names are fixture content by definition. Case IDs are returned as
+    `<feature>/<case>`, the only form the audit treats as public.
+    """
+    values: set[str] = set()
+    idents = []
+    for path in fixtures.glob("*/*/expected.json"):
+        idents.append(f"{path.parent.parent.name}/{path.parent.name}")
+        for rule in json.loads(path.read_text()).values():
+            if not isinstance(rule, dict):
+                continue
+            for key in ("must", "must_not", "want", "examples"):
+                values.update(str(v) for v in rule.get(key) or [])
+            values.update(str(v) for v in rule.get("link") or {})
+    # One-character names can't be told apart from ordinary text.
+    return {v for v in values if len(norm(v)) > 1}, idents
+
+
+def loose_pattern(value: str) -> re.Pattern:
+    """Match value the way norm() compares names: case, `-`, `_` and spacing
+    are interchangeable, so "Home Office" finds `home-office`."""
+    words = [re.escape(w) for w in norm(value).split(" ")]
+    return re.compile(r"(?<![^\W_])" + r"[\s_-]+".join(words) + r"(?![^\W_])", re.I)
+
+
+def audit(text: str, fixtures: Path) -> tuple[list[str], int]:
+    """Expected values present in text meant for a public issue, and how many
+    values were checked.
+
+    Only fully qualified case IDs (`paperless-classify/furnace-invoice-handwritten`)
+    are masked first: they're public by the fixtures contract and often share
+    a word with an expected value. A bare case name in prose is not masked,
+    because it can't be told apart from the same words used as a value.
+    """
+    values, idents = expected_values(fixtures)
+    for ident in sorted(idents, key=len, reverse=True):
+        text = re.sub(
+            r"(?<![\w/-])" + re.escape(ident) + r"(?![\w-])", " ", text, flags=re.I
+        )
+    hits = sorted(v for v in values if loose_pattern(v).search(text))
+    return hits, len(values)
+
+
+def cmd_audit(ns: argparse.Namespace) -> int:
+    fixtures = Path(ns.fixtures)
+    if not fixtures.is_dir():
+        print(f"no fixtures checkout at {fixtures}; cannot audit", file=sys.stderr)
+        return 2
+    hits, checked = audit(Path(ns.file).read_text(), fixtures)
+    if hits:
+        # Printed locally only: this is the operator's terminal, not the issue.
+        print(f"{ns.file}: {len(hits)} expected value(s) present:", file=sys.stderr)
+        for hit in hits:
+            print(f"  {hit}", file=sys.stderr)
+        return 1
+    print(f"{ns.file}: clean against {checked} expected values")
     return 0
 
 
@@ -918,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--host", required=True, help="label for the results")
     run.add_argument("--model", required=True, help="router name or alias to test")
     run.add_argument("--feature")
+    run.add_argument("--alias", help="only cases whose meta.toml targets this alias")
     run.add_argument("--trials", type=int, default=1)
     run.set_defaults(func=cmd_run)
     rescore = sub.add_parser("rescore")
@@ -926,7 +1031,16 @@ def main(argv: list[str] | None = None) -> int:
     rescore.set_defaults(func=cmd_rescore)
     cmp = sub.add_parser("compare")
     cmp.add_argument("runs", nargs="+", help="run directories")
+    cmp.add_argument(
+        "--public",
+        action="store_true",
+        help="redact expected values from failed-check labels, for issue comments",
+    )
     cmp.set_defaults(func=cmd_compare)
+    aud = sub.add_parser("audit")
+    aud.add_argument("--fixtures", required=True)
+    aud.add_argument("file", help="draft text bound for a public issue or PR")
+    aud.set_defaults(func=cmd_audit)
     ns = parser.parse_args(argv)
     return ns.func(ns)
 

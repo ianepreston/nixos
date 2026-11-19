@@ -276,5 +276,149 @@ class Gates(unittest.TestCase):
         self.assertTrue(png.endswith(b"IEND\xaeB`\x82"))
 
 
+class Compare(unittest.TestCase):
+    def run_of(self, trials: list[dict]) -> dict:
+        return {
+            "host": "terra",
+            "model": "text",
+            "resolved_model": "org/model-GGUF:Q4_K_M",
+            "trials": len(trials),
+            "started": "2026-11-19T00:00Z",
+            "fixtures_commit": "abc1234",
+            "cases": [
+                {"feature": "paperless-classify", "case": "widget", "trials": trials}
+            ],
+        }
+
+    def test_public_render_never_contains_expected_values(self):
+        miss = llm_eval.score_case(EXPECTED, tool_response({"title": "x", "tags": []}))
+        broken = llm_eval.score_case(EXPECTED, tool_response("{not json"))
+        run = self.run_of([miss, broken])
+
+        private = llm_eval.render([run])
+        public = llm_eval.render([run], public=True)
+
+        self.assertIn("must:home-office", private)
+        for value in ("home-office", "Manual", "Guide", "Customer"):
+            self.assertNotIn(value, public)
+        self.assertIn("`tags:must`", public)
+        self.assertIn("`tags:link`", public)
+        self.assertIn("`document_types:link`", public)
+        # Scores and speed are unchanged by redaction.
+        self.assertEqual(private.split("## Failed")[0], public.split("## Failed")[0])
+        self.assertEqual(private.split("## Speed")[1], public.split("## Speed")[1])
+
+    def test_public_labels_count_distinct_checks_per_rule_kind(self):
+        record = {
+            "trials": [
+                {
+                    "checks": [
+                        {
+                            "field": "tags",
+                            "check": "must:a",
+                            "pass": False,
+                            "detail": "",
+                        },
+                        {
+                            "field": "tags",
+                            "check": "must:b",
+                            "pass": False,
+                            "detail": "",
+                        },
+                        {
+                            "field": "*",
+                            "check": "parses",
+                            "pass": False,
+                            "detail": "bad",
+                        },
+                    ]
+                },
+                {
+                    "checks": [
+                        {
+                            "field": "tags",
+                            "check": "must:a",
+                            "pass": False,
+                            "detail": "",
+                        }
+                    ]
+                },
+            ]
+        }
+        self.assertEqual(
+            llm_eval.failed_labels(record, public=True),
+            ["*:parses (bad)", "tags:must ×2"],
+        )
+        self.assertEqual(
+            llm_eval.failed_labels(record, public=False),
+            ["*:parses (bad)", "tags:must:a", "tags:must:b"],
+        )
+
+
+class CompareCaseSets(unittest.TestCase):
+    def test_warns_when_runs_cover_different_cases(self):
+        trial = llm_eval.score_case(EXPECTED, tool_response({"title": "x"}))
+
+        def run(cases: list[str], alias: str | None) -> dict:
+            return {
+                "host": "terra",
+                "model": "m",
+                "resolved_model": "m",
+                "trials": 1,
+                "started": "s",
+                "fixtures_commit": "c",
+                "filter": {"alias": alias, "feature": None},
+                "cases": [
+                    {"feature": "f", "case": c, "trials": [trial]} for c in cases
+                ],
+            }
+
+        same = llm_eval.render([run(["a"], "text"), run(["a"], "text")])
+        differ = llm_eval.render([run(["a"], "text"), run(["a", "b"], None)])
+        self.assertNotIn("Warning", same)
+        self.assertIn("Warning", differ)
+
+
+class Audit(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Path(self.tmp.name)
+        for name, expected in [
+            ("widget-manual", EXPECTED),
+            ("widget", {"tags": {"must": ["Blue Widget", "HR"]}}),
+        ]:
+            case = self.fx / "paperless-classify" / name
+            case.mkdir(parents=True)
+            (case / "expected.json").write_text(json.dumps(expected))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hits(self, text: str) -> list[str]:
+        return llm_eval.audit(text, self.fx)[0]
+
+    def test_qualified_case_ids_are_public(self):
+        clean = "paperless-classify/widget-manual: 8.0/10, `tags:must` ×2"
+        self.assertEqual(self.hits(clean), [])
+        self.assertEqual(self.hits("paperless-classify/widget 3/3"), [])
+
+    def test_matches_names_the_way_the_scorer_does(self):
+        for text in ("missed home-office", "missed Home Office", "missed home_office"):
+            self.assertEqual(self.hits(text), ["home-office"], text)
+        self.assertEqual(self.hits("no MANUAL type"), ["Manual"])
+        # Word-bounded: a value inside a longer word isn't a hit.
+        self.assertEqual(self.hits("Manually re-run"), [])
+
+    def test_bare_case_name_does_not_mask_a_value(self):
+        # `widget` is a case name; "Blue Widget" is still a value.
+        self.assertEqual(self.hits("it missed Blue Widget"), ["Blue Widget"])
+
+    def test_short_values_are_checked(self):
+        self.assertEqual(self.hits("tagged it HR"), ["HR"])
+        self.assertEqual(self.hits("HRM"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
