@@ -49,12 +49,17 @@ tasks:
   # target in myLlamaCpp.evalTargets (tool-call round trip, input
   # modalities, the alias's full context, resident VRAM vs the host's
   # budget). Needs no fixtures; its output is safe to paste publicly.
+  #
+  # ALIAS is also one of Task's own special variables: the name the task was
+  # invoked by. So `{{.ALIAS | default ...}}` never sees it as unset; without
+  # ALIAS= on the command line it holds "llm:gate" / "llm:eval". Neither task
+  # declares aliases, so ALIAS == TASK means the caller didn't pass one.
   gate:
     desc: 'Tier-0 gates for MODEL against ALIAS on HOST. Vars: HOST (default terra), ALIAS (default text), MODEL (router name, default the alias incumbent), JSON (optional output path)'
     silent: true
     vars:
       HOST: '{{.HOST | default "terra"}}'
-      ALIAS: '{{.ALIAS | default "text"}}'
+      GATE_ALIAS: '{{if eq .ALIAS .TASK}}text{{else}}{{.ALIAS}}{{end}}'
       MODEL: '{{.MODEL | default ""}}'
       JSON: '{{.JSON | default ""}}'
     cmds:
@@ -64,7 +69,7 @@ tasks:
         model="{{.MODEL}}"
         json="{{.JSON}}"
         case $json in "" | /*) ;; *) json="{{.USER_WORKING_DIR}}/$json" ;; esac
-        scripts/llm-eval-connect.sh "{{.HOST}}" gate --targets "$targets" --alias "{{.ALIAS}}" \
+        scripts/llm-eval-connect.sh "{{.HOST}}" gate --targets "$targets" --alias "{{.GATE_ALIAS}}" \
           ${model:+--model "$model"} ${json:+--json "$json"}
 
   # Tier 1, `eval`: replays the private fixtures in ../nix-eval-fixtures
@@ -77,7 +82,8 @@ tasks:
       HOST: '{{.HOST | default "terra"}}'
       MODEL: '{{.MODEL | default "text"}}'
       FEATURE: '{{.FEATURE | default ""}}'
-      ALIAS: '{{.ALIAS | default ""}}'
+      # See the ALIAS note above `gate`.
+      EVAL_ALIAS: '{{if eq .ALIAS .TASK}}{{else}}{{.ALIAS}}{{end}}'
       TRIALS: '{{.TRIALS | default "1"}}'
       FIXTURES: '{{.FIXTURES | default "../nix-eval-fixtures"}}'
     cmds:
@@ -89,7 +95,7 @@ tasks:
           exit 0
         fi
         feature="{{.FEATURE}}"
-        alias="{{.ALIAS}}"
+        alias="{{.EVAL_ALIAS}}"
         scripts/llm-eval-connect.sh "{{.HOST}}" run --fixtures "$fixtures" \
           --model "{{.MODEL}}" --trials "{{.TRIALS}}" ${feature:+--feature "$feature"} \
           ${alias:+--alias "$alias"}

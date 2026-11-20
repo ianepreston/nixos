@@ -148,7 +148,43 @@ def score_list_field(field: str, rule: dict, args: dict) -> list[dict]:
     return out
 
 
+def text_norm(value: object) -> str:
+    """OCR text compares on letters and digits alone: punctuation, case and
+    layout don't count, so "240.45" matches a transcription that put dollars
+    and cents in separate columns ("240 / 45")."""
+    return re.sub(r"[^0-9a-z]+", " ", str(value).lower()).strip()
+
+
+def score_text_case(expected: dict, response: dict) -> dict:
+    """Free-text answers (`image-to-text`): did each field come back?
+
+    `expected["recover"]` maps a field label to its accepted spellings. A
+    field passes when any spelling appears, whole-word, in the message
+    content after `text_norm`. One check per field, plus `*:non-empty` and
+    `*:complete` (not cut off at max_tokens).
+    """
+    try:
+        choice = response["choices"][0]
+        content = choice["message"].get("content") or ""
+        finish = choice.get("finish_reason")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        content, finish = "", None
+    text = f" {text_norm(content)} "
+    # A transcription cut off at max_tokens loses its tail fields. Its own
+    # check says so, instead of that reading as misread handwriting.
+    checks = [
+        check("*", "non-empty", bool(text.strip())),
+        check("*", "complete", bool(text.strip()) and finish != "length"),
+    ]
+    for field, spellings in expected["recover"].items():
+        found = any(f" {text_norm(s)} " in text for s in spellings if text_norm(s))
+        checks.append(check(field, "recovered", found))
+    return summarize(checks)
+
+
 def score_case(expected: dict, response: dict) -> dict:
+    if "recover" in expected:
+        return score_text_case(expected, response)
     args, error = extract_arguments(response)
     finish = ((response.get("choices") or [{}])[0] or {}).get("finish_reason")
     if error and finish == "length":
@@ -651,9 +687,13 @@ def cmd_gate(ns: argparse.Namespace) -> int:
         )
 
     if "image" in target["modalities"]:
+        # 256 px, not smaller: at 64 px the image is ~16 tokens and
+        # Qwen3-VL-4B answered "Black" for solid red (2026-11-20, #986),
+        # failing a deployment that reads handwriting fine. 256 px costs
+        # 85 prompt tokens and both vision incumbents answer "Red".
         image = (
             "data:image/png;base64,"
-            + base64.b64encode(solid_png((220, 20, 20))).decode()
+            + base64.b64encode(solid_png((220, 20, 20), size=256)).decode()
         )
         content = [
             {"type": "text", "text": "What colour is this image? Answer in one word."},
@@ -949,8 +989,11 @@ def expected_values(fixtures: Path) -> tuple[set[str], list[str]]:
     idents = []
     for path in fixtures.glob("*/*/expected.json"):
         idents.append(f"{path.parent.parent.name}/{path.parent.name}")
-        for rule in json.loads(path.read_text()).values():
-            if not isinstance(rule, dict):
+        expected = json.loads(path.read_text())
+        for spellings in (expected.get("recover") or {}).values():
+            values.update(str(v) for v in spellings)
+        for field, rule in expected.items():
+            if field == "recover" or not isinstance(rule, dict):
                 continue
             for key in ("must", "must_not", "want", "examples"):
                 values.update(str(v) for v in rule.get(key) or [])
