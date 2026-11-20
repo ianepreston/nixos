@@ -1635,7 +1635,10 @@ input and managed with [sops-nix](https://github.com/Mic92/sops-nix).
   `sops/<hostname>.yaml`)
 - Age encryption keys are bootstrapped from host SSH keys
   (`/etc/ssh/ssh_host_ed25519_key`)
-- Home-manager secrets use `~/.config/sops/age/keys.txt`
+- Home-manager secrets use `~/.config/sops/age/host.txt`, which activation
+  derives from the same host key, so a host decrypts only the files that list
+  it. `~/.config/sops/age/keys.txt` is the `sops` CLI's operator identity:
+  YubiKey stubs, present only on the authoring workstations (terra, luna)
 - Configured in `modules/system/sops.nix` with both NixOS and home-manager
   integration
 - `sops.useSystemdActivation = true` runs decryption as a real systemd unit
@@ -1767,8 +1770,9 @@ HA-component PRs.
 - Target machine booted into a NixOS ISO (use `task iso` for a custom one)
 - This repo and `nix-secrets` cloned on the source machine (e.g.
   `~/src/{nixos,nix-secrets}`)
-- A key on the source machine that can decrypt secrets
-  (`~/.config/sops/age/keys.txt`)
+- An operator identity on the source machine: terra or luna with one of the
+  two operator YubiKeys plugged in (`~/.config/sops/age/keys.txt` holds the
+  stubs)
 
 ### Connecting the target to wifi (minimal ISO)
 
