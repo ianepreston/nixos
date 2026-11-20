@@ -447,9 +447,9 @@ supports one. To revoke a secret, rotate the value its catalog entry names in
 `nix-secrets` and redeploy the hosts that read it. Each new session reads the
 new value; no VM needs recreating.
 
-`llm` is such a key: `llama-cpp/sandbox_api_key` in `sops/shared.yaml`, which
+`llm` is such a key: `llama-cpp/sandbox_api_key` in `sops/llm.yaml`, which
 llama-server on amos1 and terra accepts beside the fleet's primary key
-(`modules/system/_llama-cpp/nixos.nix`). It lives in `shared.yaml` because the
+(`modules/system/_llama-cpp/nixos.nix`). It lives in `llm.yaml` because the
 serving hosts must read it, and `coding-sandbox.yaml` deliberately excludes
 servers. Rotating it touches only llama-server; Caddy and the fleet's own
 clients keep the primary key.

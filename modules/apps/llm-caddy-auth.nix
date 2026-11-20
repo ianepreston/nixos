@@ -7,7 +7,7 @@
 # this can't just live in one of them.
 #
 # One key covers both instances: `myLlamaCpp` reads `llama-cpp/api_key`
-# from shared.yaml wherever it runs, so terra's llama-server and amos1's
+# from llm.yaml wherever it runs, so terra's llama-server and amos1's
 # enforce the same token and caddy injects the same value for either
 # route. Worth knowing before assuming the two endpoints are isolated —
 # a client holding the key can reach both. llama-server also accepts the
@@ -33,7 +33,7 @@
         { config, ... }:
         {
           sops.secrets."llama-cpp/api_key" = {
-            sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+            sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
           };
 
           sops.templates."llm-caddy.env" = {

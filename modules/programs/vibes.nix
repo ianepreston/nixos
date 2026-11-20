@@ -335,15 +335,15 @@ _: {
         }) llamaHosts;
       };
 
-      # shared.yaml because that is where `myLlamaCpp` reads the same key
+      # llm.yaml because that is where `myLlamaCpp` reads the same key
       # from — one token covers both hosts' llama-servers and caddy's
       # upstream injection (see modules/apps/llm-caddy-auth.nix). Decrypted
       # with the host-derived age identity that modules/system/sops.nix
       # writes to ~/.config/sops/age/host.txt, so the host must be a
-      # shared.yaml recipient.
+      # llm.yaml recipient.
       localInference = {
         sops.secrets."llama-cpp/api_key" = {
-          sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+          sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
           path = llamaKeyPath;
         };
 

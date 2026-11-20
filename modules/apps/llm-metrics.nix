@@ -156,14 +156,14 @@
               }
             ];
 
-            # Same key the routers enforce, from shared.yaml — see
+            # Same key the routers enforce, from llm.yaml — see
             # modules/system/llama-cpp.nix for why one key covers the
             # fleet. Read directly by the oneshot (which runs as root)
             # rather than through a template: there is no env file to
             # render and no unit to restart on rotation, since the next
             # timer firing picks up the new value on its own.
             sops.secrets."llama-cpp/api_key" = {
-              sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+              sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
             };
 
             systemd.services.llama-metrics = {

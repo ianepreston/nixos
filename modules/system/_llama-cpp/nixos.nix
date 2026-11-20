@@ -167,13 +167,11 @@ in
     # echoes back), and the children pick the key up from the
     # inherited environment instead.
     #
-    # shared.yaml rather than the per-host file because the servers
+    # llm.yaml rather than the per-host file because the servers
     # fronting this need the same key: caddy injects it upstream on
     # behalf of an authentik-authenticated browser (see
-    # modules/apps/llm-terra.nix). shared.yaml is decryptable by every
-    # host in the fleet, which is wider than the three that need it —
-    # acceptable for now, and the thing to fix when the sops files get
-    # split more finely.
+    # modules/apps/llm-terra.nix). llm.yaml lists exactly the hosts that
+    # read either llama key (#505).
     #
     # The coding sandbox's session secret `llm` (#998) is a second,
     # sandbox-only key, so it can be rotated without touching caddy or
@@ -184,8 +182,8 @@ in
     # token comes from its own template (llm-caddy-auth.nix) and stays
     # the primary key alone.
     sops = {
-      secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
-      secrets."llama-cpp/sandbox_api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+      secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
+      secrets."llama-cpp/sandbox_api_key".sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
 
       templates."llama-cpp.env" = {
         content = ''
