@@ -22,15 +22,15 @@ in
       # the personal account. Home stays the personal account.
       sops.secrets = {
         "smb-secrets" = {
-          sopsFile = "${sopsFolder}/shared.yaml";
+          sopsFile = "${sopsFolder}/workstation.yaml";
           path = "/etc/nixos/smb-secrets";
         };
         "smb-secrets-prod" = {
-          sopsFile = "${sopsFolder}/shared.yaml";
+          sopsFile = "${sopsFolder}/workstation.yaml";
           path = "/etc/nixos/smb-secrets-prod";
         };
         "smb-secrets-dev" = {
-          sopsFile = "${sopsFolder}/shared.yaml";
+          sopsFile = "${sopsFolder}/workstation.yaml";
           path = "/etc/nixos/smb-secrets-dev";
         };
       };

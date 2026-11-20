@@ -11,8 +11,9 @@
 #
 # Restore is a manual operator action; see README "Server App Pattern".
 #
-# The restic password lives in shared.yaml (not per-host) so any server
-# can decrypt any other server's repo for cross-host recovery testing.
+# The restic password lives in server-shared.yaml (not per-host) so any
+# server can decrypt any other server's repo for cross-host recovery
+# testing.
 #
 # `mySqliteQuiesce` (modules/system/sqlite-quiesce.nix) is imported
 # here so SQLite-backed app modules can opt into a pre-restic
@@ -80,7 +81,7 @@
       environment.systemPackages = [ pkgs.restic ];
 
       sops.secrets = {
-        "restic/password" = { };
+        "restic/password".sopsFile = "${inputs.nix-secrets}/sops/server-shared.yaml";
         # Three per-job heartbeat URLs. Per-host sops file because the
         # restic repo is also per-host, and each backup unit needs its
         # own healthchecks.io check (otherwise one job silently masks

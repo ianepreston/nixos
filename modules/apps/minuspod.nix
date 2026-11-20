@@ -193,7 +193,7 @@
       sops = {
         secrets."minuspod/master_passphrase".sopsFile = hostSpec.sopsFile;
         # Same key every llm route accepts; see paperless-ngx.nix.
-        secrets."llama-cpp/api_key".sopsFile = "${sopsFolder}/shared.yaml";
+        secrets."llama-cpp/api_key".sopsFile = "${sopsFolder}/llm.yaml";
 
         templates."minuspod.env" = {
           content = ''

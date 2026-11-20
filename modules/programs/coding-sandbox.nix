@@ -108,10 +108,10 @@ in
           description = "llama.cpp API key for the fleet's LLM endpoints";
           env = "LLAMA_API_KEY";
           # A sandbox-only key that llama-server accepts beside the primary
-          # one (modules/system/_llama-cpp/nixos.nix). shared.yaml, not
+          # one (modules/system/_llama-cpp/nixos.nix). llm.yaml, not
           # coding-sandbox.yaml, because the serving hosts must read it too
           # and coding-sandbox.yaml (the GitHub App key) excludes servers.
-          sopsFile = "shared.yaml";
+          sopsFile = "llm.yaml";
           key = "llama-cpp/sandbox_api_key";
           # The routes vibes.nix's llamaBaseUrl targets.
           domains = [

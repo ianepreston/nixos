@@ -4,11 +4,11 @@
 # should have the account. ipreston (from base.nix) remains the
 # administrator on every host; this module never grants `wheel`.
 #
-# Password is sops-managed at `passwords/preston` in shared.yaml,
+# Password is sops-managed at `passwords/preston` in parents.yaml,
 # mirroring the `passwords/${hostSpec.username}` shape used by base.nix.
 { inputs, ... }:
 let
-  sopsFile = builtins.toString inputs.nix-secrets + "/sops/shared.yaml";
+  sopsFile = builtins.toString inputs.nix-secrets + "/sops/parents.yaml";
 in
 {
   flake.modules.nixos.parents-user =

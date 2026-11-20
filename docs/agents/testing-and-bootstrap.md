@@ -33,7 +33,8 @@ with an SSH host key (and matching age identity) preserved across
 - `task vm:up` — boot on the installer ISO (rebuilds `latest.iso` only if
   absent or `FORCE_ISO=true`).
 - `task vm:sops-authorize TARGET=<host>` — one-time per real-host secret set:
-  adds the VM's age key to `<host>.yaml` + `shared.yaml` creation rules in
+  adds the VM's age key to `<host>.yaml` and to every other sops file the VM's
+  flake host (`HOST`, default `tests-server`) reads, in
   `../nix-secrets/.sops.yaml`. Uncommitted; `task secrets:publish` to keep it,
   `git restore` in `../nix-secrets` to revoke.
 - `task vm:install HOST=<flake-host>` — `bootstrap:reinstall` against the VM

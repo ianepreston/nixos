@@ -25,12 +25,12 @@
 # files and points ssh at them. See the `tokens` comment below.
 { inputs, ... }:
 let
-  sopsFile = builtins.toString inputs.nix-secrets + "/sops/shared.yaml";
+  sopsFile = builtins.toString inputs.nix-secrets + "/sops/sk-stubs.yaml";
   sshKeysDir = ../profiles/_ssh-keys;
 
   # The enrolled YubiKeys, by the suffix in their file names. Both
   # credentials are *resident* (`-O resident`), so what lives in
-  # `ssh/ed25519_sk_<n>` in shared.yaml is only a credential handle plus
+  # `ssh/ed25519_sk_<n>` in sk-stubs.yaml is only a credential handle plus
   # the public half — inert without the physical token in hand. It is in
   # sops rather than committed next to the pubkeys because
   # `_ssh-keys/` is contractually pubkeys-only (see its README), and

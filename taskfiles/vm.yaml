@@ -233,9 +233,13 @@ tasks:
         vars: { HOST: '{{.HOST}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}' }
 
   sops-authorize:
-    desc: Authorize the VM age key to read TARGET's secrets + shared.yaml (uncommitted edit in ../nix-secrets)
+    desc: Authorize the VM age key to read TARGET's secrets + every other sops file HOST reads (uncommitted edit in ../nix-secrets)
     requires:
       vars: [TARGET]
+    vars:
+      # The flake host the VM runs as; its config decides which non-host
+      # files the VM key must be able to read.
+      HOST: '{{.HOST | default "tests-server"}}'
     cmds:
       - |
         set -euo pipefail
@@ -295,27 +299,31 @@ tasks:
           needs_updatekeys=1
         fi
 
-        # 3. *anchor in shared.yaml's age list (insert after *TARGET if
-        # present, else after the first existing entry).
-        if block_for shared | grep -q "\*${anchor}"; then
-          echo -e "\x1B[33m[~] *${anchor} already in shared.yaml age list\x1B[0m"
-        else
-          if block_for shared | grep -q "\*{{.TARGET}}"; then
-            echo -e "\x1B[32m[+] Adding *${anchor} to shared.yaml age list (after *{{.TARGET}})\x1B[0m"
-            sed -i "/^  - path_regex: shared\\\\\\.yaml\\\$/,/^  - path_regex:/{/- \\*{{.TARGET}}\$/a\\          - *${anchor}
-            }" "$sops_yaml"
-          else
-            echo -e "\x1B[31m[!] *{{.TARGET}} not in shared.yaml age list — can't anchor *${anchor} insertion\x1B[0m"
-            echo "    Add *{{.TARGET}} to shared.yaml's age list first."
-            exit 1
-          fi
-          needs_updatekeys=1
+        # 3. *anchor in every other file the VM's flake host reads. Before
+        # #506 that was always shared.yaml; now it is whatever narrow files
+        # (common, llm, server-shared, ...) HOST's evaluated config names,
+        # so the grant follows the config rather than a hardcoded list.
+        # Both helpers are shared with bootstrap:secrets.
+        # Eval on its own line so a failure stops here; only grep -v's
+        # "nothing left" exit is tolerated.
+        reads=$(scripts/sops-host-files.sh "{{.HOST}}" "$secrets_dir")
+        listed=$(grep -vx "{{.TARGET}}.yaml" <<<"$reads" || true)
+        others=()
+        while IFS= read -r f; do
+          if [ -n "$f" ]; then others+=( "$f" ); fi
+        done <<<"$listed"
+        rekey=( "sops/{{.TARGET}}.yaml" )
+        if [ ${#others[@]} -gt 0 ]; then
+          granted=$(scripts/sops-grant.sh "$sops_yaml" "$anchor" "${others[@]}")
+          while IFS= read -r f; do
+            if [ -n "$f" ]; then rekey+=( "sops/$f" ); needs_updatekeys=1; fi
+          done <<<"$granted"
         fi
 
         if [ "$needs_updatekeys" = "1" ]; then
-          echo -e "\x1B[32m[+] Running sops updatekeys on {{.TARGET}}.yaml + shared.yaml\x1B[0m"
-          ( cd "$secrets_dir" && sops updatekeys --yes sops/{{.TARGET}}.yaml sops/shared.yaml )
+          echo -e "\x1B[32m[+] Running sops updatekeys on ${rekey[*]}\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes "${rekey[@]}" )
           echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — commit + push via \`task secrets:publish\` to make sticky, or \`git restore\` to revoke\x1B[0m"
         else
-          echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} — no changes\x1B[0m"
+          echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} and every file {{.HOST}} reads — no changes\x1B[0m"
         fi

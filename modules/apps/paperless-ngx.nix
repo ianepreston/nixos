@@ -119,12 +119,12 @@
       sops.secrets."paperless-ngx/secret_key".sopsFile = hostSpec.sopsFile;
 
       # llama-server's bearer token, for PAPERLESS_AI_LLM_API_KEY below.
-      # shared.yaml rather than the host file because it is the fleet-wide
+      # llm.yaml rather than the host file because it is the fleet-wide
       # key `myLlamaCpp` enforces wherever it runs (see
       # modules/system/llama-cpp.nix). Both servers already declare this
       # same secret through modules/apps/llm-caddy-auth.nix; the
       # definitions are identical, so the module system merges them.
-      sops.secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+      sops.secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
 
       myAuthentik.oidcApps.paperless-ngx = {
         blueprintsDir = ./paperless-ngx-blueprints;
