@@ -37,6 +37,10 @@
           networkmanager.enable = true;
         };
 
+        # Off the tailnet: the drill VM has no reason to join, and
+        # tailnet.yaml deliberately does not list it (#506).
+        services.tailscale.enable = false;
+
         system.stateVersion = "25.11";
       }
     ];
