@@ -71,6 +71,11 @@ A [github] table grants one repository and a small permission set. Each shell
 or exec session then receives a fresh one-hour GitHub App token as GH_TOKEN
 plus an HTTPS Git credential helper; the guest can never mint or renew one.
 
+A [secrets] table grants named secrets from this workstation's catalog (see
+`sandbox plan`). Each shell or exec session receives them as environment
+variables; nothing during provisioning or startup scripts has them. A secret
+grants no network reach: its service still needs a network grant.
+
 The default storage.nix_store = "instance" keeps /nix only for the lifetime of
 one VM. storage.nix_store = "persistent" keeps a separate 50 GiB Lima disk
 for this project and network mode; inspect it with `sandbox cache status` and
@@ -193,42 +198,116 @@ mint_github_token() {
   github_token_expiry=$(jq -r '.expires_at' <<<"$response")
 }
 
-# Writes the token into a fresh 0700 tmpfs directory owned by agent, over
-# stdin, and sets github_stage to its path. The session deletes it before
-# running anything else; the launcher deletes it again afterwards in case the
-# session never started.
-stage_github_token() {
-  # The command below is evaluated by the guest shell, not this launcher.
-  # shellcheck disable=SC2016
-  github_stage=$(printf '%s' "$github_token" | limactl shell --workdir "$transport_workdir" "$instance" \
-    sudo -H -u agent -- bash -c \
-    'umask 077; stage=$(mktemp -d "$1/coding-sandbox-github.XXXXXXXX"); cat >"$stage/token"; printf "%s\n" "$stage"' \
-    sandbox-github-stage /dev/shm) || die 'could not stage the GitHub session credential in the guest'
-  unset github_token
-  [[ "$github_stage" =~ ^/dev/shm/coding-sandbox-github\.[A-Za-z0-9]{8}$ ]] ||
-    die 'could not stage the GitHub session credential in the guest'
+# --- Session secrets ([secrets]) --------------------------------------------
+#
+# Named, host-held secrets from coding-sandbox.nix's catalog. The policy
+# carries only names, env names and domains; each value is read from its
+# sops-nix path at session time and crosses into the guest the same way the
+# GitHub token does.
+
+secrets_declared() {
+  jq -e '(.secrets // []) | length > 0' <<<"$policy_json" >/dev/null
 }
 
-remove_github_stage() {
-  [[ -n "${github_stage:-}" ]] || return 0
+# The host path of one catalog entry, or nothing when this host does not
+# provision it.
+session_secret_file() {
+  [[ -n "${SANDBOX_SECRET_CATALOG:-}" ]] || return 0
+  jq -r --arg name "$1" '.[$name].file // empty' "$SANDBOX_SECRET_CATALOG"
+}
+
+# Prints why a granted secret is unusable here, returning non-zero; silent
+# when it is ready.
+session_secret_status() {
+  local file
+  file=$(session_secret_file "$1")
+  if [[ -z "$file" ]]; then
+    printf 'this host does not provision it'
+    return 1
+  fi
+  if [[ ! -r "$file" ]]; then
+    printf 'not readable at %s; apply the Home Manager configuration' "$file"
+    return 1
+  fi
+}
+
+check_session_secrets() {
+  local name status
+  while IFS= read -r name; do
+    status=$(session_secret_status "$name") ||
+      die "session secret $name: $status, but $(jq -r '.config_path' <<<"$policy_json") grants it"
+  done < <(jq -r '.secrets // [] | .[].name' <<<"$policy_json")
+}
+
+# "llm (LLAMA_API_KEY), ..." — shared by the confirmation and the refusal.
+session_secret_summary() {
+  jq -r '.secrets // [] | map("\(.name) (\(.env))") | join(", ")' <<<"$policy_json"
+}
+
+# The NUL-delimited NAME, VALUE stream the guest stages. Values pass only
+# through builtins (printf, $(<file)), never a process argument.
+session_credentials_stream() {
+  local name env file
+  if [[ -n "${github_token:-}" ]]; then
+    printf '%s\0%s\0' GH_TOKEN "$github_token"
+  fi
+  while IFS=$'\t' read -r name env; do
+    file=$(session_secret_file "$name")
+    printf '%s\0%s\0' "$env" "$(<"$file")"
+  done < <(jq -r '.secrets // [] | .[] | [.name, .env] | @tsv' <<<"$policy_json")
+}
+
+# Writes each credential as one file named for its environment variable in a
+# fresh 0700 tmpfs directory owned by agent, over stdin, and sets
+# session_stage to its path. The session deletes it before running anything
+# else; the launcher deletes it again afterwards in case the session never
+# started.
+stage_session_credentials() {
+  # The command below is evaluated by the guest shell, not this launcher.
+  # shellcheck disable=SC2016
+  session_stage=$(session_credentials_stream | limactl shell --workdir "$transport_workdir" "$instance" \
+    sudo -H -u agent -- bash -c '
+      umask 077
+      stage=$(mktemp -d "$1/coding-sandbox-session.XXXXXXXX")
+      while IFS= read -r -d "" name && IFS= read -r -d "" value; do
+        [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { rm -rf -- "$stage"; exit 1; }
+        printf "%s" "$value" >"$stage/$name"
+      done
+      printf "%s\n" "$stage"' \
+    sandbox-session-stage /dev/shm) || die 'could not stage the session credentials in the guest'
+  unset github_token
+  [[ "$session_stage" =~ ^/dev/shm/coding-sandbox-session\.[A-Za-z0-9]{8}$ ]] ||
+    die 'could not stage the session credentials in the guest'
+}
+
+remove_session_stage() {
+  [[ -n "${session_stage:-}" ]] || return 0
   limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-    rm -rf -- "$github_stage" >/dev/null 2>&1 || true
+    rm -rf -- "$session_stage" >/dev/null 2>&1 || true
 }
 
 # Guest-side prelude shared by shell and exec. "$2" is the staged credential
-# directory, or empty for a credential-free sandbox. The token lives only in
-# this process's environment from here on; git reads it through an
-# environment-only credential helper, so no guest config file names it.
+# directory, or empty for a credential-free sandbox. Each credential lives
+# only in this process's environment from here on; git reads the GitHub
+# token through an environment-only credential helper, so no guest config
+# file names it.
 # shellcheck disable=SC2016
-github_session_prelude='
+session_prelude='
 if [[ -n "$2" ]]; then
-  GH_TOKEN=$(<"$2/token")
+  github_credential=false
+  [[ -f "$2/GH_TOKEN" ]] && github_credential=true
+  for credential in "$2"/*; do
+    [[ -f "$credential" ]] || continue
+    export "${credential##*/}=$(<"$credential")"
+  done
   rm -rf -- "$2"
-  export GH_TOKEN
-  export GIT_CONFIG_COUNT=2
-  export GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0=
-  export GIT_CONFIG_KEY_1=credential.https://github.com.helper
-  export GIT_CONFIG_VALUE_1="!f() { test \"\$1\" = get || return 0; echo username=x-access-token; echo \"password=\$GH_TOKEN\"; }; f"
+  if "$github_credential"; then
+    export GIT_CONFIG_COUNT=2
+    export GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0=
+    export GIT_CONFIG_KEY_1=credential.https://github.com.helper
+    export GIT_CONFIG_VALUE_1="!f() { test \"\$1\" = get || return 0; echo username=x-access-token; echo \"password=\$GH_TOKEN\"; }; f"
+  fi
+  unset credential github_credential
 fi
 '
 
@@ -324,6 +403,7 @@ parse_target() {
   nix_store_disk="s${instance_id:0:10}"
   state_root="${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox"
   policy_record="$state_root/$instance.policy.json"
+  previous_policy_record="$state_root/$instance.policy.previous.json"
   guest_profile_root="$state_root/$instance.guest-profile"
   if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
     temporary_root="${TMPDIR:-/tmp}"
@@ -342,6 +422,11 @@ load_policy() {
   local -a args=("$project")
   if [[ -n "$network_mode_override" ]]; then
     args+=(--network "$network_mode_override")
+  fi
+  # Secret domain coverage costs DNS lookups and is only ever displayed, so
+  # only the commands that show a plan ask for it.
+  if [[ "${policy_coverage:-false}" == true ]]; then
+    args+=(--coverage)
   fi
   policy_json=$(python3 "$SANDBOX_POLICY_HELPER" "${args[@]}") ||
     die 'sandbox policy helper failed; see the error above'
@@ -416,6 +501,15 @@ doctor() {
   else
     printf '  INFO  [github] grants unavailable: %s.\n' "$result"
   fi
+  # Optional too: each catalog secret a [secrets] table may grant.
+  local name
+  while IFS= read -r name; do
+    if result=$(session_secret_status "$name"); then
+      printf '  PASS  Session secret %s is provisioned.\n' "$name"
+    else
+      printf '  INFO  Session secret %s unavailable: %s.\n' "$name" "$result"
+    fi
+  done < <(if [[ -n "${SANDBOX_SECRET_CATALOG:-}" ]]; then jq -r 'keys[]' "$SANDBOX_SECRET_CATALOG"; fi)
 
   printf '\n'
   if ((failures)); then
@@ -474,6 +568,7 @@ Coding sandbox plan
 EOF
 
   show_github_grant
+  show_session_secrets
   show_callbacks
 
   case "$nix_store_mode" in
@@ -575,12 +670,12 @@ EOF
     jq -r '.strict_domains[] | "    \(.name) -> \(.addresses | join(", "))"' <<<"$policy_json"
   fi
 
-  if github_grant_declared; then
+  if github_grant_declared || secrets_declared; then
     cat <<'EOF'
 
 No SSH agent, host credential file, or directory outside the declared mounts is
-available in the VM. The only credential is the GitHub session token above,
-held in the environment of each shell/exec process. Git mount worktrees are
+available in the VM. The only credentials are the session grants above, held
+in the environment of each shell/exec process. Git mount worktrees are
 retained under the launcher-owned directory above after VM deletion so
 uncommitted guest work is never discarded.
 EOF
@@ -607,6 +702,24 @@ show_github_grant() {
     '    delivery: fresh GitHub App token for each shell/exec session' \
     '    expiry: one hour; guest renewal unavailable'
   status=$(github_credentials_status) || printf '    host: NOT READY: %s\n' "$status"
+}
+
+show_session_secrets() {
+  if ! secrets_declared; then
+    printf '%s\n' '  Session secrets: none'
+    return
+  fi
+  local name status
+  printf '%s\n' '  Session secrets (host-held; exported to each shell/exec session):'
+  while IFS= read -r name; do
+    jq -r --arg name "$name" '.secrets[] | select(.name == $name) | . as $secret |
+      "    \(.name): \(.env) - \(.description)",
+      (select(.domains | length > 0) |
+        "      for: \(.domains | map(. as $domain | $secret.coverage[$domain] // null
+          | if . then "\($domain) (\(.))" else $domain end) | join(", "))")
+    ' <<<"$policy_json"
+    status=$(session_secret_status "$name") || printf '      host: NOT READY: %s\n' "$status"
+  done < <(jq -r '.secrets[].name' <<<"$policy_json")
 }
 
 show_callbacks() {
@@ -1303,6 +1416,17 @@ EOF
     printf '\nGitHub credential: every shell/exec session receives a fresh one-hour token for\n%s with %s.\nCode in the guest can read and copy that token until it expires.\n' \
       "$(jq -r '.github.repository' <<<"$policy_json")" "$(github_grant_permissions)"
   fi
+  if secrets_declared; then
+    if github_grant_declared; then
+      confirmation+=' AND SECRETS'
+    else
+      confirmation+=' WITH SECRETS'
+    fi
+    printf '\nSession secrets: every shell/exec session receives %s.\nCode in the guest can read and copy them; rotate a secret to revoke it.\n' \
+      "$(session_secret_summary)"
+  fi
+
+  show_previous_policy_changes
 
   "$assume_yes" && return
   printf 'Type %s to create this VM: ' "$confirmation"
@@ -1310,14 +1434,68 @@ EOF
   [[ "$response" == "$confirmation" ]] || die 'not started'
 }
 
+# The compared part of a policy. Guest pins and bundle store paths follow the
+# workstation's flake.lock; a VM keeps what it was built from. Bundle names
+# and source digests stay in the contract. A secret's domain coverage is a
+# render-time DNS observation, not policy.
+policy_contract='
+  del(.strict_domains, .strict_v4, .strict_v6, .guest_pins)
+  | if .profile.bundles then .profile.bundles |= map(del(.packages)) else . end
+  | if .secrets then .secrets |= map({ name, env }) else . end'
+
+# policy_contract_diff OLD NEW: one line per changed leaf of the compared
+# contract, "+ path: value", "- path: value" or "~ path: old -> new". An
+# entry in a list of tables is addressed by its identity (name, mount point
+# or guest path) rather than its position, so inserting one reads as one
+# addition. Lists of scalars compare as sets, so an added CIDR reads as one
+# "+" line; a pure reorder, which the exact comparison still refuses, reads
+# as "~".
+policy_contract_diff() {
+  jq -nr --argjson old "$1" --argjson new "$2" "
+    def contract: $policy_contract;"'
+    def show: if type == "string" then . else tojson end;
+    def scalars: type != "object" and type != "array";
+    def flat(path):
+      if type == "object" and length > 0 then
+        to_entries[] | .key as $key | .value | flat(if path == "" then $key else "\(path).\($key)" end)
+      elif type == "array" and any(.[]; scalars | not) then
+        to_entries[] | .key as $index | .value
+        | ((objects | .name // .mount_point // .guest_path) // $index) as $id
+        | flat("\(path)[\($id)]")
+      else {key: path, value: .} end;
+    def leaves: [flat("")] | from_entries;
+    ($old | contract | leaves) as $o | ($new | contract | leaves) as $n
+    | (($o | keys) + ($n | keys) | unique)[] as $key
+    | ($o | has($key)) as $had | ($n | has($key)) as $has
+    | if $had and $has and $o[$key] == $n[$key] then empty
+      elif $had and $has and ($o[$key] | type) == "array" and ($n[$key] | type) == "array" then
+        [($n[$key] - $o[$key])[] | "  + \($key): \(show)"]
+        + [($o[$key] - $n[$key])[] | "  - \($key): \(show)"]
+        | if length > 0 then .[]
+          else "  ~ \($key): \($o[$key] | show) -> \($n[$key] | show)" end
+      elif $had and $has then "  ~ \($key): \($o[$key] | show) -> \($n[$key] | show)"
+      elif $has then "  + \($key): \($n[$key] | show)"
+      else "  - \($key): \($o[$key] | show)" end'
+}
+
+# Before creating a VM, show what changed since this project's previous VM
+# for the same network mode, so a grant edited into .sandbox.toml (by the
+# guest itself, perhaps) is visible at the confirmation that adopts it.
+show_previous_policy_changes() {
+  local previous changes
+  [[ -r "$previous_policy_record" ]] || return 0
+  limactl list --format '{{.Name}}' 2>/dev/null | grep -Fxq "$instance" && return 0
+  previous=$(jq -ce '.policy' "$previous_policy_record" 2>/dev/null) || return 0
+  changes=$(policy_contract_diff "$previous" "$policy_json")
+  if [[ -z "$changes" ]]; then
+    printf '\nPolicy unchanged since the previous VM for this project.\n'
+  else
+    printf '\nPolicy changes since the previous VM for this project:\n%s\n' "$changes"
+  fi
+}
+
 policy_matches_instance() {
   local recorded current_contract recorded_contract
-  # Guest pins and bundle store paths follow the workstation's flake.lock;
-  # a VM keeps what it was built from. Bundle names and source digests stay
-  # in the contract.
-  local policy_contract='
-    del(.strict_domains, .strict_v4, .strict_v6, .guest_pins)
-    | if .profile.bundles then .profile.bundles |= map(del(.packages)) else . end'
   [[ -r "$policy_record" ]] || die \
     "existing $instance has no recorded policy; destroy it before using this network-policy version"
   recorded=$(jq -ce '.policy' "$policy_record") ||
@@ -1329,8 +1507,11 @@ policy_matches_instance() {
   # remain in the compared contract and still require recreation on change.
   current_contract=$(jq -cS "$policy_contract" <<<"$policy_json")
   recorded_contract=$(jq -cS "$policy_contract" <<<"$recorded")
-  [[ "$recorded_contract" == "$current_contract" ]] || die \
-    "effective policy changed for $instance; inspect sandbox plan, then destroy and recreate the VM"
+  if [[ "$recorded_contract" != "$current_contract" ]]; then
+    printf 'sandbox: effective policy changed for %s:\n%s\n' \
+      "$instance" "$(policy_contract_diff "$recorded" "$policy_json")" >&2
+    die 'inspect sandbox plan, then destroy and recreate the VM'
+  fi
   policy_json="$recorded"
 }
 
@@ -1342,6 +1523,7 @@ record_policy() {
   jq -cn --arg instance "$instance" --argjson policy "$policy_json" \
     '{ instance: $instance, policy: $policy }' >"$temporary"
   mv "$temporary" "$policy_record"
+  rm -f "$previous_policy_record"
 }
 
 persistent_disk_exists() {
@@ -1495,18 +1677,34 @@ instance_action() {
   policy_matches_instance
   local session_status=0
   local -a proxy_environment=()
-  github_stage=''
+  session_stage=''
   case "$action" in
     shell | exec)
       [[ "$action" == shell ]] || ((${#command[@]})) || die 'sandbox exec needs a command after --'
-      if github_grant_declared; then
+      # Every granted secret must be readable before anything is minted or
+      # staged: the credential stream runs in a pipeline, where a failure
+      # could not stop the launcher.
+      local with_github=false with_secrets=false
+      github_grant_declared && with_github=true
+      secrets_declared && with_secrets=true
+      if "$with_secrets"; then
+        check_session_secrets
+      fi
+      if "$with_github"; then
         mint_github_token
+      fi
+      if "$with_github" || "$with_secrets"; then
         # Before staging, so an interrupt or failure after the guest has
-        # written the token still removes it.
-        trap remove_github_stage EXIT
-        stage_github_token
+        # written a credential still removes it.
+        trap remove_session_stage EXIT
+        stage_session_credentials
+      fi
+      if "$with_github"; then
         printf 'sandbox: GitHub token for %s expires %s; re-enter through sandbox %s for a fresh one\n' \
           "$(jq -r '.github.repository' <<<"$policy_json")" "$github_token_expiry" "$action" >&2
+      fi
+      if "$with_secrets"; then
+        printf 'sandbox: session secrets: %s\n' "$(session_secret_summary)" >&2
       fi
       ;;
   esac
@@ -1519,8 +1717,8 @@ instance_action() {
       # The command below is evaluated by the guest shell, not this launcher.
       # shellcheck disable=SC2016
       limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- \
-        bash -c "$github_session_prelude"'cd "$1"; exec bash --login' \
-        sandbox-agent-shell "$guest_workdir" "$github_stage" || session_status=$?
+        bash -c "$session_prelude"'cd "$1"; exec bash --login' \
+        sandbox-agent-shell "$guest_workdir" "$session_stage" || session_status=$?
       ;;
     exec)
       if [[ "$network_mode" == restricted ]]; then
@@ -1541,8 +1739,8 @@ instance_action() {
       # shellcheck disable=SC2016
       limactl shell --workdir "$transport_workdir" "$instance" sudo -H -u agent -- env \
         "${proxy_environment[@]}" \
-        bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"'"$github_session_prelude"'cd "$1"; shift 2; exec "$@"' \
-        sandbox-agent-exec "$guest_workdir" "$github_stage" "${command[@]}" || session_status=$?
+        bash -c 'source "$HOME/.config/coding-sandbox/environment.sh"'"$session_prelude"'cd "$1"; shift 2; exec "$@"' \
+        sandbox-agent-exec "$guest_workdir" "$session_stage" "${command[@]}" || session_status=$?
       ;;
     status)
       limactl list "$instance"
@@ -1592,7 +1790,11 @@ destroy() {
   else
     limactl delete --force "$instance"
   fi
-  rm -f "$policy_record" "$guest_profile_root"
+  # Keep the destroyed VM's policy so the next start can show what changed.
+  if [[ -e "$policy_record" ]]; then
+    mv -f "$policy_record" "$previous_policy_record"
+  fi
+  rm -f "$guest_profile_root"
   if [[ "$instance_nix_store_mode" == persistent ]]; then
     note "deleted VM. Persistent Nix cache disk $nix_store_disk was retained."
   else
@@ -1666,6 +1868,9 @@ main() {
       delete_instance "$@"
       ;;
     plan | template | validate | start | shell | exec | status | stop | destroy)
+      case "$subcommand" in
+        plan | start) policy_coverage=true ;;
+      esac
       parse_target "$@"
       case "$subcommand" in
         plan)
