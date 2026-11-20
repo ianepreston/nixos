@@ -687,9 +687,13 @@ def cmd_gate(ns: argparse.Namespace) -> int:
         )
 
     if "image" in target["modalities"]:
+        # 256 px, not smaller: at 64 px the image is ~16 tokens and
+        # Qwen3-VL-4B answered "Black" for solid red (2026-11-20, #986),
+        # failing a deployment that reads handwriting fine. 256 px costs
+        # 85 prompt tokens and both vision incumbents answer "Red".
         image = (
             "data:image/png;base64,"
-            + base64.b64encode(solid_png((220, 20, 20))).decode()
+            + base64.b64encode(solid_png((220, 20, 20), size=256)).decode()
         )
         content = [
             {"type": "text", "text": "What colour is this image? Answer in one word."},
