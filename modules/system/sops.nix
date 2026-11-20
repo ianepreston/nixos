@@ -33,7 +33,9 @@ in
       imports = [ inputs.sops-nix.nixosModules.sops ];
 
       sops = {
-        defaultSopsFile = "${sopsFolder}/shared.yaml";
+        # The host file, matching home-manager below. Every secret names
+        # its file explicitly; this only catches one that forgets to.
+        defaultSopsFile = hostSpec.sopsFile;
         validateSopsFiles = false;
         age = {
           # Automatically import host SSH keys as age keys
