@@ -396,8 +396,8 @@ tasks:
       # target afterwards, but for this drill we only
       # need the install — the per-app restore subtasks below are the
       # actual signal, and a full rebuild on a freshly-installed
-      # tests-server would fail on harmless degraded units (tailscale
-      # authkey, loki/radarr expecting NFS content paths). Call
+      # tests-server would fail on harmless degraded units (loki/radarr
+      # expecting NFS content paths). Call
       # bootstrap:install directly with the persistent key from vm:up.
       - task: :bootstrap:install
         vars:
