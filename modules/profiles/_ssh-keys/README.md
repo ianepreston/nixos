@@ -106,7 +106,7 @@ with `ssh-keygen -K` (which writes into `$PWD`, and names both
 string, so rename between downloads).
 
 To save doing that on every machine, the stubs are distributed like any
-other user secret: stored at `ssh/ed25519_sk_{1,2}` in `shared.yaml` and
+other user secret: stored at `ssh/ed25519_sk_{1,2}` in `sk-stubs.yaml` and
 rendered to `~/.ssh/` by `modules/hardware/yubikey.nix`, which also names
 them in `IdentityFile`. They are not committed here — this directory is
 pubkeys-only.
