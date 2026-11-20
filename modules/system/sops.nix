@@ -93,9 +93,19 @@ in
       # makes this unit the failure you see, not a vague "no identity matched"
       # later in home-manager's sops. Changing the script restarts it on
       # switch; a regenerated host key is picked up on the next boot.
+      #
+      # Wanted by the home-manager unit too, not only multi-user.target:
+      # `before` orders jobs only within one transaction, and on a switch
+      # the home-manager restart runs before new units start. Without the
+      # Wants, the first switch to this unit restarted home-manager before
+      # host.txt existed and failed amos1's autoUpgrade. Wants, not
+      # Requires, so a missing host key fails this unit, not home-manager.
       systemd.services.sops-host-age-identity = {
         description = "Derive the home-manager sops age identity from the SSH host key";
-        wantedBy = [ "multi-user.target" ];
+        wantedBy = [
+          "multi-user.target"
+          "home-manager-${hostSpec.username}.service"
+        ];
         before = [
           "home-manager-${hostSpec.username}.service"
           "systemd-user-sessions.service"
