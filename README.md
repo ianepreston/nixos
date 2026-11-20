@@ -258,8 +258,8 @@ lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf.
 Only server-local app state is in scope. NAS-resident media under `/mnt/content`
 is protected NAS-side via Synology snapshots / Hyper Backup, not by restic.
 
-The restic password lives in `shared.yaml` (one value, all servers), so any host
-can decrypt any other host's repo for cross-host recovery testing. Each host
+The restic password lives in `server-shared.yaml` (one value, all servers), so
+any server can decrypt any other host's repo for cross-host recovery testing. Each host
 still mounts the _other_ environment's backup share read-only at
 `/mnt/<otherEnv>-backups` (see `nfsclient.nix`), so e.g. restoring prod state
 onto a dev host is a one-liner pointing restic at
@@ -1455,9 +1455,9 @@ what keeps it off the public hostname.
 
 The key comes from sops via `LLAMA_API_KEY` in an `EnvironmentFile`, never
 `--api-key` on the command line: `/proc/*/cmdline` and `/nix/store` are both
-world-readable. It lives in `shared.yaml` rather than a per-host file because
-terra and both servers need it — wider than the three hosts that do, which is
-the thing to fix when the sops files get split more finely.
+world-readable. It lives in `llm.yaml` rather than a per-host file because
+terra and both servers need it, and `llm.yaml` lists exactly the hosts that read
+a llama key.
 
 ### Driving it from a coding agent
 
@@ -1542,7 +1542,7 @@ Five things make this work, none of which needed a server-side change:
   npm registry.
 - **The key is read at request time, not baked in.** Both configs land in
   `/nix/store` and are world-readable, so each references a home-manager sops
-  secret by path — the same `shared.yaml` key llama-server enforces. Rotation
+  secret by path — the same `llm.yaml` key llama-server enforces. Rotation
   needs no rebuild.
 
 Thinking is always on, and the lever differs per model. The Qwen3 models are
@@ -1631,8 +1631,10 @@ Two settings live in the UI and are easy to get wrong:
 Secrets are stored in a private `nix-secrets` repository pulled in as a flake
 input and managed with [sops-nix](https://github.com/Mic92/sops-nix).
 
-- Secrets are YAML files in the `nix-secrets` repo (`sops/shared.yaml`,
-  `sops/<hostname>.yaml`)
+- Secrets are YAML files in the `nix-secrets` repo: `sops/<hostname>.yaml`,
+  plus per-consumer files (`common.yaml`, `tailnet.yaml`, `llm.yaml`,
+  `server-shared.yaml`, ...) each encrypted to exactly the hosts that read
+  them. `task secrets:matrix` checks that.
 - Age encryption keys are bootstrapped from host SSH keys
   (`/etc/ssh/ssh_host_ed25519_key`)
 - Home-manager secrets use `~/.config/sops/age/host.txt`, which activation
