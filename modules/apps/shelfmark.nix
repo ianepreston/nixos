@@ -86,10 +86,10 @@
         #
         # Deliberately NOT under the `<app>/<key>` convention: the key
         # belongs to the AA account, not to shelfmark, so it lives in
-        # shared.yaml where a second consumer can reach it without a
-        # per-host copy. No `restartUnits` on the secret — the template
+        # server-shared.yaml where a second consumer can reach it without
+        # a per-host copy. No `restartUnits` on the secret — the template
         # referencing it re-renders on rotation and carries them.
-        extraSecrets."annas-archive/authkey".sopsFile = "${sopsFolder}/shared.yaml";
+        extraSecrets."annas-archive/authkey".sopsFile = "${sopsFolder}/server-shared.yaml";
         extraEnvLines = ''
           AA_DONATOR_KEY=${config.sops.placeholder."annas-archive/authkey"}
         '';
