@@ -191,8 +191,9 @@
             # share because it barely uses the GPU: over 2026-11-05..20, 66
             # of 67 playback sessions copied the video stream, one used
             # NVENC, and NVDEC ran 201 minutes, all thumbnail extraction. A
-            # rare transcode that lands while a model is resident may fail;
-            # sleepIdleSeconds below is what hands the card back. The
+            # rare transcode that lands while a model is resident may fail.
+            # sleepIdleSeconds below is meant to hand the card back, but the
+            # llm-metrics scrape currently keeps every model awake (#1010). The
             # "set by Jellyfin" ceilings in the model comments above predate
             # this and are open for re-evaluation.
             evaluation = {
