@@ -26,6 +26,33 @@
 # `OPENCODE_DISABLE_AUTOUPDATE=true`, which is the one thing that would
 # otherwise fight a store-managed install.
 #
+# ## Unstable library paths must not reach tool processes (#977)
+#
+# On Linux, nixpkgs wraps `claude` with `--prefix LD_LIBRARY_PATH` naming
+# unstable's alsa-lib (for voice). The wrapper exports it, so every tool
+# process the agent starts inherits it. A 26.05 binary that links
+# libasound (qemu, under the coding sandbox) then loads the unstable copy,
+# which needs a newer glibc than 26.05 ships, and fails at load time.
+# Patching the path into the binary's RPATH instead is not an option:
+# patchelf on the bun executable makes it segfault.
+#
+# The fix is `env.LD_LIBRARY_PATH = ""` in the generated settings. Claude
+# Code puts that `env` block into its own process environment, so every
+# child inherits it (checked for the Bash tool), and glibc treats an
+# empty value as unset. Claude's own lookup is unaffected because ld.so
+# reads the variable once, at exec, before the settings are applied.
+# The cost is that an `LD_LIBRARY_PATH`
+# set *before* launching claude (a devshell's, say) is also cleared for
+# tool calls. Run such a command from the devshell directly, or prefix it
+# in the tool call.
+#
+# opencode's wrapper has the same shape (unstable gcc-lib and wayland) and
+# no settings hook to undo it. It is harmless while those libraries need
+# no newer glibc symbol than 26.05 provides, which holds today (at most
+# GLIBC_2.38 against 26.05's 2.42). Check with `objdump -T` on the paths
+# in `bin/opencode` if a tool started from opencode fails with
+# "version `GLIBC_2.x' not found".
+#
 # ## Local inference
 #
 # Both agents are pointed at the fleet's own llama-servers, so an agent
@@ -170,17 +197,24 @@ _: {
         '';
       };
 
-      settings = (pkgs.formats.json { }).generate "claude-settings.json" {
-        model = "opus";
-        effortLevel = "high";
-        theme = "light";
-        agentPushNotifEnabled = true;
-        permissions.defaultMode = "auto";
-        statusLine = {
-          type = "command";
-          command = "${statusLine}/bin/claude-statusline";
-        };
-      };
+      settings = (pkgs.formats.json { }).generate "claude-settings.json" (
+        {
+          model = "opus";
+          effortLevel = "high";
+          theme = "light";
+          agentPushNotifEnabled = true;
+          permissions.defaultMode = "auto";
+          statusLine = {
+            type = "command";
+            command = "${statusLine}/bin/claude-statusline";
+          };
+        }
+        # See the header: undo the wrapper's unstable alsa-lib path for
+        # every process claude starts. Darwin's wrapper sets no such path.
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          env.LD_LIBRARY_PATH = "";
+        }
+      );
 
       # The home-manager half of modules/system/sops.nix is pulled into
       # `sharedModules` by the *NixOS* half of that same file, so it is
