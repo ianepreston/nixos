@@ -233,9 +233,13 @@ tasks:
         vars: { HOST: '{{.HOST}}', LOCAL_SECRETS: '{{.LOCAL_SECRETS}}' }
 
   sops-authorize:
-    desc: Authorize the VM age key to read TARGET's secrets + shared.yaml (uncommitted edit in ../nix-secrets)
+    desc: Authorize the VM age key to read TARGET's secrets + every other sops file HOST reads (uncommitted edit in ../nix-secrets)
     requires:
       vars: [TARGET]
+    vars:
+      # The flake host the VM runs as; its config decides which non-host
+      # files the VM key must be able to read.
+      HOST: '{{.HOST | default "tests-server"}}'
     cmds:
       - |
         set -euo pipefail
@@ -295,27 +299,60 @@ tasks:
           needs_updatekeys=1
         fi
 
-        # 3. *anchor in shared.yaml's age list (insert after *TARGET if
-        # present, else after the first existing entry).
-        if block_for shared | grep -q "\*${anchor}"; then
-          echo -e "\x1B[33m[~] *${anchor} already in shared.yaml age list\x1B[0m"
-        else
-          if block_for shared | grep -q "\*{{.TARGET}}"; then
-            echo -e "\x1B[32m[+] Adding *${anchor} to shared.yaml age list (after *{{.TARGET}})\x1B[0m"
-            sed -i "/^  - path_regex: shared\\\\\\.yaml\\\$/,/^  - path_regex:/{/- \\*{{.TARGET}}\$/a\\          - *${anchor}
-            }" "$sops_yaml"
-          else
-            echo -e "\x1B[31m[!] *{{.TARGET}} not in shared.yaml age list — can't anchor *${anchor} insertion\x1B[0m"
-            echo "    Add *{{.TARGET}} to shared.yaml's age list first."
+        # 3. *anchor in every other file the VM's flake host reads. Before
+        # #506 that was always shared.yaml. Now it is whatever narrow files
+        # (common, llm, server-shared, ...) HOST's evaluated NixOS and
+        # home-manager secrets name, so the grant follows the config
+        # rather than a hardcoded list.
+        # No mapfile: task's built-in shell interpreter lacks it.
+        listed=$(
+          nix eval --json ".#nixosConfigurations" \
+            --apply "$(cat scripts/_sops-matrix/consumers.nix)" \
+            --override-input nix-secrets "path:$(realpath "$secrets_dir")" \
+            | jq -r --arg h "{{.HOST}}" --arg t "{{.TARGET}}.yaml" '.[$h][] | select(. != $t)'
+        )
+        host_files=()
+        while IFS= read -r f; do
+          if [ -n "$f" ]; then host_files+=( "$f" ); fi
+        done <<<"$listed"
+        if [ ${#host_files[@]} -eq 0 ]; then
+          echo -e "\x1B[31m[!] Could not evaluate the sops files {{.HOST}} reads\x1B[0m"
+          exit 1
+        fi
+        rekey=( "sops/{{.TARGET}}.yaml" )
+        for f in "${host_files[@]}"; do
+          stem=${f%.yaml}
+          if block_for "$stem" | grep -q "\*${anchor}\$"; then
+            echo -e "\x1B[33m[~] *${anchor} already in $f age list\x1B[0m"
+            continue
+          fi
+          if ! grep -qF "  - path_regex: ${stem}\\.yaml\$" "$sops_yaml"; then
+            echo -e "\x1B[31m[!] {{.HOST}} reads $f but $sops_yaml has no creation_rule for it\x1B[0m"
             exit 1
           fi
+          echo -e "\x1B[32m[+] Adding *${anchor} to $f age list\x1B[0m"
+          # Append after the block's last `- *anchor` entry.
+          # ENVIRON, not -v: awk -v would turn the regex's `\.` into `.`.
+          HDR="  - path_regex: ${stem}\\.yaml\$" ENTRY="          - *${anchor}" awk '
+            { line[NR] = $0 }
+            $0 == ENVIRON["HDR"] { start = NR }
+            END {
+              last = 0
+              for (i = start + 1; start && i <= NR; i++) {
+                if (line[i] ~ /^  - path_regex:/ || line[i] ~ /^[^ ]/) break
+                if (line[i] ~ /^ +- \*/) last = i
+              }
+              for (i = 1; i <= NR; i++) { print line[i]; if (i == last) print ENVIRON["ENTRY"] }
+            }
+          ' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
+          rekey+=( "sops/$f" )
           needs_updatekeys=1
-        fi
+        done
 
         if [ "$needs_updatekeys" = "1" ]; then
-          echo -e "\x1B[32m[+] Running sops updatekeys on {{.TARGET}}.yaml + shared.yaml\x1B[0m"
-          ( cd "$secrets_dir" && sops updatekeys --yes sops/{{.TARGET}}.yaml sops/shared.yaml )
+          echo -e "\x1B[32m[+] Running sops updatekeys on ${rekey[*]}\x1B[0m"
+          ( cd "$secrets_dir" && sops updatekeys --yes "${rekey[@]}" )
           echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — commit + push via \`task secrets:publish\` to make sticky, or \`git restore\` to revoke\x1B[0m"
         else
-          echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} — no changes\x1B[0m"
+          echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} and every file {{.HOST}} reads — no changes\x1B[0m"
         fi
