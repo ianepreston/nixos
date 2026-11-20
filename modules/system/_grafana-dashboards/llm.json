@@ -6,7 +6,7 @@
   "id": null,
   "links": [],
   "liveNow": false,
-  "description": "Per-model llama-server usage, fed by llama-metrics.service (modules/apps/llm-metrics.nix) through the node_exporter textfile collector. Series are published once a minute by polling each router's /v1/models for state and each loaded model's /metrics for counters — the counters live in the model's child process, so they reset when a different model evicts it and `increase()` is the only honest way to read them.",
+  "description": "Per-model llama-server usage, fed by llama-metrics.service (modules/apps/llm-metrics.nix) through the node_exporter textfile collector. Series are published once a minute by polling each router's /v1/models for state and each loaded model's /metrics for counters, backing off from a model once it goes idle so the read does not keep it awake (llama_model_scrape_paused; #1010) — the counters live in the model's child process, so they reset when a different model evicts it and `increase()` is the only honest way to read them.",
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },

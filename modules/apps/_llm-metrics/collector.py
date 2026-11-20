@@ -1,4 +1,5 @@
 import json
+import time
 import os
 import sys
 import tempfile
@@ -8,6 +9,16 @@ import urllib.request
 OUT = os.environ["TEXTFILE_OUT"]
 ENDPOINTS = json.load(open(os.environ["ENDPOINTS_FILE"]))
 API_KEY_FILE = os.environ["API_KEY_FILE"]
+# Per-model back-off memory between timer firings; see the
+# back-off comment in the main loop and hazard 4 in
+# modules/apps/llm-metrics.nix.
+STATE_FILE = os.path.join(os.environ["STATE_DIRECTORY"], "state.json")
+
+# How long past its own --sleep-idle-seconds a backed-off
+# child may stay `loaded` before that can only mean real
+# traffic is keeping it awake, so a read is safe again: one
+# timer tick for the read that paused it, plus slack.
+WAKE_MARGIN = 90
 
 # Long enough to ride out a busy child answering a metrics
 # task behind a decode, short enough that a powered-off
@@ -61,6 +72,16 @@ GAUGES = {
 }
 
 
+# What counts as "the model did something since the last
+# read". Every counter moves only on real work (prompt eval,
+# prediction, decode); a /metrics task moves none of them,
+# so two equal readings mean idle rather than "we only saw
+# our own scrape".
+ACTIVITY = sorted(COUNTERS)
+# Everything a backed-off model republishes.
+KEPT = set(COUNTERS) | set(GAUGES)
+
+
 def read_api_key():
     # Missing key is survivable: /v1/models is public, so
     # state still publishes and only the token counters go
@@ -103,6 +124,55 @@ def labels(**kwargs):
     return "{" + body + "}"
 
 
+def load_state():
+    # Losing this file is harmless: every loaded model is
+    # read once or twice more before it can back off again.
+    try:
+        with open(STATE_FILE) as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(data):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(STATE_FILE), prefix=".state.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(data, fh, sort_keys=True)
+        os.rename(tmp, STATE_FILE)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
+def child_arg(model, flag):
+    args = model.get("status", {}).get("args") or []
+    for name, value in zip(args, args[1:]):
+        if name == flag:
+            return value
+    return None
+
+
+def sleep_idle_seconds(model):
+    try:
+        return float(child_arg(model, "--sleep-idle-seconds"))
+    except (TypeError, ValueError):
+        return None
+
+
+def spawn_id(model):
+    # The router gives every child a fresh port from
+    # get_free_port() and echoes the child's argv in
+    # status.args, so the port is a cheap "still the same
+    # child" check. It catches an unload + reload landing
+    # between two firings, where the state reads `loaded`
+    # both times but the counters have reset. If a future
+    # router stops echoing it this returns None for every
+    # child, which loses that check but keeps the back-off.
+    return child_arg(model, "--port")
+
+
 rows = {}
 
 
@@ -111,6 +181,9 @@ def emit(metric, mtype, help_text, label_str, value):
 
 
 api_key = read_api_key()
+prev_state = load_state()
+now = time.time()
+next_state = {}
 
 for server in sorted(ENDPOINTS):
     base = ENDPOINTS[server].rstrip("/")
@@ -159,20 +232,80 @@ for server in sorted(ENDPOINTS):
         # see the module header. `autoload=false` is the
         # second line of defence for the case where the
         # model sleeps between this check and the request.
+        key = "%s\0%s" % (server, name)
         if state != "loaded":
+            # Remembered so a sleeping -> loaded transition
+            # reads as a wake and the child is read at once.
+            next_state[key] = {"state": state}
             continue
 
-        url = "%s/metrics?model=%s&autoload=false" % (
-            base,
-            urllib.parse.quote(name, safe=""),
+        # Back-off (#1010). Every task that reaches the child,
+        # this /metrics read included, resets its idle clock,
+        # so reading a loaded model every minute keeps it
+        # from ever sleeping. Once two consecutive reads of
+        # the same child show no work in between, stop
+        # reading it and republish the last values, until the
+        # router reports that it slept, was replaced, or went
+        # away. Tokens it serves while backed off are picked
+        # up when it next wakes: the totals live in
+        # server_context_impl and survive sleep/wake.
+        #
+        # A child still `loaded` well past its own idle
+        # timeout since the pause can only be awake because
+        # clients are using it, so it is read again then:
+        # that read costs no VRAM the traffic wasn't already
+        # holding, and keeps a busy model's counters from
+        # freezing until it finally sleeps or is evicted.
+        child = spawn_id(model)
+        prev = prev_state.get(key) or {}
+        last = prev.get("values") or {}
+        same_child = prev.get("state") == "loaded" and prev.get("spawn") == child
+        idle = sleep_idle_seconds(model)
+        paused_at = prev.get("paused_at")
+        overdue = (
+            paused_at is not None
+            and idle is not None
+            and now - paused_at > idle + WAKE_MARGIN
         )
-        try:
-            parsed = parse_prometheus(fetch(url, api_key))
+
+        if same_child and paused_at is not None and not overdue:
+            parsed = last
             failed = 0
-        except Exception as exc:
-            sys.stderr.write("%s: /metrics for %s failed: %s\n" % (server, name, exc))
-            parsed = {}
-            failed = 1
+        else:
+            url = "%s/metrics?model=%s&autoload=false" % (
+                base,
+                urllib.parse.quote(name, safe=""),
+            )
+            try:
+                parsed = parse_prometheus(fetch(url, api_key))
+                failed = 0
+            except Exception as exc:
+                sys.stderr.write(
+                    "%s: /metrics for %s failed: %s\n" % (server, name, exc)
+                )
+                parsed = {}
+                failed = 1
+            # Compare whatever counters this llama.cpp
+            # publishes, so a renamed one can't silently
+            # disable the back-off.
+            seen = [src for src in ACTIVITY if src in parsed]
+            if (
+                same_child
+                and not failed
+                and seen
+                and parsed.get("llamacpp:requests_processing", 0) == 0
+                and all(parsed[src] == last.get(src) for src in seen)
+            ):
+                paused_at = now
+            else:
+                paused_at = None
+
+        next_state[key] = {
+            "state": state,
+            "spawn": child,
+            "paused_at": paused_at,
+            "values": {k: v for k, v in parsed.items() if k in KEPT},
+        }
 
         # The one silent-failure mode worth a series of its
         # own: this exporter depends on `--metrics` reaching
@@ -185,6 +318,13 @@ for server in sorted(ENDPOINTS):
             "Whether the last /metrics read for this loaded model failed.",
             labels(**common),
             failed,
+        )
+        emit(
+            "llama_model_scrape_paused",
+            "gauge",
+            "Whether this loaded model has gone idle and is no longer being read, so that it can reach sleepIdleSeconds; its counters are republished from the last read.",
+            labels(**common),
+            int(paused_at is not None),
         )
 
         for src, (dst, help_text) in COUNTERS.items():
@@ -213,3 +353,8 @@ with os.fdopen(fd, "w") as fh:
             fh.write("%s%s %s\n" % (metric, label_str, repr(float(value))))
 os.chmod(tmp, 0o644)
 os.rename(tmp, OUT)
+
+# An unreachable router's models drop out of the state, so
+# they are read fresh when it comes back — right after a
+# terra power cycle, where every child is new anyway.
+save_state(next_state)

@@ -31,11 +31,32 @@
 #    resident forever, which on amos1 means permanently holding VRAM that
 #    Jellyfin's NVENC transcoding needs (see modules/hosts/amos1.nix).
 #
+# 4. **A scrape keeps an awake model awake, too.** `/metrics` is a
+#    queued `SERVER_TASK_TYPE_METRICS` task, and `server_queue::start_loop`
+#    sets `time_last_task` after every task it processes; sleep needs
+#    `now - time_last_task >= sleepIdleSeconds`. So reading only `loaded`
+#    models (the answer to 3) is not enough: a once-a-minute read of an
+#    awake child still resets its idle clock every minute, and from
+#    2026-09-05 until #1010 no model on either router ever slept.
+#
 # So the child's `/metrics` can only be read when the router says that
-# model is `loaded` (awake), and nothing but a real client request may
-# change that. That is a decision, not a scrape, hence the exporter
-# below: it reads the router's public `/v1/models` for state and only
-# then reaches for `/metrics` on the models that are already awake.
+# model is `loaded` (awake), and only while it is doing something:
+# nothing but a real client request may wake a model or keep it awake.
+# That is a decision, not a scrape, hence the exporter below. It reads
+# the router's public `/v1/models` for state and reaches for `/metrics`
+# only on models that are already awake. Once two consecutive reads of
+# the same child show no counter movement, it stops reading that child
+# and republishes the last values (`llama_model_scrape_paused 1`) until
+# the router reports it asleep, replaced (a new child port in
+# `status.args`), or gone. A model therefore sleeps at most about two
+# timer ticks later than `sleepIdleSeconds` after its last request. One
+# exception: a backed-off child still `loaded` more than its own
+# `--sleep-idle-seconds` + 90 s after the pause can only be awake
+# because clients keep using it, so it is read again then — otherwise a
+# steadily busy model's counters would freeze until it finally slept. The
+# per-model memory this needs lives in the unit's StateDirectory; it is
+# disposable (losing it costs one or two extra reads), so it is neither
+# preserved nor backed up.
 #
 # The same shape also solves terra: it is a desktop that gets powered
 # off, and a real scrape target for it would trip `InstanceDown` every
@@ -53,14 +74,20 @@
 #
 # The counters live in the *child* process, so they reset when a model is
 # evicted (`--models-max 1`, i.e. whenever a different model is asked
-# for) but survive a sleep/wake cycle. `increase()` over a window is
+# for) but survive a sleep/wake cycle: `server_metrics` is a member of
+# `server_context_impl`, `metrics.init()` runs only on the first load,
+# and the sleep path's `destroy()` frees the model and context without
+# touching it (checked against b9190). `increase()` over a window is
 # therefore the honest way to read them; an absolute total is not.
 #
-# Sampling is also lossy by construction: tokens a model serves between
-# the last poll and its eviction are never observed. At a 1 min timer
-# against models that stay loaded for `sleepIdleSeconds` (300-600 s)
-# after their last request, that is a small tail, and the question this
-# feeds ("is this alias worth its disk") is comparative, not exact.
+# Sampling is also lossy by construction, in two ways. Tokens a model
+# serves between the last read and its eviction are never observed. And
+# while a model is backed off (hazard 4), a request that arrives before
+# it sleeps shows up late — on its next wake, or at the overdue re-read
+# above; if a swap evicts it first, those tokens are lost outright. Both
+# are small tails,
+# and the question this feeds ("is this alias worth its disk") is
+# comparative, not exact.
 #
 # One row will always read as dead, and is meant to: terra publishes a
 # phantom `unsloth/…-GGUF:Q4_K_XL` with an empty `alias`, which is
@@ -172,6 +199,7 @@
                 Type = "oneshot";
                 User = "root";
                 ExecStart = exporter;
+                StateDirectory = "llama-metrics";
                 Environment = [
                   "TEXTFILE_OUT=${textfileDir}/llama.prom"
                   "ENDPOINTS_FILE=${endpointsFile}"
