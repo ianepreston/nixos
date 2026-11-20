@@ -10,7 +10,10 @@
 # from shared.yaml wherever it runs, so terra's llama-server and amos1's
 # enforce the same token and caddy injects the same value for either
 # route. Worth knowing before assuming the two endpoints are isolated —
-# a client holding the key can reach both.
+# a client holding the key can reach both. llama-server also accepts the
+# coding sandbox's own key (`llama-cpp/sandbox_api_key`, #998); caddy never
+# sees it, and a /v1/* request carrying it passes the bypass because only
+# the header's presence is checked here.
 #
 # Stacked as a second EnvironmentFile rather than merged into caddy.nix's
 # own template: this belongs to the llm modules, and `EnvironmentFile` is

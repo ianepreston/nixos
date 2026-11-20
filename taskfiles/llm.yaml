@@ -163,7 +163,7 @@ tasks:
         ENV_FILE=$3
         [ -d "$CACHE" ] || { echo "no model cache at $CACHE"; exit 0; }
 
-        key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
+        key=$(grep -oP 'LLAMA_API_KEY=\K[^,]*' "$ENV_FILE" 2>/dev/null || true)
         # The router answers /v1/models without loading anything, and it
         # reports every model it would route to — the configured preset
         # *plus* whatever else is sitting in the cache. A name here that
@@ -241,7 +241,7 @@ tasks:
           "sudo bash -se -- $port $key_file $configured" <<'EOF'
         set -euo pipefail
         PORT=$1; ENV_FILE=$2; shift 2
-        key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
+        key=$(grep -oP 'LLAMA_API_KEY=\K[^,]*' "$ENV_FILE" 2>/dev/null || true)
         rc=0
         for m in "$@"; do
           printf '    %-52s ' "$m"

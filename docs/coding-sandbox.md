@@ -443,15 +443,24 @@ The threat model differs from GitHub's. These secrets are long-lived keys for
 internal services that are not reachable from the internet, and guest code
 can read and copy them. The boundary is what the agent can reach and what the
 key itself permits, so give sandboxes their own key wherever the service
-supports one. To revoke a secret, rotate its value in `nix-secrets`
-(`sops/coding-sandbox.yaml`, `session_secrets.<name>`) and at the service.
-Each new session reads the new value; no VM needs recreating.
+supports one. To revoke a secret, rotate the value its catalog entry names in
+`nix-secrets` and redeploy the hosts that read it. Each new session reads the
+new value; no VM needs recreating.
+
+`llm` is such a key: `llama-cpp/sandbox_api_key` in `sops/shared.yaml`, which
+llama-server on amos1 and terra accepts beside the fleet's primary key
+(`modules/system/_llama-cpp/nixos.nix`). It lives in `shared.yaml` because the
+serving hosts must read it, and `coding-sandbox.yaml` deliberately excludes
+servers. Rotating it touches only llama-server; Caddy and the fleet's own
+clients keep the primary key.
 
 Secrets come from sops-nix, so the same hosts that can mint GitHub tokens
 provision them (`terra` and `luna`). On the `work` Mac every entry reports
 `NOT READY`, and `sandbox shell`/`exec` refuse a policy that grants one.
-Adding an entry means a new `sessionSecrets` attribute plus its value in
-`sops/coding-sandbox.yaml` **before** the change reaches a host: sops-nix
+Adding an entry means a new `sessionSecrets` attribute (with its `sopsFile`
+and `key`) plus that value in `nix-secrets` **before** the change reaches a
+host. Use `sops/coding-sandbox.yaml` unless a server must read the value too,
+and then the narrowest file the servers can read: sops-nix
 installs a user's secrets all or nothing, so a missing key would also break
 that host's other user secrets.
 

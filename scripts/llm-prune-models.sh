@@ -92,7 +92,7 @@ if [ ! -d "$CACHE_DIR" ]; then
   exit 0
 fi
 
-api_key=$(grep -oP 'LLAMA_API_KEY=\K.*' "$ENV_FILE" 2>/dev/null || true)
+api_key=$(grep -oP 'LLAMA_API_KEY=\K[^,]*' "$ENV_FILE" 2>/dev/null || true)
 api() {
   curl -sf --max-time 15 "http://127.0.0.1:${PORT}$1" \
     ${api_key:+-H "Authorization: Bearer ${api_key}"} 2>/dev/null || true

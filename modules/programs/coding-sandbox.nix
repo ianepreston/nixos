@@ -97,8 +97,8 @@ in
       # Named session secrets a project may grant with [secrets].grants
       # (#998). This catalog is the whole universe: a worktree selects names
       # only, so it can never point the launcher at another sops key. Each
-      # value lives in coding-sandbox.yaml under session_secrets/<name> and
-      # reaches the guest only as `env` in a shell/exec session. `domains`
+      # entry names its own sops file and key, and its value reaches the
+      # guest only as `env` in a shell/exec session. `domains`
       # are what the secret is for; `sandbox plan` reports whether the
       # project's network policy grants them, and grants nothing itself.
       # The same sops test as the GitHub App gates them: on the work Mac
@@ -107,6 +107,12 @@ in
         llm = {
           description = "llama.cpp API key for the fleet's LLM endpoints";
           env = "LLAMA_API_KEY";
+          # A sandbox-only key that llama-server accepts beside the primary
+          # one (modules/system/_llama-cpp/nixos.nix). shared.yaml, not
+          # coding-sandbox.yaml, because the serving hosts must read it too
+          # and coding-sandbox.yaml (the GitHub App key) excludes servers.
+          sopsFile = "shared.yaml";
+          key = "llama-cpp/sandbox_api_key";
           # The routes vibes.nix's llamaBaseUrl targets.
           domains = [
             "llm.amos.ipreston.net"
@@ -119,7 +125,10 @@ in
         builtins.toJSON (
           lib.mapAttrs (
             name: secret:
-            secret
+            removeAttrs secret [
+              "sopsFile"
+              "key"
+            ]
             // {
               file = if githubApp then config.sops.secrets.${sessionSecretName name}.path else null;
             }
@@ -296,10 +305,10 @@ in
           "coding-sandbox/github_app_private_key" = githubAppSecret "private_key";
         }
         // lib.mapAttrs' (
-          name: _:
+          name: secret:
           lib.nameValuePair (sessionSecretName name) {
-            sopsFile = "${inputs.nix-secrets}/sops/coding-sandbox.yaml";
-            key = "session_secrets/${name}";
+            sopsFile = "${inputs.nix-secrets}/sops/${secret.sopsFile}";
+            inherit (secret) key;
           }
         ) sessionSecrets;
       };
