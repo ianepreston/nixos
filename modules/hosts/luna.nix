@@ -40,6 +40,8 @@
         {
           home-manager.sharedModules = with inputs.self.modules.homeManager; [
             vibes
+            # Authoring workstation: `sops` CLI operator identity (#504).
+            sops-operator
             coding-sandbox
             moonlight
             browser

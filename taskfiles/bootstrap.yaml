@@ -208,7 +208,9 @@ tasks:
         echo "    - path_regex: {{.HOST}}\\.yaml\$"
         echo "      key_groups:"
         echo "        - age:"
-        echo "            - *ipreston"
+        echo "            - *escrow"
+        echo "            - *yk1"
+        echo "            - *yk2"
         echo "            - *{{.HOST}}"
 
   hwconfig:
@@ -262,7 +264,9 @@ tasks:
         echo "    - path_regex: {{.HOST}}\\.yaml\$"
         echo "      key_groups:"
         echo "        - age:"
-        echo "            - *ipreston"
+        echo "            - *escrow"
+        echo "            - *yk1"
+        echo "            - *yk2"
         echo "            - *{{.HOST}}"
         echo ""
         echo "Then: cd ../nix-secrets && sops updatekeys sops/*.yaml && git add -A && git commit -m 'add {{.HOST}} keys' && git push"
@@ -323,7 +327,7 @@ tasks:
             { print }
           ' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
           # Append creation rule for host.yaml
-          printf '  - path_regex: %s\\.yaml$\n    key_groups:\n      - age:\n          - *ipreston\n          - *%s\n' "$host" "$host" >> "$sops_yaml"
+          printf '  - path_regex: %s\\.yaml$\n    key_groups:\n      - age:\n          - *escrow\n          - *yk1\n          - *yk2\n          - *%s\n' "$host" "$host" >> "$sops_yaml"
         fi
 
         # Create host secrets file with a generated SSH key, or rekey

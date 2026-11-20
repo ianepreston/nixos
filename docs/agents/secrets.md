@@ -26,5 +26,13 @@ Stick to `oidc_client_id`, `oidc_client_secret`, `db_password` so existing
 modules (`tandoor.nix`, `paperless-ngx.nix`) stay copy-paste templates; use
 `secrets:secret` only for something beyond those.
 
+Every task that decrypts (`oidc`, `dbpw`, `secret`, `view`, `rekey`) uses the
+operator identity in `~/.config/sops/age/keys.txt`. It exists only on terra and
+luna, and it is a YubiKey stub (#504), so it works only while one of the two
+operator tokens is plugged in. No PIN and no touch are needed, so it works fine
+from an agent session. `yubikey plugin: Could not open YubiKey with serial …`
+means no token is present: ask the user to plug one in. Nothing is wrong with
+the key. On any other host these tasks cannot decrypt at all.
+
 A local `../nix-secrets` checkout that is *behind* origin/main breaks every
 secret on a deployed target, not just the missing one — pull before deploying.
