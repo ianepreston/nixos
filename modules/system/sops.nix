@@ -16,7 +16,7 @@
 # key itself, and sops-nix put it on every host.
 { inputs, ... }:
 let
-  sopsFile = builtins.toString inputs.nix-secrets + "/sops/shared.yaml";
+  sopsFolder = builtins.toString inputs.nix-secrets + "/sops";
   ageDir = home: "${home}/.config/sops/age";
 in
 {
@@ -33,7 +33,7 @@ in
       imports = [ inputs.sops-nix.nixosModules.sops ];
 
       sops = {
-        defaultSopsFile = sopsFile;
+        defaultSopsFile = "${sopsFolder}/shared.yaml";
         validateSopsFiles = false;
         age = {
           # Automatically import host SSH keys as age keys
@@ -61,7 +61,8 @@ in
         {
           # User password for creating the user
           "passwords/${hostSpec.username}" = {
-            inherit sopsFile;
+            # common.yaml: every NixOS host is a recipient (#505).
+            sopsFile = "${sopsFolder}/common.yaml";
             neededForUsers = true;
           };
         }
