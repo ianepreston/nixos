@@ -166,6 +166,18 @@ jobs:
             --no-update-lock-file \
             --print-build-logs \
             ".#nixosConfigurations.${{ matrix.host }}.config.system.build.toplevel"
+      # The coding-sandbox guest's platform bundles are not a host closure,
+      # and several (claude-code, databricks-cli, unity-gateway) are never in
+      # cache.nixos.org. Building them here leaves them in hpp-1's store, so
+      # a NixOS workstation seeding a new sandbox VM substitutes them from
+      # hpp-1 instead of building them (#1006). Once, on a workstation leg.
+      - name: Build coding-sandbox guest packages
+        if: matrix.host == 'terra'
+        run: |
+          nix build \
+            --no-update-lock-file \
+            --print-build-logs \
+            ".#legacyPackages.x86_64-linux.coding-sandbox-guest-packages"
   checks:
     name: build Linux flake checks
     # Builds every x86_64-linux flake check except pre-commit, which the lint

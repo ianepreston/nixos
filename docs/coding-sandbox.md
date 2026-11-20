@@ -203,17 +203,48 @@ each returns a description, its commands, and its packages from the guest's
 also owns the guest's short unfree allowlist). The fast-moving clients use
 unstable, as on the workstations. The exception is OpenCode: Hydra doesn't
 cache unstable's build, and building it from source runs out of memory in a
-default guest, so `agent-opencode` uses stable until the cache serves it.
+default guest, so `agent-opencode` uses stable until the cache serves it. The
+work Mac's guest still builds whatever cache.nixos.org lacks, so the pin stays
+even though a NixOS host now seeds its guests (below).
 Unfree bundles (`databricks-cli`, `agent-claude-code`) and `unity-gateway` are
-never in cache.nixos.org, so each new VM builds them. They are small builds.
+never in cache.nixos.org.
+
+**On a NixOS workstation (QEMU), the host seeds the selected bundles.** Before
+a new VM's first boot, `sandbox start` builds the guest flake's
+`sandboxBundles.<name>` outputs on the host. The host's own substituters serve
+them: hpp-1 first (CI builds every bundle there as
+`legacyPackages.x86_64-linux.coding-sandbox-guest-packages`), then
+cache.nixos.org. The host builds locally whatever neither has. It checks that
+the catalog's exact store paths are now valid, then exports their closures with
+`nix copy --to file://…` into `${XDG_STATE_HOME:-~/.local/state}/coding-sandbox/<instance>.seed`.
+The template mounts that directory read-only at `/mnt/sandbox-seed`. Before
+the Home Manager switch, the guest's root copies it to a private local
+directory and imports it from there with `nix copy --no-check-sigs --from
+file://…`. Nix creates subdirectories in a `file://` cache even to read it, so
+it can't read the mount in place. The switch then finds the bundle paths valid. Locally built
+paths are unsigned. The host is the guest's trust root anyway, since it
+supplies the profile flake. The guest gets no network grant to hpp-1 and no
+key for it: the seed is a host directory like the profile mount, not guest
+egress. The launcher clears the export once `limactl start` returns. It keeps
+the empty directory because Lima mounts it on every boot, and removes it with
+the VM. If the host can't build or export a bundle, it says so, and the guest
+substitutes or builds it as before. If the guest import fails, it records that
+in the guest's `/home/agent/.local/state/coding-sandbox/seed.log` and the switch
+builds instead.
+
+On the work Mac (VZ) the host can't build Linux paths, so each new VM builds
+the uncached bundles itself. They are small builds. `sandbox plan` shows which
+path applies on its `Guest packages:` line.
+
 `databricks-cli` is upstream's statically linked release binary rather than
 nixpkgs' source build: as an unfree package that build would run in the guest
 and fetch its Go modules from `proxy.golang.org`, which the work Mac's network
 policy blocks for its guests too.
 
 A bundle that builds in the guest declares the hosts its build fetches from,
-and the plan shows them. In `restricted` mode the plan refuses until the
-project lists each one in `network.public_domains`:
+and the plan shows them. They stay declared on a NixOS host too, where the
+guest builds only when seeding fails. In `restricted` mode the plan refuses
+until the project lists each one in `network.public_domains`:
 `release-assets.githubusercontent.com` for `databricks-cli` (its download
 starts at `github.com`, already a bootstrap domain, which redirects there), and
 `downloads.claude.ai` for `agent-claude-code`. The other bundles need nothing
@@ -745,7 +776,10 @@ leaves its dedicated Lima disk for the next VM. Do not mount a shared writable
 not a safe multi-guest cache, exposing it would give untrusted guest code a
 host filesystem boundary to attack, and a Darwin host store is not a substitute
 for Linux guest outputs. A future shared-cache design should instead use a
-dedicated, content-addressed binary-cache service with a narrow interface.
+dedicated, content-addressed binary-cache service with a narrow interface. The
+NixOS bundle seed ([Platform bundles](#platform-bundles)) is a narrow case of
+that: a one-shot, read-only binary-cache export of the selected bundles'
+closures, imported once by the guest's root.
 
 ## Current limits
 

@@ -405,6 +405,7 @@ parse_target() {
   policy_record="$state_root/$instance.policy.json"
   previous_policy_record="$state_root/$instance.policy.previous.json"
   guest_profile_root="$state_root/$instance.guest-profile"
+  guest_seed_dir="$state_root/$instance.seed"
   if [[ "$SANDBOX_VM_TYPE" == vz ]]; then
     temporary_root="${TMPDIR:-/tmp}"
     temporary_root="${temporary_root%/}"
@@ -581,6 +582,15 @@ EOF
       ;;
   esac
 
+  if guest_seed_planned; then
+    printf '%s\n' '  Guest packages: bundles pre-seeded from this host'"'"'s store when the VM is created'
+    printf '%s\n' '                built in the guest instead if this host cannot build or export them'
+  elif [[ $(jq '.profile.bundles // [] | length' <<<"$policy_json") -gt 0 ]]; then
+    printf '%s\n' '  Guest packages: bundles substituted or built in the guest'
+  else
+    printf '%s\n' '  Guest packages: no bundles selected'
+  fi
+
   printf '\n  Declared mounts:\n'
   jq -r --arg mount_root "$mount_root" '
     .mounts | to_entries[] |
@@ -593,14 +603,21 @@ EOF
   if [[ -n $(jq -r '.config_path // empty' <<<"$policy_json") ]]; then
     printf '%s\n' '    project specification -> /sandbox-spec/.sandbox.toml [ro]'
   fi
+  if guest_seed_planned; then
+    printf '%s\n' "    guest package seed: $guest_seed_dir -> /mnt/sandbox-seed [ro]"
+  fi
 
   printf '\n  Selected profile: sha256:%s\n' "$(jq -r '.profile.digest | sub("sha256:"; "")' <<<"$policy_json")"
   if [[ $(jq '.profile.bundles // [] | length' <<<"$policy_json") -eq 0 ]]; then
     printf '%s\n' '    bundles: none'
   else
-    jq -r '.profile.bundles[] |
+    local guest_build='builds in the guest'
+    if guest_seed_planned; then
+      guest_build='builds in the guest only if seeding fails'
+    fi
+    jq -r --arg guest_build "$guest_build" '.profile.bundles[] |
       "    bundle: \(.name) [\(.digest)]\n      \(.description)\n      commands: \(.commands | join(", "))",
-      (select((.fetch_domains // []) | length > 0) | "      builds in the guest; fetches from: \(.fetch_domains | join(", "))"),
+      (select((.fetch_domains // []) | length > 0) | "      \($guest_build); fetches from: \(.fetch_domains | join(", "))"),
       (.packages[] | "      \(.name) \(.version) \(.path)")' <<<"$policy_json"
   fi
   if [[ $(jq '.profile.modules | length' <<<"$policy_json") -eq 0 ]]; then
@@ -891,7 +908,60 @@ YAML
     printf '%s\n' '  # Fixed, store-built guest profile; read-only and not a host secret.'
     printf '%s\n' "- location: $(json_string "$SANDBOX_GUEST_PROFILE")"
     printf '%s\n' '  mountPoint: /mnt/sandbox-profile' '  writable: false'
+    if guest_seed_planned; then
+      printf '%s\n' '  # Bundle closures this host exported before first boot; read-only.'
+      printf '%s\n' "- location: $(json_string "$guest_seed_dir")"
+      printf '%s\n' '  mountPoint: /mnt/sandbox-seed' '  writable: false'
+    fi
   } >>"$template"
+}
+
+# --- Guest package seed (NixOS hosts) --------------------------------------
+#
+# A Linux host builds for its guest's own system, so it realises the selected
+# bundles with its own substituters (hpp-1, then cache.nixos.org) and exports
+# their closures as a file:// binary cache that the template mounts read-only.
+# The guest's root imports them before the Home Manager switch, so a new VM
+# builds nothing that this host already holds. The guest gains no network
+# grant or credential: the export is a host directory, like the profile mount.
+# A macOS host cannot build Linux paths, so its guest keeps building them.
+guest_seed_planned() {
+  [[ "$SANDBOX_VM_TYPE" == qemu ]] &&
+    jq -e '(.profile.bundles // []) | length > 0' <<<"$policy_json" >/dev/null
+}
+
+seed_guest_packages() {
+  local -a installables paths
+  guest_seed_planned || return 0
+  mapfile -t installables < <(jq -r --arg profile "path:$SANDBOX_GUEST_PROFILE" \
+    '.profile.bundles[] | "\($profile)#sandboxBundles.\(.name)"' <<<"$policy_json")
+  mapfile -t paths < <(jq -r '.profile.bundles[].packages[].path' <<<"$policy_json")
+  rm -rf -- "$guest_seed_dir"
+  mkdir -p -- "$guest_seed_dir"
+  note "building the selected bundles on this host to seed the guest"
+  # The guest checks these exact catalog paths after activation, so the seed
+  # must contain them rather than whatever the build happened to produce.
+  # The profile is a read-only store path without a lock file; its inputs are
+  # already locked by rev and narHash, so the computed lock is not written.
+  if nix --extra-experimental-features 'nix-command flakes' \
+    build --no-link --no-write-lock-file "${installables[@]}" &&
+    nix-store --check-validity "${paths[@]}" &&
+    nix --extra-experimental-features nix-command copy --quiet --to "file://$guest_seed_dir?compression=zstd" "${paths[@]}"; then
+    printf '%s\n' "${paths[@]}" >"$guest_seed_dir/store-paths"
+    note "guest packages: pre-seeded from this host ($(nix-store --query --requisites "${paths[@]}" | wc -l) paths)"
+  else
+    rm -rf -- "$guest_seed_dir"
+    mkdir -p -- "$guest_seed_dir"
+    note 'guest packages: could not seed from this host; the guest will build them'
+  fi
+}
+
+# Lima keeps the seed mount for the VM's life, so keep the directory but drop
+# the export once the first boot has imported it.
+clear_guest_seed() {
+  guest_seed_planned || return 0
+  rm -rf -- "$guest_seed_dir"
+  mkdir -p -- "$guest_seed_dir"
 }
 
 append_persistent_nix_store_provision() {
@@ -1024,6 +1094,29 @@ YAML
     else
       cat <<'YAML'
     proxy_environment=()
+YAML
+    fi
+    if guest_seed_planned; then
+      cat <<'YAML'
+    # The host exported the selected bundles' closures before first boot
+    # (seed_guest_packages). Import them as root, the store's trusted user:
+    # the host built them unsigned and is already the guest's trust root,
+    # since it supplies the profile flake. Anything not imported is still
+    # substituted or built by the switch below. Nix creates its own
+    # subdirectories when it opens a file:// cache, even to read it, so
+    # import from a private local copy rather than the read-only mount.
+    if test -s /mnt/sandbox-seed/store-paths; then
+      mapfile -t seed_paths </mnt/sandbox-seed/store-paths
+      seed_cache=$(mktemp -d /var/tmp/coding-sandbox-seed.XXXXXX)
+      if ! { cp -a /mnt/sandbox-seed/. "$seed_cache/" &&
+        /nix/var/nix/profiles/default/bin/nix --extra-experimental-features nix-command \
+          copy --no-check-sigs --from "file://$seed_cache" "${seed_paths[@]}"; } \
+        >"$state_dir/seed.log" 2>&1; then
+        echo 'guest package seed import failed; the profile switch builds them instead' >>"$state_dir/seed.log"
+      fi
+      rm -rf "$seed_cache"
+      chown agent:agent "$state_dir/seed.log"
+    fi
 YAML
     fi
     cat <<'YAML'
@@ -1656,11 +1749,15 @@ start() {
     return
   fi
   ensure_persistent_disk
+  seed_guest_packages
   make_template
-  trap 'rm -f "$template"' EXIT
+  # A failed or timed-out first boot must not leave the export behind: a
+  # restart of an existing VM never seeds, so nothing else would clear it.
+  trap 'rm -f "$template"; clear_guest_seed' EXIT
 
   note "creating or starting $instance; first boot downloads Ubuntu, Nix, and the selected guest profile"
   limactl start --tty=false --name="$instance" "$template"
+  clear_guest_seed
   record_policy
   root_guest_profile
   check_provisioned
@@ -1795,6 +1892,7 @@ destroy() {
     mv -f "$policy_record" "$previous_policy_record"
   fi
   rm -f "$guest_profile_root"
+  rm -rf -- "$guest_seed_dir"
   if [[ "$instance_nix_store_mode" == persistent ]]; then
     note "deleted VM. Persistent Nix cache disk $nix_store_disk was retained."
   else
@@ -1841,6 +1939,7 @@ delete_instance() {
   fi
   limactl delete --force "$instance_to_delete"
   rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox/$instance_to_delete.guest-profile"
+  rm -rf -- "${XDG_STATE_HOME:-$HOME/.local/state}/coding-sandbox/$instance_to_delete.seed"
   note 'deleted. No declared host path was changed.'
 }
 
