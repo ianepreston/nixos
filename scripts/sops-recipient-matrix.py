@@ -93,9 +93,13 @@ def live_host_key(host):
     ssh-keyscan does not read ssh_config, so resolve the real address and
     port with `ssh -G` (which parses config without connecting).
     """
-    cfg = subprocess.run(
-        ["ssh", "-G", host], check=True, capture_output=True, text=True
-    ).stdout
+    # A broken ssh_config stanza for one host falls back to its anchor
+    # rather than aborting the run. ssh-keyscan has no ProxyJump, so a
+    # host reachable only through a jump host also falls back (flagged).
+    g = subprocess.run(["ssh", "-G", host], capture_output=True, text=True)
+    if g.returncode != 0:
+        return None
+    cfg = g.stdout
     opts = dict(line.split(" ", 1) for line in cfg.splitlines() if " " in line)
     scan = subprocess.run(
         [
@@ -205,6 +209,12 @@ def build_identities(hosts, anchors, vm_pubkey, offline):
                 "hosts": vm_members,
                 "source": "anchor",
             }
+        else:
+            print(
+                f"[!] {', '.join(vm_members)}: no VM key file and no tests-vm anchor;"
+                " their reads are unchecked",
+                file=sys.stderr,
+            )
     for host in sorted(set(hosts) - VM_HOSTS):
         key = None if offline else live_host_key(host)
         if key:
@@ -237,6 +247,11 @@ def main():
     identities = build_identities(consumers, anchors, args.vm_pubkey, args.offline)
 
     rows, problems = evaluate(files, consumers, identities, operators, anchors)
+    covered = {h for i in identities.values() for h in i["hosts"]}
+    problems += [
+        f"{h} has no key to check (unreachable, no anchor)"
+        for h in sorted(set(consumers) - covered)
+    ]
 
     for name, ident in sorted(identities.items()):
         src = {

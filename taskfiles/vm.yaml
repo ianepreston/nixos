@@ -300,54 +300,25 @@ tasks:
         fi
 
         # 3. *anchor in every other file the VM's flake host reads. Before
-        # #506 that was always shared.yaml. Now it is whatever narrow files
-        # (common, llm, server-shared, ...) HOST's evaluated NixOS and
-        # home-manager secrets name, so the grant follows the config
-        # rather than a hardcoded list.
-        # No mapfile: task's built-in shell interpreter lacks it.
-        listed=$(
-          nix eval --json ".#nixosConfigurations" \
-            --apply "$(cat scripts/_sops-matrix/consumers.nix)" \
-            --override-input nix-secrets "path:$(realpath "$secrets_dir")" \
-            | jq -r --arg h "{{.HOST}}" --arg t "{{.TARGET}}.yaml" '.[$h][] | select(. != $t)'
-        )
-        host_files=()
+        # #506 that was always shared.yaml; now it is whatever narrow files
+        # (common, llm, server-shared, ...) HOST's evaluated config names,
+        # so the grant follows the config rather than a hardcoded list.
+        # Both helpers are shared with bootstrap:secrets.
+        # Eval on its own line so a failure stops here; only grep -v's
+        # "nothing left" exit is tolerated.
+        reads=$(scripts/sops-host-files.sh "{{.HOST}}" "$secrets_dir")
+        listed=$(grep -vx "{{.TARGET}}.yaml" <<<"$reads" || true)
+        others=()
         while IFS= read -r f; do
-          if [ -n "$f" ]; then host_files+=( "$f" ); fi
+          if [ -n "$f" ]; then others+=( "$f" ); fi
         done <<<"$listed"
-        if [ ${#host_files[@]} -eq 0 ]; then
-          echo -e "\x1B[31m[!] Could not evaluate the sops files {{.HOST}} reads\x1B[0m"
-          exit 1
-        fi
         rekey=( "sops/{{.TARGET}}.yaml" )
-        for f in "${host_files[@]}"; do
-          stem=${f%.yaml}
-          if block_for "$stem" | grep -q "\*${anchor}\$"; then
-            echo -e "\x1B[33m[~] *${anchor} already in $f age list\x1B[0m"
-            continue
-          fi
-          if ! grep -qF "  - path_regex: ${stem}\\.yaml\$" "$sops_yaml"; then
-            echo -e "\x1B[31m[!] {{.HOST}} reads $f but $sops_yaml has no creation_rule for it\x1B[0m"
-            exit 1
-          fi
-          echo -e "\x1B[32m[+] Adding *${anchor} to $f age list\x1B[0m"
-          # Append after the block's last `- *anchor` entry.
-          # ENVIRON, not -v: awk -v would turn the regex's `\.` into `.`.
-          HDR="  - path_regex: ${stem}\\.yaml\$" ENTRY="          - *${anchor}" awk '
-            { line[NR] = $0 }
-            $0 == ENVIRON["HDR"] { start = NR }
-            END {
-              last = 0
-              for (i = start + 1; start && i <= NR; i++) {
-                if (line[i] ~ /^  - path_regex:/ || line[i] ~ /^[^ ]/) break
-                if (line[i] ~ /^ +- \*/) last = i
-              }
-              for (i = 1; i <= NR; i++) { print line[i]; if (i == last) print ENVIRON["ENTRY"] }
-            }
-          ' "$sops_yaml" > "$sops_yaml.tmp" && mv "$sops_yaml.tmp" "$sops_yaml"
-          rekey+=( "sops/$f" )
-          needs_updatekeys=1
-        done
+        if [ ${#others[@]} -gt 0 ]; then
+          granted=$(scripts/sops-grant.sh "$sops_yaml" "$anchor" "${others[@]}")
+          while IFS= read -r f; do
+            if [ -n "$f" ]; then rekey+=( "sops/$f" ); needs_updatekeys=1; fi
+          done <<<"$granted"
+        fi
 
         if [ "$needs_updatekeys" = "1" ]; then
           echo -e "\x1B[32m[+] Running sops updatekeys on ${rekey[*]}\x1B[0m"
