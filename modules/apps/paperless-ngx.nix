@@ -59,7 +59,7 @@
 # differently — the index is excluded and re-embedded, the model cache is
 # kept — and the nightly index task moves out of the backup window; see
 # the restic exclude and PAPERLESS_LLM_INDEX_TASK_CRON below (#558).
-{ inputs, ... }:
+{ inputs, hostSpecs, ... }:
 {
   flake.modules.nixos.paperless-ngx =
     {
@@ -77,6 +77,7 @@
         inherit (pkgs.stdenv.hostPlatform) system;
         inherit (pkgs) config;
       };
+      paperlessPackage = pkgsUnstable.paperless-ngx;
 
       paperlessHost = "paperless-ngx.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
@@ -88,6 +89,46 @@
         "paperless-consumer.service"
         "paperless-web.service"
       ];
+
+      # Post-consume hook (#986): when a document's text came from
+      # tesseract and reads poorly (handwriting, phone photos), append a
+      # transcription from a vision model. The logic and its calibration
+      # are in _paperless-ngx/vision-ocr.py.
+      #
+      # It runs as `paperless-ngx shell -c`, inside Django, rather than
+      # PATCHing content through the REST API: that would need an API
+      # token, a user to own it, and a secret to hold it, all for a script
+      # that already runs as the paperless user. The script then does what
+      # the API's update view does: save, document_updated, reindex.
+      #
+      # amos1's `vision`, from both servers. It's always on, unlike terra.
+      # On the two calibration documents its Qwen3-VL-4B read the
+      # handwriting at least as well as terra's 8B. It goes through
+      # amos1's HTTPS route rather than loopback so hpp-1 can use the same
+      # URL. A /v1/* request carrying an Authorization header takes the
+      # route's forward-auth bypass, and Caddy passes the header through
+      # untouched (modules/apps/authentik.nix). So the hook's own
+      # PAPERLESS_AI_LLM_API_KEY must be the `llama-cpp/api_key` that
+      # amos1's llama-server enforces, which it is. There is no cross-host
+      # endpoint contract (`myServiceEndpoints` is host-local), so the URL
+      # is built from amos1's hostSpec plus llm.nix's `llm.` route name.
+      # Consumption is rare and not latency-bound, so a cold model load on
+      # the first page is fine.
+      #
+      # The package is `config.services.paperless.package`, not
+      # `paperlessPackage`: the upstream module's `apply` re-overrides
+      # tesseract, so only the former is the derivation the units run.
+      visionOcr = pkgs.writeShellApplication {
+        name = "paperless-vision-ocr";
+        runtimeInputs = [ pkgs.poppler-utils ];
+        text = ''
+          export VISION_OCR_ENDPOINT=https://llm.${hostSpecs.amos1.serverDomain}/v1
+          export VISION_OCR_MODEL=vision
+          export VISION_OCR_WORDLIST=${pkgs.scowl}/share/dict/wcanadian.60
+          exec ${config.services.paperless.package}/bin/paperless-ngx shell \
+            -c "exec(open('${pkgs.writeText "vision-ocr.py" (builtins.readFile ./_paperless-ngx/vision-ocr.py)}').read())"
+        '';
+      };
     in
     {
       myObservability.monitoredSystemdUnits = [ "paperless(-.+)?" ];
@@ -150,7 +191,7 @@
 
       services.paperless = {
         enable = true;
-        package = pkgsUnstable.paperless-ngx;
+        package = paperlessPackage;
         inherit dataDir port;
         address = "127.0.0.1";
         environmentFile = config.sops.templates."paperless-ngx.env".path;
@@ -184,7 +225,9 @@
           # tags / title suggestions from terra's llama-server. The
           # subsystem is text-only — the classifier reads `doc.content`,
           # which paperless has already produced with tesseract/ocrmypdf
-          # — so nothing here wants terra's `vision` alias.
+          # — so nothing here wants terra's `vision` alias. Handwriting
+          # that tesseract can't read reaches `doc.content` through the
+          # post-consume hook instead (`visionOcr` above, #986).
           #
           # Suggestions are pull-only: the document detail page's
           # suggestions call, or an AI workflow action (a DB object
@@ -324,6 +367,13 @@
       systemd.services = {
         paperless-task-queue.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
         paperless-web.serviceConfig.MemoryDenyWriteExecute = lib.mkForce false;
+
+        # The celery worker is where consume_file, and so the post-consume
+        # script, runs. Set here rather than in `services.paperless.settings`:
+        # the wrapper reads `services.paperless.package`, whose `apply`
+        # reads `settings` (tesseract languages), so putting it there
+        # recurses.
+        paperless-task-queue.environment.PAPERLESS_POST_CONSUME_SCRIPT = lib.getExe visionOcr;
 
         # paperless-secret-key.service reads the same sops-rendered env
         # file as the four units above, but it is neither a postgres

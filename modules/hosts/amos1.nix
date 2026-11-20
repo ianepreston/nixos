@@ -156,6 +156,12 @@
               # or may not have it. This is the cost of the 8 GB budget;
               # route to terra's `vision` when it matters. Document OCR
               # itself was flawless on both.
+              #
+              # Paperless's handwriting hook calls this alias from both
+              # servers (modules/apps/paperless-ngx.nix, #986), so a swap
+              # here should be checked against the `paperless-ocr`
+              # fixtures. On those, the 4B read handwriting at least as
+              # well as terra's 8B.
               "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M" = {
                 aliases = [ "vision" ];
                 ctxSize = 32768;

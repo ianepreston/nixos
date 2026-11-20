@@ -379,6 +379,53 @@ class CompareCaseSets(unittest.TestCase):
         self.assertIn("Warning", differ)
 
 
+TEXT_EXPECTED = {
+    "recover": {
+        "vendor": ["Acme Widget Co"],
+        "total": ["123.45"],
+        "date": ["Jan 2/27", "2027-01-02"],
+    }
+}
+
+
+def text_response(content: str | None, finish: str = "stop") -> dict:
+    return {"choices": [{"message": {"content": content}, "finish_reason": finish}]}
+
+
+class ScoreTextCase(unittest.TestCase):
+    def test_layout_and_punctuation_do_not_count(self):
+        r = llm_eval.score_case(
+            TEXT_EXPECTED,
+            text_response("ACME widget co.\nDate: Jan 2/27\nTOTAL 123\n45\n"),
+        )
+        self.assertEqual(failed(r), set())
+        self.assertEqual(r["total"], 5)
+
+    def test_any_spelling_passes(self):
+        r = llm_eval.score_case(
+            TEXT_EXPECTED, text_response("Acme Widget Co 2027-01-02 123.45")
+        )
+        self.assertEqual(failed(r), set())
+
+    def test_whole_word_only(self):
+        r = llm_eval.score_case(
+            TEXT_EXPECTED, text_response("Acme Widget Corp 9123.456 Jan 2/27")
+        )
+        self.assertEqual(failed(r), {"vendor:recovered", "total:recovered"})
+
+    def test_empty_answer_fails_every_check_with_same_total(self):
+        for response in (text_response(None), text_response(""), {}):
+            r = llm_eval.score_case(TEXT_EXPECTED, response)
+            self.assertEqual(r["passed"], 0)
+            self.assertEqual(r["total"], 5)
+
+    def test_truncation_is_its_own_failure(self):
+        r = llm_eval.score_case(
+            TEXT_EXPECTED, text_response("Acme Widget Co Jan 2/27", "length")
+        )
+        self.assertEqual(failed(r), {"*:complete", "total:recovered"})
+
+
 class Audit(unittest.TestCase):
     def setUp(self):
         import tempfile
@@ -388,6 +435,7 @@ class Audit(unittest.TestCase):
         for name, expected in [
             ("widget-manual", EXPECTED),
             ("widget", {"tags": {"must": ["Blue Widget", "HR"]}}),
+            ("receipt", TEXT_EXPECTED),
         ]:
             case = self.fx / "paperless-classify" / name
             case.mkdir(parents=True)
@@ -414,6 +462,11 @@ class Audit(unittest.TestCase):
     def test_bare_case_name_does_not_mask_a_value(self):
         # `widget` is a case name; "Blue Widget" is still a value.
         self.assertEqual(self.hits("it missed Blue Widget"), ["Blue Widget"])
+
+    def test_recovered_text_values_are_checked(self):
+        self.assertEqual(self.hits("it read Acme Widget Co fine"), ["Acme Widget Co"])
+        # Field labels are public; only the spellings are fixture content.
+        self.assertEqual(self.hits("vendor:recovered failed"), [])
 
     def test_short_values_are_checked(self):
         self.assertEqual(self.hits("tagged it HR"), ["HR"])
