@@ -604,6 +604,32 @@ class PolicyTest(unittest.TestCase):
         self.assertIn("bundle store path missing from the agent profile", template)
         self.assertIn(".local/state/nix/profiles/home-manager", template)
 
+        # A NixOS (qemu) host seeds the selected bundles from its own store
+        # through a read-only mount, imported before the profile switch.
+        self.assertIn(
+            "  Guest packages: bundles pre-seeded from this host's store", plan
+        )
+        self.assertIn("-> /mnt/sandbox-seed [ro]", plan)
+        seed_dir = str(root / ".local/state/coding-sandbox")
+        self.assertRegex(
+            template,
+            rf'- location: "{re.escape(seed_dir)}/coding-sandbox-[^"]+\.seed"\n'
+            r"  mountPoint: /mnt/sandbox-seed\n  writable: false\n",
+        )
+        self.assertLess(
+            template.index("cp -a /mnt/sandbox-seed/."),
+            template.index('nix run "$profile#home-manager"'),
+        )
+
+        # A macOS (VZ) host cannot build Linux paths: no seed is rendered.
+        environment.update(VZ_BACKEND)
+        vz_plan = launcher("plan")
+        vz_template = launcher("template")
+        self.assertIn(
+            "  Guest packages: bundles substituted or built in the guest", vz_plan
+        )
+        self.assertNotIn("sandbox-seed", vz_plan + vz_template)
+
     def test_template_allows_only_declared_loopback_callback_ranges(self) -> None:
         root = self.config("")
         environment = {

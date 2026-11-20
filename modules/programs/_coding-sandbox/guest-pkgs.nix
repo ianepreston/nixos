@@ -1,8 +1,10 @@
 # Package sets for the coding-sandbox guest.
 #
-# Evaluated from the same locked revisions twice: by the workstation, which
-# only reads each bundle's store paths for `sandbox plan` and the guest's
-# post-activation check, and by the generated guest flake, which builds them.
+# Evaluated from the same locked revisions in two places: by this flake, which
+# reads each bundle's store paths for `sandbox plan` and the guest's
+# post-activation check (and builds them all in CI), and by the generated
+# guest flake, which the guest builds from, and which a NixOS host builds
+# from too when it seeds a new guest.
 # Both callers must get identical derivations, so this file is the single
 # owner of the guest's nixpkgs configuration.
 {

@@ -9,7 +9,9 @@
 # One launcher serves both host OSes.  Apple Silicon macOS runs an aarch64
 # guest under Virtualization.framework (VZ); a Linux workstation runs a guest
 # of its own CPU architecture under QEMU/KVM.  The guest always matches the
-# host CPU, so nothing is emulated and the guest builds its own closure.
+# host CPU, so nothing is emulated and the guest builds its own closure. A
+# Linux host can also build the guest's platform bundles itself, so it seeds
+# them into a new guest's store rather than having every VM build them.
 { inputs, ... }:
 let
   # The guest flake's inputs are this flake's locked revisions, so a
@@ -66,9 +68,28 @@ in
   perSystem =
     { system, lib, ... }:
     {
-      legacyPackages.coding-sandbox-bundle-sources = lib.genAttrs bundleNames (
-        name: (importBundle (guestSets system) name).sources or { }
-      );
+      legacyPackages = {
+        coding-sandbox-bundle-sources = lib.genAttrs bundleNames (
+          name: (importBundle (guestSets system) name).sources or { }
+        );
+      }
+      # Every bundle's packages for a Linux guest. CI builds this on hpp-1, so
+      # a NixOS workstation seeding a new guest (coding-sandbox.sh) substitutes
+      # them from hpp-1's cache instead of building them. Each entry is the
+      # guest flake's own `sandboxBundles.<name>` farm, so the paths are the
+      # guest's: both evaluate guest-pkgs.nix at the same lock.
+      // lib.optionalAttrs (lib.hasSuffix "-linux" system) {
+        coding-sandbox-guest-packages =
+          let
+            sets = guestSets system;
+          in
+          sets.pkgs.linkFarm "coding-sandbox-guest-packages" (
+            map (name: {
+              inherit name;
+              path = sets.pkgs.linkFarmFromDrvs "coding-sandbox-bundle-${name}" (importBundle sets name).packages;
+            }) bundleNames
+          );
+      };
     };
 
   flake.modules.homeManager.coding-sandbox =
@@ -151,8 +172,10 @@ in
             mountType = "9p";
             description = "QEMU/KVM";
           };
-      # Nothing Linux is built on the workstation: each bundle's store paths
-      # lose their string context before they reach the launcher.
+      # The workstation's own activation builds nothing Linux: each bundle's
+      # store paths lose their string context before they reach the launcher.
+      # A NixOS launcher builds the selected bundles only when it creates a
+      # VM, from the guest flake's `sandboxBundles` output.
       guestBundle = importBundle (guestSets guestSystem);
       # The trusted catalog a project selects from by name. Each bundle's
       # source digest is policy (changing it requires recreating a VM); its
@@ -217,6 +240,14 @@ in
               # Activation uses this flake's own pinned Home Manager rather
               # than resolving a release branch at first boot.
               packages.''${system}.home-manager = home-manager.packages.''${system}.home-manager;
+
+              # One buildable output per catalog bundle, so a NixOS
+              # workstation can realise exactly this flake's bundle paths
+              # before the guest boots and seed them into its store.
+              # CI builds the same farms (coding-sandbox-guest-packages).
+              sandboxBundles = lib.genAttrs [ ${
+                lib.concatMapStringsSep " " (name: ''"${name}"'') bundleNames
+              } ] (name: sets.pkgs.linkFarmFromDrvs "coding-sandbox-bundle-''${name}" (bundle name).packages);
 
               homeConfigurations.agent = home-manager.lib.homeManagerConfiguration {
                 inherit (sets) pkgs;
