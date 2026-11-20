@@ -202,7 +202,9 @@ tasks:
         echo "  Under keys.hosts:"
         echo "    - &{{.HOST}} $host_age_key"
         echo ""
-        echo "  Under creation_rules, add *{{.HOST}} to shared.yaml's age list."
+        echo "  Under creation_rules, add *{{.HOST}} to common.yaml's age list, plus each"
+        echo "  per-consumer file it reads (nix-secrets README, Recipient policy;"
+        echo "  'task secrets:matrix' reports any that are missing)."
         echo ""
         echo "  Add a new creation rule for {{.HOST}}:"
         echo "    - path_regex: {{.HOST}}\\.yaml\$"
@@ -258,7 +260,9 @@ tasks:
         echo "  Under keys.hosts:"
         echo "    - &{{.HOST}} $host_age_key"
         echo ""
-        echo "  Under creation_rules, add *{{.HOST}} to shared.yaml's age list."
+        echo "  Under creation_rules, add *{{.HOST}} to common.yaml's age list, plus each"
+        echo "  per-consumer file it reads (nix-secrets README, Recipient policy;"
+        echo "  'task secrets:matrix' reports any that are missing)."
         echo ""
         echo "  Add a new creation rule for {{.HOST}}:"
         echo "    - path_regex: {{.HOST}}\\.yaml\$"
@@ -314,8 +318,13 @@ tasks:
           echo -e "\x1B[32m[+] Adding $host to .sops.yaml\x1B[0m"
           # Add host key anchor under keys.hosts (before creation_rules)
           sed -i "/^creation_rules:/i\\    - \&${host} $host_age_key" "$sops_yaml"
-          # Add *host to shared.yaml's age list (after the last existing entry)
-          sed -i "/path_regex: shared/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
+          # Add *host to common.yaml's age list (after the last existing
+          # entry): passwords/<user> lives there, so without it the host
+          # boots with no password hash (#506). Any other per-consumer file
+          # it reads (tailnet, llm, workstation, ...) is a manual edit until
+          # #508 generates .sops.yaml; `task secrets:matrix` names what is
+          # missing.
+          sed -i "/path_regex: common/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
           # Server hosts also get added to server-shared.yaml's rule
           if [ "$is_server" = true ]; then
             sed -i "/path_regex: server-shared/,/^ *- path_regex:/{s/^\( *- \*[a-z][a-z_]*\)$/\1\n          - *${host}/}" "$sops_yaml"
@@ -340,9 +349,7 @@ tasks:
         host_secrets="$secrets_dir/sops/${host}.yaml"
         if [ -f "$host_secrets" ]; then
           echo -e "\x1B[33m[~] $host_secrets already exists — rekeying envelope to current .sops.yaml\x1B[0m"
-          rekey_files=( "sops/${host}.yaml" )
-          [ "$is_server" = true ] && rekey_files+=( "sops/server-shared.yaml" )
-          ( cd "$secrets_dir" && sops updatekeys --yes "${rekey_files[@]}" )
+          ( cd "$secrets_dir" && sops updatekeys --yes "sops/${host}.yaml" )
         else
           echo -e "\x1B[32m[+] Creating $host_secrets with generated SSH key\x1B[0m"
           temp=$(mktemp -d)
@@ -368,12 +375,21 @@ tasks:
           echo "      ssh ipreston@${host} 'sudo ssh-keygen -y -f /run/secrets/ssh/ed25519'"
         fi
 
-        # Re-encrypt shared secrets for the new host
-        echo -e "\x1B[32m[+] Updating shared secrets keys\x1B[0m"
+        # Re-encrypt every other file whose creation_rule lists *host. A
+        # reinstall regenerates the host key, so each of them still wraps
+        # the old one until updatekeys runs; since #506 that includes
+        # common.yaml (the password hash), tailnet.yaml and llm.yaml, not
+        # just a single shared file.
+        echo -e "\x1B[32m[+] Rekeying the other files that list *${host}\x1B[0m"
         cd "$secrets_dir"
-        shared_files=( sops/shared.yaml )
-        [ "$is_server" = true ] && shared_files+=( sops/server-shared.yaml )
-        sops updatekeys --yes "${shared_files[@]}"
+        mapfile -t host_files < <(awk -v pat="- *${host}" '
+          /^  - path_regex: / { f = $3; gsub(/\\/, "", f); sub(/\$$/, "", f); next }
+          { line = $0; sub(/^[[:space:]]+/, "", line) }
+          line == pat && f != "" { print f }
+        ' "$sops_yaml" | sort -u | grep -vx "${host}.yaml" | sed "s|^|sops/|")
+        existing=()
+        for f in "${host_files[@]}"; do [ -f "$f" ] && existing+=( "$f" ); done
+        [ ${#existing[@]} -gt 0 ] && sops updatekeys --yes "${existing[@]}"
 
         # Commit
         echo -e "\x1B[32m[+] Committing nix-secrets changes\x1B[0m"
