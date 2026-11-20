@@ -21,7 +21,7 @@ key_file=$(nix eval --raw ".#nixosConfigurations.$host.config.myLlamaCpp.operato
 
 if [ "$(hostname)" = "$host" ]; then
   endpoint="http://127.0.0.1:$port"
-  LLAMA_API_KEY=$(sudo grep -oP 'LLAMA_API_KEY=\K.*' "$key_file")
+  LLAMA_API_KEY=$(sudo grep -oP 'LLAMA_API_KEY=\K[^,]*' "$key_file")
   unset LLM_EVAL_SSH
 else
   ssh -O check "$host" 2>/dev/null || {
@@ -32,7 +32,7 @@ else
   ssh -O forward -L "$lport:127.0.0.1:$port" "$host"
   trap 'ssh -O cancel -L "$lport:127.0.0.1:$port" "$host" 2>/dev/null || true' EXIT
   endpoint="http://127.0.0.1:$lport"
-  LLAMA_API_KEY=$(ssh -n "$host" "sudo grep -oP 'LLAMA_API_KEY=\K.*' $key_file")
+  LLAMA_API_KEY=$(ssh -n "$host" "sudo grep -oP 'LLAMA_API_KEY=\K[^,]*' $key_file")
   export LLM_EVAL_SSH=$host
 fi
 export LLAMA_API_KEY

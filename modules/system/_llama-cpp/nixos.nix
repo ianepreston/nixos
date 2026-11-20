@@ -174,15 +174,27 @@ in
     # host in the fleet, which is wider than the three that need it —
     # acceptable for now, and the thing to fix when the sops files get
     # split more finely.
-    sops.secrets."llama-cpp/api_key" = {
-      sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
-    };
+    #
+    # The coding sandbox's session secret `llm` (#998) is a second,
+    # sandbox-only key, so it can be rotated without touching caddy or
+    # the fleet's own clients. llama-server takes a comma-separated key
+    # list in LLAMA_API_KEY, and router children inherit the whole list.
+    # The primary key stays first: every script that reads this file
+    # for its own bearer token takes the first entry. Caddy's injected
+    # token comes from its own template (llm-caddy-auth.nix) and stays
+    # the primary key alone.
+    sops = {
+      secrets."llama-cpp/api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
+      secrets."llama-cpp/sandbox_api_key".sopsFile = "${inputs.nix-secrets}/sops/shared.yaml";
 
-    sops.templates."llama-cpp.env" = {
-      content = ''
-        LLAMA_API_KEY=${config.sops.placeholder."llama-cpp/api_key"}
-      '';
-      restartUnits = [ "llama-cpp.service" ];
+      templates."llama-cpp.env" = {
+        content = ''
+          LLAMA_API_KEY=${config.sops.placeholder."llama-cpp/api_key"},${
+            config.sops.placeholder."llama-cpp/sandbox_api_key"
+          }
+        '';
+        restartUnits = [ "llama-cpp.service" ];
+      };
     };
 
     services.llama-cpp = {
