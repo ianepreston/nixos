@@ -94,6 +94,38 @@ in
         sopsFile = "${inputs.nix-secrets}/sops/coding-sandbox.yaml";
         key = "github_app/${key}";
       };
+      # Named session secrets a project may grant with [secrets].grants
+      # (#998). This catalog is the whole universe: a worktree selects names
+      # only, so it can never point the launcher at another sops key. Each
+      # value lives in coding-sandbox.yaml under session_secrets/<name> and
+      # reaches the guest only as `env` in a shell/exec session. `domains`
+      # are what the secret is for; `sandbox plan` reports whether the
+      # project's network policy grants them, and grants nothing itself.
+      # The same sops test as the GitHub App gates them: on the work Mac
+      # every entry reports unavailable.
+      sessionSecrets = {
+        llm = {
+          description = "llama.cpp API key for the fleet's LLM endpoints";
+          env = "LLAMA_API_KEY";
+          # The routes vibes.nix's llamaBaseUrl targets.
+          domains = [
+            "llm.amos.ipreston.net"
+            "llm-terra.amos.ipreston.net"
+          ];
+        };
+      };
+      sessionSecretName = name: "coding-sandbox/session_secrets/${name}";
+      secretCatalog = pkgs.writeText "coding-sandbox-secrets.json" (
+        builtins.toJSON (
+          lib.mapAttrs (
+            name: secret:
+            secret
+            // {
+              file = if githubApp then config.sops.secrets.${sessionSecretName name}.path else null;
+            }
+          ) sessionSecrets
+        )
+      );
       vm =
         if hostPlatform.isDarwin then
           {
@@ -240,6 +272,7 @@ in
           export SANDBOX_GUEST_PROFILE=${guestProfile}
           export SANDBOX_POLICY_HELPER=${./coding-sandbox-policy.py}
           export SANDBOX_BUNDLE_CATALOG=${bundleCatalog}
+          export SANDBOX_SECRET_CATALOG=${secretCatalog}
           export SANDBOX_VM_TYPE=${vm.type}
           export SANDBOX_VM_ARCH=${cpu}
           export SANDBOX_VM_MOUNT_TYPE=${vm.mountType}
@@ -261,7 +294,14 @@ in
         sops.secrets = {
           "coding-sandbox/github_app_id" = githubAppSecret "app_id";
           "coding-sandbox/github_app_private_key" = githubAppSecret "private_key";
-        };
+        }
+        // lib.mapAttrs' (
+          name: _:
+          lib.nameValuePair (sessionSecretName name) {
+            sopsFile = "${inputs.nix-secrets}/sops/coding-sandbox.yaml";
+            key = "session_secrets/${name}";
+          }
+        ) sessionSecrets;
       };
 
       home.packages = [

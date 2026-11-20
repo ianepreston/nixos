@@ -1040,7 +1040,7 @@ esac
         self.assertIn("token=unset\n", free.stdout)
         argv = (logs / "argv").read_text()
         self.assertFalse((logs / "curl-config").exists())
-        self.assertNotIn("sandbox-github-stage", argv)
+        self.assertNotIn("sandbox-session-stage", argv)
 
         # Without provisioned App credentials, a grant fails closed.
         (project / ".sandbox.toml").write_text(
@@ -1051,6 +1051,353 @@ esac
         missing = launch("exec", str(project), "--", "true")
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn("does not provision GitHub App credentials", missing.stderr)
+
+    def secret_catalog(self, file: str | None = None) -> dict:
+        """The shape coding-sandbox.nix renders into SANDBOX_SECRET_CATALOG."""
+        return {
+            "llm": {
+                "description": "llama.cpp API key",
+                "env": "LLAMA_API_KEY",
+                "domains": ["llm.example.internal", "llm-two.example.internal"],
+                "file": file,
+            },
+            "other": {
+                "description": "another service",
+                "env": "OTHER_API_KEY",
+                "domains": [],
+                "file": None,
+            },
+        }
+
+    def test_secret_grants_resolve_only_from_the_host_catalog(self) -> None:
+        catalog = self.secret_catalog()
+        original_resolve = POLICY.resolve
+        self.addCleanup(setattr, POLICY, "resolve", original_resolve)
+        POLICY.resolve = lambda domain: [ipaddress.ip_address("100.64.12.34")]
+
+        root = self.config(
+            '[secrets]\ngrants = ["llm"]\n\n'
+            '[network]\ninternal_domains = ["llm.example.internal"]\n'
+        )
+        self.assertNotIn(
+            "coverage", POLICY.render_policy(root, None, None, catalog)["secrets"][0]
+        )
+        policy = POLICY.render_policy(root, None, None, catalog, coverage=True)
+        (secret,) = policy["secrets"]
+        self.assertEqual(secret["name"], "llm")
+        self.assertEqual(secret["env"], "LLAMA_API_KEY")
+        self.assertNotIn("file", secret)
+        self.assertEqual(
+            secret["coverage"],
+            {
+                "llm.example.internal": "granted",
+                "llm-two.example.internal": "NOT GRANTED",
+            },
+        )
+        # A CIDR covering every resolved address also counts; open mode
+        # reaches everything.
+        root = self.config(
+            '[secrets]\ngrants = ["llm"]\n\n[network]\ninternal_cidrs = ["100.64.12.0/24"]\n'
+        )
+        coverage = POLICY.render_policy(root, None, None, catalog, coverage=True)[
+            "secrets"
+        ][0]["coverage"]
+        self.assertEqual(set(coverage.values()), {"granted by internal_cidrs"})
+        coverage = POLICY.render_policy(root, "open", None, catalog, coverage=True)[
+            "secrets"
+        ][0]["coverage"]
+        self.assertEqual(set(coverage.values()), {"open network"})
+
+        # A domain that resolves publicly is reachable in public mode, and
+        # in restricted mode through public_domains.
+        POLICY.resolve = lambda domain: [ipaddress.ip_address("203.0.113.10")]
+        public_catalog = self.secret_catalog()
+        public_catalog["llm"]["domains"] = ["api.example.com"]
+        root = self.config('[secrets]\ngrants = ["llm"]\n')
+        self.assertEqual(
+            POLICY.render_policy(root, None, None, public_catalog, coverage=True)[
+                "secrets"
+            ][0]["coverage"],
+            {"api.example.com": "public internet"},
+        )
+        root = self.config(
+            '[secrets]\ngrants = ["llm"]\n\n'
+            '[network]\npublic_domains = ["api.example.com"]\n'
+        )
+        self.assertEqual(
+            POLICY.render_policy(
+                root, "restricted", None, public_catalog, coverage=True
+            )["secrets"][0]["coverage"],
+            {"api.example.com": "granted by public_domains"},
+        )
+
+        # Absent or empty means undeclared: the recorded shape is unchanged.
+        for text in ("", "[secrets]\n", "[secrets]\ngrants = []\n"):
+            with self.subTest(text=text):
+                policy = POLICY.render_policy(self.config(text), None, None, catalog)
+                self.assertNotIn("secrets", policy)
+
+        for text, message in (
+            ('[secrets]\ngrants = ["missing"]\n', "not a session secret"),
+            ('[secrets]\ngrants = ["llm", "llm"]\n', "duplicates"),
+            ("[secrets]\ngrants = [1]\n", "secret name string"),
+            ('[secrets]\ngrants = ["/run/secret"]\n', "not a session secret"),
+            ('[secrets]\ngrants = "llm"\n', "array of secret names"),
+            ('[secrets]\nsource = "x"\n', "unknown secrets key"),
+            (
+                '[secrets]\ngrants = ["llm"]\n\n[environment]\nLLAMA_API_KEY = "x"\n',
+                "environment must not set LLAMA_API_KEY",
+            ),
+        ):
+            with (
+                self.subTest(text=text),
+                self.assertRaisesRegex(POLICY.PolicyError, message),
+            ):
+                POLICY.render_policy(self.config(text), None, None, catalog)
+
+        # A catalog entry can never claim the GitHub credential, and two
+        # grants can never set the same variable.
+        for name, env, message in (
+            ("llm", "GH_TOKEN", "may not set GH_TOKEN"),
+            ("llm", "GIT_CONFIG_COUNT", "may not set GIT_CONFIG_COUNT"),
+            ("other", "LLAMA_API_KEY", "both set LLAMA_API_KEY"),
+        ):
+            bad = self.secret_catalog()
+            bad[name]["env"] = env
+            with (
+                self.subTest(env=env),
+                self.assertRaisesRegex(POLICY.PolicyError, message),
+            ):
+                POLICY.render_policy(
+                    self.config('[secrets]\ngrants = ["llm", "other"]\n'),
+                    None,
+                    None,
+                    bad,
+                )
+
+    def test_session_secrets_reach_only_the_new_agent_process(self) -> None:
+        sentinel = "sk-SENTINELsecret0123456789"
+        bash = subprocess.run(
+            ["sh", "-c", "command -v bash"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        bin_dir, logs, shm, agent_home, project = (
+            base / "bin",
+            base / "logs",
+            base / "shm",
+            base / "agent",
+            base / "project",
+        )
+        for directory in (bin_dir, logs, shm, agent_home, project):
+            directory.mkdir()
+        (agent_home / ".config/coding-sandbox").mkdir(parents=True)
+        (agent_home / ".config/coding-sandbox/environment.sh").write_text("")
+        secret_file = base / "llm-secret"
+        secret_file.write_text(sentinel)
+        catalog = base / "secrets.json"
+        catalog.write_text(json.dumps(self.secret_catalog(str(secret_file))))
+
+        # The same limactl stand-in as the GitHub test: the guest command
+        # runs locally with /dev/shm and /home/agent mapped into the test
+        # directory, and every argv is logged.
+        (bin_dir / "limactl").write_text(
+            f"""#!{bash}
+set -euo pipefail
+printf '%s\\n' "$*" >>"$FAKE_LOGS/argv"
+case "$1" in
+  list) printf '%s\\n' "${{FAKE_INSTANCE-}}" ;;
+  shell)
+    shift 3
+    while [[ "$1" != -- ]]; do shift; done
+    shift
+    args=()
+    for arg in "$@"; do
+      case "$arg" in
+        /dev/shm) arg=$FAKE_SHM ;;
+        /dev/shm/*) arg="$FAKE_SHM/${{arg#/dev/shm/}}" ;;
+        /home/agent) arg=$FAKE_AGENT_HOME ;;
+      esac
+      args+=("$arg")
+    done
+    HOME=$FAKE_AGENT_HOME "${{args[@]}}" | sed "s#$FAKE_SHM#/dev/shm#g"
+    exit "${{PIPESTATUS[0]}}"
+    ;;
+  *) exit 1 ;;
+esac
+"""
+        )
+        (bin_dir / "limactl").chmod(0o755)
+        (project / ".sandbox.toml").write_text('[secrets]\ngrants = ["llm"]\n')
+        environment = {
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(base),
+            "XDG_STATE_HOME": str(base / "state"),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            "SANDBOX_SECRET_CATALOG": str(catalog),
+            "FAKE_LOGS": str(logs),
+            "FAKE_SHM": str(shm),
+            "FAKE_AGENT_HOME": str(agent_home),
+            **QEMU_BACKEND,
+        }
+        harness = (
+            f"source <(sed '$d' \"{SANDBOX_PATH}\")\n"
+            "host_platform_check() { :; }\n"
+            'parse_target "$2"; export FAKE_INSTANCE="$instance"; record_policy\n'
+            'main "$@"\n'
+        )
+        guest_command = [
+            "bash",
+            "-c",
+            'printf "key=%s\\n" "${LLAMA_API_KEY-unset}"; '
+            'printf "gh=%s\\n" "${GH_TOKEN-unset}"; '
+            'printf "helper=%s\\n" "${GIT_CONFIG_COUNT-unset}"; exit 7',
+        ]
+
+        def launch(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [bash, "-c", harness, "sandbox-test", *arguments],
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+        result = launch("exec", str(project), "--", *guest_command)
+        self.assertEqual(result.returncode, 7, result.stderr + result.stdout)
+        self.assertIn(f"key={sentinel}\n", result.stdout)
+        # No GitHub grant: no token and no credential helper.
+        self.assertIn("gh=unset\n", result.stdout)
+        self.assertIn("helper=unset\n", result.stdout)
+        self.assertIn("session secrets: llm (LLAMA_API_KEY)", result.stderr)
+        self.assertEqual(list(shm.iterdir()), [], "staged secret was not removed")
+
+        # Never in an argument, the policy record, or output.
+        self.assertNotIn(sentinel, (logs / "argv").read_text())
+        self.assertNotIn(sentinel, result.stderr)
+        for record in (base / "state/coding-sandbox").iterdir():
+            self.assertNotIn(sentinel, record.read_text())
+            self.assertNotIn(str(secret_file), record.read_text())
+        plan = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(project)],
+            capture_output=True,
+            env=environment,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertNotIn(sentinel, plan)
+        self.assertIn("llm: LLAMA_API_KEY - llama.cpp API key", plan)
+        self.assertIn("llm.example.internal (NOT GRANTED", plan)
+        self.assertNotIn("NOT READY", plan)
+
+        # A secret this host does not provision fails closed before any
+        # guest session or staging.
+        (logs / "argv").write_text("")
+        catalog.write_text(json.dumps(self.secret_catalog(None)))
+        missing = launch("exec", str(project), "--", "true")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn(
+            "session secret llm: this host does not provision it", missing.stderr
+        )
+        argv = (logs / "argv").read_text()
+        self.assertNotIn("sandbox-session-stage", argv)
+        self.assertNotIn("sandbox-agent-exec", argv)
+        plan = subprocess.run(
+            ["bash", str(SANDBOX_PATH), "plan", str(project)],
+            capture_output=True,
+            env=environment,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertIn("host: NOT READY: this host does not provision it", plan)
+
+    def test_policy_changes_are_listed_on_refusal_and_next_start(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        project = base / "project"
+        project.mkdir()
+        catalog = base / "secrets.json"
+        catalog.write_text(json.dumps(self.secret_catalog()))
+        spec = project / ".sandbox.toml"
+        spec.write_text('[environment]\nBROWSER = "none"\n')
+        environment = {
+            **os.environ,
+            "HOME": str(base),
+            "XDG_STATE_HOME": str(base / "state"),
+            "SANDBOX_GUEST_PROFILE": "/nix/store/fixed-sandbox-profile",
+            "SANDBOX_POLICY_HELPER": str(POLICY_PATH),
+            "SANDBOX_SECRET_CATALOG": str(catalog),
+            **QEMU_BACKEND,
+        }
+
+        def run(step: str) -> subprocess.CompletedProcess[str]:
+            harness = (
+                f"source <(sed '$d' \"{SANDBOX_PATH}\")\n"
+                f'parse_target "{project}"\n{step}\n'
+            )
+            return subprocess.run(
+                ["bash", "-c", harness],
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+        self.assertEqual(run("record_policy").returncode, 0)
+        # An edit the guest could make through its writable worktree.
+        spec.write_text(
+            '[environment]\nBROWSER = "w3m"\n\n[secrets]\ngrants = ["llm"]\n\n'
+            '[network]\ninternal_cidrs = ["10.1.2.3/32"]\n'
+        )
+        refused = run("policy_matches_instance")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("effective policy changed", refused.stderr)
+        self.assertIn("  + secrets[llm].name: llm\n", refused.stderr)
+        self.assertIn("  + secrets[llm].env: LLAMA_API_KEY\n", refused.stderr)
+        # Catalog-owned text is not the project's policy.
+        self.assertNotIn("description", refused.stderr)
+        self.assertNotIn("domains", refused.stderr)
+        self.assertIn("  + internal_cidrs: 10.1.2.3/32\n", refused.stderr)
+        self.assertIn("  ~ environment.BROWSER: none -> w3m\n", refused.stderr)
+        # Render-time observations are not policy changes.
+        self.assertNotIn("coverage", refused.stderr)
+
+        # After destroy, the next start's confirmation shows the same lines
+        # against the destroyed VM's policy; a fresh record clears it.
+        shown = run(
+            'mv "$policy_record" "$previous_policy_record"; show_previous_policy_changes'
+        )
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        self.assertIn("Policy changes since the previous VM", shown.stdout)
+        self.assertIn("  + secrets[llm].name: llm\n", shown.stdout)
+        cleared = run(
+            'record_policy; test ! -e "$previous_policy_record"; show_previous_policy_changes'
+        )
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertEqual(cleared.stdout, "")
+
+        # Rewording or extending the host catalog is not a project change.
+        changed = self.secret_catalog()
+        changed["llm"]["description"] = "reworded"
+        changed["llm"]["domains"].append("llm-three.example.internal")
+        catalog.write_text(json.dumps(changed))
+        self.assertEqual(run("policy_matches_instance").returncode, 0)
+
+        # A pure reorder is still refused, and says what moved.
+        spec.write_text(
+            '[environment]\nBROWSER = "w3m"\n\n[secrets]\ngrants = ["llm"]\n\n'
+            '[network]\ninternal_cidrs = ["10.1.2.3/32", "10.9.9.9/32"]\n'
+        )
+        self.assertEqual(run("record_policy").returncode, 0)
+        spec.write_text(
+            '[environment]\nBROWSER = "w3m"\n\n[secrets]\ngrants = ["llm"]\n\n'
+            '[network]\ninternal_cidrs = ["10.9.9.9/32", "10.1.2.3/32"]\n'
+        )
+        reordered = run("policy_matches_instance")
+        self.assertNotEqual(reordered.returncode, 0)
+        self.assertIn("  ~ internal_cidrs: ", reordered.stderr)
 
     def test_launcher_requires_the_wrapper_backend(self) -> None:
         root = self.config("")

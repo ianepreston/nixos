@@ -71,6 +71,11 @@ GITHUB_RESERVED_ENVIRONMENT = (
 )
 
 
+def credential_reserved(name: str) -> bool:
+    """Names a session secret may never set: the GitHub credential's."""
+    return name in GITHUB_RESERVED_ENVIRONMENT or name.startswith("GIT_CONFIG")
+
+
 class PolicyError(Exception):
     pass
 
@@ -469,6 +474,76 @@ def parse_github(value: Any) -> dict[str, Any] | None:
     }
 
 
+def load_secret_catalog(path: str | None) -> dict[str, Any]:
+    """Read the workstation's named session secrets (coding-sandbox.nix).
+
+    Only the non-secret description is used here; each entry's `file` is
+    the host path the launcher reads at session time.
+    """
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as catalog_file:
+            catalog = json.load(catalog_file)
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"cannot read secret catalog {path}: {error}")
+    if not isinstance(catalog, dict):
+        fail(f"secret catalog {path} must be an object")
+    return catalog
+
+
+def parse_secrets(value: Any, catalog: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Resolve project-selected names to the workstation's own secrets.
+
+    As with bundles, a name is the whole interface: the worktree can only
+    choose among secrets this host already offers, never name a source.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        fail("secrets must be a table")
+    unknown = set(value) - {"grants"}
+    if unknown:
+        fail(f"unknown secrets key(s): {', '.join(sorted(unknown))}")
+    grants = value.get("grants", [])
+    if not isinstance(grants, list):
+        fail("secrets.grants must be an array of secret names")
+    resolved: list[dict[str, Any]] = []
+    for index, name in enumerate(grants):
+        field = f"secrets.grants[{index}]"
+        if not isinstance(name, str):
+            fail(f"{field} must be a secret name string")
+        if name not in catalog:
+            fail(
+                f"{field} {name!r} is not a session secret on this host"
+                f" (available: {', '.join(sorted(catalog)) or 'none'})"
+            )
+        if any(entry["name"] == name for entry in resolved):
+            fail(f"{field} {name!r} duplicates another secret")
+        entry = catalog[name]
+        env = entry.get("env")
+        if not isinstance(env, str) or not ENVIRONMENT_NAME_RE.fullmatch(env):
+            fail(f"secret catalog entry {name!r} has an invalid env name")
+        if credential_reserved(env):
+            fail(f"secret catalog entry {name!r} may not set {env}")
+        clash = next((other for other in resolved if other["env"] == env), None)
+        if clash:
+            fail(f"{field} {name!r} and {clash['name']!r} both set {env}")
+        resolved.append(
+            {
+                "name": name,
+                "description": entry.get("description", ""),
+                "env": env,
+                "domains": [
+                    normalize_domain(domain, f"secret catalog entry {name!r} domains")
+                    for domain in entry.get("domains", [])
+                ],
+            }
+        )
+    # An empty table grants nothing; record it as undeclared.
+    return resolved or None
+
+
 def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     if value is None:
         return {"port_ranges": []}
@@ -506,7 +581,9 @@ def parse_callbacks(value: Any) -> dict[str, list[list[int]]]:
     return {"port_ranges": normalized}
 
 
-def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
+def parse_config(
+    project: Path, catalog: dict[str, Any], secret_catalog: dict[str, Any]
+) -> dict[str, Any]:
     config_path = find_config_path(project)
     if config_path is None:
         return {
@@ -522,6 +599,7 @@ def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
             },
             "startup": [],
             "github": None,
+            "secrets": None,
             "config_path": None,
             "config_root": project,
         }
@@ -542,6 +620,7 @@ def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
         "profile",
         "startup",
         "github",
+        "secrets",
     }
     if unknown:
         fail(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
@@ -562,17 +641,27 @@ def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
     environment = parse_environment(config.get("environment"))
     github = parse_github(config.get("github"))
     if github is not None:
-        reserved = [
-            name
-            for name in environment
-            if name in GITHUB_RESERVED_ENVIRONMENT or name.startswith("GIT_CONFIG")
-        ]
+        reserved = [name for name in environment if credential_reserved(name)]
         if reserved:
             fail(
                 "environment must not set "
                 + ", ".join(reserved)
                 + " when [github] grants a session credential"
             )
+    secrets = parse_secrets(config.get("secrets"), secret_catalog)
+    # [environment] is sourced in every agent shell, so a literal of the same
+    # name would silently replace the granted secret.
+    reserved = [
+        name
+        for name in environment
+        if any(secret["env"] == name for secret in secrets or [])
+    ]
+    if reserved:
+        fail(
+            "environment must not set "
+            + ", ".join(reserved)
+            + " when [secrets] grants it as a session secret"
+        )
     storage = config.get("storage", {})
     if not isinstance(storage, dict):
         fail("storage must be a table")
@@ -604,18 +693,56 @@ def parse_config(project: Path, catalog: dict[str, Any]) -> dict[str, Any]:
         "profile": profile,
         "startup": startup,
         "github": github,
+        "secrets": secrets,
         "config_path": config_path,
         "config_root": config_path.parent,
     }
+
+
+def secret_domain_coverage(
+    domain: str,
+    mode: str,
+    internal_domains: list[str],
+    internal_cidrs: list[str],
+    public_domains: list[str],
+) -> str:
+    """Whether the network policy lets the guest reach a secret's domain.
+
+    Reported, never enforced: a secret grants no network reach of its own.
+    """
+    if mode == "open":
+        return "open network"
+    if domain in internal_domains:
+        return "granted"
+    if mode == "restricted" and domain in public_domains:
+        return "granted by public_domains"
+    try:
+        addresses = resolve(domain)
+    except PolicyError:
+        return "NOT GRANTED (unresolvable here)"
+    if mode == "public" and not any(is_protected(address) for address in addresses):
+        return "public internet"
+    networks = [ipaddress.ip_network(cidr) for cidr in internal_cidrs]
+    if all(
+        any(
+            address.version == network.version and address in network
+            for network in networks
+        )
+        for address in addresses
+    ):
+        return "granted by internal_cidrs"
+    return "NOT GRANTED"
 
 
 def render_policy(
     project: Path,
     override_mode: str | None,
     catalog: dict[str, Any] | None = None,
+    secret_catalog: dict[str, Any] | None = None,
+    coverage: bool = False,
 ) -> dict[str, Any]:
     catalog = catalog or {"pins": None, "bundles": {}}
-    config = parse_config(project, catalog)
+    config = parse_config(project, catalog, secret_catalog or {})
     network = config["network"]
     requested_mode = network.get("mode", "public")
     if requested_mode not in {"public", "restricted", "open"}:
@@ -768,6 +895,33 @@ def render_policy(
     # must keep matching an unchanged, credential-free specification.
     if config["github"] is not None:
         policy["github"] = config["github"]
+    # Likewise only when declared. Only each name and env are policy; the
+    # catalog's description and domains, and the coverage computed from them,
+    # are display-only and excluded from the compared contract. Coverage
+    # costs DNS lookups, so it is computed only when asked for (plan/start).
+    if config["secrets"] is not None:
+        policy["secrets"] = [
+            {
+                **secret,
+                **(
+                    {
+                        "coverage": {
+                            domain: secret_domain_coverage(
+                                domain,
+                                mode,
+                                internal_domains,
+                                normalized_cidrs,
+                                public_domains,
+                            )
+                            for domain in secret["domains"]
+                        }
+                    }
+                    if coverage
+                    else {}
+                ),
+            }
+            for secret in config["secrets"]
+        ]
     # The guest flake's locked revisions, recorded for display. Like the
     # strict-domain addresses, they are excluded from the compared contract.
     if catalog["pins"] is not None:
@@ -779,12 +933,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project", type=Path)
     parser.add_argument("--network", choices=("public", "restricted", "open"))
+    parser.add_argument(
+        "--coverage",
+        action="store_true",
+        help="report whether the network policy reaches each secret's domains",
+    )
     arguments = parser.parse_args()
     try:
         policy = render_policy(
             arguments.project.resolve(),
             arguments.network,
             load_catalog(os.environ.get("SANDBOX_BUNDLE_CATALOG")),
+            load_secret_catalog(os.environ.get("SANDBOX_SECRET_CATALOG")),
+            arguments.coverage,
         )
     except PolicyError as error:
         print(f"sandbox policy: {error}", file=sys.stderr)

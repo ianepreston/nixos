@@ -399,6 +399,86 @@ Rotating the private key means generating a new key on the App's settings
 page, replacing `github_app.private_key` in `nix-secrets`, and deleting the
 old key in GitHub.
 
+### Session secrets
+
+A project may grant named secrets that this workstation holds, such as an
+API key for an internal service. The grant is visible, non-secret policy:
+
+```toml
+[secrets]
+grants = ["llm"]
+
+[network]
+internal_domains = ["llm.amos.ipreston.net"]
+```
+
+The names come from a catalog in `modules/programs/coding-sandbox.nix`
+(`sessionSecrets`), which is the only place a secret's source is declared.
+A worktree selects names; it can never name a sops key, path, or host
+variable. Each catalog entry sets one environment variable:
+
+| Name | Variable | For |
+| --- | --- | --- |
+| `llm` | `LLAMA_API_KEY` | the llama.cpp endpoints `llm.amos.ipreston.net` and `llm-terra.amos.ipreston.net` |
+
+`sandbox plan` lists each grant with its variable and its domains, and
+reports whether the project's network policy reaches each domain (`granted`,
+`granted by internal_cidrs`, `open network`, or `NOT GRANTED`). A secret
+grants no network reach of its own: without a matching `internal_domains` or
+`internal_cidrs` grant, the guest holds a key for a service it cannot
+contact. Values never appear in `plan`, the recorded policy, a log, or a
+process argument.
+
+Delivery follows the [GitHub session credential](#github-session-credential):
+immediately before each `sandbox shell` or `sandbox exec`, the launcher reads
+each value from its sops-nix path and passes it over stdin into a private
+tmpfs file, which the session reads into its environment and deletes before
+running anything else. Nothing during `sandbox start`, provisioning, or
+`[[startup]]` has a secret. `[environment]` may not set a granted variable,
+and no catalog entry may set the GitHub credential's names. The start
+confirmation gains `WITH SECRETS` (or `AND SECRETS` after `WITH GITHUB`), and
+changing the grants means destroying and recreating the VM.
+
+The threat model differs from GitHub's. These secrets are long-lived keys for
+internal services that are not reachable from the internet, and guest code
+can read and copy them. The boundary is what the agent can reach and what the
+key itself permits, so give sandboxes their own key wherever the service
+supports one. To revoke a secret, rotate its value in `nix-secrets`
+(`sops/coding-sandbox.yaml`, `session_secrets.<name>`) and at the service.
+Each new session reads the new value; no VM needs recreating.
+
+Secrets come from sops-nix, so the same hosts that can mint GitHub tokens
+provision them (`terra` and `luna`). On the `work` Mac every entry reports
+`NOT READY`, and `sandbox shell`/`exec` refuse a policy that grants one.
+Adding an entry means a new `sessionSecrets` attribute plus its value in
+`sops/coding-sandbox.yaml` **before** the change reaches a host: sops-nix
+installs a user's secrets all or nothing, so a missing key would also break
+that host's other user secrets.
+
+### Seeing what changed
+
+The guest can write to its worktree, so it can edit `.sandbox.toml` to ask
+for more: a secret, a network grant, a mount. It cannot get any of it that
+way. A VM keeps the policy recorded on the host when it was created
+(`~/.local/state/coding-sandbox/<instance>.policy.json`, never mounted in the
+guest), and every `shell`/`exec` refuses when the current specification
+differs, listing each change:
+
+```text
+sandbox: effective policy changed for coding-sandbox-project-0123456789ab:
+  + secrets[llm].name: llm
+  + secrets[llm].env: LLAMA_API_KEY
+  + internal_cidrs: 10.1.2.3/32
+  ~ environment.BROWSER: none -> w3m
+sandbox: inspect sandbox plan, then destroy and recreate the VM
+```
+
+Only a host-side `sandbox destroy` and `sandbox start`, with its typed
+confirmation, adopts the change. `destroy` keeps the destroyed VM's policy
+beside it, and the next `start` prints the same list above its confirmation,
+so an edit nobody remembers making is visible at the moment it would take
+effect.
+
 ### Nix cache lifecycle
 
 The default keeps `/nix` on the VM's primary disk. It is warm across
@@ -573,9 +653,9 @@ that with `sandbox exec -- sudo -n nft list ruleset` (it must fail). The host
 operator may inspect the VM's rendered rules through Lima's privileged
 transport account when diagnosing a policy: `limactl shell INSTANCE sudo nft
 list ruleset`, where `INSTANCE` comes from `sandbox plan`. The sandbox has no
-host credentials or forwarded SSH agent. The only credential it can hold is a
-declared [GitHub session token](#github-session-credential); there is no SSH
-forwarding or web UI.
+host credentials or forwarded SSH agent. The only credentials it can hold are
+a declared [GitHub session token](#github-session-credential) and declared
+[session secrets](#session-secrets); there is no SSH forwarding or web UI.
 
 ### Browser OAuth callbacks
 
@@ -663,11 +743,12 @@ dedicated, content-addressed binary-cache service with a narrow interface.
 - Hosts are Apple Silicon macOS (VZ) and Linux with KVM (QEMU). The guest is
   always the host's CPU architecture; there is no cross-architecture guest.
 - `.sandbox.toml` covers mount/network policy plus platform bundles, portable
-  Home Manager modules, agent-only startup scripts, and one-repository GitHub
-  session grants. Other credentials, a `sandbox agent` launcher, and UI
-  settings remain out of scope.
+  Home Manager modules, agent-only startup scripts, one-repository GitHub
+  session grants, and named session secrets. SSH credentials, a
+  `sandbox agent` launcher, and UI settings remain out of scope.
 - GitHub grants support only `contents` and `pull_requests`, and only on hosts
   that provision the App credentials (`terra` and `luna`, not yet `work`).
+  Session secrets have the same host limit.
 - No deploy key, long-lived token, host SSH forwarding, web UI, or general
   service publishing is available. Lima guest port forwarding is denied by default
   except for explicitly declared loopback-only TCP browser callbacks.
