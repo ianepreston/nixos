@@ -184,10 +184,19 @@
               };
             };
 
-            # The 8 GB card's useful candidate envelope is its measured
-            # Jellyfin-NVENC-safe budget, not the nominal card capacity.
+            # The whole card, not a Jellyfin-safe share (was 6200 until
+            # #986). 8192 MiB less the 352 the driver reserves leaves 7840
+            # for processes; 7680 keeps a sliver for compute-buffer spikes
+            # the gate's post-request reading can miss. Jellyfin gave up its
+            # share because it barely uses the GPU: over 2026-11-05..20, 66
+            # of 67 playback sessions copied the video stream, one used
+            # NVENC, and NVDEC ran 201 minutes, all thumbnail extraction. A
+            # rare transcode that lands while a model is resident may fail;
+            # sleepIdleSeconds below is what hands the card back. The
+            # "set by Jellyfin" ceilings in the model comments above predate
+            # this and are open for re-evaluation.
             evaluation = {
-              residentBudgetMiB = 6200;
+              residentBudgetMiB = 7680;
               targets = {
                 text.role = "generalist";
                 vision = {
