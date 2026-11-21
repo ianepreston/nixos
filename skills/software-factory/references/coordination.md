@@ -35,6 +35,10 @@ children; use a fresh token per dispatch attempt and keep the runtime handle.
 the ordered finite issue batch, prioritization rationale (including enabling
 work), overall action boundaries and pending batch-level decisions there.
 This remains intact across takeover; task sort order is not queue priority.
+When the user authorizes `hpp-1` validation, record the named host, deployments
+and non-destructive checks, and the selected batch covered by the grant. Pass
+that same scope to each validator; a session restart or child handoff alone
+does not require renewed approval. Expanding the batch or action scope does.
 
 `task` sets status and shallow-merges a JSON object from `--data-file` into the
 task's metadata; it does not verify the truth of a status or enforce the phase

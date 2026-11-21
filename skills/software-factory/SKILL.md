@@ -7,8 +7,12 @@ description: Supervise a bounded GitHub issue queue in this repo, dispatch isola
 
 Act as the supervisor for a finite batch in `ianepreston/nixos`. Deliver
 reviewed PRs and an evidence-backed handoff; the human merges. Invoking this
-workflow authorizes child-agent delegation within the requested scope, not
-live-host changes, secrets operations, or a background schedule.
+workflow authorizes child-agent delegation within the requested scope. The
+user can also authorize deployments and non-destructive validation on `hpp-1`
+for the selected batch; record that grant once and pass it to validators.
+The invocation example below includes this grant. Otherwise, obtain it before
+the first activation. Production activation is outside this workflow; secrets
+operations, destructive actions and background schedules need separate scope.
 
 Read root `AGENTS.md` and [host-access](../_shared/host-access.md). Root
 host-specific authorization governs where older workflow guidance disagrees.
@@ -160,12 +164,20 @@ operator; no automatic retry, rollback, kill or recovery command.
    generation, user authority and behavioral probes. Check for other sessions,
    CI resource contention and auto-upgrade activity; the local claim cannot
    exclude those. A conflicting/uncertain host state blocks activation.
-4. Root authorization applies to every host, including `hpp-1`: ask for the
-   concrete host/action/step if it has not already been granted. Delegate
-   activation only to the named validator, and prefer withholding deployment
-   credentials from implementers. Worktrees and approval-bypass harnesses do
-   not enforce isolation. Disk-layout changes require the documented operator
-   reinstall workflow; never route them through an in-place deploy.
+4. Use `hpp-1` for dev activation. A user grant covering deployments and
+   non-destructive validation on `hpp-1` for the selected batch satisfies the
+   host/action/step requirement: reuse it across that batch's validation steps
+   without asking for every switch or child handoff. Record its scope in the
+   plan and validator packet. Ask only if the grant is absent or the proposed
+   action exceeds it. Never activate production hosts (`amos1` or another host
+   classified as prod), or substitute a workstation; production rollout is a
+   separate operator-directed workflow. Read-only production inspection and
+   host builds remain available under root guidance.
+   Delegate activation only to the named validator, and prefer withholding
+   deployment credentials from implementers. Worktrees and approval-bypass
+   harnesses do not enforce isolation. Destructive tests and disk-layout
+   changes need separate authorization; disko changes require the documented
+   operator reinstall workflow, never an in-place deploy.
 5. Use supported repository deployment tooling and enforce root's hostname,
    closure-name and per-host SSH rules in the activation command chain. Verify
    the running closure/generation afterward and exercise the acceptance
@@ -204,7 +216,9 @@ In a fresh Omnigent Polly session with this repository as its workspace:
 
 > Read `skills/software-factory/SKILL.md` and use it to implement issues #A
 > and #B serially. Stop at reviewed PRs; I will merge. Ask about unresolved
-> tradeoffs or manual steps. Do not activate any host or change secrets.
+> tradeoffs or manual steps. I authorize deployments and non-destructive
+> validation on `hpp-1` for this batch. Do not activate production hosts or
+> workstations, change secrets, or run destructive tests.
 
 Codex can use `$software-factory` with the same request. For queue discovery:
 
