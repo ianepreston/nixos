@@ -18,17 +18,6 @@
     # See also 'stable-packages' and 'unstable-packages' overlays at 'overlays/default.nix"
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # Held copy of nixpkgs-unstable for apps that the latest unstable breaks.
-    # A pinned rev is skipped by `nix flake update`, so this will not move on
-    # its own. Current users, and what blocks each:
-    #   - home-assistant (modules/apps/homeassistant.nix): auth_oidc 1.2.1 fails
-    #     its tests against HA 2026.11.1 (PersonData API change; upstream
-    #     hass-oidc-auth#459).
-    #   - paperless-ngx (modules/apps/paperless-ngx.nix): 3.4.2 requires
-    #     torch<2.15, unstable now has 2.15.0.
-    # When an app is fixed in nixpkgs-unstable, point its module back at
-    # nixpkgs-unstable; remove this input once nothing uses it.
-    nixpkgs-unstable-held.url = "github:NixOS/nixpkgs/d4f25a3e562008648d45bcf2d70bcc7422cad84e";
     nix-darwin.url = "github:nix-darwin/nix-darwin/nix-darwin-26.05";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs-darwin";
     hardware.url = "github:nixos/nixos-hardware";
