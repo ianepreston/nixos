@@ -1683,9 +1683,9 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 
 | Command                                          | Description                                                                      |
 | ------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `task rebuild`                                   | Rebuild current NixOS host                                                       |
+| `task rebuild`                                   | Rebuild current NixOS host (asserts hostname + closure name before activating)   |
 | `task rebuild:<host>`                            | Rebuild a specific NixOS host                                                    |
-| `task deploy:<host>`                             | Build locally and push the closure to a live remote host (`switch` over SSH)     |
+| `task deploy:<host>`                             | Build locally, copy, and activate on a live remote host; identity asserted on target |
 | `task build_darwin:<host>`                       | Rebuild a nix-darwin host                                                        |
 | `task build_home:<target>`                       | Rebuild standalone home-manager                                                  |
 | `task build`                                     | Build a host without switching (default: luna)                                   |
@@ -1706,7 +1706,7 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task bootstrap:hostkey HOST=x DEST=ip`          | Re-derive age key from live host SSH key (fallback if install output was missed) |
 | `task bootstrap:secrets HOST=x DEST=ip`          | Add host age key to nix-secrets, create host secrets, commit                     |
 | `task bootstrap:sync HOST=x DEST=ip`             | Rsync nixos and nix-secrets to target                                            |
-| `task bootstrap:rebuild HOST=x DEST=ip`          | Run nixos-rebuild switch on target                                               |
+| `task bootstrap:rebuild HOST=x DEST=ip`          | Build on target, then activate it after asserting hostname + closure name         |
 | `task recovery:app APP=x HOST=y [SOURCE_HOST=z]` | Restore a single app from restic, driven by the generated recovery manifest      |
 | `task recovery:all HOST=x`                       | Catastrophic restore: every per-app dispatcher in sequence                       |
 | `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore four apps, teardown           |
@@ -1824,7 +1824,7 @@ task bootstrap:hwconfig HOST=newhostname DEST=192.168.1.50  # extract hardware c
 task bootstrap:hostkey  HOST=newhostname DEST=192.168.1.50  # re-derive age key from live host
 task bootstrap:secrets  HOST=newhostname DEST=192.168.1.50  # configure nix-secrets for host
 task bootstrap:sync     HOST=newhostname DEST=192.168.1.50  # rsync configs to target
-task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebuild switch
+task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # build + identity-checked switch on target
 ```
 
 ### 3. Secrets setup

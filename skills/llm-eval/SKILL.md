@@ -125,8 +125,8 @@ each time. Mention two side effects when you ask:
   finish the eval the same day or plan to redeploy. This is also the safety
   net: an abandoned peer cleans itself up.
 
-Use the deploy recipe from host-access with its identity assertions, not
-`task deploy:<host>`. Then:
+Deploy with `task deploy:<host>` (it enforces the host/closure identity
+assertions; see host-access). Then:
 
 ```sh
 task llm:models:fetch HOST=<host>

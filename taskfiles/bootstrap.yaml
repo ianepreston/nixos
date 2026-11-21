@@ -427,13 +427,13 @@ tasks:
           "$git_root"/../nix-secrets "{{.TARGET_USER}}@{{.DEST}}:src/"
 
   rebuild:
-    desc: Run nixos-rebuild switch on the target
+    desc: Build on the target, then activate it (switch) after asserting its hostname and closure name
     requires:
       vars: [HOST, DEST]
     vars:
       SSH_PORT: '{{.SSH_PORT | default "22"}}'
       TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
-      # When true, the on-target switch resolves nix-secrets from the
+      # When true, the on-target build resolves nix-secrets from the
       # synced ../nix-secrets/ checkout. Set false to resolve via
       # flake.lock (no synced secrets needed on the target).
       LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
@@ -441,11 +441,10 @@ tasks:
       - |
         set -euo pipefail
         echo -e "\x1B[32m[+] Rebuilding {{.HOST}} on {{.DEST}}\x1B[0m"
-        if [ "{{.LOCAL_SECRETS}}" = "true" ]; then
-          override="--override-input nix-secrets path:../nix-secrets"
-        else
-          override=""
-        fi
-        # shellcheck disable=SC2029,SC2086
-        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
-          "cd src/nixos && sudo nixos-rebuild switch --flake .#{{.HOST}} $override"
+        # HOST is the identity the target must report; DEST is only where to
+        # connect. The helper builds in the synced checkout on the target and
+        # activates through one ssh that re-checks both (#1018).
+        "{{.ROOT_DIR}}/scripts/activate-nixos.sh" \
+          --host "{{.HOST}}" --dest "{{.DEST}}" --user "{{.TARGET_USER}}" --port "{{.SSH_PORT}}" \
+          --target-ssh-opt=-oForwardAgent=yes --remote-flake src/nixos \
+          {{if eq .LOCAL_SECRETS "true"}}--local-secrets{{end}}

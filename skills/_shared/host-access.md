@@ -98,42 +98,34 @@ local-time incident window.
 
 ## Deploying to a host
 
-Use `nixos-rebuild` directly, not `task deploy:<host>`. `nixos-rebuild-ng`
-appends its own `-o ControlMaster=auto -o ControlPath=<fresh tmpdir>/ssh-%C`
-(`SSH_DEFAULT_OPTS` in `nixos_rebuild/process.py`), so it can never reuse the
-master and must authenticate fresh — which hangs with no tty. User opts from
-`NIX_SSHOPTS` are placed *before* those defaults and ssh takes the first value
-for each option, so pointing it at the existing master wins.
-
-This recipe is only for a deployment with **exactly one remote host**, where
-that host is both the target and the control master's host. `NIX_SSHOPTS`
-applies to every SSH connection the tool opens. Never use it when
-`--build-host` differs from `--target-host`: the build host's socket can send
-the target's activation to the build host instead. In that case, use separate
-explicit per-host connections, build and copy first, and activate in a separate
-single-host command with these same identity checks.
-
-Set the expected host, derive the closure with the same input overrides, and
-abort unless both the closure name and the target's hostname match before
-running the activation:
+Use the repo helper, `scripts/activate-nixos.sh` (what `task deploy:<host>`,
+`task rebuild[:<host>]` and `task bootstrap:rebuild` all call). It builds, then
+copies, then activates through **one** connection that runs
+`scripts/_activate-nixos/activate.sh` as root. That script asserts
+`hostname == <host>` and the closure basename `*-nixos-system-<host>-*` in the
+same chain as `switch-to-configuration`, and the helper also checks the name
+before anything is copied. No retries, no fallback host.
 
 ```sh
-host=hpp-1
-closure=$(nix eval --raw ".#nixosConfigurations.${host}.config.system.build.toplevel.outPath" \
-  --override-input nix-secrets path:/home/ipreston/src/nix-secrets)
-case ${closure##*/} in
-  *-nixos-system-"$host"-*) ;;
-  *) printf 'refusing to activate unexpected closure: %s\n' "$closure" >&2; exit 1 ;;
-esac &&
-  ssh "ipreston@$host" "test \"\$(hostname)\" = '$host'" &&
-  NIX_SSHOPTS="-o ControlPath=$HOME/.ssh/master-ipreston@$host:22 -o ControlMaster=no" \
-    nixos-rebuild switch --flake ".#$host" --target-host "ipreston@$host" --sudo \
-      --override-input nix-secrets path:/home/ipreston/src/nix-secrets
+# from any checkout or worktree; nix-secrets is found portably (sibling of the
+# checkout, or of the main checkout when run from a worktree; $NIX_SECRETS_PATH wins)
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets --dry-run  # eval + print plan only
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets --action check  # build, assert identity on the target, activate nothing
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets            # switch
 ```
 
-The `--override-input` must be absolute: `task deploy` hardcodes
-`path:../nix-secrets`, which resolves to nothing from an arbitrary worktree
-location.
+`task deploy:hpp-1` is the same thing; `ACTION=check|test|boot` selects the
+action. SSH options are per host and explicit: the helper discards an inherited
+`NIX_SSHOPTS`, and a separate `--build-host` gets only `--build-ssh-opt`s while
+the target gets only `--target-ssh-opt`s (the closure is pulled from the build
+host, then pushed to the target, as two single-host commands), so the build host
+never receives the target's socket or activation. The helper opens plain `ssh`
+connections, so an existing master from `~/.ssh/config` is reused; to pin one
+explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
+--target-ssh-opt=-oControlMaster=no`.
+
+Do not call `nixos-rebuild --target-host` or `switch-to-configuration` by hand:
+that bypasses the assertions (a test fails if any Taskfile does).
 
 The failure mode is misleading if you skip the master check — the closure copy
 shows a live `ESTAB` socket and transfers ~0 bytes. Confirm from the target:
