@@ -111,13 +111,14 @@
 #        fixed 15.8s into the job, upsd/upsmon PIDs untouched, so the
 #        escalation below never ran.
 #      * The second `$D start` after `nut.sh restart` is there because
-#        one `nut.sh restart` is genuinely not always enough: on
-#        2026-09-18 the driver came up only on the second attempt
-#        (`nut_libusb_get_report: No device` the first time, clean the
-#        second), which is the same USB flakiness behind the recurring
-#        `libusb1: Could not open any HID devices` staleness flaps.
-#      * Those `Data stale` flaps (a few per day, 5-10s) still serve
-#        variables, so `upsc` succeeds and the watchdog ignores them.
+#        one `nut.sh restart` is genuinely not always enough: the
+#        driver can fail a start with `Can't initialize data from HID
+#        UPS` (or, on 2026-09-18, `nut_libusb_get_report: No device`)
+#        and come up clean on the next attempt. See the `debug_min`
+#        setting below for why.
+#      * Without that setting, `Data stale` flaps (seconds long) still
+#        serve variables, so `upsc` succeeds and the watchdog ignores
+#        them.
 #      * The `logger` lines land in the pfSense syslog stream we
 #        already ship to VictoriaLogs, so a watchdog that is papering
 #        over a failing UPS every 5 minutes is visible rather than
@@ -136,6 +137,46 @@
 #      driver (`killall -9 usbhid-ups`, safe — upsd and upsmon stay up,
 #      the UPS stays on mains) and watch for the `nut-watchdog` pair
 #      within one 5-minute tick.
+#
+# pfSense driver setting (one-time, out-of-band — #939):
+#   Services → UPS → UPS Settings → Extra Arguments to driver:
+#   `debug_min=1`. A behemoth reinstall without it brings the flaps back.
+#
+#   Why. Since pfSense 2.9.0 (FreeBSD 16, NUT 2.8.5) an occasional
+#   GET_REPORT control transfer (~1 per 40s) fails with
+#   LIBUSB_ERROR_NO_DEVICE although the UPS never detaches (no
+#   ugen/uhub kernel messages, interrupt pipe keeps delivering).
+#   `HIDGetDataValue()` returns `-errno`; at debug 0 that is -4, which
+#   usbhid-ups reads as a disconnect and does a full USB reconnect.
+#   That reconnect is each upsd `Data stale` episode (~35/hour), and a
+#   reconnect that fails at the report-descriptor read is `Can't
+#   initialize data from HID UPS`, the dead driver the watchdog
+#   repairs. At debug >= 1 the logging call in `vupslog()` zeroes errno
+#   first, so the failure is skipped as an item instead. A real unplug
+#   is still caught through the interrupt-pipe path. Same mechanism as
+#   networkupstools/nut#3116.
+#
+#   Result: 0 stale episodes in the first 24 minutes (baseline would be
+#   ~14), and no router-side alerts in the week after.
+#
+#   * Do NOT set `pollonly`, whatever the driver's "You may want to set
+#     'pollonly' flag on CPS devices" hint says. Every read becomes a
+#     GET_REPORT, and the data went permanently stale 16s after start
+#     until the driver was restarted (tried 2026-11-14, reverted).
+#     `pollfreq=30` (undoing 2.8.3's CPS default of 12) also changed
+#     nothing.
+#   * `debug_min` output is invisible on pfSense: the driver logs at
+#     LOG_DEBUG, pfSense's syslog routes only daemon.notice and above,
+#     and the daemon's stderr is /dev/null. To see the USB calls, run
+#     a foreground capture under `timeout`:
+#     `usbhid-ups -a UPSA -DDD -F`, then `upsdrvctl start` to hand
+#     back to the daemon.
+#   * Saving the Services → UPS page restarts NUT through `nut.sh`, and
+#     each start can fail as above. Expect up to ~5 minutes unmonitored
+#     until the watchdog wins.
+#   * Nothing has been filed upstream. The defect is in NUT (error
+#     classification depends on the debug level), so an eventual fix
+#     there may make this setting unnecessary or change what it does.
 #
 # Metrics. A pair of DRuggeri/nut_exporter instances run on loopback
 # ports 9199 (router-ups) / 9200 (nas-ups) and are scraped by the
