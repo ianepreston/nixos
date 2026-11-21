@@ -202,8 +202,12 @@ Release issue claims only after its workers/build/validation claims are gone.
 Parked or blocked work can free an issue slot after confirming its children
 have stopped and its reservations are safely released; retain its context.
 Keep worktrees while review, live validation or manual work remains. Before
-cleanup check for unexpected tracked/untracked files and verify publication;
-use ordinary `git worktree remove`, never unconditional force-removal.
+cleanup follow `resolve-issue` section 8: verify the remote head equals local
+HEAD exactly, check tracked/untracked status and use ordinary
+`git worktree remove`. If verification fails, unexpected work remains or
+removal refuses, preserve the worktree, report its path and state without
+publishing file contents or sensitive paths, and let the user decide. Never
+automatically stage, commit, delete or relocate unknown work for cleanup.
 
 Finish with issue → PR/status, evidence and omissions, outstanding questions,
 retained worktrees/reservations, and how to resume this supervisor. When the

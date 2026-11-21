@@ -175,13 +175,31 @@ is stale, so trust `gh api`, not `git branch -vv`:
 
 ```sh
 gh pr view <PR#> --json url,headRefName,state
+git -C "<worktree-path>" rev-parse HEAD
 gh api repos/ianepreston/nixos/branches/<branch> --jq .commit.sha
 ```
 
-Only once that confirms the remote branch is at your HEAD, tear down with
-`git worktree remove --force <worktree-path>` (and, if needed,
-`git worktree prune`). The force is safe *at this point specifically* because
-the commits are on the remote. Never use it before the push is confirmed.
+Require both SHA queries to succeed and return exactly the same nonempty SHA.
+A missing branch, failed query or mismatch means publication is unverified:
+preserve the worktree and report that state. A matching remote HEAD proves
+only that the commits were pushed; it says nothing about uncommitted files.
+
+Before removal, check the worktree for tracked edits and untracked files:
+
+```sh
+git -C "<worktree-path>" status --porcelain --untracked-files=all
+```
+
+If this fails or reports any unexpected changes, preserve the worktree.
+Only after publication is verified and the status check succeeds with no
+remaining changes, run ordinary `git worktree remove "<worktree-path>"`
+from outside that worktree. If removal refuses, preserve it; never retry with
+force or delete files to make removal succeed.
+
+For any preserved worktree, report its path, the verification/removal failure
+or remaining tracked/untracked state, without publishing file contents or
+sensitive paths. Let the user decide how to handle it. Never automatically
+stage, commit, delete or relocate unknown work for cleanup.
 
 Report back with the PR URL, the design calls the user made, anything left
 unvalidated, and any follow-up issues filed.
