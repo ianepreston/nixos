@@ -143,7 +143,10 @@ then pushed to the target, as two single-host commands). With a build host,
 every connection to either host (including the `nix copy` transports) is forced
 to `-oControlMaster=no -oControlPath=none -oProxyJump=none -oProxyCommand=none`,
 ahead of any option you pass, so no socket can be shared whatever
-`~/.ssh/config` says. A jump host is a separate ssh client that never sees those
+`~/.ssh/config` says. In single-host mode only the `nix copy` leg is forced to
+`-oControlMaster=no -oControlPath=none` (also ahead of your options): nix starts
+its own ssh master, and a `ControlMaster`/`ControlPath` in `~/.ssh/config`
+collides with it (`protocol mismatch, got 'started'`). A jump host is a separate ssh client that never sees those
 options, so with `--build-host` an explicit `-J`/`-oProxyJump` is rejected and
 any jump or proxy from `~/.ssh/config` is disabled; single-host mode still
 accepts `-J`/`-oProxyJump`. Every target ssh also passes `-T`, so a
@@ -158,7 +161,8 @@ where stdin goes, or which config/socket is used (`-n`, `-N`, `-f`, `-W`, `-O`,
 `-S`, `-F`, `-l`, `RemoteCommand`, `ProxyCommand`, `User`, …) is rejected. Use
 `--port` and `--user` rather than `-p`/`-l`. The helper opens plain `ssh`
 connections, so (single-host only) an existing master from `~/.ssh/config` is
-reused; to pin one explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
+reused for the activation ssh (never for `nix copy`, see above); to pin one
+explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
 --target-ssh-opt=-oControlMaster=no`.
 
 `system.autoUpgrade` is the one accepted exception: it activates without the

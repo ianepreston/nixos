@@ -1691,7 +1691,9 @@ copy, in the same process as the activation. With a separate build host every
 ssh leg (including `nix copy`) is forced to `ControlMaster=no`,
 `ControlPath=none`, `ProxyJump=none` and `ProxyCommand=none`, and explicit
 `-J`/`ProxyJump` options are rejected (a jump client would not inherit them);
-single-host deploys still accept `-J`.
+single-host deploys still accept `-J`, and their `nix copy` leg is also forced
+to `ControlMaster=no`/`ControlPath=none` (nix's own ssh master collides with a
+`ControlMaster`/`ControlPath` from `~/.ssh/config`).
 The one accepted exception is `system.autoUpgrade`
 (`modules/system/auto-rebuild.nix`): it only ever activates the local host from
 `main`, so there is no remote target and no cross-host identity risk.

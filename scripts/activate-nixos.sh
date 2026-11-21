@@ -44,6 +44,11 @@
 #
 # SSH options are per host and never shared: NIX_SSHOPTS from the environment is
 # discarded, and each nix copy sees only the options of the one host it talks to.
+# Every nix copy to the target (single-host mode too) is forced to
+# -oControlMaster=no -oControlPath=none ahead of caller options: nix starts its
+# own ssh master, and a ControlMaster/ControlPath from ~/.ssh/config collides
+# with it ("protocol mismatch, got 'started'"). The direct ssh activation
+# connection is not forced, so in single-host mode it may still multiplex.
 # With --build-host, every ssh connection to EITHER host (build, pull, push,
 # activate; including the transports nix copy spawns) is forced to
 # -oControlMaster=no -oControlPath=none, placed before any user option so it
@@ -291,9 +296,17 @@ sshopts_string() { # prints the options of one host as a NIX_SSHOPTS string
   printf '%s' "$out"
 }
 
+# The nix copy transport must never multiplex: nix starts its own ssh master
+# (-M, LocalCommand 'echo started'), and a ControlMaster/ControlPath from
+# ~/.ssh/config collides with it ("protocol mismatch, got 'started'"). Split-host
+# mode already forces these (and more) at the head of target_opts; single-host
+# mode adds just these two here, ahead of any caller option so they win. The
+# direct activation ssh (ssh_target) is unaffected and may still multiplex.
 target_nix_sshopts() {
   local s
-  s=$(sshopts_string ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"})
+  local forced=()
+  [ -n "$build_host" ] || forced=(-oControlMaster=no -oControlPath=none)
+  s=$(sshopts_string ${forced[@]+"${forced[@]}"} ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"})
   printf '%s' "$s"
 }
 

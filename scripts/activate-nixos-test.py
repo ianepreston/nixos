@@ -23,6 +23,20 @@ REPO = (
     else Path(__file__).resolve().parent.parent
 )
 STORE_LINE = "store_dir=/nix/store\n"
+# The Nix build sandbox has no /usr/bin/env (only /bin/sh), so no shebang here
+# may name it: every script this test writes or copies uses the bash that is
+# running on PATH, resolved at runtime.
+BASH = os.path.realpath(shutil.which("bash") or "/bin/bash")
+SHEBANG = f"#!{BASH}\n"
+ENV_SHEBANG = "#!/usr/bin/env bash\n"
+GIT_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+}
 HASH = "abcdfghijklmnpqrsvwxyz0123456789"  # 32 nix-base32 chars
 VERSION = "26.05.20261115.b349185"
 
@@ -85,7 +99,28 @@ def make_repo(dest, store):
         text = f.read_text()
         assert text.count(STORE_LINE) == 1, f"{rel}: expected one {STORE_LINE!r}"
         f.write_text(text.replace(STORE_LINE, f"store_dir={store}\n"))
+    # Hermetic interpreter: swap the /usr/bin/env shebang of every shell script
+    # for the resolved bash (a Nix sandbox cannot exec the former).
+    for f in (repo / "scripts").rglob("*.sh"):
+        text = f.read_text()
+        if text.startswith(ENV_SHEBANG):
+            f.write_text(SHEBANG + text[len(ENV_SHEBANG) :])
+            f.chmod(0o755)
     (dest / "nix-secrets").mkdir()
+    # A throwaway git repo, so nothing depends on the caller's checkout (the
+    # sandbox copy has no .git).
+    for args in (
+        ("init", "-q", "-b", "main"),
+        ("add", "-A"),
+        ("commit", "-q", "-m", "init"),
+    ):
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            env={**os.environ, **GIT_ENV},
+            check=True,
+            capture_output=True,
+        )
     return repo
 
 
@@ -102,7 +137,7 @@ class Harness(unittest.TestCase):
         self.bin.mkdir()
         for name, body in STUBS.items():
             p = self.bin / name
-            p.write_text("#!/usr/bin/env bash\n" + LOGGER + body)
+            p.write_text(SHEBANG + LOGGER + body)
             p.chmod(0o755)
         self.log = self.tmp / "log"
         self.log.write_text("")
@@ -126,7 +161,7 @@ class Harness(unittest.TestCase):
         (c / "etc" / "hostname").write_text((etc_host or host) + "\n")
         s = c / "bin" / "switch-to-configuration"
         s.write_text(
-            "#!/usr/bin/env bash\n"
+            f"{SHEBANG}"
             'printf "ACTIVATED\\t%s\\n" "$*" >> "$STUB_LOG"\n'
             '[ -z "${STUB_SWITCH_READS_STDIN-}" ] || cat > /dev/null\n'
             '[ -z "${STUB_SWITCH_OUT-}" ] || printf "%s" "$STUB_SWITCH_OUT"\n'
@@ -398,6 +433,43 @@ class RemoteActivation(Harness):
         rows = [r[0] for r in self.lines() if r[0] in ("nix-env", "ACTIVATED")]
         self.assertEqual(rows, ["nix-env", "ACTIVATED"], "generation recorded first")
 
+    # nix starts its own ssh master; ControlMaster/ControlPath from ssh config
+    # collide with it ("protocol mismatch, got 'started'"), so every nix copy
+    # leg is forced to these, ahead of anything the caller passes.
+    COPY_FORCED = ["-oControlMaster=no", "-oControlPath=none"]
+
+    def test_single_host_copy_forces_no_multiplexing_first(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--port", "2222",
+            "--target-ssh-opt=-oControlPath=/sock/CALLER",
+            "--target-ssh-opt=-oControlMaster=auto",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        nixopts = self.copies()[0][2]
+        self.assertTrue(
+            nixopts.startswith("NIX_SSHOPTS=[" + " ".join(self.COPY_FORCED) + " "),
+            nixopts,
+        )
+        # ssh keeps the first value it sees, so the caller's cannot win
+        words = nixopts.removeprefix("NIX_SSHOPTS=[").removesuffix("]").split()
+        self.assertLess(
+            words.index("-oControlPath=none"), words.index("-oControlPath=/sock/CALLER")
+        )
+        self.assertLess(
+            words.index("-oControlMaster=no"), words.index("-oControlMaster=auto")
+        )
+        # no duplicates of the forced options without a caller
+        self.log.write_text("")
+        self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+        self.assertEqual(
+            self.copies()[0][2], "NIX_SSHOPTS=[" + " ".join(self.COPY_FORCED) + "]"
+        )
+
+    def test_dry_run_single_host_shows_forced_copy_options(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("NIX_SSHOPTS=" + " ".join(self.COPY_FORCED), r.stdout)
+
     def test_port_and_target_options_scoped_to_target(self):
         self.run_helper(
             "--host",
@@ -444,7 +516,10 @@ class RemoteActivation(Harness):
             "--host", "hpp-1", "--dest", "hpp-1", *[f"--target-ssh-opt={o}" for o in opts]
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.copies()[0][2], "NIX_SSHOPTS=[" + " ".join(opts) + "]")
+        self.assertEqual(
+            self.copies()[0][2],
+            "NIX_SSHOPTS=[" + " ".join([*self.COPY_FORCED, *opts]) + "]",
+        )
 
     def test_single_host_mode_accepts_jump_hosts(self):
         for opt in ("-Jjump.example", "-oProxyJump=jump.example"):
@@ -663,7 +738,8 @@ class BuildHost(Harness):
         self.assertEqual(self.split_rows(), [])
         self.assertFalse(self.activated())
 
-    def test_single_host_mode_leaves_multiplexing_to_the_caller(self):
+    def test_single_host_activation_ssh_may_still_multiplex(self):
+        # only the nix copy transport is forced; the direct ssh is untouched
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         for cmd, argv, _ in self.split_rows():
@@ -703,11 +779,7 @@ class LocalSecrets(Harness):
         main = src / "nixos"
         shutil.copytree(self.repo / "scripts", main / "scripts")
         (src / "nix-secrets").mkdir()
-        git_env = {
-            **self.env, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
-            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
-        }  # fmt: skip
+        git_env = {**self.env, **GIT_ENV}
 
         def git(*a, cwd=main):
             subprocess.run(
