@@ -3,12 +3,22 @@
 # service (./_rollback-root.nix) and by its regression test
 # (../flake/checks-rollback-root.nix), which runs this exact text
 # against a scratch btrfs. Leading-underscore filename => import-tree
-# skips it. See ianepreston/nixos#310.
+# skips it. See ianepreston/nixos#310 and #910.
 #
-# NixOS wraps this with `set -e` when it becomes a service `script`;
-# everything on the critical path (archive the old root, recreate the
-# blank root) must succeed, and the prune that follows is deliberately
-# isolated so its failure can never propagate.
+# NixOS wraps this with `set -e` when it becomes a service `script`.
+# Every generation's fstab mounts subvol=@root, so the one outcome that
+# must never happen is "no @root" (#910). The new root is therefore
+# snapshotted beside the live one first, and the live root is only
+# archived once its replacement exists:
+#   - no @root-blank: the disk was never installed for rollback (the
+#     wrong host's config switched in place, or impermanence added by
+#     `task deploy` instead of a reinstall). Touch nothing.
+#   - snapshot fails (e.g. a full filesystem): @root was never moved.
+#   - the final rename fails: move the archived root back.
+# Each of these exits non-zero so the unit shows as failed. Nothing in
+# the initrd Requires= it, so sysroot.mount proceeds on @root: the worst
+# case is "not rolled back", never "no root". The prune that follows
+# is isolated so its failure can never propagate (#310).
 {
   partlabel,
   keepDays ? 30,
@@ -16,10 +26,34 @@
 ''
   mkdir -p /btrfs_tmp
   mount -t btrfs -o subvol=/ /dev/disk/by-partlabel/${partlabel} /btrfs_tmp
+  trap 'umount /btrfs_tmp 2>/dev/null || true' EXIT
 
-  # 1. Archive the live root (if any) for post-mortem. Pick a
-  #    non-colliding name so a same-second or retried boot can't
-  #    fail the move (which would abort before the recreate).
+  fail() {
+    echo "rollback-root: $*" >&2
+    exit 1
+  }
+
+  # 0. Pre-flight: touch nothing on a layout this script doesn't own.
+  #    Never create @root-blank here instead: that would wipe a
+  #    non-impermanent host's root on the next boot.
+  [ -e /btrfs_tmp/@root-blank ] ||
+    fail "@root-blank missing; leaving @root untouched (disk not installed for rollback?)"
+
+  # 1. Build the pristine root beside the live one, so a failure here
+  #    leaves @root where it was. A leftover from an interrupted boot
+  #    is cleared first.
+  new=/btrfs_tmp/@root-new
+  if [ -e "$new" ]; then
+    btrfs subvolume delete --recursive "$new" ||
+      fail "cannot clear stale @root-new; leaving @root untouched"
+  fi
+  btrfs subvolume snapshot /btrfs_tmp/@root-blank "$new" ||
+    fail "snapshot of @root-blank failed; leaving @root untouched"
+
+  # 2. Archive the live root (if any) for post-mortem, then move the
+  #    new one into place. Pick a non-colliding archive name so a
+  #    same-second or retried boot can't fail the move.
+  dest=
   if [ -e /btrfs_tmp/@root ]; then
     mkdir -p /btrfs_tmp/@old_roots
     timestamp=$(date --date="@$(stat -c %Y /btrfs_tmp/@root)" "+%Y-%m-%d_%H:%M:%S")
@@ -29,13 +63,15 @@
       n=$((n + 1))
       dest="/btrfs_tmp/@old_roots/''${timestamp}_$n"
     done
-    mv /btrfs_tmp/@root "$dest"
+    mv /btrfs_tmp/@root "$dest" ||
+      fail "cannot archive @root; leaving it in place"
   fi
-
-  # 2. CRITICAL: recreate a pristine root from the blank snapshot
-  #    *before* any maintenance, so a later failure can never
-  #    leave the host unbootable.
-  btrfs subvolume snapshot /btrfs_tmp/@root-blank /btrfs_tmp/@root
+  if ! mv "$new" /btrfs_tmp/@root; then
+    if [ -n "$dest" ] && mv "$dest" /btrfs_tmp/@root; then
+      fail "cannot move @root-new into place; previous root restored"
+    fi
+    fail "cannot move @root-new into place; previous root is at ''${dest:-<none>}"
+  fi
 
   # 3. Best-effort prune of archived roots older than keepDays.
   #    `btrfs subvolume delete --recursive` removes nested
@@ -59,6 +95,4 @@
     mkdir -p "$marker" 2>/dev/null || true
     date -u "+%Y-%m-%dT%H:%M:%SZ" > "$marker/prune-failed" 2>/dev/null || true
   fi
-
-  umount /btrfs_tmp
 ''

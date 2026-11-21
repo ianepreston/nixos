@@ -22,6 +22,14 @@
 # the awk dependency by letting `btrfs subvolume delete --recursive`
 # handle nested subvolumes, (b) recreates @root *before* the prune, and
 # (c) makes the prune strictly best-effort so it can never block boot.
+#
+# #910: on a disk without @root-blank (terra, after the wrong host's
+# config was switched onto it) the archive ran, the snapshot had no
+# source, and every generation was left with no @root to mount. The
+# script now refuses to run without @root-blank, and snapshots the new
+# root as @root-new before archiving the live one, so a failed snapshot
+# never moves @root. Failures exit non-zero; nothing here Requires= the
+# service, so boot proceeds on the untouched @root.
 {
   config,
   lib,
