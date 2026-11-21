@@ -110,7 +110,8 @@
           # than the pre-router service's load-at-start. Idle eviction is
           # the mechanism that hands VRAM back mid-day: a child drops from
           # full residency to ~330 MiB after `sleepIdleSeconds` (verified
-          # in router mode, 2026-09-02). From 2026-09-05 until #1010 the
+          # in router mode 2026-09-02, and again 2026-11-20 after #1010:
+          # 6199 -> 191 MiB 404 s after one request). From 2026-09-05 the
           # llm-metrics collector's per-minute /metrics read reset the idle
           # clock and nothing ever slept; it now backs off from an idle
           # model (hazard 4 in modules/apps/llm-metrics.nix).
