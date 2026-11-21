@@ -68,6 +68,10 @@ tasks:
   # `recovery:all` chains every app in sequence. nixpkgs runs `restic
   # unlock` before the nightly prune for this reason; these templates
   # need their own.
+  # Shutdown is a hard boundary: every requested unit must stop successfully
+  # and report inactive before any restore work. Missing units are errors too;
+  # a recovery target must provide the services named by its manifest. A failed
+  # stop or restore must not trigger an automatic restart from an error trap.
   _restore-volume:
     requires:
       vars: [HOST, APP, UNITS, PATHS]
@@ -92,7 +96,15 @@ tasks:
 
         for u in {{.UNITS}}; do
           echo "[+] Stopping \$u"
-          systemctl stop "\$u" || true
+          if ! systemctl stop "\$u"; then
+            echo "[!] Failed to stop \$u; aborting restore" >&2
+            exit 1
+          fi
+          state=\$(systemctl show "\$u" --property=ActiveState --value)
+          if [ "\$state" != inactive ]; then
+            echo "[!] \$u is \$state after stop; aborting restore" >&2
+            exit 1
+          fi
         done
 
         includes=""
@@ -140,7 +152,15 @@ tasks:
 
         for u in {{.UNITS}}; do
           echo "[+] Stopping \$u"
-          systemctl stop "\$u" || true
+          if ! systemctl stop "\$u"; then
+            echo "[!] Failed to stop \$u; aborting restore" >&2
+            exit 1
+          fi
+          state=\$(systemctl show "\$u" --property=ActiveState --value)
+          if [ "\$state" != inactive ]; then
+            echo "[!] \$u is \$state after stop; aborting restore" >&2
+            exit 1
+          fi
         done
 
         includes="--include /var/backup/postgresql"
@@ -201,7 +221,15 @@ tasks:
 
         for u in {{.UNITS}}; do
           echo "[+] Stopping \$u"
-          systemctl stop "\$u" || true
+          if ! systemctl stop "\$u"; then
+            echo "[!] Failed to stop \$u; aborting restore" >&2
+            exit 1
+          fi
+          state=\$(systemctl show "\$u" --property=ActiveState --value)
+          if [ "\$state" != inactive ]; then
+            echo "[!] \$u is \$state after stop; aborting restore" >&2
+            exit 1
+          fi
         done
 
         includes=""
