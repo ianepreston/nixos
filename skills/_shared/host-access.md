@@ -27,9 +27,10 @@ Free, no confirmation:
 - Read-only inspection of any host, prod included — `systemctl status`,
   `journalctl`, `ss`, reading config and metrics.
 - `task check`, `task build:<host>`, `nix build` of a host closure.
-- `nixos-rebuild switch` against **hpp-1** (dev), after the identity checks
-  below. This authorization names hpp-1 only; it never extends to a build host
-  or another machine reached through SSH option reuse.
+- `task deploy:hpp-1` (or `scripts/activate-nixos.sh --host hpp-1 --dest
+  hpp-1 ...`) against **hpp-1** (dev) — never raw `nixos-rebuild`; see
+  "Deploying to a host" below. This authorization names hpp-1 only; it never
+  extends to a build host or another machine reached through SSH option reuse.
 
 Ask the user first, every time:
 
@@ -101,10 +102,20 @@ local-time incident window.
 Use the repo helper, `scripts/activate-nixos.sh` (what `task deploy:<host>`,
 `task rebuild[:<host>]` and `task bootstrap:rebuild` all call). It builds, then
 copies, then activates through **one** connection that runs
-`scripts/_activate-nixos/activate.sh` as root. That script asserts
-`hostname == <host>` and the closure basename `*-nixos-system-<host>-*` in the
-same chain as `switch-to-configuration`, and the helper also checks the name
-before anything is copied. No retries, no fallback host.
+`scripts/_activate-nixos/activate.sh` as root. Before anything is copied, and
+again on the target in the same process as `switch-to-configuration`, it
+requires:
+
+- the closure path to be exactly
+  `/nix/store/<32-char hash>-nixos-system-<host>-<version>` (so
+  `…-custom-nixos-system-hpp-1-…` and `…-nixos-system-hpp-1-lab-…` fail);
+- the closure's own `etc/hostname` to equal `<host>` exactly — the real guard,
+  since a hyphenated host makes the name alone ambiguous;
+- on the target, `hostname` to equal `<host>`.
+
+The target script prints two nonce-bearing sentinel lines; unless both come
+back, the run fails even if ssh exited 0 (so an ssh that never fed it the script
+cannot pass as success). No retries, no fallback host.
 
 ```sh
 # from any checkout or worktree; nix-secrets is found portably (sibling of the
@@ -115,14 +126,30 @@ scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets            #
 ```
 
 `task deploy:hpp-1` is the same thing; `ACTION=check|test|boot` selects the
-action. SSH options are per host and explicit: the helper discards an inherited
-`NIX_SSHOPTS`, and a separate `--build-host` gets only `--build-ssh-opt`s while
-the target gets only `--target-ssh-opt`s (the closure is pulled from the build
-host, then pushed to the target, as two single-host commands), so the build host
-never receives the target's socket or activation. The helper opens plain `ssh`
+action. Task values reach the shell only as quoted environment variables, and
+the helper validates host, action, user, port and destination.
+
+SSH options are per host and explicit. The helper discards an inherited
+`NIX_SSHOPTS`; a separate `--build-host` gets only `--build-ssh-opt`s while the
+target gets only `--target-ssh-opt`s (the closure is pulled from the build host,
+then pushed to the target, as two single-host commands). With a build host, the
+effective `ControlPath` of each (`ssh -G`, after `~/.ssh/config`) must differ, or
+the run is refused — give each its own path or pass `-oControlPath=none`.
+
+Each `--*-ssh-opt` is one whitespace-free token from an allowlist of connection
+settings: `-oKey=value` for `ForwardAgent`, `ControlPath`, `ControlMaster`,
+`ControlPersist`, `IdentityFile`, `ProxyJump` and similar, plus `-iFILE`,
+`-JJUMP`, `-4`, `-6`, `-A`, `-C`, `-q`, `-v`. Anything that changes what runs,
+where stdin goes, or which config/socket is used (`-n`, `-N`, `-f`, `-W`, `-O`,
+`-S`, `-F`, `-l`, `RemoteCommand`, `ProxyCommand`, `User`, …) is rejected. Use
+`--port` and `--user` rather than `-p`/`-l`. The helper opens plain `ssh`
 connections, so an existing master from `~/.ssh/config` is reused; to pin one
 explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
 --target-ssh-opt=-oControlMaster=no`.
+
+`system.autoUpgrade` is the one accepted exception: it activates without the
+helper, but it only ever activates the local host from `main`, so there is no
+remote target and no cross-host identity risk.
 
 Do not call `nixos-rebuild --target-host` or `switch-to-configuration` by hand:
 that bypasses the assertions (a test fails if any Taskfile does).

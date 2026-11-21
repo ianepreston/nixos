@@ -427,7 +427,7 @@ tasks:
           "$git_root"/../nix-secrets "{{.TARGET_USER}}@{{.DEST}}:src/"
 
   rebuild:
-    desc: Build on the target, then activate it (switch) after asserting its hostname and closure name
+    desc: Build on the target, then activate it (switch) after asserting its hostname and closure identity
     requires:
       vars: [HOST, DEST]
     vars:
@@ -437,14 +437,28 @@ tasks:
       # synced ../nix-secrets/ checkout. Set false to resolve via
       # flake.lock (no synced secrets needed on the target).
       LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
+    # User-supplied values reach the shell only as quoted environment
+    # variables, never as template-expanded source; the helper validates them.
+    env:
+      ACTIVATE_HOST: '{{.HOST}}'
+      ACTIVATE_DEST: '{{.DEST}}'
+      ACTIVATE_USER: '{{.TARGET_USER}}'
+      ACTIVATE_PORT: '{{.SSH_PORT}}'
+      ACTIVATE_LOCAL_SECRETS: '{{.LOCAL_SECRETS}}'
     cmds:
       - |
         set -euo pipefail
-        echo -e "\x1B[32m[+] Rebuilding {{.HOST}} on {{.DEST}}\x1B[0m"
+        printf '\033[32m[+] Rebuilding %s on %s\033[0m\n' "$ACTIVATE_HOST" "$ACTIVATE_DEST"
+        secrets=()
+        case $ACTIVATE_LOCAL_SECRETS in
+          true) secrets=(--local-secrets) ;;
+          false) ;;
+          *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+        esac
         # HOST is the identity the target must report; DEST is only where to
         # connect. The helper builds in the synced checkout on the target and
         # activates through one ssh that re-checks both (#1018).
         "{{.ROOT_DIR}}/scripts/activate-nixos.sh" \
-          --host "{{.HOST}}" --dest "{{.DEST}}" --user "{{.TARGET_USER}}" --port "{{.SSH_PORT}}" \
+          --host "$ACTIVATE_HOST" --dest "$ACTIVATE_DEST" --user "$ACTIVATE_USER" --port "$ACTIVATE_PORT" \
           --target-ssh-opt=-oForwardAgent=yes --remote-flake src/nixos \
-          {{if eq .LOCAL_SECRETS "true"}}--local-secrets{{end}}
+          ${secrets[@]+"${secrets[@]}"}

@@ -1681,10 +1681,19 @@ and secrets-management workflows live in `taskfiles/*.yaml` and are pulled in
 via Task's `includes:`, so `task --list` shows the full prefixed surface
 (`bootstrap:*`, `recovery:*`, `secrets:*`).
 
+Every task that activates a NixOS closure (`rebuild`, `rebuild:<host>`,
+`deploy:<host>`, `bootstrap:rebuild`) goes through `scripts/activate-nixos.sh`,
+which refuses unless the machine's hostname, the closure name
+(`/nix/store/<hash>-nixos-system-<host>-<version>`) and the closure's own
+`etc/hostname` all equal `<host>`. `ACTION=boot|test|check` changes the action.
+The one accepted exception is `system.autoUpgrade`
+(`modules/system/auto-rebuild.nix`): it only ever activates the local host from
+`main`, so there is no remote target and no cross-host identity risk.
+
 | Command                                          | Description                                                                      |
 | ------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `task rebuild`                                   | Rebuild current NixOS host (asserts hostname + closure name before activating)   |
-| `task rebuild:<host>`                            | Rebuild a specific NixOS host                                                    |
+| `task rebuild`                                   | Rebuild current NixOS host (asserts hostname + closure identity before activating) |
+| `task rebuild:<host>`                            | Rebuild config `<host>` on this machine; refuses unless this machine's hostname is `<host>` |
 | `task deploy:<host>`                             | Build locally, copy, and activate on a live remote host; identity asserted on target |
 | `task build_darwin:<host>`                       | Rebuild a nix-darwin host                                                        |
 | `task build_home:<target>`                       | Rebuild standalone home-manager                                                  |
