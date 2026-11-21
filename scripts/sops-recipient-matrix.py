@@ -40,9 +40,6 @@ VM_HOSTS = {"tests-server", "tests-desktop"}
 # Keep this short: an entry here is a hole someone has decided to live
 # with for now, not a way to make the check pass.
 EXCEPTIONS = {
-    # Still encrypted to the whole fleet and read by nothing; retired in
-    # phase 4.
-    ("shared.yaml", "*"): "#507 retires shared.yaml",
     # The `tests-server` anchor matches no key the drill VM boots with
     # (that is `tests-vm`); it is left from an earlier VM.
     ("*", "tests-server"): "#510 stale drill anchor",
