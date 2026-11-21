@@ -58,26 +58,19 @@ tasks:
   # then asserts the target hostname, closure name and the closure's own
   # etc/hostname in the same process that runs switch-to-configuration (#1018).
   # Pass ACTION=boot|test|check to change the action (default switch; `check`
-  # asserts identity and activates nothing). Host and action reach the shell
-  # only as quoted environment variables, never as template-expanded source;
-  # the helper validates both.
+  # asserts identity and activates nothing). Host and action are passed as
+  # explicit arguments rendered with shellQuote, never through `env:` (Task lets
+  # an inherited environment variable of the same name override `env:`, which
+  # could redirect a deploy), and the helper validates them again.
   rebuild:
     desc: Rebuild this NixOS host (refuses unless hostname matches the configuration)
-    env:
-      ACTIVATE_ACTION: '{{.ACTION | default "switch"}}'
-    cmd: ./scripts/activate-nixos.sh --host "$(hostname)" --local-secrets --action "$ACTIVATE_ACTION"
+    cmd: ./scripts/activate-nixos.sh --host "$(hostname)" --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   rebuild:*:
     desc: Rebuild a particular config on this machine, pass :[hostname] (refuses unless it equals this machine's hostname)
-    env:
-      ACTIVATE_HOST: '{{index .MATCH 0}}'
-      ACTIVATE_ACTION: '{{.ACTION | default "switch"}}'
-    cmd: ./scripts/activate-nixos.sh --host "$ACTIVATE_HOST" --local-secrets --action "$ACTIVATE_ACTION"
+    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   deploy:*:
     desc: Build locally, copy, and activate on a live remote host, pass :[hostname] for the target
-    env:
-      ACTIVATE_HOST: '{{index .MATCH 0}}'
-      ACTIVATE_ACTION: '{{.ACTION | default "switch"}}'
-    cmd: ./scripts/activate-nixos.sh --host "$ACTIVATE_HOST" --dest "$ACTIVATE_HOST" --local-secrets --action "$ACTIVATE_ACTION"
+    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   build_home:*:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}

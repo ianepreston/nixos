@@ -3,7 +3,7 @@
 # ACTIVATED (as root), either locally via sudo or on a remote host through the
 # single ssh connection that scripts/activate-nixos.sh opens for this step.
 #
-#   activate.sh <expected-host> <closure> <check|switch|boot|test> <nonce>
+#   activate.sh <expected-host> <closure> <check|switch|boot|test> <nonce> [caller-verified]
 #
 # The identity assertions and the activation run in one process under set -e,
 # so nothing can route the check to one machine and the activation to another.
@@ -21,6 +21,9 @@ host=${1:?expected host}
 closure=${2:?closure path}
 action=${3:?action}
 nonce=${4:?nonce}
+# Only `check` may run against a closure that is absent here, and only when the
+# caller says it already verified that closure (name and etc/hostname) locally.
+caller_verified=${5-}
 
 die() {
   printf 'activate: %s\n' "$*" >&2
@@ -44,7 +47,7 @@ if [ -e "$closure" ]; then
   [ -r "$closure/etc/hostname" ] || die "refusing: closure has no etc/hostname: $closure"
   configured=$(<"$closure/etc/hostname")
   [ "$configured" = "$host" ] || die "refusing: closure is configured for host '$configured', expected '$host'"
-elif [ "$action" != check ]; then
+elif [ "$action" != check ] || [ "$caller_verified" != caller-verified ]; then
   die "closure is not present on this machine: $closure"
 fi
 
@@ -66,11 +69,20 @@ fi
 # wires its stdio to ours, so a dropped connection can still interrupt it (a
 # write to the closed pipe gets SIGPIPE). Never assume an interrupted run
 # finished; inspect the target first.
-if [ "$action" != test ]; then
-  nix-env --profile /nix/var/nix/profiles/system --set "$closure"
-fi
-systemd-run --setenv=LOCALE_ARCHIVE --collect --no-ask-password --pipe --quiet \
-  --service-type=exec --unit=nixos-rebuild-switch-to-configuration \
-  "$closure/bin/switch-to-configuration" "$action"
+#
+# stdin and stdout are shared with the caller: under `ssh host sudo bash -s`
+# stdin is this very script, and stdout carries the sentinel lines. So the
+# activation gets stdin from /dev/null (it cannot swallow the rest of this
+# script) and its stdout goes to stderr (its output, with or without a trailing
+# newline, can never fuse with a sentinel). Exit status is unaffected; set -e
+# stops here on failure.
+{
+  if [ "$action" != test ]; then
+    nix-env --profile /nix/var/nix/profiles/system --set "$closure"
+  fi
+  systemd-run --setenv=LOCALE_ARCHIVE --collect --no-ask-password --pipe --quiet \
+    --service-type=exec --unit=nixos-rebuild-switch-to-configuration \
+    "$closure/bin/switch-to-configuration" "$action"
+} </dev/null >&2
 
 printf 'ACTIVATE-NIXOS-DONE %s\n' "$nonce"

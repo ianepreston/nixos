@@ -128,6 +128,8 @@ class Harness(unittest.TestCase):
         s.write_text(
             "#!/usr/bin/env bash\n"
             'printf "ACTIVATED\\t%s\\n" "$*" >> "$STUB_LOG"\n'
+            '[ -z "${STUB_SWITCH_READS_STDIN-}" ] || cat > /dev/null\n'
+            '[ -z "${STUB_SWITCH_OUT-}" ] || printf "%s" "$STUB_SWITCH_OUT"\n'
             'exit "${STUB_SWITCH_RC:-0}"\n'
         )
         s.chmod(0o755)
@@ -298,6 +300,66 @@ class RemoteActivation(Harness):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("never confirmed", r.stderr)
         self.assertFalse(self.activated())
+
+    def sentinel_lines(self, r):
+        return [ln for ln in r.stdout.splitlines() if ln.startswith("ACTIVATE-NIXOS-")]
+
+    def test_activation_that_reads_stdin_cannot_swallow_the_final_marker(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", STUB_SWITCH_READS_STDIN=1
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.sentinel_lines(r)), 2, r.stdout)
+        self.assertTrue(self.activated())
+
+    def test_activation_output_without_newline_cannot_fuse_with_a_marker(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", STUB_SWITCH_OUT="partial line"
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.sentinel_lines(r)), 2, r.stdout)
+        self.assertNotIn("partial line", r.stdout)
+        self.assertIn("partial line", r.stderr)
+
+    def test_activation_failure_status_survives_the_redirects(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_SWITCH_RC=3)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("ACTIVATE-NIXOS-DONE", r.stdout)
+
+    def test_missing_closure_is_allowed_only_for_a_caller_verified_check(self):
+        gone = self.store / f"{HASH}-nixos-system-hpp-1-{VERSION}"
+        shutil.rmtree(gone)
+
+        def run(action, *extra):
+            return subprocess.run(
+                [
+                    "bash",
+                    str(self.target_script),
+                    "hpp-1",
+                    str(gone),
+                    action,
+                    "0" * 32,
+                    *extra,
+                ],
+                env=self.env,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+            )
+
+        self.assertNotEqual(run("check").returncode, 0)
+        self.assertNotEqual(run("switch", "caller-verified").returncode, 0)
+        self.assertEqual(run("check", "caller-verified").returncode, 0)
+
+    def test_helper_marks_remote_check_as_caller_verified(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", "--action", "check")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        bash_s = [x for x in self.lines("ssh") if "bash -s" in x[1]]
+        self.assertTrue(bash_s[0][1].endswith(" caller-verified"), bash_s)
+        self.log.write_text("")
+        self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+        bash_s = [x for x in self.lines("ssh") if "bash -s" in x[1]]
+        self.assertNotIn("caller-verified", bash_s[0][1])
 
     def test_check_action_activates_and_copies_nothing(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", "--action", "check")
@@ -480,39 +542,77 @@ class BuildHost(Harness):
         )
         self.assertFalse(self.activated())
 
-    def assert_refused_before_any_build(self, r):
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("same ControlPath", r.stderr)
-        self.assertEqual(self.copies(), [])
-        self.assertEqual([x for x in self.lines("ssh") if "-G" not in x[1].split()], [])
-        self.assertFalse(self.activated())
+    FORCED = ["-oControlMaster=no", "-oControlPath=none"]
 
-    def test_identical_explicit_controlpath_is_refused(self):
+    def split_rows(self):
+        """Every ssh and every nix copy that touches a host, with its options."""
+        rows = []
+        for r in self.lines("ssh"):
+            rows.append((r[0], r[1].split(), r[2]))
+        for r in self.lines("nix"):
+            if r[1].startswith("copy"):
+                rows.append((r[0], r[1].split(), r[2]))
+        return rows
+
+    def assert_isolated_everywhere(self, r):
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.split_rows()
+        # build ssh, derivation copy, pull, push, activation ssh: five legs
+        self.assertGreaterEqual(len(rows), 5, rows)
+        for cmd, argv, nixopts in rows:
+            if cmd == "ssh":
+                # forced options are the first -o options ssh sees (first wins)
+                opts = [a for a in argv if a.startswith("-o")]
+                self.assertEqual(opts[:2], self.FORCED, argv)
+            else:
+                self.assertTrue(
+                    nixopts.startswith(
+                        "NIX_SSHOPTS=[-oControlMaster=no -oControlPath=none"
+                    ),
+                    nixopts,
+                )
+        self.assertTrue(self.activated())
+
+    def test_every_split_host_connection_forces_no_multiplexing(self):
+        self.assert_isolated_everywhere(self.run_split())
+
+    def test_identical_controlpaths_are_overridden_not_compared(self):
         r = self.run_helper(
             "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1",
             "--target-ssh-opt=-oControlPath=/sock/SHARED", "--build-ssh-opt=-oControlPath=/sock/SHARED",
         )  # fmt: skip
-        self.assert_refused_before_any_build(r)
+        self.assert_isolated_everywhere(r)
 
-    def test_identical_ssh_config_controlpath_is_refused(self):
+    def test_aliased_and_ssh_config_controlpaths_cannot_survive(self):
         r = self.run_helper(
             "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1",
+            "--target-ssh-opt=-oControlPath=/tmp/shared.sock", "--build-ssh-opt=-oControlPath=/tmp/./shared.sock",
             STUB_SSH_CONTROLPATH="/home/u/.ssh/shared-master",
         )  # fmt: skip
-        self.assert_refused_before_any_build(r)
-        dry = self.run_helper(
-            "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1",
-            "--dry-run", STUB_SSH_CONTROLPATH="/home/u/.ssh/shared-master",
-        )  # fmt: skip
-        self.assertNotEqual(dry.returncode, 0)
+        self.assert_isolated_everywhere(r)
 
-    def test_multiplexing_disabled_on_both_is_allowed(self):
+    def test_controlpath_with_a_space_cannot_reach_ssh(self):
+        # whitespace in an option is refused outright, before anything runs
         r = self.run_helper(
             "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1",
-            "--target-ssh-opt=-oControlPath=none", "--build-ssh-opt=-oControlPath=none",
+            "--target-ssh-opt=-oControlPath=/tmp/a b", "--build-ssh-opt=-oControlPath=/tmp/a",
+        )  # fmt: skip
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.split_rows(), [])
+        self.assertFalse(self.activated())
+
+    def test_single_host_mode_leaves_multiplexing_to_the_caller(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for cmd, argv, _ in self.split_rows():
+            self.assertNotIn("-oControlPath=none", argv)
+
+    def test_dry_run_split_host_shows_forced_options(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1", "--dry-run",
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue(self.activated())
+        self.assertIn("-oControlMaster=no -oControlPath=none", r.stdout)
 
 
 class LocalActivation(Harness):
@@ -704,6 +804,40 @@ class TaskRouting(Harness):
                     self.assertEqual(
                         [x for x in self.lines() if x[0] in ("nix", "ssh", "sudo")], []
                     )
+
+    def test_inherited_activate_variables_cannot_redirect_or_change_the_action(self):
+        (self.repo / "src" / "nixos").mkdir(parents=True)
+        hostile = {
+            "ACTIVATE_HOST": "amos1", "ACTIVATE_DEST": "amos1", "ACTIVATE_ACTION": "switch",
+            "ACTIVATE_USER": "root", "ACTIVATE_PORT": "1", "ACTIVATE_LOCAL_SECRETS": "false",
+            "HOST": "amos1", "DEST": "amos1",
+        }  # fmt: skip
+        r = self.task("deploy:hpp-1", **hostile)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.copies()[0][1].split()[-2], "ssh-ng://ipreston@hpp-1")
+        self.assertEqual([x[1] for x in self.lines("ACTIVATED")], ["switch"])
+        self.assertFalse([x for x in self.lines() if "amos1" in "".join(x)])
+        # an inherited ACTIVATE_ACTION must not turn `check` into a switch
+        self.log.write_text("")
+        r = self.task("deploy:hpp-1", "ACTION=check", **hostile)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(self.activated())
+        r = self.task("rebuild:hpp-1", "ACTION=check", **hostile)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(self.activated())
+        r = self.task("rebuild", "ACTION=check", **hostile)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(self.activated())
+        self.log.write_text("")
+        r = self.task("bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", **hostile)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = self.lines("ssh")
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertTrue(
+                row[1].startswith("-p 22 -oForwardAgent=yes ipreston@192.0.2.9 ")
+            )
+        self.assertFalse([x for x in self.lines() if "amos1" in "".join(x)])
 
     def test_no_task_activates_without_the_helper(self):
         for f in [REPO / "Taskfile.yaml", *sorted((REPO / "taskfiles").glob("*.yaml"))]:  # fmt: skip

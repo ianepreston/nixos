@@ -44,8 +44,13 @@
 #
 # SSH options are per host and never shared: NIX_SSHOPTS from the environment is
 # discarded, and each nix copy sees only the options of the one host it talks to.
-# With --build-host, the two hosts' effective ControlPaths (`ssh -G`, after
-# ~/.ssh/config and the explicit options) must differ, or the run is refused.
+# With --build-host, every ssh connection to EITHER host (build, pull, push,
+# activate; including the transports nix copy spawns) is forced to
+# -oControlMaster=no -oControlPath=none, placed before any user option so it
+# wins (ssh keeps the first value it sees, and command-line -o beats
+# ~/.ssh/config, `Match` blocks included). Nothing is multiplexed, so no socket
+# can carry a command meant for one host to the other; isolation does not
+# depend on parsing or comparing socket paths.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -204,6 +209,14 @@ for o in ${build_opts[@]+"${build_opts[@]}"}; do check_ssh_opt build "$o"; done
 [ -z "$remote_flake" ] || [ -n "$dest" ] || die "--remote-flake needs --dest"
 [ -f "$activate_script" ] || die "missing $activate_script"
 
+# Split-host mode: forbid connection sharing outright. Forced options come first
+# so they take precedence over anything the caller or ssh_config supplies.
+if [ -n "$build_host" ]; then
+  no_mux=(-oControlMaster=no -oControlPath=none)
+  target_opts=("${no_mux[@]}" ${target_opts[@]+"${target_opts[@]}"})
+  build_opts=("${no_mux[@]}" ${build_opts[@]+"${build_opts[@]}"})
+fi
+
 # nix-secrets sibling checkout: worktrees live elsewhere, so ../nix-secrets from
 # the working directory is not reliable. Try the checkout's own parent, then the
 # parent of the main checkout the worktree was created from.
@@ -287,23 +300,6 @@ check_closure_hostname() {
   [ "$configured" = "$host" ] || die "refusing: closure is configured for host '$configured', expected '$host'"
 }
 
-effective_controlpath() { # effective_controlpath SSH-ARGS... DEST
-  local out
-  out=$(ssh -G "$@" 2>/dev/null </dev/null) || die "ssh -G failed for ${*: -1}"
-  awk '$1 == "controlpath" { print $2; found = 1 } END { if (!found) print "none" }' <<<"$out"
-}
-
-# Split-host mode: two hosts must never share one multiplexed connection, or a
-# command meant for one is carried to the other (AGENTS.md).
-check_distinct_sockets() {
-  local bcp tcp
-  bcp=$(effective_controlpath ${build_opts[@]+"${build_opts[@]}"} "$build_host")
-  tcp=$(effective_controlpath ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"} "$target")
-  if [ "$bcp" != none ] && [ "$bcp" = "$tcp" ]; then
-    die "refusing: build host and target resolve to the same ControlPath '$bcp'; give each its own -oControlPath or use -oControlPath=none"
-  fi
-}
-
 single_path() { # the helper's builds must yield exactly one store path
   [ "$(printf '%s\n' "$1" | grep -c .)" -eq 1 ] || die "expected exactly one store path, got: $1"
 }
@@ -316,7 +312,6 @@ if [ "$dry_run" = true ]; then
   check_name "$closure"
   configured=$(nix eval --raw "$flake#nixosConfigurations.$host.config.networking.hostName" ${override_args[@]+"${override_args[@]}"})
   [ "$configured" = "$host" ] || die "refusing: configuration is for host '$configured', expected '$host'"
-  [ -z "$build_host" ] || check_distinct_sockets
   printf 'plan: host=%s action=%s closure=%s\n' "$host" "$action" "$closure"
   if [ -z "$dest" ]; then
     printf 'plan: activate locally: sudo bash %s %s %s %s <nonce>\n' "$activate_script" "$host" "$closure" "$action"
@@ -334,7 +329,6 @@ if [ -n "$remote_flake" ]; then
   printf '[+] Building %s on %s (%s)\n' "$host" "$target" "$remote_flake" >&2
   closure=$(ssh_target "cd $remote_flake && nix build --no-link --print-out-paths .#$attr ${override_args[*]:-}")
 elif [ -n "$build_host" ]; then
-  check_distinct_sockets
   printf '[+] Building %s on %s\n' "$host" "$build_host" >&2
   drv=$(nix eval --raw "$flake#${attr}.drvPath" ${override_args[@]+"${override_args[@]}"})
   NIX_SSHOPTS=$(sshopts_string ${build_opts[@]+"${build_opts[@]}"}) nix copy --derivation --to "ssh-ng://$build_host" "$drv"
@@ -357,7 +351,7 @@ fi
 # --- 2. copy ------------------------------------------------------------------
 # Local activation needs no copy. A remote build host's closure was pulled to
 # this machine above and is pushed to the target here, as two separate
-# single-host commands with distinct sockets, so neither host's options (or
+# single-host commands with multiplexing disabled, so neither host's options (or
 # control socket) can reach the other. The identity-only `check` action copies
 # nothing to the target.
 if [ -n "$dest" ] && [ -z "$remote_flake" ] && [ "$action" != check ]; then
@@ -384,7 +378,11 @@ if [ -z "$dest" ]; then
   fi
 else
   printf '[+] Activating %s on %s (%s)\n' "$host" "$target" "$action" >&2
-  ssh_target "sudo bash -s -- $host $closure $action $nonce" <"$activate_script" | tee "$transcript" ||
+  # `check` copies nothing to the target; only then, and only for a closure this
+  # machine already verified locally, may it be absent there.
+  verified=""
+  [ "$action" != check ] || [ -n "$remote_flake" ] || verified=" caller-verified"
+  ssh_target "sudo bash -s -- $host $closure $action $nonce$verified" <"$activate_script" | tee "$transcript" ||
     die "activation of $host on $target failed (not retried); inspect the target before doing anything else"
 fi
 

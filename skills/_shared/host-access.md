@@ -115,7 +115,13 @@ requires:
 
 The target script prints two nonce-bearing sentinel lines; unless both come
 back, the run fails even if ssh exited 0 (so an ssh that never fed it the script
-cannot pass as success). No retries, no fallback host.
+cannot pass as success). The activation's own stdin is `/dev/null` and its
+stdout goes to stderr, so it can neither swallow the script nor fuse its output
+with a sentinel. No retries, no fallback host. The target `hostname` is checked
+after the copy (copy only needs the connection; the check runs in the same
+process as the switch). `task bootstrap:rebuild` always switches; use
+`scripts/activate-nixos.sh --remote-flake src/nixos --action check|test|boot`
+directly for another action.
 
 ```sh
 # from any checkout or worktree; nix-secrets is found portably (sibling of the
@@ -126,15 +132,17 @@ scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets            #
 ```
 
 `task deploy:hpp-1` is the same thing; `ACTION=check|test|boot` selects the
-action. Task values reach the shell only as quoted environment variables, and
-the helper validates host, action, user, port and destination.
+action. Task passes host and action as explicit `shellQuote`d arguments, never
+`env:` (an inherited `ACTIVATE_HOST` would override it), and the helper
+validates host, action, user, port and destination.
 
 SSH options are per host and explicit. The helper discards an inherited
 `NIX_SSHOPTS`; a separate `--build-host` gets only `--build-ssh-opt`s while the
 target gets only `--target-ssh-opt`s (the closure is pulled from the build host,
 then pushed to the target, as two single-host commands). With a build host, the
-effective `ControlPath` of each (`ssh -G`, after `~/.ssh/config`) must differ, or
-the run is refused — give each its own path or pass `-oControlPath=none`.
+every connection to either host (including the `nix copy` transports) is forced
+to `-oControlMaster=no -oControlPath=none`, ahead of any option you pass, so no
+socket can be shared whatever `~/.ssh/config` says.
 
 Each `--*-ssh-opt` is one whitespace-free token from an allowlist of connection
 settings: `-oKey=value` for `ForwardAgent`, `ControlPath`, `ControlMaster`,
@@ -143,8 +151,8 @@ settings: `-oKey=value` for `ForwardAgent`, `ControlPath`, `ControlMaster`,
 where stdin goes, or which config/socket is used (`-n`, `-N`, `-f`, `-W`, `-O`,
 `-S`, `-F`, `-l`, `RemoteCommand`, `ProxyCommand`, `User`, …) is rejected. Use
 `--port` and `--user` rather than `-p`/`-l`. The helper opens plain `ssh`
-connections, so an existing master from `~/.ssh/config` is reused; to pin one
-explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
+connections, so (single-host only) an existing master from `~/.ssh/config` is
+reused; to pin one explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
 --target-ssh-opt=-oControlMaster=no`.
 
 `system.autoUpgrade` is the one accepted exception: it activates without the
