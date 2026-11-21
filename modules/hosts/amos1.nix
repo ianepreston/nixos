@@ -108,9 +108,13 @@
           # the GPU's other job is Jellyfin's NVENC transcoding, and staying
           # cold until a request arrives is strictly better for that budget
           # than the pre-router service's load-at-start. Idle eviction is
-          # unchanged and still the mechanism that hands VRAM back mid-day
-          # — verified to still work in router mode, where a child drops
-          # from full residency to ~330 MiB after `sleepIdleSeconds`.
+          # the mechanism that hands VRAM back mid-day: a child drops from
+          # full residency to ~330 MiB after `sleepIdleSeconds` (verified
+          # in router mode 2026-09-02, and again 2026-11-20 after #1010:
+          # 6199 -> 191 MiB 404 s after one request). From 2026-09-05 the
+          # llm-metrics collector's per-minute /metrics read reset the idle
+          # clock and nothing ever slept; it now backs off from an idle
+          # model (hazard 4 in modules/apps/llm-metrics.nix).
           #
           # VRAM budget (8.0 GB, shared with Jellyfin's NVENC transcoding),
           # worst case of the two, which is the vision model:
@@ -192,8 +196,8 @@
             # of 67 playback sessions copied the video stream, one used
             # NVENC, and NVDEC ran 201 minutes, all thumbnail extraction. A
             # rare transcode that lands while a model is resident may fail.
-            # sleepIdleSeconds below is meant to hand the card back, but the
-            # llm-metrics scrape currently keeps every model awake (#1010). The
+            # sleepIdleSeconds below hands the card back once a model goes
+            # idle (until #1010 the llm-metrics scrape kept it awake). The
             # "set by Jellyfin" ceilings in the model comments above predate
             # this and are open for re-evaluation.
             evaluation = {
