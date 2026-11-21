@@ -42,9 +42,12 @@ class MatrixTest(unittest.TestCase):
         problems = self.run_eval(files, {"a": {"x.yaml"}, "b": set()})
         self.assertEqual(["b over-granted x.yaml"], problems)
 
-    def test_shared_yaml_over_grant_is_excepted_until_retired(self):
-        files = {"shared.yaml": {"age1op", "age1a", "age1b"}}
-        self.assertEqual([], self.run_eval(files, {"a": set(), "b": set()}))
+    def test_a_revived_shared_yaml_is_no_longer_excepted(self):
+        # #507 retired shared.yaml; a file by that name is an over-grant
+        # like any other.
+        files = {"shared.yaml": {"age1op", "age1a"}}
+        problems = self.run_eval(files, {"a": set(), "b": set()})
+        self.assertEqual(["a over-granted shared.yaml"], problems)
 
     def test_reading_a_file_that_does_not_exist_fails(self):
         problems = self.run_eval({}, {"a": {"gone.yaml"}, "b": set()})

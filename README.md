@@ -1834,7 +1834,7 @@ task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebui
 1. Derives the host's age key from its SSH host key
 2. Adds the key to `nix-secrets/.sops.yaml` (host anchor + creation rules)
 3. Creates `nix-secrets/sops/newhostname.yaml` with a generated SSH key
-4. Re-encrypts shared secrets for the new host
+4. Grants the host every cross-host sops file its config reads, and rekeys them
 5. Commits nix-secrets (locally — not pushed)
 6. Prints the host's machine pubkey — **add it to GitHub as a deploy key** for
    the private `nix-secrets` input, or `nixos-upgrade` can't fetch it
