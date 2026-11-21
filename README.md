@@ -1687,7 +1687,11 @@ which refuses unless the machine's hostname, the closure name
 (`/nix/store/<hash>-nixos-system-<host>-<version>`) and the closure's own
 `etc/hostname` all equal `<host>`. `ACTION=boot|test|check` changes the action
 (`bootstrap:rebuild` always switches). The target hostname is checked after the
-copy, in the same process as the activation.
+copy, in the same process as the activation. With a separate build host every
+ssh leg (including `nix copy`) is forced to `ControlMaster=no`,
+`ControlPath=none`, `ProxyJump=none` and `ProxyCommand=none`, and explicit
+`-J`/`ProxyJump` options are rejected (a jump client would not inherit them);
+single-host deploys still accept `-J`.
 The one accepted exception is `system.autoUpgrade`
 (`modules/system/auto-rebuild.nix`): it only ever activates the local host from
 `main`, so there is no remote target and no cross-host identity risk.

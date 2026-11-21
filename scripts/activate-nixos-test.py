@@ -172,8 +172,9 @@ class RemoteActivation(Harness):
         order = [row[0] + ":" + row[1].split(" ")[0] for row in self.lines()]
         self.assertEqual(
             [o for o in order if o.split(":")[0] != "hostname"][:3],
-            ["nix:build", "nix:copy", "ssh:ipreston@hpp-1"],
+            ["nix:build", "nix:copy", "ssh:-T"],
         )
+        self.assertTrue(self.lines("ssh")[0][1].startswith("-T ipreston@hpp-1 "))
         self.assertTrue(self.activated())
         self.assertEqual(self.lines("nix-env")[0][1].split()[-1], str(self.closure))
         # the requested action is what switch-to-configuration receives
@@ -413,7 +414,7 @@ class RemoteActivation(Harness):
         self.assertIn("ssh-ng://ipreston@10.0.0.5", cp[1])
         self.assertTrue(
             self.lines("ssh")[0][1].startswith(
-                "-p 2222 -oForwardAgent=yes ipreston@10.0.0.5"
+                "-p 2222 -oForwardAgent=yes -T ipreston@10.0.0.5"
             )
         )
 
@@ -424,6 +425,7 @@ class RemoteActivation(Harness):
             "-oProxyCommand=nc", "-oUser=root", "-oHostname=amos1",
             "-oStdinNull=yes", "-oPermitLocalCommand=yes", "-o ControlPath=/x",
             "-oControlPath=/a /b", "-oForwardAgent=$(id)", "-oFoo=1",
+            "-tt", "-oRequestTTY=force", "-orequesttty=yes",
         ]  # fmt: skip
         for opt in bad:
             for flag in ("--target-ssh-opt", "--build-ssh-opt"):
@@ -443,6 +445,36 @@ class RemoteActivation(Harness):
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.copies()[0][2], "NIX_SSHOPTS=[" + " ".join(opts) + "]")
+
+    def test_single_host_mode_accepts_jump_hosts(self):
+        for opt in ("-Jjump.example", "-oProxyJump=jump.example"):
+            with self.subTest(opt=opt):
+                self.log.write_text("")
+                r = self.run_helper(
+                    "--host", "hpp-1", "--dest", "hpp-1", f"--target-ssh-opt={opt}"
+                )  # fmt: skip
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(opt, self.lines("ssh")[0][1].split())
+                self.assertTrue(self.activated())
+
+    def test_target_ssh_never_allocates_a_tty(self):
+        # -T on every target ssh, after the caller's options, so neither
+        # `RequestTTY force` in ssh_config nor an option can re-enable a tty
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--target-ssh-opt=-oForwardAgent=yes"
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ssh = self.lines("ssh")
+        self.assertTrue(ssh)
+        for row in ssh:
+            argv = row[1].split()
+            dest = argv.index("ipreston@hpp-1")
+            self.assertEqual(argv[dest - 1], "-T", argv)
+            self.assertFalse(
+                [a for a in argv[:dest] if a.startswith("-t")]
+                or [a for a in argv[:dest] if "requesttty" in a.lower()],
+                argv,
+            )
 
     def test_remote_flake_builds_and_activates_on_the_same_target_only(self):
         (self.tmp / "src" / "nixos").mkdir(parents=True)
@@ -542,7 +574,10 @@ class BuildHost(Harness):
         )
         self.assertFalse(self.activated())
 
-    FORCED = ["-oControlMaster=no", "-oControlPath=none"]
+    FORCED = [
+        "-oControlMaster=no", "-oControlPath=none",
+        "-oProxyJump=none", "-oProxyCommand=none",
+    ]  # fmt: skip
 
     def split_rows(self):
         """Every ssh and every nix copy that touches a host, with its options."""
@@ -563,12 +598,10 @@ class BuildHost(Harness):
             if cmd == "ssh":
                 # forced options are the first -o options ssh sees (first wins)
                 opts = [a for a in argv if a.startswith("-o")]
-                self.assertEqual(opts[:2], self.FORCED, argv)
+                self.assertEqual(opts[:4], self.FORCED, argv)
             else:
                 self.assertTrue(
-                    nixopts.startswith(
-                        "NIX_SSHOPTS=[-oControlMaster=no -oControlPath=none"
-                    ),
+                    nixopts.startswith("NIX_SSHOPTS=[" + " ".join(self.FORCED)),
                     nixopts,
                 )
         self.assertTrue(self.activated())
@@ -591,6 +624,35 @@ class BuildHost(Harness):
         )  # fmt: skip
         self.assert_isolated_everywhere(r)
 
+    def test_explicit_jump_hosts_are_refused_in_split_mode(self):
+        jumps = [
+            "-Jjump.example",
+            "-oProxyJump=jump.example",
+            "-oproxyjump=j",
+            "-JNone",
+        ]
+        for opt in jumps:
+            for flag in ("--target-ssh-opt", "--build-ssh-opt"):
+                with self.subTest(opt=opt, flag=flag):
+                    self.log.write_text("")
+                    r = self.run_helper(
+                        "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1",
+                        f"{flag}={opt}",
+                    )  # fmt: skip
+                    self.assertNotEqual(r.returncode, 0, opt)
+                    self.assertIn("jump host", r.stderr)
+                    self.assertEqual(self.lines(), [], opt)
+                    self.assertFalse(self.activated())
+
+    def test_config_supplied_jumps_are_disabled_on_every_split_leg(self):
+        # ProxyJump/ProxyCommand from ~/.ssh/config lose to the forced
+        # command-line =none values on every leg, nix copy transports included
+        r = self.run_split()
+        self.assert_isolated_everywhere(r)
+        for cmd, argv, nixopts in self.split_rows():
+            text = " ".join(argv) if cmd == "ssh" else nixopts
+            self.assertIn("-oProxyJump=none -oProxyCommand=none", text)
+
     def test_controlpath_with_a_space_cannot_reach_ssh(self):
         # whitespace in an option is refused outright, before anything runs
         r = self.run_helper(
@@ -612,7 +674,7 @@ class BuildHost(Harness):
             "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1", "--dry-run",
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("-oControlMaster=no -oControlPath=none", r.stdout)
+        self.assertIn(" ".join(self.FORCED), r.stdout)
 
 
 class LocalActivation(Harness):
@@ -766,7 +828,7 @@ class TaskRouting(Harness):
         self.assertEqual(len(ssh), 2)
         for row in ssh:
             self.assertTrue(
-                row[1].startswith("-p 2200 -oForwardAgent=yes ipreston@192.0.2.9 ")
+                row[1].startswith("-p 2200 -oForwardAgent=yes -T ipreston@192.0.2.9 ")
             )
         self.assertIn("--override-input nix-secrets path:../nix-secrets", ssh[0][1])
         self.assertTrue(self.activated())
@@ -835,7 +897,7 @@ class TaskRouting(Harness):
         self.assertTrue(rows)
         for row in rows:
             self.assertTrue(
-                row[1].startswith("-p 22 -oForwardAgent=yes ipreston@192.0.2.9 ")
+                row[1].startswith("-p 22 -oForwardAgent=yes -T ipreston@192.0.2.9 ")
             )
         self.assertFalse([x for x in self.lines() if "amos1" in "".join(x)])
 

@@ -139,10 +139,16 @@ validates host, action, user, port and destination.
 SSH options are per host and explicit. The helper discards an inherited
 `NIX_SSHOPTS`; a separate `--build-host` gets only `--build-ssh-opt`s while the
 target gets only `--target-ssh-opt`s (the closure is pulled from the build host,
-then pushed to the target, as two single-host commands). With a build host, the
+then pushed to the target, as two single-host commands). With a build host,
 every connection to either host (including the `nix copy` transports) is forced
-to `-oControlMaster=no -oControlPath=none`, ahead of any option you pass, so no
-socket can be shared whatever `~/.ssh/config` says.
+to `-oControlMaster=no -oControlPath=none -oProxyJump=none -oProxyCommand=none`,
+ahead of any option you pass, so no socket can be shared whatever
+`~/.ssh/config` says. A jump host is a separate ssh client that never sees those
+options, so with `--build-host` an explicit `-J`/`-oProxyJump` is rejected and
+any jump or proxy from `~/.ssh/config` is disabled; single-host mode still
+accepts `-J`/`-oProxyJump`. Every target ssh also passes `-T`, so a
+`RequestTTY force` in client config cannot merge stderr into the activation
+transcript (`-t`/`-tt`/`RequestTTY` are not allowlisted).
 
 Each `--*-ssh-opt` is one whitespace-free token from an allowlist of connection
 settings: `-oKey=value` for `ForwardAgent`, `ControlPath`, `ControlMaster`,

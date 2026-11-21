@@ -50,7 +50,15 @@
 # wins (ssh keeps the first value it sees, and command-line -o beats
 # ~/.ssh/config, `Match` blocks included). Nothing is multiplexed, so no socket
 # can carry a command meant for one host to the other; isolation does not
-# depend on parsing or comparing socket paths.
+# depend on parsing or comparing socket paths. A jump host would be a separate
+# ssh client that never sees those forced options (and could reuse a shared
+# master), so split-host mode also rejects -J/-oProxyJump and forces
+# -oProxyJump=none -oProxyCommand=none, overriding any jump or proxy from
+# ~/.ssh/config. Single-host mode keeps -J/-oProxyJump allowed.
+#
+# Every ssh to the target passes -T, so `RequestTTY force` in client config
+# cannot allocate a tty (merging stderr into stdout, adding CRs); -t, -tt and
+# -oRequestTTY are not in the option allowlist.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -210,9 +218,25 @@ for o in ${build_opts[@]+"${build_opts[@]}"}; do check_ssh_opt build "$o"; done
 [ -f "$activate_script" ] || die "missing $activate_script"
 
 # Split-host mode: forbid connection sharing outright. Forced options come first
-# so they take precedence over anything the caller or ssh_config supplies.
+# so they take precedence over anything the caller or ssh_config supplies. A
+# jump host is its own ssh client that the forced options never reach, so
+# explicit jumps are refused and config-supplied ones are disabled.
+reject_jump() { # reject_jump WHICH OPTION
+  local key
+  case $1 in -J*) die "$2 ssh option '$1' is not allowed with --build-host: a jump host's ssh client would not inherit ControlMaster=no/ControlPath=none" ;; esac
+  case $1 in
+    -o*=*)
+      key=${1#-o}
+      key=$(printf '%s' "${key%%=*}" | tr '[:upper:]' '[:lower:]')
+      [ "$key" != proxyjump ] ||
+        die "$2 ssh option '$1' is not allowed with --build-host: a jump host's ssh client would not inherit ControlMaster=no/ControlPath=none"
+      ;;
+  esac
+}
 if [ -n "$build_host" ]; then
-  no_mux=(-oControlMaster=no -oControlPath=none)
+  for o in ${target_opts[@]+"${target_opts[@]}"}; do reject_jump "$o" target; done
+  for o in ${build_opts[@]+"${build_opts[@]}"}; do reject_jump "$o" build; done
+  no_mux=(-oControlMaster=no -oControlPath=none -oProxyJump=none -oProxyCommand=none)
   target_opts=("${no_mux[@]}" ${target_opts[@]+"${target_opts[@]}"})
   build_opts=("${no_mux[@]}" ${build_opts[@]+"${build_opts[@]}"})
 fi
@@ -275,7 +299,7 @@ target_nix_sshopts() {
 
 ssh_target() {
   # shellcheck disable=SC2029 # client-side expansion is intended; values are validated by safe()
-  ssh ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"} "$target" "$@"
+  ssh ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"} -T "$target" "$@"
 }
 
 ssh_build() {
@@ -318,7 +342,7 @@ if [ "$dry_run" = true ]; then
   else
     [ -z "$build_host" ] || printf 'plan: build on %s, pull to this machine, then copy\n' "$build_host"
     printf 'plan: nix copy --to ssh-ng://%s (NIX_SSHOPTS=%s)\n' "$target" "$(target_nix_sshopts)"
-    printf 'plan: ssh %s sudo bash -s -- %s %s %s <nonce>  < activate.sh\n' "$target" "$host" "$closure" "$action"
+    printf 'plan: ssh -T %s sudo bash -s -- %s %s %s <nonce>  < activate.sh\n' "$target" "$host" "$closure" "$action"
   fi
   exit 0
 fi
