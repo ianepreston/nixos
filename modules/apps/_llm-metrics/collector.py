@@ -14,10 +14,20 @@ API_KEY_FILE = os.environ["API_KEY_FILE"]
 # modules/apps/llm-metrics.nix.
 STATE_FILE = os.path.join(os.environ["STATE_DIRECTORY"], "state.json")
 
-# How long past its own --sleep-idle-seconds a backed-off
-# child may stay `loaded` before that can only mean real
-# traffic is keeping it awake, so a read is safe again: one
-# timer tick for the read that paused it, plus slack.
+# How long a backed-off child may stay `loaded` before that
+# can only mean real traffic is keeping it awake, so a read
+# is safe again: twice its own --sleep-idle-seconds, plus
+# one timer tick and slack.
+#
+# Twice, not once, because terra is polled by two collectors
+# (amos1 and hpp-1) with no shared state, and each one's
+# re-read looks like traffic to the other. A re-read at r
+# keeps the child up until r + idle; the other collector
+# paused less than idle before r, so with a window over
+# 2 x idle its own check falls after the child has already
+# slept. With a 1 x idle window the two alternated forever
+# once their pauses were more than WAKE_MARGIN apart
+# (observed on terra while validating #1010).
 WAKE_MARGIN = 90
 
 # Long enough to ride out a busy child answering a metrics
@@ -250,7 +260,7 @@ for server in sorted(ENDPOINTS):
         # up when it next wakes: the totals live in
         # server_context_impl and survive sleep/wake.
         #
-        # A child still `loaded` well past its own idle
+        # A child still `loaded` well past twice its idle
         # timeout since the pause can only be awake because
         # clients are using it, so it is read again then:
         # that read costs no VRAM the traffic wasn't already
@@ -265,7 +275,7 @@ for server in sorted(ENDPOINTS):
         overdue = (
             paused_at is not None
             and idle is not None
-            and now - paused_at > idle + WAKE_MARGIN
+            and now - paused_at > 2 * idle + WAKE_MARGIN
         )
 
         if same_child and paused_at is not None and not overdue:

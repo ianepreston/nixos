@@ -50,10 +50,12 @@
 # the router reports it asleep, replaced (a new child port in
 # `status.args`), or gone. A model therefore sleeps at most about two
 # timer ticks later than `sleepIdleSeconds` after its last request. One
-# exception: a backed-off child still `loaded` more than its own
+# exception: a backed-off child still `loaded` more than twice its own
 # `--sleep-idle-seconds` + 90 s after the pause can only be awake
 # because clients keep using it, so it is read again then — otherwise a
-# steadily busy model's counters would freeze until it finally slept. The
+# steadily busy model's counters would freeze until it finally slept.
+# (Twice, so that terra's two collectors can't keep each other's
+# re-reads going; see WAKE_MARGIN in the collector.) The
 # per-model memory this needs lives in the unit's StateDirectory; it is
 # disposable (losing it costs one or two extra reads), so it is neither
 # preserved nor backed up.
