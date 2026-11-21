@@ -1,0 +1,76 @@
+# Omnigent delegation adapter
+
+Use this only when running the supervisor in Omnigent. Discover the current
+tool schemas; these names describe capabilities, not a promise that a
+particular version has every argument or harness.
+
+Prefer one Polly supervisor running the canonical factory workflow, with
+direct implementation and review workers. Polly's generic fanout defaults
+are not the factory's limits: a per-turn dispatch cap does not cap concurrent
+descendants. Its worktree/registry conventions must not create a second owner
+or bypass the shared reservations. Repo worktrees, metadata/PII rules and
+authorization remain authoritative.
+
+## Discover and launch
+
+- `sys_session_get_info({})` reports the bound host's `configured_harnesses`.
+  A harness is ready only when its value is `true`; missing or unknown values
+  need a bounded preflight. `sys_agent_list` identifies registered agents and
+  host availability. Do not dispatch a worker marked unavailable.
+- `sys_list_models` reports the models available in the calling agent's
+  context; a supervisor's own model list does not prove a different worker's
+  model is usable. Use worker defaults unless a suitable override is verified.
+- Reserve a worker slot before dispatch. For an existing registered agent,
+  `sys_session_create(agent_id=…, title=…)` creates an idle child when the
+  initial message is omitted. Persist its returned `conversation_id`, then
+  drive that child with `sys_session_send(session_id=…, args=…)`. A runtime
+  exposing declared named workers may instead support named dispatch; follow
+  its advertised schema and still reserve before launch.
+- Map the packet's role to an accepted runtime `purpose` when required.
+  Polly's purpose guard accepts `implement`, `review`, `explore` and `search`,
+  not `validate`. A validator doing read-only probes can use `explore`; one
+  performing an explicitly authorized activation needs a bounded `implement`
+  packet that permits only that validation action and excludes source edits.
+- Use default child placement for parent/child supervision. `same_host` and
+  `managed` placements create independent sessions whose replies are not
+  forwarded to the parent; do not accidentally select them for this workflow.
+  Managed placement also needs a configured provider and approved profile.
+- Supply the full task packet with an absolute worktree path and require the
+  worker to confirm that cwd. Siblings can share a filesystem; sessions do not
+  create Git worktree isolation automatically. Do not assume repo skills were
+  inherited: pass the canonical paths and ask the worker to read them.
+
+If using an outer supervisor with Polly as an issue-level child, the child
+coordinator itself and every descendant consume worker slots. With two slots,
+that leaves one worker below Polly at a time. Require shared claims or choose
+a direct coder instead. Generic Polly workers may use approval bypass and
+have access to the caller's credentials; a prompt prohibition is not a
+technical deployment gate. Do not claim sandboxing or permission enforcement.
+
+## Collect, interrupt and resume
+
+Omnigent child completion may wake the parent with an inbox notice; collect
+with `sys_read_inbox`. `sys_session_get_info` exposes lifecycle state and
+pending approval prompts; `sys_session_get_history` supplies recent output.
+Inspect those when a result is empty, unclear or waiting, and retain the
+recorded handle so a supervisor restart can reconcile the child. Do not infer
+that every harness forwards questions, supports human takeover, or resumes
+the parent identically; verify the selected pair in the first pilot.
+
+Forward a genuine question to the human with the issue and resume condition.
+Do not answer a child's protected-action approval on the user's behalf.
+Where human takeover is available, ask the user to open the named child;
+record the resulting decision/evidence back in the supervisor state.
+
+Continue the same child by its session ID, reserving a worker slot again if
+the earlier turn had stopped and released it. Use `sys_cancel_task` only with
+the cancellation identifier documented/returned by that runtime. A request
+to cancel is not proof of termination: some harnesses are best-effort. Keep
+its reservation until runtime evidence confirms it has stopped. A boot
+failure removes that worker from this run's roster rather than triggering
+repeated dispatch to the same unavailable harness.
+
+Completion wakes cover children, not arbitrary external events. If only a
+human answer, hardware change or upstream release can unblock work, leave a
+durable waiting state and an explicit resume instruction. This workflow does
+not install timers, recurring tasks, change model providers or grant access.
