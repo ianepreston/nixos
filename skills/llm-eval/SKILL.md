@@ -244,15 +244,19 @@ worktree (the `resolve-issue` commit, push and PR conventions apply):
 - **peer:** rename `-next` to a lasting alias the user picks (for example
   `text-nemotron`).
 - **reject / defer:** no PR. Preserve the worktree and branch for the user's
-  decision. Let autoUpgrade revert the host, or redeploy `main` if the user
-  wants it gone now. Deploying is ask-first again.
+  decision, and report its path and state using the shared **Commit, PR,
+  teardown** preservation procedure in `resolve-issue`. Let autoUpgrade revert
+  the host, or redeploy `main` if the user wants it gone now. Deploying is
+  ask-first again.
 
-For published adopt/peer work, follow `resolve-issue` section 8 for cleanup:
-require exact remote-HEAD equality, check tracked/untracked status and use
-ordinary `git worktree remove`. If publication is unverified, unexpected work
-remains or removal refuses, preserve the worktree and report its path and
-state without publishing private contents or sensitive paths. Never
-automatically stage, commit, delete or relocate unknown work to clean up.
+For published adopt/peer work, follow **Commit, PR, teardown** in
+`resolve-issue`: verify the checked-out branch and exact remote/local HEAD
+equality, check tracked, untracked and ignored files, and use ordinary
+`git worktree remove`. Any status output beyond that procedure's explicit
+generated-file allowance, failed verification or refused removal means
+preserve the worktree and report its path and state without publishing private
+contents or sensitive paths. Never automatically stage, commit, delete or
+relocate unknown work to clean up.
 
 Put `Closes #<N>` in the PR when this is the last target, and run
 `task llm:eval:audit` on the PR body as well. After the merge and deploy,

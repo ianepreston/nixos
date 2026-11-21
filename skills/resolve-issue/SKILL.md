@@ -175,31 +175,41 @@ is stale, so trust `gh api`, not `git branch -vv`:
 
 ```sh
 gh pr view <PR#> --json url,headRefName,state
+git -C "<worktree-path>" symbolic-ref --short HEAD
 git -C "<worktree-path>" rev-parse HEAD
 gh api repos/ianepreston/nixos/branches/<branch> --jq .commit.sha
 ```
 
+Require the symbolic-ref query to succeed and return exactly `<branch>`.
+A detached HEAD or another checked-out branch means publication is unverified,
+even if the SHAs match: preserve the worktree and report that state.
 Require both SHA queries to succeed and return exactly the same nonempty SHA.
 A missing branch, failed query or mismatch means publication is unverified:
 preserve the worktree and report that state. A matching remote HEAD proves
 only that the commits were pushed; it says nothing about uncommitted files.
 
-Before removal, check the worktree for tracked edits and untracked files:
+Before removal, check the worktree for tracked, untracked and ignored files:
 
 ```sh
-git -C "<worktree-path>" status --porcelain --untracked-files=all
+git -C "<worktree-path>" status --porcelain --untracked-files=all --ignored
 ```
 
-If this fails or reports any unexpected changes, preserve the worktree.
+If the status check fails, preserve the worktree. Any output other than this
+explicit allowance means preserve: `!! .pre-commit-config.yaml`, only after
+confirming it is the unchanged, regenerable generated symlink created by the
+dev-shell setup above. An unverified file or replacement symlink at that path
+gets no allowance; neither do other ignored files or directories.
+
 Only after publication is verified and the status check succeeds with no
-remaining changes, run ordinary `git worktree remove "<worktree-path>"`
-from outside that worktree. If removal refuses, preserve it; never retry with
-force or delete files to make removal succeed.
+output beyond that allowance, run ordinary
+`git worktree remove "<worktree-path>"` from outside that worktree. If removal
+refuses, preserve it; never retry with force or delete files to make removal
+succeed.
 
 For any preserved worktree, report its path, the verification/removal failure
-or remaining tracked/untracked state, without publishing file contents or
-sensitive paths. Let the user decide how to handle it. Never automatically
-stage, commit, delete or relocate unknown work for cleanup.
+or remaining tracked, untracked and ignored state, without publishing file
+contents or sensitive paths. Let the user decide how to handle it. Never
+automatically stage, commit, delete or relocate unknown work for cleanup.
 
 Report back with the PR URL, the design calls the user made, anything left
 unvalidated, and any follow-up issues filed.
