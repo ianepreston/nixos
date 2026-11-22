@@ -63,18 +63,26 @@ Everything the app owns lives in this one file (or a private
 
 ## 5. Validate
 
-1. `task check`.
-2. Deploy to hpp-1 with the identity checks from `AGENTS.md` (from an agent
-   session see [skills/_shared/host-access.md](../_shared/host-access.md)).
-3. On the host: unit active, caddy route answers, SSO login works, the
-   `myAppState` directory exists with the right owner. Check the recovery
-   entry with a read-only eval —
-   `nix eval --json .#nixosConfigurations.hpp-1.config.myRecovery.manifest | jq .<app>`.
-   Never run `task recovery:app` to test it; that performs a real restore.
+1. Run `task check` and verify the app's recovery entry with a read-only eval.
+   Replace `<app>` with its name in
+   `nix eval --json .#nixosConfigurations.hpp-1.config.myRecovery.manifest | jq -e --arg app '<app>' '.[$app]'`.
+   Never run `task recovery:app` to test it. That performs a real restore.
+2. Use `task ssh:preflight HOST=hpp-1` for the standard deployment, or the
+   helper with matching custom options. See
+   [host-access](../_shared/host-access.md) for bounded access checks and operator
+   handoff. With host-specific authorization and working transport, deploy
+   with `task deploy:hpp-1`, which enforces the identity checks in `AGENTS.md`.
+3. Check that the unit is active, the Caddy route answers, SSO login works,
+   and the `myAppState` directory exists with the right owner.
 4. Note anything that needed manual first-run setup (admin bootstrap, library
-   creation) in the module header — it'll be needed again on amos1.
+   creation) in the module header for later use on `amos1`.
+
+If access is unavailable, continue independent implementation and local
+checks. Defer the deploy and on-host checks until their prerequisites are
+met, and keep them required before production rollout.
 
 ## 6. Hand off
 
-Report what was wired, what was validated, and any manual steps outstanding.
-Commit / PR only when asked.
+Report what was wired, which checks passed, and any failed or deferred
+checks. For each deferral, include the unmet prerequisite and the commands or
+manual steps still needed. Commit / PR only when asked.

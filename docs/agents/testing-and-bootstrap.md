@@ -60,5 +60,5 @@ auto-upgrade reads the lock from the GitHub flake, which can differ from your
 local checkout), and `LOCAL_SECRETS=true task deploy:<host>` opts into the
 sibling checkout.
 
-Deploying from an agent session (no tty for FIDO2): see
-[skills/_shared/host-access.md](../../skills/_shared/host-access.md).
+For deployment access checks and operator handoff, see the
+[host access preflight](../../skills/_shared/host-access.md#host-access-preflight).

@@ -8,10 +8,8 @@ description: Take a GitHub issue number in ianepreston/nixos from read through m
 Argument: one issue number (`631`, `#631`, or a full issue URL). If none was
 given, ask for it — do not guess from recent activity.
 
-**Read `skills/_shared/host-access.md` first.** It carries the fleet
-roles, the permission boundary, and the ssh/git recipes this skill depends on —
-most of the commands below have a plausible form that hangs forever instead of
-failing.
+**Read `skills/_shared/host-access.md` first.** It covers the fleet roles,
+authorization, bounded SSH probes, and Git transport fallbacks.
 
 ## 1. Read the issue
 
@@ -34,14 +32,22 @@ stop rather than manufacturing a diff.
 
 ## 2. Preflight
 
-Work out which systems the change will need to *validate* against, then prove
-you can reach them before writing code. A server-app / module / blueprint change
-validates on `hpp-1` (dev). Workstation-only changes (`modules/programs/*`,
-`luna`/`terra` config) validate by build, not by switch.
+Identify which validation can run locally and which needs a live host.
+Server-app, module, and blueprint changes normally need live validation on
+`hpp-1` (dev). Workstation-only changes (`modules/programs/*` and
+`luna`/`terra` config) validate by build.
 
-Check `gh auth status`, and check the ssh master for every host you will need —
-per host-access, a missing master only shows up as a hang at deploy time, so
-get it opened now rather than after a 20-minute build.
+If live validation calls for activating `hpp-1`, request authorization for
+the named host and action now unless the user already granted it. A missing
+reply leaves activation and the checks that depend on it deferred. Continue
+independent work while waiting.
+
+Check `gh auth status --hostname github.com` for GitHub work. For each
+required live stage, use the relevant bounded SSH or transport preflight from
+host-access. This can surface missing access before a dependent build. If the
+runner lacks access, record the unmet prerequisite and defer the dependent
+stages. Continue inspection, implementation, and local checks that the runner
+can support. Ask for operator action only for work that depends on it.
 
 If the issue needs secrets that don't exist yet, note it here and raise it in
 Phase 3: `task secrets:*` is ask-first.
@@ -52,7 +58,7 @@ Always a worktree, even when the main checkout looks idle — the user routinely
 runs concurrent sessions against this repo and `git switch` in the shared
 checkout yanks the tree out from under them.
 
-Refresh `origin/main` first (the https fetch in host-access; the ssh one hangs),
+Refresh `origin/main` using the available Git transport (see host-access),
 then create a Git worktree on a temporary or runner-configured path with a name
 derived from the intended branch (`fix/valheim-joincode-stale` →
 `fix-valheim-joincode-stale`). Use `git worktree add -b <branch>
@@ -72,10 +78,9 @@ Two worktree gotchas:
   `PRE_COMMIT_ALLOW_NO_CONFIG=1`: it papers over the missing config and can
   make the local hook a no-op. `task check` remains the full pre-push gate.
 - `task deploy:*` / `task rebuild` resolve `nix-secrets` from `flake.lock`, so
-  no sibling checkout is needed. `LOCAL_SECRETS=true` adds
-  `scripts/activate-nixos.sh --local-secrets`, which finds `../nix-secrets` from
-  a worktree via the main checkout (`NIX_SECRETS_PATH` if yours lives
-  elsewhere).
+  no sibling checkout is needed. For unpublished secrets work,
+  `LOCAL_SECRETS=true` enables the helper's local checkout lookup. See
+  host-access for worktree resolution and `NIX_SECRETS_PATH`.
 
 ## 4. Implement
 
@@ -111,20 +116,22 @@ Repo rules that bite most often:
 
 ## 5. Validate
 
-The permission boundary is in host-access. For this skill the shape of it is:
-`task check` and host builds are free, `nixos-rebuild switch` against **hpp-1**
-is free, and everything touching amos1, this workstation's own configuration,
-or `../nix-secrets` asks first.
+Run `task check` and the applicable local builds or tests. This can proceed
+while live validation is deferred, subject to each check's own prerequisites.
 
-Deploy with `scripts/activate-nixos.sh` (or `task deploy:hpp-1`, the same
-helper); it asserts the target hostname and closure name in the activation
-chain itself. See host-access for `--dry-run`, `--action check` and per-host
-ssh options. Don't pipe the activation.
+For live validation, follow the host-access authorization and preflight steps.
+Once access and host-specific activation authorization are established, use
+`scripts/activate-nixos.sh` or `task deploy:hpp-1`. The helper asserts the
+target hostname and closure identity in the activation chain. See host-access
+for `--dry-run`, `--action check` and per-host SSH options. Don't pipe the
+activation. If it errors or the target stops answering, stop and report without
+retrying.
 
-Then actually exercise the change on the target — `systemctl status`,
-`journalctl -u`, curl the endpoint, read the metric — rather than treating a
-green switch as proof. host-access has the journal and VictoriaMetrics recipes.
-Record what you ran; it becomes the PR's validation section.
+Exercise the change on the target after a successful activation. Check the
+unit status, journal, endpoint, or metric the issue requires. Record each
+check's command and outcome. For each deferred check, record the prerequisite
+and what the user still needs to run, including the expected evidence.
+Only checks that ran successfully count as passes.
 
 ## 6. Ancillary sweep
 
@@ -155,8 +162,8 @@ Commit in the worktree normally, after the dev-shell setup above, with a subject
 in the house style (`<area>: <imperative>`, e.g. `valheim: publish a player-count
 gauge from the notifier roster`) and the session's attribution footer.
 
-Push with the `gh`-credential-helper invocation from host-access (plain `git
-push` hangs, and the https URL is rewritten back to ssh). Then `gh pr create`.
+Push the task branch with a working Git transport. See host-access for scoped
+fallbacks if the configured transport is unavailable. Then `gh pr create`.
 PR bodies here are substantial — match the repo's existing ones (`gh pr list
 --state merged --limit 3 --json body` if you need a model):
 
@@ -167,8 +174,9 @@ PR bodies here are substantial — match the repo's existing ones (`gh pr list
   if they chose it in Phase 4.
 - `## What it does not do` — scope the issue explicitly excluded.
 - Drive-by / ancillary changes from Phase 6.
-- `## Validation` — what you ran and what it showed. A table of state → result
-  beats prose. Name anything you couldn't validate.
+- `## Validation` — commands and outcomes, including failed, skipped, and
+  deferred checks. For each incomplete check, name the reason, the steps
+  still to run, and the evidence that would complete validation.
 
 Pushing the branch and opening the PR need no confirmation. After the PR is
 open, **verify it landed** before tearing anything down — the local tracking ref
@@ -212,5 +220,6 @@ or remaining tracked, untracked and ignored state, without publishing file
 contents or sensitive paths. Let the user decide how to handle it. Never
 automatically stage, commit, delete or relocate unknown work for cleanup.
 
-Report back with the PR URL, the design calls the user made, anything left
-unvalidated, and any follow-up issues filed.
+Report back with the PR URL, the design calls the user made, and any
+follow-up issues filed. State which checks failed, were skipped, or were
+deferred, why, and what the user still needs to run.
