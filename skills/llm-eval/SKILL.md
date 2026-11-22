@@ -125,11 +125,14 @@ entry with its own alias, `<alias>-next`, and the context, KV types and
 offload the *target* needs, not the candidate's maximum. Leave the
 incumbent's alias where it is.
 
-**Deploying it is ask-first on every host this targets.** terra is a
+**Deploying it needs the user's grant for that host.** terra is a
 workstation and amos1 is prod (host-access), so under `AGENTS.md`
-**Authorization** the user names the host and action each time; the `hpp-1`
-workflow exception does not apply to this skill. Mention two side effects
-when you ask:
+**Authorization** the user names the host and action; the `hpp-1` workflow
+exception does not apply to this skill. A grant covers its stated scope (for
+example deploying and reverting this candidate on that host for this
+evaluation): reuse it rather than asking per switch, and ask again only for
+another host or an action it does not cover. Mention two side effects when
+you ask:
 
 - **Production traffic.** `--models-max 1` means loading the candidate
   unloads whatever the apps are using. On amos1 that is the production
@@ -268,8 +271,8 @@ apply, including its optional attribution footer rule):
 - **reject / defer:** no PR. Preserve the worktree and branch for the user's
   decision, and report its path and state using the shared **Commit, PR,
   teardown** preservation procedure in `resolve-issue`. Let autoUpgrade revert
-  the host, or redeploy `main` if the user wants it gone now. Deploying is
-  ask-first again.
+  the host, or redeploy `main` if the user wants it gone now. That redeploy
+  needs a grant covering it; ask only if the existing one does not.
 
 For published adopt/peer work, follow **Commit, PR, teardown** in
 `resolve-issue`: verify the checked-out branch and exact remote/local HEAD

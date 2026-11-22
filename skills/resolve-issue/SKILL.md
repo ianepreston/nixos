@@ -46,10 +46,11 @@ Server-app, module, and blueprint changes normally need live validation on
 `hpp-1` (dev). Workstation-only changes (`modules/programs/*` and
 `luna`/`terra` config) validate by build.
 
-Activating `hpp-1` for this change and running non-destructive checks there
-is already authorized by the invocation; do not ask again per switch. Any
-other host, or a destructive or otherwise protected step, needs the user to
-authorize that host and action. Ask now; a missing reply leaves that step and
+When the user invoked this workflow, activating `hpp-1` for this change and
+running non-destructive checks there is already authorized; do not ask again
+per switch. A dispatched agent activates `hpp-1` only if its packet grants
+it. Any other host, or a destructive or otherwise protected step, needs the
+user to authorize that host and action. Ask now; a missing reply leaves that step and
 the checks that depend on it deferred. Continue independent work meanwhile.
 
 Check `gh auth status --hostname github.com` for GitHub work. For each
@@ -134,12 +135,13 @@ Run `task check` and the applicable local builds or tests. This can proceed
 while live validation is deferred, subject to each check's own prerequisites.
 
 For live validation, run the host-access preflight. Once access is
-established, deploy to `hpp-1` (authorized by the invocation; other hosts per
-`AGENTS.md` **Authorization**) with `scripts/activate-nixos.sh` or
+established, deploy to `hpp-1` if authorized as in Phase 2 (the user's
+invocation, or a dispatched agent's packet; other hosts per `AGENTS.md`
+**Authorization**) with `scripts/activate-nixos.sh` or
 `task deploy:hpp-1`. The helper asserts the target hostname and closure
 identity in the activation chain. See host-access for `--dry-run`,
-`--action check` and per-host SSH options. Don't pipe the activation. If it errors or the target stops answering, stop and report without
-retrying.
+`--action check` and per-host SSH options. Don't pipe the activation. If it
+errors or the target stops answering, stop and report without retrying.
 
 Exercise the change on the target after a successful activation. Check the
 unit status, journal, endpoint, or metric the issue requires. Record each
@@ -159,11 +161,16 @@ rg -n '#<N>\b' --glob '!flake.lock'      # explicit references to this issue
 rg -n -i 'workaround|FIXME|TODO|for now|until <thing>' <touched modules>
 ```
 
-Fold in every item the fix directly entails (a stale comment, dead
-workaround, obsolete gotcha) without asking, and list each in the PR. Ask only
-about items that are optional, widen scope or are genuine trade-offs, with a
-recommendation per item; continue the rest while waiting. Anything the user
-splits off gets a follow-up issue, linked from the PR.
+Cleanup the accepted fix directly entails (a stale comment, dead workaround,
+obsolete gotcha) is already authorized by the request to resolve the issue:
+fold it in without a separate question and list each item in the PR; it
+counts as approved for the Phase 7 scope check. Ask, with a recommendation per
+item, about items that are optional, widen scope or are genuine trade-offs,
+and about any item needing a protected operation under `AGENTS.md`
+**Authorization** (`task secrets:*`, other live mutations, destructive
+actions, disko) even when the fix entails it. Continue the rest while
+waiting. Anything the user splits off gets a follow-up issue, linked from the
+PR.
 
 ## 7. Self-review
 
@@ -175,7 +182,7 @@ changes) and work through this checklist, noting a finding or "clear" for each:
    vs zero, empty input, first run, restart). Where it matters, check the
    rendered config or output, not just the source.
 2. **Scope** — nothing the issue ruled out, no unrelated churn, and every
-   ancillary change is entailed by the fix or was approved in Phase 6.
+   ancillary change was approved in Phase 6.
 3. **Existing contracts** — published option surfaces and contracts keep their
    shape (or the change is called out), the `AGENTS.md` architecture rules
    hold, and docs or skills describing the touched behaviour still match it.

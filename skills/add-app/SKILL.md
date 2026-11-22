@@ -1,6 +1,6 @@
 ---
 name: add-app
-description: Add a new self-hosted server app to ianepreston/nixos end to end — choose native module vs upstream flake vs container, write modules/apps/<app>.nix, wire caddy, postgres, SSO, secrets, state/backup, recovery, observability and homepage, then validate on hpp-1. Use when asked to add, deploy, set up, or try out a new app/service ("add wallabag", "let's try out bookorbit", "/add-app <name>").
+description: Add a new self-hosted server app to ianepreston/nixos end to end — choose native module vs upstream flake vs container, write modules/apps/<app>.nix, wire caddy, postgres, SSO, secrets, state/backup, recovery, observability and homepage, then validate on hpp-1. Use only on an explicit request to add, deploy or set up a new app/service ("add wallabag", "set up bookorbit on hpp-1", "/add-app <name>"); asking about or exploring an app ("what is bookorbit", "would wallabag fit?") is research-and-report, not this workflow.
 ---
 
 # Add an app
@@ -8,13 +8,22 @@ description: Add a new self-hosted server app to ianepreston/nixos end to end �
 Argument: the app name (and optionally an upstream URL). Validate on **hpp-1**
 (dev) before anything reaches amos1 (prod).
 
+What needs approval is set by the **Authorization** section of `AGENTS.md`.
+A user's explicit request to add, deploy or set up the app authorizes this
+workflow, including the `hpp-1` deploy and non-destructive validation there;
+an agent dispatched by a supervisor holds only what its packet grants.
+Exploring or asking about an app is research and a report: no module, commit
+or live switch.
+
 ## 1. Choose the packaging
 
 Read [docs/agents/app-packaging.md](../../docs/agents/app-packaging.md) and
 decide, in order: nixpkgs `services.<app>` → upstream flake NixOS module →
-container. Check stable and unstable versions with the commands there. This is
-a trade-off — **tell the user what you found and ask** before committing to a
-container or a new flake input.
+container. Check stable and unstable versions with the commands there. When
+the guide's order settles the choice, follow it and note why in the hand-off.
+When it leaves a genuine trade-off open (for example a container despite a
+usable module, or a new flake input with a real maintenance cost), **tell the
+user what you found and ask**.
 
 ## 2. Plan the integration
 
@@ -35,7 +44,10 @@ Read the surfaces' docs as you touch them:
 
 ## 3. Secrets
 
-Per [docs/agents/secrets.md](../../docs/agents/secrets.md): `task secrets:oidc`,
+`task secrets:*` (creating and publishing) is ask-first under `AGENTS.md`
+**Authorization**, even though the app needs it: list the secrets and key
+names, ask, and defer the dependent deploy until approved. Once approved,
+follow [docs/agents/secrets.md](../../docs/agents/secrets.md): `task secrets:oidc`,
 `task secrets:dbpw`, `task secrets:secret` as needed, with the standard key
 names. Publish with `task secrets:publish` before a deploy that needs them.
 
@@ -70,9 +82,10 @@ Everything the app owns lives in this one file (or a private
 2. Use `task ssh:preflight HOST=hpp-1` for the standard deployment, or the
    helper with matching custom options. See
    [host-access](../_shared/host-access.md) for bounded access checks and operator
-   handoff. Invoking this workflow authorizes deploying to `hpp-1` and
-   non-destructive validation there (`AGENTS.md` **Authorization**); any
-   other host needs its own grant. With working transport, deploy with
+   handoff. A user's request for this workflow authorizes deploying to
+   `hpp-1` and non-destructive validation there (`AGENTS.md`
+   **Authorization**); a dispatched agent deploys only if its packet grants
+   it, and any other host needs its own grant. With working transport, deploy with
    `task deploy:hpp-1`, which enforces the identity checks in `AGENTS.md`.
 3. Check that the unit is active, the Caddy route answers, SSO login works,
    and the `myAppState` directory exists with the right owner.
