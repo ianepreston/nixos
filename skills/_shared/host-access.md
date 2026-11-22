@@ -26,7 +26,10 @@ one host or action never extends to another. A missing reply is never approval.
 
 Ask first for other live mutations (including restarts or changes to app data),
 workstation rebuilds, `build_home`, and `task secrets:*` (including publication).
-Disko changes require the operator's documented reinstall workflow.
+Never use `task deploy:<host>` for changes touching
+`modules/hosts/_<host>-disks.nix`. For a disko change on a live host, the
+operator runs `task bootstrap:reinstall` themselves, following the
+[documented reinstall workflow](../../docs/agents/testing-and-bootstrap.md).
 
 ## Host access preflight
 
@@ -35,14 +38,16 @@ Check access before starting that step or a build that depends on it. Read-only
 SSH needs a route to the effective host and port, a trusted host key, and usable
 authentication. That can be an existing authenticated connection or credentials
 that work in this runner. Some fleet identities use FIDO2 keys that require
-a touch or PIN. A runner can use those when it has an interactive terminal
-and someone can supply the requested input.
+a touch or PIN. Use the operator handoff below when authentication needs
+interaction.
 
-The examples use OpenSSH and GNU coreutils `timeout` on Linux and macOS
-(`gtimeout` is the command used by some macOS installations). The repo's
-transport helper specifically requires `timeout` on its PATH. Use a
-wall-clock deadline for the whole unattended probe, including any proxy or key
-provider. `ConnectTimeout` only covers connection establishment.
+The probes need a recent OpenSSH client with `ForkAfterAuthentication` and
+`SSH_ASKPASS_REQUIRE` support. An older client that rejects a probe option
+fails immediately. The examples use GNU coreutils `timeout` on Linux and
+macOS (`gtimeout` on some macOS installations). The repo's transport helper
+specifically requires `timeout` on its PATH. Use a wall-clock deadline for
+the whole unattended probe, including any proxy or key provider.
+`ConnectTimeout` only covers connection establishment.
 
 ### Read-only SSH
 
@@ -52,14 +57,20 @@ connection options as the planned operation. For example:
 ```sh
 target=hpp-1
 timeout -k 1s 5s ssh -G "$target" </dev/null
+```
+
+Inspect the effective hostname, user, port, jump/proxy, and identity/agent
+locally. Before checking a master, compare the `controlpath` from `ssh -G`
+with the expected socket path for that exact destination, user, and port.
+Use the socket only if the path matches and is specific to that destination.
+
+```sh
 timeout -k 1s 5s ssh -o BatchMode=yes -O check "$target" </dev/null
 ```
 
-Inspect the effective hostname, user, port, jump/proxy, identity/agent, and
-`ControlPath` locally. The second command checks for a listening master on
-that socket. Confirm the socket belongs to the intended destination before
-using it. A missing master only blocks tools that require one. A listening
-master still needs a remote probe to establish reachability and identity:
+The master check only shows that a socket is listening. A missing master
+blocks tools that require one. Use the hostname probe to establish
+reachability and verify the destination:
 
 ```sh
 timeout -k 1s 15s env SSH_ASKPASS_REQUIRE=never \
@@ -88,13 +99,27 @@ connections. Keep target and builder SSH options separate as described below.
 
 Use the probe's result to identify what is missing (for example network access,
 host trust, an effective agent, a usable master or interactive authentication).
-If operator input is needed, use an interactive terminal with the same
-connection settings. For a required master, use `ssh -M -N "$target"` with a
-configured host-specific `ControlPath` (or supply that path explicitly with
-`-S`), complete any touch or PIN prompt, and keep the connection available.
-Recheck it from the runner, which must be able to access the same socket.
-For fresh authentication, verify it from that terminal and run the dependent
-step there if the unattended runner still cannot authenticate.
+Ask the operator to authenticate in their own terminal with the same
+destination, user, port, and connection settings. When a tool requires a
+master, set `target` in that terminal to the verified SSH destination. The
+operator can then run this command with the expected host-specific
+`ControlPath` (or supply that path with `-S`):
+
+```sh
+timeout --foreground -k 1s 60s ssh -o BatchMode=no -fMN "$target"
+```
+
+The operator completes the touch or PIN within the deadline. After successful
+authentication, `-f` backgrounds the master so it stays available. When a
+step needs fresh authentication, the operator runs it in their terminal if
+the runner cannot authenticate unattended. The agent's part is the bounded
+recheck from the runner, which must be able to access the same socket if one
+is required.
+
+An agent may start interactive authentication or a foreground master only
+with the operator present, their explicit agreement, and a wall-clock
+deadline. An unanswered touch or PIN at the deadline is a missing reply.
+Stop and report the unmet prerequisite. A missing reply is never approval.
 
 When access is unavailable, report the unmet prerequisite and the exact
 operator step or check to run from a capable environment. Defer the dependent
@@ -108,8 +133,10 @@ checks run.
 Bound the window, count, then excerpt:
 
 ```sh
-ssh <host> 'journalctl -u <unit> --since "7 days ago" | grep -c "<pattern>"'
-ssh <host> 'journalctl -u <unit> --since "2026-09-18 16:40" --until "2026-09-18 17:00" -o short-iso'
+timeout -k 1s 30s ssh -nT -o BatchMode=yes -o ControlMaster=no "$target" \
+  'journalctl -u <unit> --since "7 days ago" | grep -c "<pattern>"'
+timeout -k 1s 30s ssh -nT -o BatchMode=yes -o ControlMaster=no "$target" \
+  'journalctl -u <unit> --since "2026-09-18 16:40" --until "2026-09-18 17:00" -o short-iso'
 ```
 
 Both server hosts run **VictoriaMetrics** on `127.0.0.1:8428` (**45 day
@@ -129,8 +156,12 @@ Two traps, each worth a wasted round:
 1. **`ssh host -- curl ... 'promql'` does not work.** ssh joins argv into one
    string and the remote zsh re-parses it, so `(`, `{mode="idle"}` and `[2m]`
    get glob/brace-expanded — you get `zsh: no matches found` instead of JSON.
-   Pipe a script: `ssh host bash -s < script.sh`, PromQL single-quoted inside
-   and passed via `--data-urlencode "query=$q"`.
+   Feed a script with this command. Single-quote the PromQL inside the script
+   and pass it via `--data-urlencode "query=$q"`.
+
+   ```sh
+   timeout -k 1s 30s ssh -T -o BatchMode=yes -o ControlMaster=no "$target" bash -s < script.sh
+   ```
 2. **No `python3` on the server hosts.** Fetch raw JSON over ssh, parse locally.
 
 LogSQL: `_time:30d "some phrase"` works, but adding
@@ -179,11 +210,15 @@ scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --action check  # preflight,
 scripts/activate-nixos.sh --host hpp-1 --dest hpp-1            # switch
 ```
 
-Use `--skip-preflight` on the helper or `SKIP_PREFLIGHT=true` with deploy,
-rebuild, or bootstrap rebuild tasks to bypass the probes explicitly. With
-`--local-secrets`, the preflight compares the checkout's HEAD with the
+Only the operator may decide to skip the probes with `--skip-preflight`
+on the helper or `SKIP_PREFLIGHT=true` with deploy, rebuild, or bootstrap
+rebuild tasks. A failed probe requires resolving or reporting the unmet
+prerequisite. Never use either flag to get past a failed probe. Record an
+operator-directed bypass as skipped preflight.
+
+With `--local-secrets`, the preflight compares the checkout's HEAD with the
 locked revision and reports uncommitted changes. A builder failure stops
-the run before the build. Record an explicit bypass as skipped preflight.
+the run before the build.
 
 `task deploy:hpp-1` is the same thing (`LOCAL_SECRETS=true task deploy:hpp-1`
 adds `--local-secrets`); `ACTION=check|test|boot` selects the action. Task passes host and action as explicit `shellQuote`d arguments, never
@@ -237,7 +272,8 @@ and transfer ~0 bytes. During read-only diagnosis from a verified connection,
 inspect the target:
 
 ```sh
-ssh <host> 'ps -eo pid,etime,args | grep -E "[s]shd-session|[n]ix-store --serve"'
+timeout -k 1s 15s ssh -nT -o BatchMode=yes -o ControlMaster=no "$target" \
+  'ps -eo pid,etime,args | grep -E "[s]shd-session|[n]ix-store --serve"'
 ```
 
 A stuck session sits in `[priv]` (pre-auth) with no `nix-store --serve`.
@@ -254,43 +290,67 @@ deploy reads as success. Check `PIPESTATUS`, or don't pipe.
 Inspect the effective fetch and push URLs with `git remote get-url origin`
 and `git remote get-url --push origin`. Check `gh auth status --hostname
 github.com` before relying on the GitHub CLI or its credential helper. Use the
-configured remote when its transport and credentials work. For an unattended
-read probe, use a wall-clock deadline and disable prompting. For example, with
-an effective HTTPS remote:
+configured remote when its transport and credentials work. Bound unattended
+Git operations with a wall-clock deadline. Disable Git prompts and use SSH
+BatchMode in case a rewrite selects SSH. With the standard OpenSSH client:
 
 ```sh
-timeout -k 1s 15s env GIT_TERMINAL_PROMPT=0 git ls-remote origin HEAD </dev/null
+timeout -k 1s 15s env GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=never \
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' git ls-remote origin HEAD </dev/null
 ```
 
-For SSH, use BatchMode with the remote's effective SSH settings or use an
-operator terminal if authentication needs a touch or PIN. A read probe can
-establish fetch access. Confirm publication after a push using the remote SHA.
+Carry forward any custom SSH options the remote requires. Use the operator's
+terminal if authentication needs a touch or PIN. A read probe can establish
+fetch access. Confirm publication after a push using the remote SHA.
 
-If SSH is unavailable, try a command-scoped HTTPS URL
-(`https://github.com/ianepreston/nixos.git`). Fetch can use anonymous HTTPS.
-For push, use an authenticated HTTPS credential helper. For example, with a
-working GitHub CLI login and `branch` set to the task branch:
+### HTTPS fallback
+
+The flake's [Git config](../../modules/system/_hm-core/git.nix) installs a
+global `url."git@github.com:ianepreston/".insteadOf` rule for
+`https://github.com/ianepreston/`. It can send an explicit HTTPS URL over
+SSH. `insteadOf` applies to fetch and push. For push, a matching
+`pushInsteadOf` can override it. A configured remote with an explicit
+`pushurl` ignores `pushInsteadOf`. `-c url.<base>.insteadOf=<junk>` adds
+another value to the multi-valued setting, so the existing rewrite still applies.
+
+Before fetching or pushing to an explicit HTTPS URL, check its effective
+URL and the applicable push rules using the same configuration as the transfer:
 
 ```sh
 https_url=https://github.com/ianepreston/nixos.git
-GIT_TERMINAL_PROMPT=0 git fetch "$https_url" refs/heads/main:refs/remotes/origin/main
-GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c credential.helper='!gh auth git-credential' \
-  push "$https_url" "HEAD:refs/heads/$branch"
+timeout -k 1s 5s git ls-remote --get-url "$https_url" </dev/null
+timeout -k 1s 5s git config --show-origin --get-regexp '^url\..*\.pushinsteadof$' </dev/null
+```
+
+Require the first command to return the intended HTTPS URL. Before pushing,
+also confirm no `pushInsteadOf` prefix matches that URL. Exit 1 from the
+config query with no output means no such rules are set.
+
+If a confirmed global rewrite is the blocker and HTTPS is authorized, set
+`GIT_CONFIG_GLOBAL=/dev/null` only on the individual URL checks and transfer
+for this fallback. Repeat the checks before transferring. Carry forward any
+settings the transfer needs, including the effective `core.hooksPath` for a
+push if suppression would change it. Read it with
+`git config --get core.hooksPath` before suppression and pass
+`-c core.hooksPath="$hooks_path"` to Git when set. Keep local and system
+configuration in effect. If the effective URL cannot be verified or required
+hooks or credentials cannot be preserved, use a capable operator terminal.
+
+Once those checks confirm HTTPS, run the needed operation with the checked
+configuration. Fetch can use anonymous HTTPS. For push, this example uses
+an authenticated GitHub CLI and `branch` set to the task branch:
+
+```sh
+timeout -k 1s 120s env GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=never \
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+  git fetch "$https_url" refs/heads/main:refs/remotes/origin/main </dev/null
+timeout -k 1s 120s env GIT_TERMINAL_PROMPT=0 SSH_ASKPASS_REQUIRE=never \
+  GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+  git -c credential.helper= -c credential.helper='!gh auth git-credential' \
+  push "$https_url" "HEAD:refs/heads/$branch" </dev/null
 ```
 
 Keep tokens out of URLs and command arguments.
-
-Check URL rewrites if the HTTPS URL still selects SSH. Use
-`git ls-remote --get-url <https-url>` for fetch and inspect any
-`url.*.pushInsteadOf` rules for push. If the relevant rewrite comes from
-global config and HTTPS is authorized, set `GIT_CONFIG_GLOBAL=/dev/null` on
-that individual fetch or push only, then verify the effective URL under that
-setting. Carry forward any settings the operation needs, including the
-effective `core.hooksPath` for a push if it would otherwise change. Read it
-with `git config --get core.hooksPath` before suppression and pass it as
-`git -c core.hooksPath="$hooks_path" …` when set. Keep local and system
-configuration in effect. If a rewrite still applies or the required hook or
-credential settings cannot be preserved, use a capable operator terminal.
 
 Commit normally with the configured identity and installed hooks. A failed
 push citing email privacy needs a commit created with the configured public

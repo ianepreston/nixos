@@ -109,7 +109,8 @@ Check the requirements for live evaluation before serving the candidate:
   fixtures commands below. Tier 1 skips when the checkout is absent.
 - Find the cases for the alias with
   `grep -l 'alias = "<alias>"' "$fixtures_path"/*/*/meta.toml`.
-  If there are no cases, report that Tier 1 has no evidence for that alias.
+  If there are no cases, tell the user during preflight that Tier 1 has no
+  evidence for the alias and that a gates-only verdict has less evidence.
 
 If host access is unavailable, continue independent preparation such as
 inspecting the issue, target config and fixtures. Defer serving and live
@@ -277,8 +278,8 @@ contents or sensitive paths. Never automatically stage, commit, delete or
 relocate unknown work to clean up.
 
 Put `Closes #<N>` in the PR when this is the last target, and run
-`task llm:eval:audit FILE=<draft> FIXTURES="$fixtures_path"` on the PR body as
-well. After the merge and deploy, show
+`task llm:eval:audit FILE=<pr-body-file> FIXTURES="$fixtures_path"` on the PR
+body as well. After the merge and deploy, show
 `task llm:models:prune HOST=<host>` (a dry run) to the user. Only run
 `APPLY=true` with their go-ahead, because it deletes weights on the host.
 

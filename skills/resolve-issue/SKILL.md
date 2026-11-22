@@ -37,6 +37,11 @@ Server-app, module, and blueprint changes normally need live validation on
 `hpp-1` (dev). Workstation-only changes (`modules/programs/*` and
 `luna`/`terra` config) validate by build.
 
+If live validation calls for activating `hpp-1`, request authorization for
+the named host and action now unless the user already granted it. A missing
+reply leaves activation and the checks that depend on it deferred. Continue
+independent work while waiting.
+
 Check `gh auth status --hostname github.com` for GitHub work. For each
 required live stage, use the relevant bounded SSH or transport preflight from
 host-access. This can surface missing access before a dependent build. If the
@@ -169,9 +174,9 @@ PR bodies here are substantial — match the repo's existing ones (`gh pr list
   if they chose it in Phase 4.
 - `## What it does not do` — scope the issue explicitly excluded.
 - Drive-by / ancillary changes from Phase 6.
-- `## Validation` — commands and outcomes, including failed and deferred
-  checks. For each deferral, name the missing prerequisite, the steps still
-  to run, and the evidence that would complete validation.
+- `## Validation` — commands and outcomes, including failed, skipped, and
+  deferred checks. For each incomplete check, name the reason, the steps
+  still to run, and the evidence that would complete validation.
 
 Pushing the branch and opening the PR need no confirmation. After the PR is
 open, **verify it landed** before tearing anything down — the local tracking ref
@@ -216,5 +221,5 @@ contents or sensitive paths. Let the user decide how to handle it. Never
 automatically stage, commit, delete or relocate unknown work for cleanup.
 
 Report back with the PR URL, the design calls the user made, and any
-follow-up issues filed. State which validations are deferred, why, and what
-the user still needs to run.
+follow-up issues filed. State which checks failed, were skipped, or were
+deferred, why, and what the user still needs to run.
