@@ -398,8 +398,10 @@ bounded() {
   LC_ALL=C SSH_ASKPASS_REQUIRE=never timeout -k 1s "$@"
 }
 
+preflight_error_prefix=preflight
+
 preflight_fail() {
-  printf 'preflight: %s\n' "$*" >&2
+  printf '%s: %s\n' "$preflight_error_prefix" "$*" >&2
   exit 1
 }
 
@@ -574,6 +576,7 @@ probe_remote_build_environment() {
       declare -p probe_opts
       cat <<'REMOTE'
 set -euo pipefail
+preflight_error_prefix=preflight-error
 require_preflight_tools timeout nix
 if [ "$2" = true ]; then probe_secrets "$1/flake.lock" "$1/../nix-secrets"; fi
 probe_builders
@@ -581,8 +584,10 @@ REMOTE
     } | bounded 45s ssh "${probe_opts[@]}" "$@" -T "$endpoint" "bash -s -- $directory $secrets" 2>&1
   ) || {
     status=$?
+    # Ignore progress messages when extracting a failure from the remote
+    # script. A successful secrets comparison may already have logged one.
     while IFS= read -r line; do
-      case $line in preflight:\ *) preflight_fail "on $endpoint: ${line#preflight: }" ;; esac
+      case $line in preflight-error:\ *) preflight_fail "on $endpoint: ${line#preflight-error: }" ;; esac
     done <<<"$output"
     ssh_probe_failure "build environment on $endpoint" "$status" "$output"
   }
@@ -623,7 +628,7 @@ run_preflight() {
         if [ -z "$remote_flake" ]; then
           preflight_fail "no usable SSH master for $target. Open it from an operator terminal using the same destination and SSH options."
         fi
-        printf 'preflight: warning: no usable SSH master for %s. Continuing with BatchMode probes.\n' "$target" >&2
+        printf 'preflight: warning: no usable SSH master for %s. Continuing with BatchMode probes. To bypass preflight explicitly, use SKIP_PREFLIGHT=true or --skip-preflight.\n' "$target" >&2
       fi
     fi
     probe_agent "$target" "${target_argv[@]+"${target_argv[@]}"}"
@@ -654,7 +659,9 @@ run_preflight() {
   printf 'preflight: passed for %s\n' "$host" >&2
 }
 
-if [ "$preflight" != --skip-preflight ]; then
+if [ "$preflight" = --skip-preflight ]; then
+  printf 'preflight: skipped (explicit)\n' >&2
+else
   run_preflight
   [ "$preflight" != --preflight ] || exit 0
 fi

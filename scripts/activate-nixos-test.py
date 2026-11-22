@@ -154,6 +154,8 @@ case "$*" in
     hostname
     exit "${STUB_HOSTNAME_SSH_RC:-$?}" ;;
   'bash -s -- '*)
+    [ -z "${STUB_REMOTE_PROBE_WARNING:-}" ] || printf '%s\n' "$STUB_REMOTE_PROBE_WARNING" >&2
+    [ -z "${STUB_REMOTE_PROBE_RC:-}" ] || exit "$STUB_REMOTE_PROBE_RC"
     PATH="${STUB_REMOTE_PROBE_PATH:-$PATH}" exec "$BASH" -c "$*" ;;
   'sudo bash -s '*)
     [ -z "${STUB_SSH_RC-}" ] || exit "$STUB_SSH_RC"
@@ -364,6 +366,7 @@ class TransportPreflight(Harness):
             STUB_MASTER_RC=255, STUB_STORE_ERROR="protocol mismatch",
         )  # fmt: skip
         self.assertIn("warning: no usable SSH master", r.stderr)
+        self.assertIn("SKIP_PREFLIGHT=true or --skip-preflight", r.stderr)
         self.assert_probe_failed(r, "Nix store protocol mismatch")
 
     def test_ssh_config_failure_stops_before_querying_agent(self):
@@ -452,6 +455,78 @@ class TransportPreflight(Harness):
                     r, f"on ipreston@hpp-1: required tool '{tool}' is missing"
                 )
                 self.assertNotIn("Check flake.lock", r.stderr)
+
+    def test_bootstrap_reports_builder_failure_after_successful_secrets_check(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
+        for message, code, reason in (
+            ("Host key verification failed. private-detail", 255, "Host key verification failed"),
+            ("Connection refused. private-detail", 255, "unreachable over SSH"),
+            ("", 124, "probe timed out"),
+            ("", 137, "probe timed out"),
+        ):  # fmt: skip
+            with self.subTest(message=message, code=code):
+                self.log.write_text("")
+                r = self.probe(
+                    "--remote-flake", "src/nixos", "--local-secrets",
+                    STUB_BUILDERS="ssh://terra x86_64-linux",
+                    STUB_BUILDER_ERROR=message, STUB_BUILDER_RC=code,
+                )  # fmt: skip
+                self.assert_probe_failed(
+                    r, f"preflight: on ipreston@hpp-1: builder terra: {reason}"
+                )
+                self.assertNotIn("matches the locked revision", r.stderr)
+
+    def test_bootstrap_reports_stale_secrets_before_checking_builders(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        secrets = make_secrets(repo, self.base_env)
+        git(
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "stale",
+            cwd=secrets,
+            env=self.base_env,
+        )
+        r = self.probe(
+            "--remote-flake", "src/nixos", "--local-secrets",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="Host key verification failed",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r, "preflight: on ipreston@hpp-1: stale local nix-secrets"
+        )
+        self.assertFalse(
+            [row for row in self.lines("nix") if row[1] == "config show builders"]
+        )
+
+    def test_split_build_environment_reports_its_own_builder_failure(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="Host key verification failed",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "preflight: on builder@build1: builder terra: Host key verification failed",
+        )
+
+    def test_remote_build_environment_classifies_ssh_failure_without_remote_marker(
+        self,
+    ):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail\nPermission denied (publickey)",
+            STUB_REMOTE_PROBE_RC=255,
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "build environment on ipreston@hpp-1: SSH authentication denied in BatchMode",
+        )
 
     def test_bootstrap_with_locked_secrets_works_without_remote_jq(self):
         r = self.probe(
@@ -579,6 +654,7 @@ class TransportPreflight(Harness):
             STUB_MASTER_RC=255, STUB_AGENT="empty",
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: skipped (explicit)", r.stderr.splitlines())
         self.assertEqual(self.lines("ssh"), self.operational_ssh())
         self.assertEqual(self.lines("ssh-add"), [])
         self.assertEqual(
@@ -1471,13 +1547,18 @@ class TaskRouting(Harness):
                         "preflight: passed for hpp-1" in r.stderr, skip == "false"
                     )
                     self.assertEqual(
+                        "preflight: skipped (explicit)" in r.stderr.splitlines(),
+                        skip == "true",
+                    )
+                    self.assertEqual(
                         "config show builders" in self.nix_args(), skip == "false"
                     )
                     self.assertTrue(self.activated())
 
         self.log.write_text("")
-        r = self.task("deploy:hpp-1", "LOCAL_SECRETS=true", "SKIP_PREFLIGHT=true")
+        r = self.task("deploy:hpp-1", "LOCAL_SECRETS=true", SKIP_PREFLIGHT="true")
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: skipped (explicit)", r.stderr.splitlines())
         self.assertIn("--override-input nix-secrets", self.nix_args())
         self.assertNotIn("config show builders", self.nix_args())
 
