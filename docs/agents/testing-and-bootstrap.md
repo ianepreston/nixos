@@ -55,8 +55,9 @@ edits in the sibling checkout; false uses `flake.lock`. Use false only to test
 against published secrets.
 
 Routine `task deploy:<host>`, `task rebuild[:<host>]` and `task hashes` are the
-opposite: they default to `flake.lock` (the revision `task build`, CI and
-auto-upgrade use), and `LOCAL_SECRETS=true task deploy:<host>` opts into the
+opposite: they default to `flake.lock` (the revision `task build` and CI use;
+auto-upgrade reads the lock from the GitHub flake, which can differ from your
+local checkout), and `LOCAL_SECRETS=true task deploy:<host>` opts into the
 sibling checkout.
 
 Deploying from an agent session (no tty for FIDO2): see

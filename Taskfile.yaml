@@ -48,7 +48,8 @@ tasks:
       set -euo pipefail
       case {{.LOCAL_SECRETS | shellQuote}} in
         true) export REGEN_NIX_ARGS='--override-input nix-secrets path:../nix-secrets' ;;
-        false) ;;
+        # an inherited REGEN_NIX_ARGS must not smuggle in an override
+        false) unset REGEN_NIX_ARGS ;;
         *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
       esac
       ./scripts/regen-fetch-hashes.sh {{.CLI_ARGS}}
@@ -74,8 +75,9 @@ tasks:
   # an inherited environment variable of the same name override `env:`, which
   # could redirect a deploy), and the helper validates them again.
   #
-  # nix-secrets resolves from flake.lock, the same revision `task build`, CI and
-  # auto-upgrade use (#1042). `LOCAL_SECRETS=true task deploy:<host>` opts into
+  # nix-secrets resolves from flake.lock, the revision `task build` and CI use
+  # (auto-upgrade reads the lock from the GitHub flake, which can differ from a
+  # local checkout) (#1042). `LOCAL_SECRETS=true task deploy:<host>` opts into
   # the sibling checkout (--local-secrets) for unpublished secrets work; it is
   # validated true|false like taskfiles/bootstrap.yaml.
   rebuild:

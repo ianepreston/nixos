@@ -12,8 +12,10 @@
 #   file...   limit the scan to these files (default: every tracked *.nix).
 #
 # Extra flags for the `nix build` in mechanism 2 below come from the
-# REGEN_NIX_ARGS environment variable (the Taskfile passes the usual
-# `--override-input nix-secrets path:../nix-secrets`).
+# REGEN_NIX_ARGS environment variable (whitespace-split). `task hashes` clears
+# it unless `LOCAL_SECRETS=true`, which sets
+# `--override-input nix-secrets path:../nix-secrets`; run directly, whatever
+# the caller exports is used.
 #
 # ## Why this is needed
 #
@@ -227,7 +229,7 @@ regen_marked_hash() {
     backup_copy=$(mktemp)
     cp "$file" "$backup_copy"
     set_hash "$file" "$lineno" "$fake_hash"
-    out=$(nix build --no-link "${nix_args[@]}" ".#$attr" 2>&1) && {
+    out=$(nix build --no-link ${nix_args[@]+"${nix_args[@]}"} ".#$attr" 2>&1) && {
       note "regen-fetch-hashes: $attr built with a fake hash — is $file:$lineno actually its hash?"
       exit 1
     }

@@ -1002,26 +1002,74 @@ class TaskRouting(Harness):
 
     def test_hashes_uses_the_lock_unless_local_secrets_is_true(self):
         regen = self.repo / "scripts" / "regen-fetch-hashes.sh"
+        out = self.tmp / "regen-args"
+        # one NUL-terminated record per argument, then the inherited variable
         regen.write_text(
             f"{SHEBANG}"
-            'printf "regen\t%s\tARGS=[%s]\n" "$*" "${REGEN_NIX_ARGS-}" >> "$STUB_LOG"\n'
+            f'{{ printf "%s\\0" "$@"; printf "ARGS=[%s]\\0" "${{REGEN_NIX_ARGS-}}"; }} > {out}\n'
         )
         regen.chmod(0o755)
+        inherited = "--override-input nix-secrets path:/stale/checkout"
+        local = "--override-input nix-secrets path:../nix-secrets"
         for value, expected in (
             (None, ""),
             ("false", ""),
-            ("true", "--override-input nix-secrets path:../nix-secrets"),
+            ("true", local),
         ):
             with self.subTest(value=value):
-                self.log.write_text("")
-                argv = ["hashes", "--", "--check"]
+                out.unlink(missing_ok=True)
+                argv = ["hashes", "--", "--check", "with space.nix"]
                 if value:
                     argv.insert(1, f"LOCAL_SECRETS={value}")
-                r = self.task(*argv)
+                # an inherited REGEN_NIX_ARGS must never reach nix unasked
+                r = self.task(*argv, REGEN_NIX_ARGS=inherited)
                 self.assertEqual(r.returncode, 0, r.stderr)
-                row = self.lines("regen")[0]
-                self.assertEqual(row[1], "--check")
-                self.assertEqual(row[2], f"ARGS=[{expected}]")
+                self.assertEqual(
+                    out.read_text().split("\0")[:-1],
+                    ["--check", "with space.nix", f"ARGS=[{expected}]"],
+                )
+
+    def test_regen_script_survives_empty_nix_args_under_old_bash(self):
+        # macOS ships bash 3.2, where expanding an empty array under `set -u`
+        # is an error; run the real script with the system bash when present.
+        bash = "/bin/bash" if Path("/bin/bash").exists() else shutil.which("bash")
+        hashval = "sha256-" + "B" * 43 + "="
+        nix = self.bin / "nix"
+        calls = self.tmp / "nix-calls"
+        nix.write_text(
+            f"{SHEBANG}"
+            f'printf "%s\\0" "$@" >> {calls}; printf "\\n" >> {calls}\n'
+            f'echo "error: hash mismatch"; echo "  got:    {hashval}"; exit 1\n'
+        )
+        (self.bin / "nix-prefetch-url").write_text(f"{SHEBANG}exit 1\n")
+        (self.bin / "nix-prefetch-url").chmod(0o755)
+        target = self.tmp / "with space.nix"
+        target.write_text(f'# regen-hash: pkg\nhash = "{hashval}";\n')
+        script = self.repo / "scripts" / "regen-fetch-hashes.sh"
+        env = {k: v for k, v in self.env.items() if k != "REGEN_NIX_ARGS"}
+        for extra, expected in (
+            ({}, ""),
+            (
+                {"REGEN_NIX_ARGS": "--override-input nix-secrets path:/x"},
+                "--override-input\0nix-secrets\0path:/x\0",
+            ),
+        ):
+            with self.subTest(regen_nix_args=extra):
+                calls.unlink(missing_ok=True)
+                r = subprocess.run(
+                    [bash, str(script), "--check", str(target)],
+                    env={**env, **extra},
+                    cwd=self.tmp,
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=30,
+                )
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("unbound variable", r.stderr)
+                self.assertEqual(
+                    calls.read_text(), f"build\0--no-link\0{expected}.#pkg\0\n"
+                )
 
     def test_rebuild_host_refuses_a_hostname_mismatch(self):
         r = self.task("rebuild:hpp-1", STUB_HOSTNAME="amos1")
