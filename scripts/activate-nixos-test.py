@@ -943,10 +943,85 @@ class TaskRouting(Harness):
         r = self.task("rebuild")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.lines("ssh"), [])
-        self.assertIn(
-            f"nix-secrets path:{self.tmp}/nix-secrets", self.lines("nix")[0][1]
-        )
+        self.assertNotIn("nix-secrets", " ".join(x[1] for x in self.lines("nix")))
         self.assertEqual([x[1] for x in self.lines("ACTIVATED")], ["switch"])
+
+    def nix_args(self):
+        return " ".join(x[1] for x in self.lines("nix"))
+
+    def test_routine_tasks_resolve_nix_secrets_from_the_lock_by_default(self):
+        # No sibling checkout at all: the default must not need one (#1042).
+        shutil.rmtree(self.tmp / "nix-secrets")
+        for argv in (("rebuild",), ("rebuild:hpp-1",), ("deploy:hpp-1",)):
+            with self.subTest(argv=argv):
+                self.log.write_text("")
+                r = self.task(*argv)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(self.activated())
+                self.assertNotIn("nix-secrets", self.nix_args())
+                self.assertNotIn("--override-input", self.nix_args())
+
+    def test_local_secrets_true_opts_routine_tasks_into_the_sibling_checkout(self):
+        for argv in (("rebuild",), ("rebuild:hpp-1",), ("deploy:hpp-1",)):
+            with self.subTest(argv=argv):
+                self.log.write_text("")
+                r = self.task(*argv, "LOCAL_SECRETS=true")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(
+                    f"--override-input nix-secrets path:{self.tmp}/nix-secrets",
+                    self.nix_args(),
+                )
+                self.log.write_text("")
+                r = self.task(*argv, "LOCAL_SECRETS=false")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("nix-secrets", self.nix_args())
+
+    def test_local_secrets_true_without_a_sibling_checkout_fails_before_building(self):
+        shutil.rmtree(self.tmp / "nix-secrets")
+        r = self.task("deploy:hpp-1", "LOCAL_SECRETS=true")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("nix-secrets", r.stderr)
+        self.assertFalse(self.activated())
+
+    def test_invalid_local_secrets_is_rejected_before_anything_runs(self):
+        for value in ("yes", "1", "TRUE", "maybe"):
+            for argv in (
+                ("rebuild",),
+                ("rebuild:hpp-1",),
+                ("deploy:hpp-1",),
+                ("hashes",),
+            ):
+                with self.subTest(argv=argv, value=value):
+                    self.log.write_text("")
+                    r = self.task(*argv, f"LOCAL_SECRETS={value}")
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn("LOCAL_SECRETS must be true or false", r.stderr)
+                    self.assertEqual(
+                        [x for x in self.lines() if x[0] in ("nix", "ssh", "sudo")], []
+                    )
+
+    def test_hashes_uses_the_lock_unless_local_secrets_is_true(self):
+        regen = self.repo / "scripts" / "regen-fetch-hashes.sh"
+        regen.write_text(
+            f"{SHEBANG}"
+            'printf "regen\t%s\tARGS=[%s]\n" "$*" "${REGEN_NIX_ARGS-}" >> "$STUB_LOG"\n'
+        )
+        regen.chmod(0o755)
+        for value, expected in (
+            (None, ""),
+            ("false", ""),
+            ("true", "--override-input nix-secrets path:../nix-secrets"),
+        ):
+            with self.subTest(value=value):
+                self.log.write_text("")
+                argv = ["hashes", "--", "--check"]
+                if value:
+                    argv.insert(1, f"LOCAL_SECRETS={value}")
+                r = self.task(*argv)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                row = self.lines("regen")[0]
+                self.assertEqual(row[1], "--check")
+                self.assertEqual(row[2], f"ARGS=[{expected}]")
 
     def test_rebuild_host_refuses_a_hostname_mismatch(self):
         r = self.task("rebuild:hpp-1", STUB_HOSTNAME="amos1")

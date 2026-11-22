@@ -124,15 +124,17 @@ process as the switch). `task bootstrap:rebuild` always switches; use
 directly for another action.
 
 ```sh
-# from any checkout or worktree; nix-secrets is found portably (sibling of the
-# checkout, or of the main checkout when run from a worktree; $NIX_SECRETS_PATH wins)
-scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets --dry-run  # eval + print plan only
-scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets --action check  # build, assert identity on the target, activate nothing
-scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --local-secrets            # switch
+# from any checkout or worktree; nix-secrets comes from flake.lock by default.
+# Add --local-secrets only for unpublished secrets work: it finds the sibling
+# checkout portably (of the main checkout when run from a worktree;
+# $NIX_SECRETS_PATH wins)
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --dry-run  # eval + print plan only
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --action check  # build, assert identity on the target, activate nothing
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1            # switch
 ```
 
-`task deploy:hpp-1` is the same thing; `ACTION=check|test|boot` selects the
-action. Task passes host and action as explicit `shellQuote`d arguments, never
+`task deploy:hpp-1` is the same thing (`LOCAL_SECRETS=true task deploy:hpp-1`
+adds `--local-secrets`); `ACTION=check|test|boot` selects the action. Task passes host and action as explicit `shellQuote`d arguments, never
 `env:` (an inherited `ACTIVATE_HOST` would override it), and the helper
 validates host, action, user, port and destination.
 

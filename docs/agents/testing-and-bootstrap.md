@@ -54,5 +54,10 @@ To add a VM-compatible flake host, add it to the `case` allow-list in
 edits in the sibling checkout; false uses `flake.lock`. Use false only to test
 against published secrets.
 
+Routine `task deploy:<host>`, `task rebuild[:<host>]` and `task hashes` are the
+opposite: they default to `flake.lock` (the revision `task build`, CI and
+auto-upgrade use), and `LOCAL_SECRETS=true task deploy:<host>` opts into the
+sibling checkout.
+
 Deploying from an agent session (no tty for FIDO2): see
 [skills/_shared/host-access.md](../../skills/_shared/host-access.md).
