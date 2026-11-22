@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Live validation of a dev host in one command (#1063).
+#
+#   task validate:hpp-1                                   # preflight + check + probes
+#   task validate:hpp-1 -- --switch --observe 3m \
+#     --probe 'systemctl is-active caddy.service'         # + switch and observation
+#
+# Everything after `--` goes to scripts/validate-host.py verbatim, one
+# shellQuote'd argument each (Task's CLI_ARGS_LIST); nothing is read from Task
+# variables or the environment, so an inherited variable can never turn a check
+# into a switch. The driver refuses any host whose hostSpec is not
+# `serverEnvironment = "dev"` before it connects to anything, and rejects a
+# second --host. It prints the evidence record's path; logs live under
+# $XDG_STATE_HOME/nixos-validate (outside git). See scripts/validate-host.py.
+version: '3'
+set: [pipefail]
+shopt: [globstar]
+tasks:
+  '*':
+    desc: 'Validate a dev host: preflight, check, then (with -- --switch) switch, probes and --observe; per-stage logs + JSON evidence'
+    cmd: |
+      set -euo pipefail
+      exec python3 {{.ROOT_DIR | shellQuote}}/scripts/validate-host.py --host {{index .MATCH 0 | shellQuote}} {{range .CLI_ARGS_LIST}}{{. | shellQuote}} {{end}}

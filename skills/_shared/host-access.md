@@ -256,6 +256,29 @@ verified socket, pass `--target-ssh-opt="-oControlPath=$control_path"` and
 `--target-ssh-opt=-oControlMaster=no`, where `control_path` is the absolute
 path for that destination. Do not share that option across hosts.
 
+### Validating a dev host in one command
+
+`task validate:<host>` (`scripts/validate-host.py`) runs the whole live
+validation sequence through this helper: inputs (source SHA, locked
+nix-secrets rev, overrides, expected closure from `--dry-run`), `--preflight`,
+a read-only pre-change read (running closure, generation, failed units, next
+`nixos-upgrade` run), `--action check`, then with `-- --switch` the switch,
+post-switch checks (expected closure running, `is-system-running` = running,
+no failed units, each `--probe` command exits 0 on the target) and an
+optional `--observe <duration>` window. Each stage logs to its own file under
+`$XDG_STATE_HOME/nixos-validate/<host>/` and the run ends with one JSON
+evidence record whose path it prints. It only accepts hosts whose hostSpec has
+`serverEnvironment = "dev"` (refused before any ssh otherwise), has no option
+that skips the helper's checks, and stops at the first failure with no retry,
+rollback or kill; a switch past its deadline is left running and reported as
+unknown (exit 3). Arguments go after `--`:
+
+```sh
+task validate:hpp-1                      # check only
+task validate:hpp-1 -- --switch --observe 3m \
+  --probe 'systemctl is-active caddy.service'
+```
+
 `system.autoUpgrade` is the one accepted exception: it activates without the
 helper, but it only ever activates the local host from `main`, so there is no
 remote target and no cross-host identity risk.
