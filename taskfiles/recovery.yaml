@@ -508,4 +508,4 @@ tasks:
         echo -e "\x1B[32m========================================================\x1B[0m"
         echo -e "\x1B[33m  Reminder: ../nix-secrets/ now has uncommitted sops envelope changes\x1B[0m"
         echo -e "\x1B[33m  authorizing the VM key. \`cd ../nix-secrets && git restore .\` to revoke,\x1B[0m"
-        echo -e "\x1B[33m  or \`task secrets:publish\` to make sticky.\x1B[0m"
+        echo -e "\x1B[33m  or, on a nix-secrets branch, \`task secrets:publish MSG=\"authorize VM\"\` to make sticky.\x1B[0m"

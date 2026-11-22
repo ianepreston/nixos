@@ -50,7 +50,9 @@ already covers those exact operations, proceed under it. Otherwise list the
 secrets and key names, ask, and defer the dependent deploy until approved.
 Once covered, follow [docs/agents/secrets.md](../../docs/agents/secrets.md): `task secrets:oidc`,
 `task secrets:dbpw`, `task secrets:secret` as needed, with the standard key
-names. Publish with `task secrets:publish` before a deploy that needs them.
+names. Before a deploy that needs them, publish them on a `nix-secrets` branch
+with `task secrets:publish`, which pins the input to that commit; restore the
+`main` pin with `task secrets:pin-main` before the PR (the secrets.md workflow).
 
 ## 4. Write `modules/apps/<app>.nix`
 

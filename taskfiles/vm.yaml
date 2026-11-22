@@ -323,7 +323,7 @@ tasks:
         if [ "$needs_updatekeys" = "1" ]; then
           echo -e "\x1B[32m[+] Running sops updatekeys on ${rekey[*]}\x1B[0m"
           ( cd "$secrets_dir" && sops updatekeys --yes "${rekey[@]}" )
-          echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes — commit + push via \`task secrets:publish\` to make sticky, or \`git restore\` to revoke\x1B[0m"
+          echo -e "\x1B[33m[~] nix-secrets has uncommitted envelope changes (vm:install builds them with LOCAL_SECRETS=true). \`git restore\` to revoke, or to make sticky: switch to a nix-secrets branch, then \`task secrets:publish MSG=\"authorize VM\"\`\x1B[0m"
         else
           echo -e "\x1B[32m[+] VM key already authorized for {{.TARGET}} and every file {{.HOST}} reads — no changes\x1B[0m"
         fi

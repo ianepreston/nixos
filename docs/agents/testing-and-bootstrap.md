@@ -35,8 +35,12 @@ with an SSH host key (and matching age identity) preserved across
 - `task vm:sops-authorize TARGET=<host>` — one-time per real-host secret set:
   adds the VM's age key to `<host>.yaml` and to every other sops file the VM's
   flake host (`HOST`, default `tests-server`) reads, in
-  `../nix-secrets/.sops.yaml`. Uncommitted; `task secrets:publish` to keep it,
-  `git restore` in `../nix-secrets` to revoke.
+  `../nix-secrets/.sops.yaml`. The edit stays uncommitted, and `vm:install`
+  builds it with the default `LOCAL_SECRETS=true`, so nothing needs
+  publishing. `git restore` in `../nix-secrets` revokes it. To keep it, commit
+  it on a `nix-secrets` branch and pin that branch with
+  `task secrets:publish MSG="authorize VM"`
+  ([secrets.md](secrets.md#workflow-for-a-change-that-needs-new-or-updated-secrets)).
 - `task vm:install HOST=<flake-host>` — `bootstrap:reinstall` against the VM
   reusing the persistent key. HOST must be on the allow-list (`tests-server`,
   `tests-desktop`); real hosts' disk layouts won't boot under quickemu.
@@ -52,13 +56,28 @@ To add a VM-compatible flake host, add it to the `case` allow-list in
 `LOCAL_SECRETS=true|false` (default `true`). True builds with
 `--override-input nix-secrets path:../nix-secrets`, picking up uncommitted
 edits in the sibling checkout; false uses `flake.lock`. Use false only to test
-against published secrets.
+against published secrets. These tasks and `vm:sops-authorize` use
+`../nix-secrets` beside the checkout they run from (bootstrap also rsyncs it to
+the target), not `SECRETS_DIR`, so run them from the primary checkout with an
+up-to-date sibling.
+
+That default exists for the cases a published pin cannot serve: first-time
+bootstrap (the new host's recipients are not published yet, and the target
+may lack credentials for the private input), disposable VM authorization, and
+recovery drills that need unpublished sops recipient changes. Fast-forward the
+sibling checkout first: a checkout behind the lock breaks every secret on the
+target. After a bootstrap, push the host's keys (committed by
+`bootstrap:secrets`) and pin them with `task secrets:publish`, so routine
+rebuilds use the lock.
 
 Routine `task deploy:<host>`, `task rebuild[:<host>]` and `task hashes` are the
 opposite: they default to `flake.lock` (the revision `task build` and CI use;
 auto-upgrade reads the lock from the GitHub flake, which can differ from your
-local checkout), and `LOCAL_SECRETS=true task deploy:<host>` opts into the
-sibling checkout.
+local checkout). To test unpublished secrets on a real host, publish them on a
+`nix-secrets` branch and deploy the resulting pin
+([secrets.md](secrets.md#workflow-for-a-change-that-needs-new-or-updated-secrets)).
+`LOCAL_SECRETS=true task deploy:<host>` still opts into the local checkout,
+for the explicit cases above only.
 
 For deployment access checks and operator handoff, see the
 [host access preflight](../../skills/_shared/host-access.md#host-access-preflight).
