@@ -130,9 +130,11 @@ repeated dispatch to the same unavailable harness.
 denied command and leaves its edits in the worktree. To have it finish or fix
 something, continue the same child with `sys_session_send(session_id=…,
 args=…)` (the `purpose` argument is still required, e.g. `implement`),
-reserving a worker slot first. Do not ask it to retry the denied action. If
-the remaining step is only commit/push/PR, the supervisor does it instead, as
-the factory skill describes.
+under its worker claim: reuse the claim if the child still holds one (a
+claim cannot be taken twice, and a second token would use a second slot), and
+reserve a new token only if the earlier claim was released. Do not ask it to
+retry the denied action. If the remaining step is only commit/push/PR, the
+supervisor does it instead, as the factory skill describes.
 
 **Budget errors.** A model whose budget is exhausted fails the dispatch (or
 the child's first turn) with a 403 whose body carries `BUDGET_EXCEEDED`, e.g.

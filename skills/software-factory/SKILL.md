@@ -109,14 +109,16 @@ packet and then the returned session/task handle. The packet contains:
 - Role (`implement`, `review`, `validate`, or `explore`), worker reservation,
   the supervisor to contact, and whether further delegation is permitted.
 - Allowed actions and any **actual user-granted** host/action authority.
-- Which commit/push/PR actions the child may attempt on this runner, taken
-  from the `plan` metadata (record it at batch start from the runner's known
-  classifier behavior or a prior batch; unknown means "attempt, then fall
-  back"). Do not ask for an action the runner is known to deny. Every
-  implementer packet also states the fallback: if commit, push or PR creation
-  is denied, **stop with the edits intact** (do not retry, work around the
-  classifier or switch transport) and report the exact denied command, the
-  worktree path, and `task check` results.
+- Which commit/push/PR actions an **implementer** may attempt on this runner,
+  taken from the `plan` metadata (record it at batch start from the runner's
+  known classifier behavior or a prior batch; unknown means "attempt, then
+  fall back"). Do not ask for an action the runner is known to deny. Review,
+  explore and validate packets are read-only for the repository and allow no
+  commit, push or PR attempts on any runner. Every implementer packet also
+  states the fallback: if commit, push or PR creation is denied, **stop with
+  the edits intact** (do not retry, work around the classifier or switch
+  transport) and report the exact denied command, the worktree path, and
+  `task check` results.
 - Validator packets include a read-only transport preflight as the first host
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
@@ -164,15 +166,19 @@ Ending that turn does not imply automatic wakeup for external changes.
 **Denied child git/gh action.** This is a handoff, not a failure or a
 correction cycle. Continue the same child if it still has work to do
 (see the Omnigent adapter); otherwise the supervisor finishes the step with
-its own authority, which is no wider than the child's task: inspect the
-worktree diff against the packet's permitted files, commit using the
+its own authority, which is no wider than the child's task. The child may
+have been denied at any step, so first reconcile what exists: compare local
+`HEAD` with the packet's base SHA, inspect staged and unstaged changes
+against the packet's permitted files, and check the remote branch and any
+open PR. Perform only the outstanding actions: commit using the
 `resolve-issue` **Commit, PR, teardown** attribution rule, push the task
 branch, and open the PR as the repository owner's `gh` account (confirm with
-`gh auth status`; switch accounts only to that one). Record `pr.note` saying
-the supervisor committed on the child's behalf. Then verify `git status` is
-clean and the remote branch head equals the local head before review. This
-adds no authority: no merge, no activation, no push to a protected branch.
-If the supervisor's own action is also denied, stop and report it.
+`gh auth status`; switch accounts only to that one). Record in `pr.note`
+which actions the child completed and which the supervisor did. Then verify
+`git status` is clean and the remote branch head equals the local head before
+review. This adds no authority: no merge, no activation, no push to a
+protected branch. If the supervisor's own action is also denied, stop and
+report it.
 
 **Reviewer model failure.** A reviewer dispatch that fails with a budget
 (`403 BUDGET_EXCEEDED`) or permission error on its model is a task failure:
