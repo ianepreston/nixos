@@ -71,15 +71,22 @@ Inspect the **same recorded child** with both tools when:
 
 Read enough history to see the last complete assistant message. The defaults
 (10 items, 2000 characters each) clip long reports; raise `tail_items` (at most
-50) and `content_max_chars`, or use `tail_items=1` and step
-`content_offset_chars` until the ` [truncated]` suffix disappears. Compare that
-output with the packet's completion criteria and required output, not with
+50) and `content_max_chars`. To page one long item, use `tail_items=1` and step
+`content_offset_chars` until the ` [truncated]` suffix disappears, but first
+confirm that the newest item is the report: it can be a tool result or a later
+progress note, in which case read more items instead. Compare that output with the packet's completion criteria and required output, not with
 the child's status alone: `idle` without a final report is still unresolved.
 
-- **Terminal outcome in history** (final report, PR head, explicit failure or
-  blocker): record it in task `evidence`/`children` and reconcile the worker
-  claim through the factory's normal collect-then-release path. Do not
-  redispatch work the history shows was done.
+- **Outcome in history** (final report, PR head, explicit failure or
+  blocker): record it in task `evidence`/`children`. Do not redispatch work
+  the history shows was done. An outcome is not proof the child has stopped:
+  a build, monitor or validator can still be running after a PR or failure is
+  reported. Release the worker claim through the factory's normal
+  collect-then-release path only after confirming both that
+  `sys_session_get_info` no longer reports the child running and that no
+  build, monitor or validator it launched is still active (per its report and
+  history). If either is uncertain, keep the claim and treat it as the next
+  case.
 - **Work may still be active** (running build, monitor, validator or pending
   approval): record the child session ID, the outstanding work, where its
   result will appear and the resume condition. Keep the worker claim; the
@@ -96,7 +103,10 @@ report when it exits." History shows the check still running and no PR. Record
 check monitor", result_at: "child history final message", resume: "next
 completion notice or resume; re-read history"}`, keep `worker:implement-123`,
 and continue independent work. When a later notice or resume shows the
-complete report with head SHA and PR URL, record it and release the claim.
+complete report with head SHA and PR URL, record it. Release
+`worker:implement-123` only once the child is no longer running and its report
+and history show the monitor exited with nothing else it launched still
+active; otherwise keep the claim and record what remains.
 
 The packet's required output (see the factory skill) asks workers to end the
 dispatched turn with the complete report and, if background work is pending,
