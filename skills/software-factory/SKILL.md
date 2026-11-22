@@ -114,6 +114,10 @@ packet and then the returned session/task handle. The packet contains:
   operator action from the preflight.
 - Required output: head SHA and PR URL where applicable, changed behavior,
   exact checks/results, validation still needed, blockers and pending questions.
+  Ask the worker to finish within the dispatched turn when practical and to
+  end with that complete report as its final message. If it hands back while
+  background work is pending, it says what is still running and where the
+  result can be read.
 
 Children may not expand the batch, merge, activate a host by default, or
 silently delegate again. Only the supervisor grants build/validation access.
