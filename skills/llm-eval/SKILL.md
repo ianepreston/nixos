@@ -17,7 +17,7 @@ the measuring, scoring and rendering, so don't reimplement any of it here.
 Before starting, read:
 
 - `skills/_shared/host-access.md`: bounded SSH preflight, operator handoff,
-  host-specific authorization, and the deploy recipe.
+  and the deploy recipe. `AGENTS.md` **Authorization** says what needs approval.
 - The *Evaluation* section of `modules/system/_llama-cpp/README.md`: the
   privacy rule, the task reference and the candidate procedure this skill
   automates.
@@ -126,8 +126,10 @@ offload the *target* needs, not the candidate's maximum. Leave the
 incumbent's alias where it is.
 
 **Deploying it is ask-first on every host this targets.** terra is a
-workstation and amos1 is prod (host-access), and the user names the host
-each time. Mention two side effects when you ask:
+workstation and amos1 is prod (host-access), so under `AGENTS.md`
+**Authorization** the user names the host and action each time; the `hpp-1`
+workflow exception does not apply to this skill. Mention two side effects
+when you ask:
 
 - **Production traffic.** `--models-max 1` means loading the candidate
   unloads whatever the apps are using. On amos1 that is the production

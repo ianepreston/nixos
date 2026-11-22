@@ -70,8 +70,10 @@ Everything the app owns lives in this one file (or a private
 2. Use `task ssh:preflight HOST=hpp-1` for the standard deployment, or the
    helper with matching custom options. See
    [host-access](../_shared/host-access.md) for bounded access checks and operator
-   handoff. With host-specific authorization and working transport, deploy
-   with `task deploy:hpp-1`, which enforces the identity checks in `AGENTS.md`.
+   handoff. Invoking this workflow authorizes deploying to `hpp-1` and
+   non-destructive validation there (`AGENTS.md` **Authorization**); any
+   other host needs its own grant. With working transport, deploy with
+   `task deploy:hpp-1`, which enforces the identity checks in `AGENTS.md`.
 3. Check that the unit is active, the Caddy route answers, SSO login works,
    and the `myAppState` directory exists with the right owner.
 4. Note anything that needed manual first-run setup (admin bootstrap, library

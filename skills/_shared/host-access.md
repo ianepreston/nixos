@@ -18,17 +18,12 @@ against a host or `origin`.
 
 ## Authorization
 
-Read-only host inspection, including on production, and local checks and host
-builds need no confirmation. Follow the host-specific activation authorization
-in [AGENTS.md](../../AGENTS.md). When dev validation requires activation, use
-`hpp-1` once the user has authorized that host and action. Authorization for
-one host or action never extends to another. A missing reply is never approval.
-
-Ask first for other live mutations (including restarts or changes to app data),
-workstation rebuilds, `build_home`, and `task secrets:*` (including publication).
-Never use `task deploy:<host>` for changes touching
-`modules/hosts/_<host>-disks.nix`. For a disko change on a live host, the
-operator runs `task bootstrap:reinstall` themselves, following the
+The **Authorization** section of [AGENTS.md](../../AGENTS.md) decides what
+needs approval, including the `hpp-1` exception for `resolve-issue` and
+`add-app` invocations. This file adds no rules and grants nothing beyond it.
+Dev activation targets `hpp-1`; the fleet table above says which hosts are
+production or workstations. For a disko change on a live host, the operator
+runs `task bootstrap:reinstall` themselves, following the
 [documented reinstall workflow](../../docs/agents/testing-and-bootstrap.md).
 
 ## Host access preflight
