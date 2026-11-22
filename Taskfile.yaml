@@ -54,15 +54,23 @@ tasks:
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
       - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
       - nix build .#nixosConfigurations.amos1.config.system.build.toplevel
+  # All three activate through scripts/activate-nixos.sh, which builds, copies,
+  # then asserts the target hostname, closure name and the closure's own
+  # etc/hostname in the same process that runs switch-to-configuration (#1018).
+  # Pass ACTION=boot|test|check to change the action (default switch; `check`
+  # asserts identity and activates nothing). Host and action are passed as
+  # explicit arguments rendered with shellQuote, never through `env:` (Task lets
+  # an inherited environment variable of the same name override `env:`, which
+  # could redirect a deploy), and the helper validates them again.
   rebuild:
-    desc: rebuild nixos config
-    cmd: sudo nixos-rebuild switch --flake . --override-input nix-secrets path:../nix-secrets
+    desc: Rebuild this NixOS host (refuses unless hostname matches the configuration)
+    cmd: ./scripts/activate-nixos.sh --host "$(hostname)" --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   rebuild:*:
-    desc: Rebuild a particular config, pass :[hostname] for the target
-    cmd: sudo nixos-rebuild switch --flake .#{{ index .MATCH 0 }} --override-input nix-secrets path:../nix-secrets
+    desc: Rebuild a particular config on this machine, pass :[hostname] (refuses unless it equals this machine's hostname)
+    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   deploy:*:
-    desc: Build locally and deploy to a live remote host, pass :[hostname] for the target
-    cmd: nixos-rebuild switch --flake .#{{ index .MATCH 0 }} --target-host ipreston@{{ index .MATCH 0 }} --sudo --override-input nix-secrets path:../nix-secrets
+    desc: Build locally, copy, and activate on a live remote host, pass :[hostname] for the target
+    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
   build_home:*:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}

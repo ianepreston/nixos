@@ -1681,11 +1681,31 @@ and secrets-management workflows live in `taskfiles/*.yaml` and are pulled in
 via Task's `includes:`, so `task --list` shows the full prefixed surface
 (`bootstrap:*`, `recovery:*`, `secrets:*`).
 
+Every task that activates a NixOS closure (`rebuild`, `rebuild:<host>`,
+`deploy:<host>`, `bootstrap:rebuild`) goes through `scripts/activate-nixos.sh`,
+which refuses unless the machine's hostname, the closure name
+(`/nix/store/<hash>-nixos-system-<host>-<version>`) and the closure's own
+`etc/hostname` all equal `<host>`. `ACTION=boot|test|check` changes the action
+(`bootstrap:rebuild` always switches). The target hostname is checked after the
+copy, in the same process as the activation. With a separate build host every
+ssh leg (including `nix copy`) is forced to `ControlMaster=no`,
+`ControlPath=none`, `ProxyJump=none` and `ProxyCommand=none`, and explicit
+`-J`/`ProxyJump` options are rejected (a jump client would not inherit them);
+single-host deploys still accept `-J` and reuse your pre-opened ssh master
+(needed for hardware-key auth): the closure is copied over the legacy `ssh://`
+store (one plain `ssh` per command, which picks up the master's `ControlPath`),
+because `ssh-ng://` always opens its own ssh master and so can never use the
+pre-opened one. In split-host mode every leg authenticates afresh, so a
+hardware key needs a touch per leg.
+The one accepted exception is `system.autoUpgrade`
+(`modules/system/auto-rebuild.nix`): it only ever activates the local host from
+`main`, so there is no remote target and no cross-host identity risk.
+
 | Command                                          | Description                                                                      |
 | ------------------------------------------------ | -------------------------------------------------------------------------------- |
-| `task rebuild`                                   | Rebuild current NixOS host                                                       |
-| `task rebuild:<host>`                            | Rebuild a specific NixOS host                                                    |
-| `task deploy:<host>`                             | Build locally and push the closure to a live remote host (`switch` over SSH)     |
+| `task rebuild`                                   | Rebuild current NixOS host (asserts hostname + closure identity before activating) |
+| `task rebuild:<host>`                            | Rebuild config `<host>` on this machine; refuses unless this machine's hostname is `<host>` |
+| `task deploy:<host>`                             | Build locally, copy, and activate on a live remote host; identity asserted on target |
 | `task build_darwin:<host>`                       | Rebuild a nix-darwin host                                                        |
 | `task build_home:<target>`                       | Rebuild standalone home-manager                                                  |
 | `task build`                                     | Build a host without switching (default: luna)                                   |
@@ -1706,7 +1726,7 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task bootstrap:hostkey HOST=x DEST=ip`          | Re-derive age key from live host SSH key (fallback if install output was missed) |
 | `task bootstrap:secrets HOST=x DEST=ip`          | Add host age key to nix-secrets, create host secrets, commit                     |
 | `task bootstrap:sync HOST=x DEST=ip`             | Rsync nixos and nix-secrets to target                                            |
-| `task bootstrap:rebuild HOST=x DEST=ip`          | Run nixos-rebuild switch on target                                               |
+| `task bootstrap:rebuild HOST=x DEST=ip`          | Build on target, then activate it after asserting hostname + closure name         |
 | `task recovery:app APP=x HOST=y [SOURCE_HOST=z]` | Restore a single app from restic, driven by the generated recovery manifest      |
 | `task recovery:all HOST=x`                       | Catastrophic restore: every per-app dispatcher in sequence                       |
 | `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore four apps, teardown           |
@@ -1824,7 +1844,7 @@ task bootstrap:hwconfig HOST=newhostname DEST=192.168.1.50  # extract hardware c
 task bootstrap:hostkey  HOST=newhostname DEST=192.168.1.50  # re-derive age key from live host
 task bootstrap:secrets  HOST=newhostname DEST=192.168.1.50  # configure nix-secrets for host
 task bootstrap:sync     HOST=newhostname DEST=192.168.1.50  # rsync configs to target
-task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # remote nixos-rebuild switch
+task bootstrap:rebuild  HOST=newhostname DEST=192.168.1.50  # build + identity-checked switch on target
 ```
 
 ### 3. Secrets setup

@@ -57,7 +57,8 @@ Read `Taskfile.yaml` and `taskfiles/*.yaml` before running ad-hoc
 - `task deploy:<host>` — build locally, push, `switch` on a remote host. The
   fast path for testing uncommitted changes; `system.autoUpgrade` only follows
   `main` after a push.
-- `task rebuild` / `task rebuild:<host>` — local rebuild.
+- `task rebuild` / `task rebuild:<host>` — local rebuild (refuses unless the
+  machine's hostname is the configuration's host).
 - `task check` — full pre-push gate (nix fmt/lint, ruff, shellcheck, shfmt,
   `nix flake check`).
 - `task bootstrap:new` / `task bootstrap:reinstall` — provision via
@@ -67,6 +68,9 @@ New files must be tracked by git (`git add -N` is enough) before flake
 evaluation sees them — including non-`.nix` files a module references.
 
 ### Remote activation: verify the one host being changed
+
+`scripts/activate-nixos.sh` (behind every `task deploy|rebuild|bootstrap:rebuild`)
+enforces the rules below mechanically; use it, never raw `nixos-rebuild`.
 
 Anything that activates a closure (`switch`, `boot`, `test`,
 `switch-to-configuration`, `task deploy:*`, `nixos-rebuild*` with

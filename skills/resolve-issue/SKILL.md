@@ -71,9 +71,9 @@ Two worktree gotchas:
   Commit normally once that succeeds. Do **not** set
   `PRE_COMMIT_ALLOW_NO_CONFIG=1`: it papers over the missing config and can
   make the local hook a no-op. `task check` remains the full pre-push gate.
-- `task deploy:*` / `task rebuild` hardcode a relative
-  `--override-input nix-secrets path:../nix-secrets`, which resolves to nothing
-  from a worktree path. Use the absolute-path invocation.
+- `task deploy:*` / `task rebuild` go through `scripts/activate-nixos.sh
+  --local-secrets`, which finds `../nix-secrets` from a worktree via the main
+  checkout. Set `NIX_SECRETS_PATH` if yours lives elsewhere.
 
 ## 4. Implement
 
@@ -114,11 +114,10 @@ The permission boundary is in host-access. For this skill the shape of it is:
 is free, and everything touching amos1, this workstation's own configuration,
 or `../nix-secrets` asks first.
 
-Deploy with the `NIX_SSHOPTS` invocation from host-access rather than
-`task deploy:hpp-1` only when hpp-1 is the sole remote host and the control
-master's host. Never use it with distinct build and target hosts; follow
-host-access's separate build/copy and single-host activation steps, including
-the hostname and closure-name assertions. Don't pipe the activation.
+Deploy with `scripts/activate-nixos.sh` (or `task deploy:hpp-1`, the same
+helper); it asserts the target hostname and closure name in the activation
+chain itself. See host-access for `--dry-run`, `--action check` and per-host
+ssh options. Don't pipe the activation.
 
 Then actually exercise the change on the target — `systemctl status`,
 `journalctl -u`, curl the endpoint, read the metric — rather than treating a
