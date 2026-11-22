@@ -66,14 +66,15 @@ tasks:
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
       - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
       - nix build .#nixosConfigurations.amos1.config.system.build.toplevel
-  # All three activate through scripts/activate-nixos.sh, which builds, copies,
-  # then asserts the target hostname, closure name and the closure's own
-  # etc/hostname in the same process that runs switch-to-configuration (#1018).
-  # Pass ACTION=boot|test|check to change the action (default switch; `check`
-  # asserts identity and activates nothing). Host and action are passed as
-  # explicit arguments rendered with shellQuote, never through `env:` (Task lets
-  # an inherited environment variable of the same name override `env:`, which
-  # could redirect a deploy), and the helper validates them again.
+  # All three use scripts/activate-nixos.sh, which runs a transport preflight
+  # before building. Run task ssh:preflight HOST=<host> to probe a remote
+  # target without building. The helper asserts the target hostname, closure
+  # name and its etc/hostname in the switch-to-configuration process (#1018).
+  # Pass ACTION=boot|test|check to change the default action (switch).
+  # check probes transport, asserts identity and activates nothing. Host and
+  # action are explicit arguments rendered with shellQuote. Task lets an
+  # inherited environment variable override an env: entry, which could
+  # redirect a deploy. The helper validates the arguments again.
   #
   # nix-secrets resolves from flake.lock, the revision `task build` and CI use
   # (auto-upgrade reads the lock from the GitHub flake, which can differ from a

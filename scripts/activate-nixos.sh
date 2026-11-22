@@ -6,6 +6,7 @@
 #   activate-nixos.sh --host <flake-host> [options]
 #
 # Steps, each its own explicit command (no retry, no fallback, stop on error):
+#   0. preflight the transports, builders and target before any build;
 #   1. build   the closure (locally, on --build-host, or on the target with
 #              --remote-flake) and, before anything is copied, validate it:
 #              exactly /nix/store/<hash>-nixos-system-<host>-<version>, and its
@@ -39,7 +40,9 @@
 #   --local-secrets     override nix-secrets (default: flake.lock) with the sibling checkout, found
 #                       portably from worktrees ($NIX_SECRETS_PATH wins)
 #   --action A          switch (default) | boot | test | check
-#                       check = identity assertions only, activates nothing
+#                       check = probe the transport and assert identity, activates nothing
+#   --preflight         run only the read-only preflight; build/copy/activate nothing
+#   --skip-preflight    bypass the preflight before building
 #   --dry-run           evaluate and print the plan; build/copy/connect to nothing
 #
 # SSH options are per host and never shared: NIX_SSHOPTS from the environment is
@@ -92,6 +95,7 @@ remote_flake=""
 flake=$(cd "$script_dir/.." && pwd)
 action=switch
 dry_run=false
+preflight=auto
 local_secrets=false
 target_opts=()
 build_opts=()
@@ -155,6 +159,11 @@ while [ $# -gt 0 ]; do
     --action)
       action=${2:?--action needs a value}
       shift 2
+      ;;
+    --preflight | --skip-preflight)
+      [ "$preflight" = auto ] || die "choose at most one of --preflight and --skip-preflight"
+      preflight=$1
+      shift
       ;;
     --dry-run)
       dry_run=true
@@ -227,6 +236,7 @@ for o in ${build_opts[@]+"${build_opts[@]}"}; do check_ssh_opt build "$o"; done
 [ -z "$build_host" ] || [ -n "$dest" ] || die "--build-host needs --dest (a local activation builds locally)"
 [ -z "$remote_flake" ] || [ -n "$dest" ] || die "--remote-flake needs --dest"
 [ -f "$activate_script" ] || die "missing $activate_script"
+[ "$dry_run" != true ] || [ "$preflight" != --preflight ] || die "--dry-run and --preflight are mutually exclusive"
 
 # Split-host mode: forbid connection sharing outright. Forced options come first
 # so they take precedence over anything the caller or ssh_config supplies. A
@@ -277,12 +287,14 @@ resolve_secrets() {
   die "cannot find the nix-secrets checkout (set NIX_SECRETS_PATH or use a sibling ../nix-secrets)"
 }
 
+secrets_dir=""
 if [ "$local_secrets" = true ]; then
   if [ -n "$remote_flake" ]; then
     # Resolved on the target, where bootstrap:sync put the checkout.
     overrides+=("nix-secrets=path:../nix-secrets")
   else
-    overrides+=("nix-secrets=path:$(resolve_secrets)")
+    secrets_dir=$(resolve_secrets)
+    overrides+=("nix-secrets=path:$secrets_dir")
   fi
 fi
 
@@ -376,6 +388,238 @@ if [ "$dry_run" = true ]; then
     printf 'plan: ssh -T %s sudo bash -s -- %s %s %s <nonce>  < activate.sh\n' "$target" "$host" "$closure" "$action"
   fi
   exit 0
+fi
+
+# --- 0. transport preflight --------------------------------------------------
+# Use a process-group deadline (including ssh and its children), in addition
+# to ConnectTimeout, which only covers connection establishment. Never print
+# command stderr: it can contain account names, agent paths or config values.
+bounded() {
+  LC_ALL=C SSH_ASKPASS_REQUIRE=never timeout -k 1s "$@"
+}
+
+preflight_fail() {
+  printf 'preflight: %s\n' "$*" >&2
+  exit 1
+}
+
+# Place these before caller options (OpenSSH uses the first value it sees).
+# A probe cannot accept/update host keys, add identities, or set up forwards.
+probe_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
+  -oUpdateHostKeys=no -oAddKeysToAgent=no -oClearAllForwardings=yes
+  -oPermitLocalCommand=no -oForkAfterAuthentication=no)
+
+ssh_probe_failure() {
+  local leg=$1 status=$2 output=$3
+  case $output in
+    *"Host key verification failed"*)
+      preflight_fail "$leg: Host key verification failed. Verify the host key out of band and update the SSH trust entry."
+      ;;
+    *"agent refused operation"* | *"signing failed"* | *"PIN required"* | *"user presence"*)
+      preflight_fail "$leg: SSH signing failed (agent refused operation or needs touch/PIN). Unlock the key and verify authentication from an operator terminal."
+      ;;
+    *"protocol mismatch"*)
+      preflight_fail "$leg: Nix store protocol mismatch. Check the remote Nix store command and unexpected shell startup output."
+      ;;
+    *"Permission denied"*)
+      preflight_fail "$leg: SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal."
+      ;;
+    *"Could not resolve hostname"* | *"Connection refused"* | *"No route to host"* | *"Operation timed out"* | *"Connection timed out"*)
+      preflight_fail "$leg: unreachable over SSH. Check the host, network and SSH port."
+      ;;
+  esac
+  case $status in
+    124 | 137) preflight_fail "$leg: probe timed out. Check connectivity and any pending SSH touch/PIN prompt." ;;
+    *) preflight_fail "$leg: probe failed (exit $status). Verify the SSH connection from an operator terminal." ;;
+  esac
+}
+
+probe_agent() {
+  local endpoint=$1 cfg agent var status output
+  shift
+  cfg=$(bounded 4s ssh "${probe_opts[@]}" "$@" -G -T "$endpoint" </dev/null 2>&1) ||
+    preflight_fail "cannot read effective SSH settings for $endpoint. Check the SSH configuration for errors or a stalled Match command."
+  agent=$(awk '$1 == "identityagent" {sub(/^[^ ]+ +/, ""); print; exit}' <<<"$cfg")
+  case $agent in
+    none)
+      printf 'preflight: IdentityAgent is disabled for %s\n' "$endpoint" >&2
+      return
+      ;;
+    '' | SSH_AUTH_SOCK) agent=${SSH_AUTH_SOCK:-} ;;
+    '$'*)
+      # ssh -G leaves variable references unexpanded. Resolve one variable
+      # without evaluating arbitrary ssh_config content as shell input.
+      var=${agent#\$}
+      var=${var#\{}
+      var=${var%\}}
+      [[ $var =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] ||
+        preflight_fail "cannot resolve IdentityAgent for $endpoint. Check the configured socket."
+      agent=${!var:-}
+      ;;
+  esac
+  agent=${agent/#\%d/$HOME}
+  case $agent in
+    *%*) preflight_fail "cannot resolve IdentityAgent tokens for $endpoint. Check the configured socket." ;;
+    '') preflight_fail "$endpoint: no effective SSH agent socket. Start the SSH agent and load the SSH keys." ;;
+  esac
+  if [ "$agent" = "${SSH_AUTH_SOCK:-}" ]; then
+    printf 'preflight: %s uses the SSH_AUTH_SOCK agent\n' "$endpoint" >&2
+  else
+    printf 'preflight: %s uses IdentityAgent, which differs from SSH_AUTH_SOCK\n' "$endpoint" >&2
+  fi
+  output=$(SSH_AUTH_SOCK=$agent bounded 4s ssh-add -l </dev/null 2>&1) || {
+    status=$?
+    case $status:$output in
+      124:* | 137:*) preflight_fail "$endpoint: SSH agent unresponsive. Check for a pending touch or PIN prompt in the operator terminal." ;;
+      *"The agent has no identities"*) preflight_fail "$endpoint: SSH agent has no identities. Load the SSH keys into the effective agent." ;;
+      *"agent refused operation"*) preflight_fail "$endpoint: SSH agent refused operation. Unlock the effective agent and retry." ;;
+      *) preflight_fail "$endpoint: cannot query the effective SSH agent. Check that its socket is reachable." ;;
+    esac
+  }
+  # Report public fingerprints and types only, never the key comments.
+  awk -v endpoint="$endpoint" '$2 ~ /^SHA256:[a-zA-Z0-9+\/=]+$/ && $NF ~ /^\([A-Z0-9-]+\)$/ {
+    printf "preflight: %s agent key %s %s\n", endpoint, $2, $NF
+  }' <<<"$output" >&2
+}
+
+probe_store() {
+  local uri=$1 opts=$2 output
+  output=$(NIX_SSHOPTS="$(sshopts_string "${probe_opts[@]}" -T) $opts" \
+    bounded 12s nix store info --store "$uri" </dev/null 2>&1) ||
+    ssh_probe_failure "store transport $uri" "$?" "$output"
+}
+
+probe_builders() {
+  local builders machine endpoint identity output port
+  local -a opts
+  builders=$(bounded 4s nix config show builders </dev/null 2>/dev/null) ||
+    preflight_fail "cannot read Nix builders on the build machine. Check its Nix configuration."
+  # Nix accepts semicolon/newline-delimited machine specs or @/path/to/file.
+  case $builders in
+    @*)
+      machine=${builders#@}
+      # Nix treats an absent builders file (including the default) as empty.
+      [ -e "$machine" ] || return 0
+      builders=$(bounded 4s cat -- "$machine" 2>/dev/null) ||
+        preflight_fail "cannot read the Nix builders file. Check its permissions."
+      ;;
+  esac
+  while read -r machine _ identity _; do
+    case $machine in
+      '' | \#* | auto | daemon | local | /*) continue ;;
+      ssh://* | ssh-ng://*) endpoint=${machine#*://} ;;
+      *://*) continue ;;
+      *) endpoint=$machine ;;
+    esac
+    opts=()
+    # Use the SSH identity and port from the machine spec when supplied.
+    [ -z "$identity" ] || [ "$identity" = - ] || opts+=(-i "$identity")
+    if [[ $endpoint =~ ^(.*\]|[^:]+):([0-9]+)$ ]]; then
+      port=${BASH_REMATCH[2]}
+      endpoint=${BASH_REMATCH[1]}
+      opts+=(-p "$port")
+    fi
+    endpoint=${endpoint//[\[\]]/}
+    [[ $endpoint =~ ^([a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?([a-zA-Z0-9_][a-zA-Z0-9._:%-]*|::[a-zA-Z0-9._:%-]*)$ ]] ||
+      preflight_fail "invalid SSH builder destination. Check the Nix builders configuration."
+    output=$(bounded 12s ssh "${probe_opts[@]}" -oControlMaster=no "${opts[@]+"${opts[@]}"}" -T "$endpoint" true </dev/null 2>&1) ||
+      ssh_probe_failure "builder $endpoint" "$?" "$output"
+  done <<<"${builders//;/$'\n'}"
+}
+
+probe_secrets() {
+  local lock=$1 dir=$2 locked head dirty state
+  locked=$(bounded 4s jq -er 'getpath(["nodes", .nodes[.root].inputs["nix-secrets"], "locked", "rev"]) |
+    select(type == "string" and test("^[a-f0-9]{40}$"))' "$lock" 2>/dev/null) ||
+    preflight_fail "cannot read the locked nix-secrets revision. Check flake.lock."
+  [ -e "$dir/.git" ] ||
+    preflight_fail "the local nix-secrets override is missing its Git checkout. Sync the checkout or use the locked input."
+  head=$(bounded 4s git -C "$dir" rev-parse --verify HEAD 2>/dev/null) ||
+    preflight_fail "cannot read the local nix-secrets HEAD. Check the checkout or use the locked input."
+  dirty=$(bounded 4s git --no-optional-locks -C "$dir" status --porcelain --untracked-files=normal 2>/dev/null) ||
+    preflight_fail "cannot inspect the local nix-secrets worktree. Check the checkout or use the locked input."
+  state=clean
+  [ -z "$dirty" ] || state="has uncommitted changes"
+  if [ "$head" != "$locked" ]; then
+    preflight_fail "stale local nix-secrets ($state): HEAD $head differs from locked $locked. Check out the locked revision or omit --local-secrets."
+  fi
+  printf 'preflight: local nix-secrets matches the locked revision (%s)\n' "$state" >&2
+}
+
+probe_remote_build_environment() {
+  local endpoint=$1 directory=$2 secrets=$3 output line status
+  shift 3
+  # Discover and reach distributed builders from the machine running the build.
+  # For bootstrap, compare the synced checkout with that machine's flake.lock.
+  output=$(
+    {
+      declare -f bounded preflight_fail ssh_probe_failure probe_builders probe_secrets
+      declare -p probe_opts
+      cat <<'REMOTE'
+set -euo pipefail
+if [ "$2" = true ]; then probe_secrets "$1/flake.lock" "$1/../nix-secrets"; fi
+probe_builders
+REMOTE
+    } | bounded 45s ssh "${probe_opts[@]}" "$@" -T "$endpoint" "bash -s -- $directory $secrets" 2>&1
+  ) || {
+    status=$?
+    while IFS= read -r line; do
+      case $line in preflight:\ *) preflight_fail "on $endpoint: ${line#preflight: }" ;; esac
+    done <<<"$output"
+    ssh_probe_failure "build environment on $endpoint" "$status" "$output"
+  }
+  case $output in
+    *"local nix-secrets matches the locked revision (clean)"*)
+      printf 'preflight: local nix-secrets on %s matches the locked revision (clean)\n' "$endpoint" >&2
+      ;;
+    *"local nix-secrets matches the locked revision (has uncommitted changes)"*)
+      printf 'preflight: local nix-secrets on %s matches the locked revision (has uncommitted changes)\n' "$endpoint" >&2
+      ;;
+  esac
+}
+
+run_preflight() {
+  local actual output
+  command -v timeout >/dev/null || preflight_fail "GNU timeout is required. Install GNU coreutils."
+  if [ -n "$dest" ]; then
+    local target_argv=(${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"})
+    if [ -z "$build_host" ]; then
+      target_argv=(-oControlMaster=no ${target_argv[@]+"${target_argv[@]}"})
+      bounded 4s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -O check -T "$target" </dev/null >/dev/null 2>&1 ||
+        preflight_fail "no usable SSH master for $target. Open it from an operator terminal using the same destination and SSH options."
+    fi
+    probe_agent "$target" "${target_argv[@]+"${target_argv[@]}"}"
+    if [ -n "$build_host" ]; then
+      probe_agent "$build_host" "${build_opts[@]}"
+    fi
+    probe_store "$(target_store_scheme)://$target" "$(target_nix_sshopts)"
+    if [ -n "$build_host" ]; then
+      output=$(bounded 12s ssh "${probe_opts[@]}" "${build_opts[@]}" -T "$build_host" true </dev/null 2>&1) ||
+        ssh_probe_failure "builder $build_host" "$?" "$output"
+      probe_store "ssh-ng://$build_host" "$(sshopts_string "${build_opts[@]}")"
+      probe_remote_build_environment "$build_host" . false "${build_opts[@]}"
+    elif [ -n "$remote_flake" ]; then
+      probe_remote_build_environment "$target" "$remote_flake" "$local_secrets" "${target_argv[@]+"${target_argv[@]}"}"
+    else
+      probe_builders
+    fi
+    actual=$(bounded 12s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -T "$target" hostname </dev/null 2>&1) ||
+      ssh_probe_failure "hostname probe for $target" "$?" "$actual"
+  else
+    probe_builders
+    actual=$(bounded 4s hostname 2>/dev/null) || preflight_fail "cannot determine the local hostname."
+  fi
+  if [ "$actual" != "$host" ]; then
+    [[ $actual =~ $host_re ]] || actual='(unexpected output)'
+    preflight_fail "hostname was '$actual', expected '$host'. Check the destination and --host."
+  fi
+  [ -z "$secrets_dir" ] || probe_secrets "$flake/flake.lock" "$secrets_dir"
+  printf 'preflight: passed for %s\n' "$host" >&2
+}
+
+if [ "$preflight" != --skip-preflight ]; then
+  run_preflight
+  [ "$preflight" != --preflight ] || exit 0
 fi
 
 # --- 1. build -----------------------------------------------------------------
