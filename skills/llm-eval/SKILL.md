@@ -256,7 +256,8 @@ issue open until the last one is decided.
 ## 7. Adopt or drop
 
 Once the user has confirmed the verdict, open the config PR from the serving
-worktree (the `resolve-issue` commit, push and PR conventions apply):
+worktree (the `resolve-issue` self-review, commit, push and PR conventions
+apply, including its optional attribution footer rule):
 
 - **adopt:** move `<alias>` onto the candidate's entry and drop `-next`. The
   old incumbent is deleted or kept as a named peer, whichever the user picks.

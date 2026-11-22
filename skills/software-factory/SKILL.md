@@ -164,8 +164,9 @@ operator; no automatic retry, rollback, kill or recovery command.
    model vendor. Give the reviewer the diff, relevant source and acceptance
    criteria, not the implementer's conclusions. Review is read-only. If no
    independent reviewer can run, record review as pending for the human.
-   Do not block on an unavailable external `code-review` skill: review scope,
-   correctness, published contracts, failure behavior, privacy and validation.
+   Do not block on an unavailable external review skill: use the
+   `resolve-issue` self-review checklist (correctness, scope, contracts,
+   failure behavior, privacy, validation).
 2. Run `task check` and the relevant behavioral checks/builds. Coordinate
    expensive commands with the `build` claim, including commands run by children.
    Missing live access defers that stage; it need not stop independent edits

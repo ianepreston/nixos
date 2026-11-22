@@ -152,15 +152,51 @@ follow-up issue, linked from the PR.
 
 ## 7. Self-review
 
-Run the `code-review` skill on the diff and address what it finds. Push back on
-findings that are wrong rather than churning the code to satisfy them; say which
-you rejected and why.
+Self-review is mandatory and needs nothing outside this repo. Read the whole
+diff against the base (`git diff origin/<default>...HEAD` plus any uncommitted
+changes) and work through this checklist, noting a finding or "clear" for each:
+
+1. **Correctness** — it does what the issue asks, including edge cases (absent
+   vs zero, empty input, first run, restart). Where it matters, check the
+   rendered config or output, not just the source.
+2. **Scope** — nothing the issue ruled out, no unrelated churn, and every
+   ancillary change was approved in Phase 6.
+3. **Existing contracts** — published option surfaces and contracts keep their
+   shape (or the change is called out), the `AGENTS.md` architecture rules
+   hold, and docs or skills describing the touched behaviour still match it.
+4. **Failure behavior** — when a dependency, secret, host or network is
+   missing, it fails in the intended direction and visibly; nothing is
+   silently skipped or reported as success.
+5. **Privacy** — no PII (see `AGENTS.md`) or secret material in the diff,
+   commit messages, PR body, or logs quoted in them.
+6. **Validation** — every claim the PR makes is backed by a check that ran and
+   fits the change; failed, skipped and deferred checks are named.
+
+A review facility the runner provides (a harness review skill or command) may
+augment the checklist: run it as well and fold in its findings, but it neither
+replaces nor changes the checklist. If none is available, the checklist alone
+completes this step; do not block on or go looking for one. Use a separate
+reviewer agent only when the session permits spawning one; give it the diff
+and acceptance criteria rather than your conclusions.
+
+Address what the review finds. Push back on findings that are wrong rather
+than churning the code to satisfy them; say which you rejected and why. Carry
+the outcome into the PR and the final report: which review sources ran, the
+unresolved risks, and the limits of the validation. "Review passed" alone is
+not a result.
 
 ## 8. Commit, PR, teardown
 
 Commit in the worktree normally, after the dev-shell setup above, with a subject
 in the house style (`<area>: <imperative>`, e.g. `valheim: publish a player-count
-gauge from the notifier roster`) and the session's attribution footer.
+gauge from the notifier roster`).
+
+The repo requires no attribution footer. If the session or runner instructions
+define one, append its exact lines to commits and the PR body as instructed.
+Otherwise omit it; a missing convention never blocks the commit. Never invent
+a co-author identity, reuse another harness's footer, or add a trailer that
+exposes a personal email or account identifier. The commit author is the
+checkout's configured Git identity; this step doesn't change it.
 
 Push the task branch with a working Git transport. See host-access for scoped
 fallbacks if the configured transport is unavailable. Then `gh pr create`.
