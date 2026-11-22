@@ -11,6 +11,7 @@ usage: activate-nixos-test.py REPO_ROOT
 
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -984,7 +985,7 @@ class TaskRouting(Harness):
         self.assertFalse(self.activated())
 
     def test_invalid_local_secrets_is_rejected_before_anything_runs(self):
-        for value in ("yes", "1", "TRUE", "maybe"):
+        for value in ("yes", "1", "TRUE", "maybe", ""):
             for argv in (
                 ("rebuild",),
                 ("rebuild:hpp-1",),
@@ -1006,7 +1007,7 @@ class TaskRouting(Harness):
         # one NUL-terminated record per argument, then the inherited variable
         regen.write_text(
             f"{SHEBANG}"
-            f'{{ printf "%s\\0" "$@"; printf "ARGS=[%s]\\0" "${{REGEN_NIX_ARGS-}}"; }} > {out}\n'
+            f'{{ printf "%s\\0" "$@"; printf "ARGS=[%s]\\0" "${{REGEN_NIX_ARGS-}}"; }} > {shlex.quote(str(out))}\n'
         )
         regen.chmod(0o755)
         inherited = "--override-input nix-secrets path:/stale/checkout"
@@ -1036,9 +1037,10 @@ class TaskRouting(Harness):
         hashval = "sha256-" + "B" * 43 + "="
         nix = self.bin / "nix"
         calls = self.tmp / "nix-calls"
+        q_calls = shlex.quote(str(calls))
         nix.write_text(
             f"{SHEBANG}"
-            f'printf "%s\\0" "$@" >> {calls}; printf "\\n" >> {calls}\n'
+            f'printf "%s\\0" "$@" >> {q_calls}; printf "\\n" >> {q_calls}\n'
             f'echo "error: hash mismatch"; echo "  got:    {hashval}"; exit 1\n'
         )
         (self.bin / "nix-prefetch-url").write_text(f"{SHEBANG}exit 1\n")

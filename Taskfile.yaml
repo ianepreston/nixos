@@ -43,7 +43,7 @@ tasks:
     # nix-secrets resolves from flake.lock, like CI. `LOCAL_SECRETS=true task
     # hashes` opts into the sibling ../nix-secrets checkout (#1042).
     vars:
-      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "false"}}'
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
     cmd: |
       set -euo pipefail
       case {{.LOCAL_SECRETS | shellQuote}} in
@@ -83,7 +83,7 @@ tasks:
   rebuild:
     desc: Rebuild this NixOS host (refuses unless hostname matches the configuration)
     vars:
-      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "false"}}'
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
     cmd: |
       set -euo pipefail
       secrets=()
@@ -96,7 +96,7 @@ tasks:
   rebuild:*:
     desc: Rebuild a particular config on this machine, pass :[hostname] (refuses unless it equals this machine's hostname)
     vars:
-      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "false"}}'
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
     cmd: |
       set -euo pipefail
       secrets=()
@@ -109,7 +109,7 @@ tasks:
   deploy:*:
     desc: Build locally, copy, and activate on a live remote host, pass :[hostname] for the target
     vars:
-      LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "false"}}'
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
     cmd: |
       set -euo pipefail
       secrets=()
