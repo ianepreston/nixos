@@ -126,6 +126,25 @@ its reservation until runtime evidence confirms it has stopped. A boot
 failure removes that worker from this run's roster rather than triggering
 repeated dispatch to the same unavailable harness.
 
+**After a denied commit, push or PR.** The child's final report names the
+denied command and leaves its edits in the worktree. To have it finish or fix
+something, continue the same child with `sys_session_send(session_id=…,
+args=…)` (the `purpose` argument is still required, e.g. `implement`),
+under its worker claim: reuse the claim if the child still holds one (a
+claim cannot be taken twice, and a second token would use a second slot), and
+reserve a new token only if the earlier claim was released. Do not ask it to
+retry the denied action. If the remaining step is only commit/push/PR, the
+supervisor does it instead, as the factory skill describes.
+
+**Budget errors.** A model whose budget is exhausted fails the dispatch (or
+the child's first turn) with a 403 whose body carries `BUDGET_EXCEEDED`, e.g.
+`{"error_code": "BUDGET_EXCEEDED", …}`; permission errors look similar with a
+different code. `sys_advise_models` does not know about the budget and may
+keep recommending that model. Read it from the `sys_session_send` result or
+`sys_session_get_history`, record the model unavailable for the run, and
+redispatch on a model that worked earlier. This is a task failure, not a boot
+failure.
+
 Completion wakes cover children, not arbitrary external events. If only a
 human answer, hardware change or upstream release can unblock work, leave a
 durable waiting state and an explicit resume instruction. This workflow does
