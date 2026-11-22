@@ -15,7 +15,7 @@
     # This is particularly useful when an upcoming stable release is in beta because you can effectively
     # keep 'nixpkgs-stable' set to stable for critical packages while setting 'nixpkgs' to the beta branch to
     # get a jump start on deprecation changes.
-    # See also 'stable-packages' and 'unstable-packages' overlays at 'overlays/default.nix"
+    # For per-package channel selection, see docs/agents/app-packaging.md.
     nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     nix-darwin.url = "github:nix-darwin/nix-darwin/nix-darwin-26.05";
@@ -34,7 +34,7 @@
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Secrets management. See ./docs/secretsmgmt.md
+    # Secrets management. See ./docs/agents/secrets.md
     sops-nix = {
       url = "github:mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -54,7 +54,7 @@
     #
     # ========= Personal Repositories =========
     #
-    # Private secrets repo.  See ./docs/secretsmgmt.md
+    # Private secrets repo.  See ./docs/agents/secrets.md
     # Authenticate via ssh and use shallow clone. SSH (not HTTPS) so the
     # nightly `nixos-upgrade.service` on impermanent server hosts can
     # fetch with a system-level deploy key — root has no HTTPS creds and

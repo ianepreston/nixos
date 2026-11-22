@@ -67,15 +67,14 @@ Check any upstream module for:
 
 - **User/group overrides.** Jellyfin gates user creation behind
   `mkIf (cfg.user == "jellyfin")`, so overriding to `server-${env}` cleanly
-  skips it. Kavita sets `users.users.${cfg.user}.group = cfg.user`
-  unconditionally, colliding with `server-users.nix`; fix with
-  `users.users.${kavitaUser}.group = lib.mkForce "servers";`. Read each
-  module's `users.users` block first.
-- **Postgres connection style.** `database.createLocally = true` +
-  `DynamicUser` (mealie) gets unix-socket peer auth for free when the role name
-  doesn't collide. When it does (paperless wants `paperless`, ours is
-  `paperless_ngx`), keep `myPostgresApp` + TCP + sops password instead of a
-  destructive rename.
+  skips it. Read each module's `users.users` block for unconditional user or
+  group assignments before overriding ownership.
+- **Postgres connection style.** The upstream `services.miniflux` module
+  defaults `createDatabaseLocally` to true and uses `DynamicUser`, providing
+  unix-socket peer auth when the role name doesn't collide. Our
+  `modules/apps/miniflux.nix` relies on those defaults. For a role-name
+  mismatch (paperless wants `paperless`, ours is `paperless_ngx`), keep
+  `myPostgresApp` + TCP + sops password instead of a destructive rename.
 - **Multi-unit apps.** Every unit consuming the same OIDC env file
   (paperless-{web,scheduler,task-queue,consumer}) goes in
   `myAuthentik.oidcApps.<app>.appRestartUnit` (accepts a list).

@@ -12,7 +12,7 @@
 #     from the podman bridge and need password auth — that's why
 #     every postgres-backed app needs this rotate-on-secret-change
 #     oneshot, and doing it once here (instead of four times verbatim
-#     across mealie/tandoor/paperless-ngx/etc.) is the point of the
+#     across bookorbit/tandoor/paperless-ngx/etc.) is the point of the
 #     helper.
 #
 # Apps that consume `myPostgresApp` still have to:

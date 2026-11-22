@@ -46,7 +46,8 @@
 
 ## Requirements
 
-- NixOS 25.11+ / nix-darwin 25.11+ / Home-Manager release-25.11
+- Flake inputs track NixOS / nix-darwin 26.05 and Home-Manager release-26.05
+  (see `flake.nix`)
 - For secrets: access to the private `nix-secrets` repo via SSH
 - Patience
 
@@ -74,7 +75,7 @@ and resources if you want to build your own.
 │   │   └── _ssh-keys/    # Human login pubkeys — authorized fleet-wide (see its README)
 │   ├── system/            # System-level modules (sops, ssh, caddy, postgresql, mariadb, oci-containers, server-backups, observability, tailscale, …). Cross-cutting option surfaces (myCaddy.apps, myPostgresApp, myHomepage.tiles, mySqliteQuiesce.apps) are declared inline next to the service that consumes them.
 │   │   └── _hm-core/     # Core home-manager config (git, zsh, starship, neovim, direnv, packages, platform-specific)
-│   ├── apps/              # Server-app modules (jellyfin, mealie, miniflux, authentik, homepage, …) plus per-app blueprint dirs
+│   ├── apps/              # Server-app modules (jellyfin, bookorbit, miniflux, authentik, homepage, …) plus per-app blueprint dirs
 │   ├── hardware/          # Hardware-specific modules (intel-quicksync, nvidia, yubikey, keyboards, rgb, xreal-headset)
 │   ├── desktop/           # Desktop environment modules (gnome, audio, gaming, flatpak, themes, moonshine, quickemu)
 │   │   └── _gnome/       # GNOME-specific sub-modules (dconf, cursor, stylix)
@@ -135,8 +136,12 @@ caddy, postgres, authentik, observability, backups, etc.). Each app module is
 self-contained: it declares the OCI container or native service, contributes a
 Caddy route, any database/user it needs, its sops secrets, an authentik
 blueprint (if SSO-protected), and a homepage tile — all in one place.
-`modules/apps/mealie.nix` is the canonical example for a containerized,
-postgres-backed, OIDC-integrated app.
+[`modules/apps/bookorbit.nix`](modules/apps/bookorbit.nix) is the canonical
+container/Postgres/OIDC example: BookOrbit runs in Podman, uses the shared
+Postgres instance, and stores its OIDC settings in its own database after UI
+setup. For a native service with OIDC credentials supplied as JSON through a
+rendered env file,
+see [`modules/apps/tandoor.nix`](modules/apps/tandoor.nix).
 
 App modules contribute to a small set of aggregator options declared inline next
 to the services that consume them (in `modules/system/` or, for `myAuthentik.*`,
@@ -190,22 +195,22 @@ to the services that consume them (in `modules/system/` or, for `myAuthentik.*`,
 - **Image versions:** pin the tag in the module and put a renovate annotation
   above it so updates are automated:
   ```nix
-  # renovate: datasource=docker depName=ghcr.io/mealie-recipes/mealie
-  image = "ghcr.io/mealie-recipes/mealie:v3.16.0";
+  # renovate: datasource=docker depName=ghcr.io/bookorbit/bookorbit
+  image = "ghcr.io/bookorbit/bookorbit:3.9.0";
   ```
-- **Volumes:** state lives under `/var/lib/containers/<appname>` (single prefix
-  lets the backup module cover every app automatically). Create the directory
-  via `systemd.tmpfiles.rules` owned by the server UID/GID and bind-mount it
-  into the container.
+- **Volumes:** state lives under `/var/lib/containers/<appname>`. Declare its
+  directories in `myContainerApp.<name>.stateDirs`; the helper creates the
+  tmpfiles rules and contributes those paths to backup. Bind-mount them into
+  the container. Container-wide preservation is separate (see below).
 - **Postgres:** declare
-  `myPostgresApp.<name>.consumerService = "podman-<app>.service"` (or whatever
-  unit consumes the role). The helper in `modules/system/postgresql.nix` handles
-  the database/role via `ensureDatabases`/`ensureUsers`, the sops secret, and
+  `myPostgresApp.<name>.consumerService = [ "podman-<app>.service" ];` (list
+  every unit that consumes the role). The helper in
+  `modules/system/postgresql.nix` handles the database/role via `ensureDatabases`/`ensureUsers`, the sops secret, and
   the rotate-on-secret-change oneshot wired `before` the consumer unit. The app
   is responsible for plumbing `${config.sops.placeholder."<app>/db_password"}`
   into its own env file (e.g. as `POSTGRES_PASSWORD`) and pointing the upstream
-  service at `host.containers.internal:5432` with the matching role
-  - db name.
+  container at `host.containers.internal:5432` with the matching role and
+  database name; native services can use `127.0.0.1:5432`.
 - **UI-stored config can silently beat the module.** Several apps keep a
   settings row in their own database and prefer it over the environment —
   paperless-ngx's AI configuration page is `app_config.X or settings.X` for
@@ -214,14 +219,13 @@ to the services that consume them (in `modules/system/` or, for `myAuthentik.*`,
   empty; a value saved there wins over the declarative one and does not show up
   in a diff.
 - **Secrets:** declare per-app entries under `sops.secrets."<app>/..."` with
-  `sopsFile = "${sopsFolder}/${hostSpec.hostName}.yaml"`. For env vars the
-  container needs, render a `sops.templates."<app>.env"` and pass it via
+  `sopsFile = hostSpec.sopsFile;`. For env vars the container needs, render a `sops.templates."<app>.env"` and pass it via
   `environmentFiles`; set `restartUnits = [ "podman-<app>.service" ]` so the
   container picks up rotated secrets.
 
 ### Operating containers
 
-The systemd services that run containers (e.g. `podman-mealie.service`) are
+The systemd services that run containers (e.g. `podman-bookorbit.service`) are
 root-owned, so use `sudo podman ps`, `sudo podman logs <name>`, etc. for
 inspection. Rootless podman as your user works for ad-hoc containers you start
 yourself, but it can't see the system-managed ones.
@@ -235,25 +239,32 @@ Server hosts run `modules/system/server-backups.nix`, which composes:
 - `services.mysqlBackup` — daily mariadb dump to `/var/backup/mysql` (also at
   02:00). Same restic snapshot picks both engines up.
 - `services.restic.backups.server` — daily restic snapshot of
-  `/var/backup/postgresql`, `/var/backup/mysql`, and `/var/lib/containers` to
+  `/var/backup/postgresql`, `/var/backup/mysql`, and app-contributed state paths to
   `/mnt/backups/restic/${hostName}` on the NFS-mounted Synology share (runs at
   03:00 with a 30-minute randomized delay). Retention:
   `--keep-daily 7 --keep-weekly 4 --keep-monthly 6`.
 
-Apps that keep state outside `/var/lib/containers` (e.g. the native \*arr stack,
-jellyfin, kavita, komga, audiobookshelf) extend
-`services.restic.backups.server.paths` themselves with their own
-`/var/lib/<app>` tree; the listOf merges via concat so the base paths stay
-intact.
+Native app modules declare `myAppState.<app>` as the authoritative source for
+state preservation and backup paths. It renders the preservation entry, the
+Restic path (unless `backup = false`), and the profile's preservation guard;
+apps do not extend Restic paths directly. See
+[the app-state guide](docs/agents/app-state.md).
 
-SQLite-backed native apps additionally opt into the `mySqliteQuiesce` helper
+Container state under `/var/lib/containers` is preserved as a whole by
+`modules/system/preservation-server.nix`. Backup is narrower:
+`myContainerApp.<app>.stateDirs` contributes only declared app directories,
+excluding Podman's image store. State outside that tree needs its own
+`myAppState` declaration.
+
+SQLite-backed apps additionally opt into the `mySqliteQuiesce` helper
 (`modules/system/sqlite-quiesce.nix`), which runs `sqlite3 .backup` for each
 declared database into `/var/backup/sqlite/<app>/` immediately before each
 restic run. The staging root is added to the restic paths automatically, so each
-snapshot contains both the (hot, possibly torn) live file under
-`/var/lib/<app>/...` and a guaranteed-consistent copy under
-`/var/backup/sqlite/<app>/`. Apps currently using it: jellyfin, sonarr, radarr,
-lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf.
+snapshot contains both the (hot, possibly torn) live file in the app's state
+directory and a guaranteed-consistent copy under `/var/backup/sqlite/<app>/`.
+Apps currently declaring it: audiobookshelf, bambuddy, bazarr, bindery, gatus,
+jellyfin, komga, lidarr, minuspod, pinchflat, prowlarr, radarr, shelfmark, sonarr,
+wealthfolio. The enabled set depends on the host's module imports.
 
 Only server-local app state is in scope. NAS-resident media under `/mnt/content`
 is protected NAS-side via Synology snapshots / Hyper Backup, not by restic.
@@ -328,7 +339,7 @@ clears a stale lock, which is what the dispatchers do automatically.
    ```
 
    Expect benign errors for roles/databases that NixOS's `ensureUsers` /
-   `ensureDatabases` has already created (`role "mealie" already exists`, etc.)
+   `ensureDatabases` has already created (`role "bookorbit" already exists`, etc.)
    — they don't stop the data-loading `\connect` blocks that follow.
    `ON_ERROR_STOP=0` keeps psql going past those.
 
@@ -344,7 +355,7 @@ clears a stale lock, which is what the dispatchers do automatically.
    ```
 
    App-specific role passwords (the sops-managed
-   `ALTER USER ... WITH PASSWORD ...` flow used by mealie) re-apply on the next
+   `ALTER USER ... WITH PASSWORD ...` flow used by bookorbit) re-apply on the next
    service start via the per-app `<app>-db-password.service` units, so you don't
    need to set them by hand.
 
@@ -375,39 +386,45 @@ sudo restic -r /mnt/backups/restic/<host> \
 
 `pg_dumpall` writes one combined file with every database and role. The awk
 filter below extracts a single database's section by tracking `\connect <name>`
-markers. Roles are managed by NixOS `ensureUsers` and don't need to be replayed.
+markers. It also stops at `CREATE DATABASE`, because `pg_dumpall` emits the
+next database's creation statement before its `\connect` marker; replaying
+that statement can fail on an already-provisioned database. This matches the
+filter in `taskfiles/recovery.yaml`. Roles are managed by NixOS `ensureUsers`
+and don't need to be replayed.
 
-##### Containerized app with volume + postgres database (mealie)
+##### Containerized app with volume + postgres database (bookorbit)
 
-Mealie has both on-disk state (`/var/lib/containers/mealie` — uploaded recipe
-images, user assets) and database state (the `mealie` postgres db — recipes,
-users, OIDC mappings). The two reference each other, so **restore both from the
-same restic snapshot** — mixing eras leaves broken image references in recipe
-rows.
+BookOrbit has both local state (`/var/lib/containers/bookorbit/data`, mounted
+as `/data`) and database state (the `bookorbit` Postgres database, including
+users, library metadata, and UI-configured OIDC settings). **Restore both from
+the same Restic snapshot.** Library media mounted from `/mnt/content` is
+protected separately by the NAS.
 
 ```bash
 # 1. Stop the container so nothing writes during restore.
-sudo systemctl stop podman-mealie.service
+sudo systemctl stop podman-bookorbit.service
 
 # 2. Restore the volume from restic.
 sudo restic -r /mnt/backups/restic/<host> \
   --password-file /run/secrets/restic/password --retry-lock 10m \
-  restore latest --target / --include /var/lib/containers/mealie
+  restore latest --target / --include /var/lib/containers/bookorbit
 
-# 3. Drop and recreate the database, then replay just the mealie
-#    section of the pg_dumpall output. The mealie role already exists
-#    (NixOS ensureUsers); its password is unchanged.
-sudo -u postgres dropdb --if-exists mealie
-sudo -u postgres createdb -O mealie mealie
+# 3. Drop and recreate the database with its required extensions, then
+#    replay just the bookorbit section of pg_dumpall. The role already
+#    exists (NixOS ensureUsers); its password is unchanged.
+sudo -u postgres dropdb --if-exists bookorbit
+sudo -u postgres createdb -O bookorbit bookorbit
+sudo systemctl restart bookorbit-db-extensions.service
 zcat /var/backup/postgresql/all.sql.gz | awk '
-  /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "mealie"); next }
+  /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "bookorbit"); next }
+  /^CREATE DATABASE / { in_target = 0; next }
   in_target { print }
-' | sudo -u postgres psql -v ON_ERROR_STOP=1 mealie
+' | sudo -u postgres psql -v ON_ERROR_STOP=1 bookorbit
 
-# 4. Restart. mealie-db-password.service is wantedBy podman-mealie
+# 4. Restart. bookorbit-db-password.service is wantedBy podman-bookorbit
 #    and re-applies the sops-managed role password before the
 #    container comes up, so authentication keeps working.
-sudo systemctl start podman-mealie.service
+sudo systemctl start podman-bookorbit.service
 ```
 
 Same pattern for any future containerized app with a postgres database:
@@ -418,7 +435,7 @@ substitute the unit name, volume path, and database name.
 Miniflux is a single Go binary running under `DynamicUser=true` with no
 persistent on-disk state — feeds, entries, read/unread flags, and OIDC user
 mappings all live in the `miniflux` postgres database. Restore is just the
-database half of the mealie flow:
+database half of the BookOrbit flow (without its extension setup):
 
 ```bash
 sudo systemctl stop miniflux.service
@@ -426,6 +443,7 @@ sudo -u postgres dropdb --if-exists miniflux
 sudo -u postgres createdb -O miniflux miniflux
 zcat /var/backup/postgresql/all.sql.gz | awk '
   /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "miniflux"); next }
+  /^CREATE DATABASE / { in_target = 0; next }
   in_target { print }
 ' | sudo -u postgres psql -v ON_ERROR_STOP=1 miniflux
 sudo systemctl start miniflux.service
@@ -434,7 +452,7 @@ sudo systemctl start miniflux.service
 Authentik fits the same shape (everything in the `authentik` postgres db, no
 host state worth restoring) — same recipe with the names swapped.
 
-##### Native service with on-disk state + SQLite (jellyfin, \*arr, kavita, …)
+##### Native service with on-disk state + SQLite (jellyfin, \*arr, komga, …)
 
 Jellyfin keeps everything under `/var/lib/jellyfin` — XML config, plugins,
 metadata cache, and the library SQLite database at
@@ -494,10 +512,10 @@ sudo systemctl start jellyfin.service
 Media files themselves live on the NAS under `/mnt/content` and are out of scope
 for restic — Synology snapshots cover them.
 
-The same pattern applies to every app that opts into `mySqliteQuiesce` (sonarr,
-radarr, lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf): stop
-the unit, `restic restore` both `/var/lib/<app>` (or `/var/lib/private/<app>`
-for DynamicUser apps like prowlarr) and `/var/backup/sqlite/<app>`,
+The same pattern applies to other apps declared in `mySqliteQuiesce.apps`
+(see the current list above): stop every consumer unit, then `restic restore`
+both the app's state directory and `/var/backup/sqlite/<app>`
+(the state path may be under `/var/lib/private` or `/var/lib/containers`),
 then `install` each staged `.db` over the live path declared in the app's
 module. Check `mySqliteQuiesce.apps.<app>.databases` in the module for the exact
 source paths to overwrite (e.g. sonarr →
@@ -515,8 +533,8 @@ the quarterly `recovery:test:full` drill. Use the dispatcher:
 task recovery:app APP=paperless-ngx HOST=<host> [SOURCE_HOST=<other>]
 ```
 
-It is the mealie shape on a native service. It stops all four units
-(`paperless-{scheduler,task-queue,consumer,web}`), restores `/var/lib/paperless-ngx`
+It restores files and Postgres together on native services. It stops all four
+units (`paperless-{scheduler,task-queue,consumer,web}`), restores `/var/lib/paperless-ngx`
 (original and archived documents under `media/`, the Tantivy search index, the
 model cache) with `--delete`, and replays the `paperless_ngx` database from the
 same snapshot. Then it starts the units and waits for `/accounts/login/` on
@@ -550,8 +568,11 @@ files, replay the postgres dump into a scratch database, etc.
 time of writing) in `modules/system/postgresql.nix` so that rebuilds never
 silently dump-and-restore the cluster. Major upgrades are a manual operation.
 The canonical reference is the
-[NixOS manual section](https://nixos.org/manual/nixos/stable/#module-services-postgres-upgrading);
-the concrete recipe that worked here for 17 → 18 was:
+[NixOS manual section](https://nixos.org/manual/nixos/stable/#module-services-postgres-upgrading).
+
+**Historical recipe: the 17 → 18 upgrade below records the then-deployed
+services and paths.** It is not a current consumer inventory; derive that
+inventory from the target configuration before a future major upgrade.
 
 ```bash
 # 0. Fresh dump + restic snapshot as a known-good rollback point.
@@ -796,60 +817,68 @@ original store paths) all fail with "Invalid blueprint path". Real files via
 Apps that speak OIDC natively register via the `myAuthentik.oidcApps` aggregator
 from `modules/apps/authentik.nix`. The aggregator generates the sops secret
 pair, contributes the per-app blueprint dir, and stacks one merged worker-side
-env file onto authentik so blueprint `!Env` placeholders resolve. Apps that read
-OIDC creds from env vars (mealie, miniflux, paperless-ngx, tandoor, komga,
-actualbudget) get their own per-app env file too; apps that store creds in their
-own DB/UI (audiobookshelf, kavita, seerr) opt out via
-`clientCredsInAppEnv = false`.
+env file onto authentik so blueprint `!Env` placeholders resolve.
+
+Miniflux, Komga, and Actual Budget use the aggregator's generated client-ID and
+client-secret env vars. Tandoor and Paperless-ngx instead set
+`clientCredsInAppEnv = false` and supply OIDC credentials in JSON settings
+through `extraEnvLines`; they still consume the rendered per-app env file.
+Tandoor remains a native env-file OIDC example. Apps that configure OIDC in
+their own DB/UI (BookOrbit, Audiobookshelf, Seerr) also set
+`clientCredsInAppEnv = false`, with no OIDC env file consumed by the app.
+BookOrbit has a separate env template for its non-OIDC secrets.
 
 Blueprint secrets must reference `!Env <APP>_OIDC_CLIENT_ID` /
 `<APP>_OIDC_CLIENT_SECRET` (uppercased app name with hyphens → underscores) so
 they never land in `/nix/store`.
 
-Sketch (Mealie — see `modules/apps/mealie.nix` for the real thing):
+Abridged aggregator wiring from
+[`modules/apps/bookorbit.nix`](modules/apps/bookorbit.nix). The full module
+also declares the container, database extensions, and a separate sops env
+template for `DATABASE_URL`, `JWT_SECRET`, and `SETUP_BOOTSTRAP_TOKEN`.
+BookOrbit's OIDC credentials are entered in Settings → OIDC / SSO, as described
+in the module header; they do not go in the container env file.
 
 ```nix
-# modules/apps/mealie.nix
+# Excerpt from modules/apps/bookorbit.nix
 _: {
-  flake.modules.nixos.mealie = { config, hostSpec, ... }: {
-    myPostgresApp.mealie.consumerService = "podman-mealie.service";
+  flake.modules.nixos.bookorbit = { ... }: {
+    myPostgresApp.bookorbit.consumerService = [ "podman-bookorbit.service" ];
 
-    myAuthentik.oidcApps.mealie = {
-      blueprintsDir = ./mealie-blueprints;
-      appRestartUnit = "podman-mealie.service";
-      extraEnvLines = ''
-        POSTGRES_PASSWORD=${config.sops.placeholder."mealie/db_password"}
-      '';
+    myAuthentik.oidcApps.bookorbit = {
+      blueprintsDir = ./bookorbit-blueprints;
+      clientCredsInAppEnv = false;
       homepage = {
         group = "Consumption";
-        icon = "mealie";
-        description = "Recipe manager";
+        icon = "bookorbit";
+        description = "Ebook + audiobook library";
       };
+      displayName = "BookOrbit";
     };
 
-    myCaddy.apps.mealie = {
-      # host defaults to "mealie.${hostSpec.serverDomain}"
-      routeConfig = "reverse_proxy localhost:9925";
+    myCaddy.apps.bookorbit = {
+      # host defaults to "bookorbit.${hostSpec.serverDomain}"
+      routeConfig = "reverse_proxy localhost:3017";
     };
-
-    # ... oci-container declaration that consumes
-    # config.sops.templates."mealie.env".path
   };
 }
 ```
 
+Abridged blueprint from
+[`bookorbit.yaml`](modules/apps/bookorbit-blueprints/bookorbit.yaml):
+
 ```yaml
-# modules/apps/mealie-blueprints/mealie.yaml
+# modules/apps/bookorbit-blueprints/bookorbit.yaml
 version: 1
-metadata: { name: mealie }
+metadata: { name: bookorbit }
 entries:
   - model: authentik_providers_oauth2.oauth2provider
-    id: prov-mealie
-    identifiers: { name: mealie }
+    id: prov-bookorbit
+    identifiers: { name: bookorbit }
     attrs:
       client_type: confidential
-      client_id: !Env MEALIE_OIDC_CLIENT_ID
-      client_secret: !Env MEALIE_OIDC_CLIENT_SECRET
+      client_id: !Env BOOKORBIT_OIDC_CLIENT_ID
+      client_secret: !Env BOOKORBIT_OIDC_CLIENT_SECRET
       grant_types: [authorization_code, refresh_token] # see note below — required on 2026.x
       authentication_flow:
         !Find [authentik_flows.flow, [slug, default-authentication-flow]]
@@ -862,11 +891,11 @@ entries:
         !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       # ... property_mappings, redirect_uris, etc.
   - model: authentik_core.application
-    id: app-mealie
-    identifiers: { slug: mealie }
-    attrs: { name: Mealie, provider: !KeyOf prov-mealie }
+    id: app-bookorbit
+    identifiers: { slug: bookorbit }
+    attrs: { name: BookOrbit, provider: !KeyOf prov-bookorbit }
   - model: authentik_policies.policybinding
-    identifiers: { target: !KeyOf app-mealie, order: 0 }
+    identifiers: { target: !KeyOf app-bookorbit, order: 0 }
     attrs:
       group: !Find [authentik_core.group, [name, Users]]
       enabled: true
@@ -1722,15 +1751,13 @@ The one accepted exception is `system.autoUpgrade`
 | `task build_darwin:<host>`                       | Rebuild a nix-darwin host                                                        |
 | `task build_home:<target>`                       | Rebuild standalone home-manager                                                  |
 | `task build`                                     | Build a host without switching (default: luna)                                   |
-| `task build-all`                                 | Build all NixOS host configurations                                              |
+| `task build-all`                                 | Build luna, terra, hpp-1, and amos1 without switching                            |
 | `task update`                                    | Update flake inputs                                                              |
 | `task update_dconf`                              | Capture host dconf config into the repo via `scripts/dconf.sh`                   |
-| `task lint`                                      | Run statix and deadnix                                                           |
 | `task fmt`                                       | Format all Nix files with nixfmt                                                 |
-| `task fmt-check`                                 | Check formatting without modifying files                                         |
-| `task check`                                     | Full pre-push check (fmt-check + lint + flake check)                             |
+| `task check`                                     | Nix/Python/shell lint + format, secret/YAML/whitespace hooks, flake checks       |
 | `task iso`                                       | Build the installer/recovery ISO                                                 |
-| `task garbage_collect`                           | Remove store objects older than 7 days                                           |
+| `task garbage_collect`                           | Collect unreachable store objects and delete generations older than 7 days       |
 | `task hashes [-- --check]`                       | Regenerate the fetch hashes Renovate can't maintain; `--check` only reports      |
 | `task bootstrap:new HOST=x DEST=ip`              | New host pipeline: install, hwconfig, secrets setup, sync + rebuild              |
 | `task bootstrap:reinstall HOST=x DEST=ip`        | Reinstall existing host: install + sync + rebuild (no secrets pause)             |
@@ -1741,15 +1768,15 @@ The one accepted exception is `system.autoUpgrade`
 | `task bootstrap:sync HOST=x DEST=ip`             | Rsync nixos and nix-secrets to target                                            |
 | `task bootstrap:rebuild HOST=x DEST=ip`          | Build on target, then activate it after asserting hostname + closure name         |
 | `task recovery:app APP=x HOST=y [SOURCE_HOST=z]` | Restore a single app from restic, driven by the generated recovery manifest      |
-| `task recovery:all HOST=x`                       | Catastrophic restore: every per-app dispatcher in sequence                       |
+| `task recovery:all HOST=x`                       | Restore every enabled manifest entry in order (SOURCE_HOST defaults to HOST)     |
 | `task recovery:test:full SOURCE_HOST=x`          | Quarterly drill — install tests-server VM, restore four apps, teardown           |
 | `task secrets:oidc APP=x [HOST=y]`               | Generate OIDC `client_id` + `client_secret` for an app on a host                 |
 | `task secrets:dbpw APP=x [HOST=y]`               | Generate a postgres `db_password` for an app on a host                           |
 | `task secrets:secret APP=x KEY=k`                | Generic high-entropy hex secret at `<app>.<key>`                                 |
 | `task secrets:edit:<host>`                       | Open a host's sops yaml in `$EDITOR`                                             |
 | `task secrets:view:<host>`                       | Decrypt and print a host's sops yaml                                             |
-| `task llm:models [HOST=x]`                       | List cached GGUFs on a llama-server host, flagging the live one                  |
-| `task llm:models:prune [HOST=x] [APPLY=true]`    | Remove superseded GGUFs; dry run unless `APPLY=true`                             |
+| `task llm:models [HOST=x]`                       | List cached GGUFs against the configured set (default HOST=terra; local on Darwin) |
+| `task llm:models:prune [HOST=x] [APPLY=true]`    | Remove unconfigured cached GGUFs; dry run unless `APPLY=true`                    |
 | `task secrets:rekey`                             | Re-encrypt every `sops/*.yaml` against current `.sops.yaml`                      |
 
 ## Fetch Hashes Are Regenerated in CI

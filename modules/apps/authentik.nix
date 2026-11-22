@@ -37,11 +37,13 @@
 # Worker-side env vars (consumed by `!Env` in the per-app blueprint)
 # are merged into a single env file stacked once onto authentik's
 # units, regardless of how many OIDC apps are registered. Whether the
-# app gets its own env file too depends on how it consumes credentials:
-# env-reading apps (mealie, miniflux, paperless-ngx, tandoor, komga,
-# actualbudget) get one; DB/UI-configured apps (audiobookshelf, kavita,
-# seerr) skip it. Apps with non-OIDC env secrets (grimmory's db
-# password) opt in via `extraEnvLines`.
+# app consumes an env file depends on how it reads credentials:
+# miniflux, komga, and actualbudget use the generated client-ID/secret vars.
+# tandoor and paperless-ngx set clientCredsInAppEnv = false but still consume
+# an env file: extraEnvLines puts their OIDC credentials in JSON settings.
+# DB/UI-configured apps (bookorbit, audiobookshelf, seerr) also set false,
+# without consuming OIDC env settings. Non-OIDC secrets can use extraEnvLines
+# or a separate template (bookorbit's database password and app tokens).
 #
 # Secrets in blueprints (user passwords, OAuth client secrets, token
 # values) are passed via `!Env VAR_NAME`; the `VAR_NAME` is rendered
@@ -949,7 +951,7 @@
             # Inject After=authentik-ready.service on every OIDC app's
             # restart units so apps that probe the OIDC discovery URL at
             # startup don't race the Django worker. Apps with empty
-            # appRestartUnit (DB/UI-configured: audiobookshelf, kavita,
+            # appRestartUnit (DB/UI-configured: bookorbit, audiobookshelf,
             # seerr, bindery) no-op through genAttrs and have to order
             # themselves — being UI-configured says where the creds live,
             # not when the app probes discovery. bindery probes at boot and
