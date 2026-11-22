@@ -16,18 +16,19 @@ The skill sequences the work and holds the judgement calls. The scripts do
 the measuring, scoring and rendering, so don't reimplement any of it here.
 Before starting, read:
 
-- `skills/_shared/host-access.md`: ssh masters, the permission boundary, and
-  the deploy recipe.
+- `skills/_shared/host-access.md`: bounded SSH preflight, operator handoff,
+  host-specific authorization, and the deploy recipe.
 - The *Evaluation* section of `modules/system/_llama-cpp/README.md`: the
   privacy rule, the task reference and the candidate procedure this skill
   automates.
-- `../nix-eval-fixtures/README.md`: which features target which alias.
+- The private fixtures checkout's `README.md` (see its location below):
+  which features target which alias.
 
 ## The privacy rule, in one place
 
-Anything from `../nix-eval-fixtures` stays out of this repo, its issues and
-its PRs: source documents, request bodies, prompts, expected values and raw
-responses. **That includes the run directories under `results/` and the
+Keep source documents, request bodies, prompts, expected values and raw
+responses from the private fixtures checkout out of this repo, its issues and
+its PRs. **That includes the run directories under `results/` and the
 plain `task llm:eval:compare` output.** Its failed-check labels
 (`tags:must:<name>`) carry expected values. Allowed in public: fixture IDs
 (`paperless-classify/energuide-report`), the fixtures commit hash, scores,
@@ -95,16 +96,26 @@ nix eval --json .#nixosConfigurations.<host>.config.myLlamaCpp.evalTargets
 
 ## 2. Preflight and serve
 
-Check the systems first, then change anything:
+Check the requirements for live evaluation before serving the candidate:
 
-- ssh master for every remote host involved (host-access). The eval tasks
-  forward over it and fail fast without one.
-- `git -C ../nix-eval-fixtures status`: the checkout is present and clean.
-  Tier 1 skips when it's absent.
-- Which features have cases for this alias:
-  `grep -l 'alias = "<alias>"' ../nix-eval-fixtures/*/*/meta.toml`.
-  No cases (today that's every `vision` target) means tier 1 has no
-  evidence. Tell the user now, because a gates-only verdict is weaker.
+- When running the gates or replay from another machine, use the bounded
+  master and hostname checks in host-access for the evaluation host's SSH
+  alias. Both tasks forward through that alias's existing master. On the
+  evaluation host itself they connect to loopback. Both paths require
+  operator access to the API key file via `sudo`.
+- Resolve the fixtures checkout to an absolute path (usually
+  `../nix-eval-fixtures` from the primary checkout). Verify it is present and
+  clean with `git -C "$fixtures_path" status --short` and use that path for the
+  fixtures commands below. Tier 1 skips when the checkout is absent.
+- Find the cases for the alias with
+  `grep -l 'alias = "<alias>"' "$fixtures_path"/*/*/meta.toml`.
+  If there are no cases, report that Tier 1 has no evidence for that alias.
+
+If host access is unavailable, continue independent preparation such as
+inspecting the issue, target config and fixtures. Defer serving and live
+measurements. Report the unmet prerequisite and the commands still needed
+for the affected stages. Skipped or deferred stages supply no evidence for
+a verdict.
 
 **Serve the candidate as a temporary peer**, following the README's
 *Evaluating a candidate* procedure. Work on a branch in a throwaway worktree
@@ -125,8 +136,11 @@ each time. Mention two side effects when you ask:
   finish the eval the same day or plan to redeploy. This is also the safety
   net: an abandoned peer cleans itself up.
 
-Deploy with `task deploy:<host>` (it enforces the host/closure identity
-assertions; see host-access). Then:
+Run `task ssh:preflight HOST=<host>` for the standard deployment or the
+matching helper preflight in host-access for custom options. Once it passes
+and the user has authorized the host and action, use `task deploy:<host>`
+for the standard deployment. It enforces the host and closure identity
+assertions. Then:
 
 ```sh
 task llm:models:fetch HOST=<host>
@@ -165,15 +179,17 @@ Don't reuse an older incumbent run: the llama.cpp build, fixtures and scorer
 all move.
 
 ```sh
-task llm:eval HOST=<host> MODEL=<alias>-next ALIAS=<alias> TRIALS=3
-task llm:eval HOST=<host> MODEL=<alias> ALIAS=<alias> TRIALS=3
+task llm:eval HOST=<host> MODEL=<alias>-next ALIAS=<alias> TRIALS=3 FIXTURES="$fixtures_path"
+task llm:eval HOST=<host> MODEL=<alias> ALIAS=<alias> TRIALS=3 FIXTURES="$fixtures_path"
 ```
 
 `ALIAS=` limits the replay to the cases whose `meta.toml` targets that
 alias. Use the same filter for both runs: `compare` warns when the case sets
 differ, because the totals then have different denominators. `TRIALS=3` is
 the floor, since per-case spread is about ±3 checks out of 40. Each run
-prints its run directory. Then:
+prints its run directory when it runs. If either replay is skipped or
+deferred, report the missing evidence and resume the paired run when the
+prerequisites are met. Then:
 
 ```sh
 task llm:eval:compare RUNS="<next run dir> <incumbent run dir>"
@@ -181,8 +197,9 @@ task llm:eval:compare RUNS="<next run dir> <incumbent run dir>" PUBLIC=true
 ```
 
 Read the private one to understand the failures, and only *quote* the public
-one. Commit the run directories in `../nix-eval-fixtures` with a message
-naming the candidate issue. Pushing that private repo is the user's call.
+one. Commit the run directories in the fixtures checkout at `$fixtures_path`
+with a message naming the candidate issue. Pushing that private repo is the
+user's call.
 
 A trial that ends with `finish_reason=length` is a real failure, usually a
 reasoning model that ran out of context. Don't re-run until it goes away.
@@ -223,7 +240,8 @@ facts the stages produced:
 <two to five sentences: the deciding numbers and the trade-off>
 ```
 
-Then run `task llm:eval:audit FILE=<draft>`. It has to pass before you post.
+Then run `task llm:eval:audit FILE=<draft> FIXTURES="$fixtures_path"`. It has
+to pass before you post.
 If it fails, rewrite the prose instead of trying to get past the check.
 Finally:
 
@@ -259,13 +277,15 @@ contents or sensitive paths. Never automatically stage, commit, delete or
 relocate unknown work to clean up.
 
 Put `Closes #<N>` in the PR when this is the last target, and run
-`task llm:eval:audit` on the PR body as well. After the merge and deploy,
-show `task llm:models:prune HOST=<host>` (a dry run) to the user. Only run
+`task llm:eval:audit FILE=<draft> FIXTURES="$fixtures_path"` on the PR body as
+well. After the merge and deploy, show
+`task llm:models:prune HOST=<host>` (a dry run) to the user. Only run
 `APPLY=true` with their go-ahead, because it deletes weights on the host.
 
 Report back with:
 
 - the verdict and the comment URL
 - the PR URL, if one was opened
-- anything the issue asked for that this skill didn't run
+- any checks the issue asked for that were out of scope, failed or were
+  deferred, with any missing prerequisites and commands or steps still needed
 - whether the fixtures commit still needs pushing

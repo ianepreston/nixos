@@ -11,10 +11,8 @@ we should fix it" costs that session a re-investigation you already did.
 
 Do not open the editor first. Evidence, then triage, then template.
 
-**Read `skills/_shared/host-access.md` first.** It carries the fleet
-roles, the permission boundary, and the ssh recipes for reaching a host and
-reading state off it — every command in Phase 2 depends on them, and several
-have a plausible form that hangs forever instead of failing.
+**Read `skills/_shared/host-access.md` first.** It covers the fleet roles,
+authorization, bounded SSH probes, and recipes for reading host state.
 
 ## 1. Frame the observation
 
@@ -37,9 +35,16 @@ An unquantified claim is the single most common gap. "Steam spams pactl errors"
 is not the issue; **"313 occurrences in the last 7 days, and it fires
 repeatedly for as long as Steam is up, not once at startup"** is (#650).
 
-Reaching a server host needs an ssh master socket; check for one before you
-start, per host-access. Read-only inspection is free on any host, prod
-included — gathering evidence off amos1 needs no permission.
+For live measurements, run the bounded read-only SSH probe in host-access.
+Reuse a verified master if available or connect with credentials that work
+from the runner. Read-only inspection needs no confirmation, including on
+`amos1`.
+
+If access is unavailable, continue repository inspection and use any evidence
+already collected. Identify deferred measurements, the exact query or command
+needed, and the host and time window. File only claims the available evidence
+supports. If a missing live measurement is necessary for the requested
+write-up, report what still needs collecting before filing it.
 
 Use the journal, VictoriaLogs and VictoriaMetrics recipes from host-access
 rather than improvising: the PromQL-through-zsh and no-`python3` traps there
