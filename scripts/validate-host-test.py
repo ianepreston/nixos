@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import hashlib
 import tempfile
 import time
 import unittest
@@ -42,8 +43,14 @@ HASH_OLD = "abcdfghijklmnpqrsvwxyz0123456789"
 HASH_NEW = "0123456789abcdfghijklmnpqrsvwxyz"
 OLD = f"/nix/store/{HASH_OLD}-nixos-system-hpp-1-26.05.20261101.aaaaaaa"
 NEW = f"/nix/store/{HASH_NEW}-nixos-system-hpp-1-26.05.20261115.b349185"
+OTHER = f"/nix/store/{HASH_OLD[::-1]}-nixos-system-hpp-1-26.05.20261110.ccccccc"
 SECRETS_REV = "1" * 40
 ENVS = {"hpp-1": "dev", "tests-server": "dev", "amos1": "prod", "terra": None}
+
+
+def probe_id(command):
+    return hashlib.sha256(command.encode()).hexdigest()[:12]
+
 
 LOGGER = r"""
 log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOPTS-}" >> "$STUB_LOG"; }
@@ -74,21 +81,29 @@ while [ $# -gt 0 ]; do
   case $1 in -o?* | -T) shift ;; -*) exit 65 ;; *) break ;; esac
 done
 shift
-exec "$@"
+script=$(cat; echo x)
+script=${script%x}
+case $script in
+  *"probe <<'"*) [ -z "${STUB_SSH_DROP_PROBE:-}" ] || exit 255 ;;
+esac
+printf '%s' "$script" | "$@"
+rc=$?
+exit "${STUB_SSH_EXIT:-$rc}"
 """,
     "hostname": 'echo "${STUB_HOSTNAME:-hpp-1}"',
     "readlink": r"""
+[ "${STUB_READLINK_FAIL:-}" != "$1" ] || exit 1
 case $1 in
   /run/current-system) cat "$STUB_STATE/current" ;;
   /run/booted-system) echo "$STUB_OLD" ;;
-  /nix/var/nix/profiles/system) echo "system-$(cat "$STUB_STATE/generation")-link" ;;
+  /nix/var/nix/profiles/system) echo "${STUB_PROFILE:-system-$(cat "$STUB_STATE/generation")-link}" ;;
   *) exit 1 ;;
 esac
 """,
     "systemctl": r"""
 case "$*" in
   is-system-running) state=$(cat "$STUB_STATE/system_state"); echo "$state"; [ "$state" = running ] ;;
-  "list-units --state=failed --no-legend --plain") cat "$STUB_STATE/failed" ;;
+  "list-units --state=failed --no-legend --plain") [ -z "${STUB_LIST_UNITS_FAIL:-}" ] || exit 1; cat "$STUB_STATE/failed" ;;
   "is-active nixos-upgrade.service") echo "${STUB_UPGRADE:-inactive}"; [ "${STUB_UPGRADE:-inactive}" = active ] ;;
   "show nixos-upgrade.timer -p NextElapseUSecRealtime --value") echo "Mon 2026-11-23 04:40:00 UTC" ;;
   *) exit 1 ;;
@@ -214,6 +229,7 @@ class Harness(unittest.TestCase):
             STUB_ENVS=json.dumps(ENVS),
             STUB_OLD=OLD,
             STUB_NEW=NEW,
+            STUB_OTHER=OTHER,
         )
         self.env = env
         subprocess.run(["git", *GIT_FLAGS, "init", "-q"], cwd=self.repo, env=env, check=True)  # fmt: skip
@@ -427,7 +443,7 @@ class Failures(Harness):
         helper.write_text(
             helper.read_text().replace(
                 '*" --action check "*)',
-                '*" --action check "*)\n    echo "/nix/store/x-other" > "$STUB_STATE/current"',
+                '*" --action check "*)\n    echo "$STUB_OTHER" > "$STUB_STATE/current"',
             )
         )
         r = self.drive("--host", "hpp-1", "--switch")
@@ -438,8 +454,10 @@ class Failures(Harness):
     def test_failed_probe_fails_post(self):
         r = self.drive("--host", "hpp-1", "--switch", "--probe", "exit 3", "--observe", "5s")  # fmt: skip
         ev = self.assert_stopped_at(r, "post")
-        self.assertEqual(ev["probes"], [{"command": "exit 3", "exit_code": 3}])
-        self.assertIn("probe 'exit 3' exited 3", ev["message"])
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id("exit 3"), "exit_code": 3}]
+        )
+        self.assertEqual(ev["message"], f"probe #1 (id {probe_id('exit 3')}) exited 3")
 
     def test_degraded_system_fails_post(self):
         (self.state / "system_state").write_text("degraded\n")
@@ -561,7 +579,9 @@ class TaskWrapper(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         _, ev = self.evidence(r)
         self.assertEqual(ev["result"], "passed")
-        self.assertEqual(ev["probes"], [{"command": probe, "exit_code": 0}])
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id(probe), "exit_code": 0}]
+        )
         self.assertTrue(any(a.endswith("--action switch") for a in self.helper_calls()))  # fmt: skip
 
     def test_default_is_check_only_and_the_environment_cannot_switch(self):
@@ -576,11 +596,353 @@ class TaskWrapper(Harness):
         self.assertEqual(self.calls("ssh"), [])
         self.assertEqual(self.helper_calls(), [])
 
+    def test_exit_code_flag_keeps_the_driver_status(self):
+        # Documented in host-access.md: Task alone reports 201.
+        self.assertEqual(self.task("validate:amos1").returncode, 201)
+        self.assertEqual(self.task("--exit-code", "validate:amos1").returncode, 2)
+        r = self.task("-x", "validate:hpp-1", "--", "--switch", "--switch-timeout", "1", STUB_SWITCH_SLEEP=3)  # fmt: skip
+        self.assertEqual(r.returncode, 3, r.stderr)
+
     def test_task_cannot_redirect_the_host(self):
         r = self.task("validate:hpp-1", "--", "--host", "tests-server")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--host may be given only once", r.stderr)
         self.assertEqual(self.calls(), [])
+
+
+class HostReads(Harness):
+    """#1: a failed or empty required read fails the stage; it is never
+    recorded as an empty or zero value."""
+
+    def assert_read_failed(self, r, stage, key=None):
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], stage)
+        if key:
+            self.assertIn(f"required read '{key}' failed", ev["message"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+        return ev
+
+    def test_failing_list_units_is_not_zero_failed_units(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_LIST_UNITS_FAIL=1)
+        ev = self.assert_read_failed(r, "pre-state", "failed_units")
+        self.assertIsNone(ev["pre"])
+
+    def test_failing_readlinks_fail_the_read(self):
+        for path, key in (
+            ("/run/current-system", "current_system"),
+            ("/run/booted-system", "booted_system"),
+            ("/nix/var/nix/profiles/system", "system_profile"),
+        ):
+            with self.subTest(path=path):
+                self.log.write_text("")
+                r = self.drive("--host", "hpp-1", "--switch", STUB_READLINK_FAIL=path)
+                self.assert_read_failed(r, "pre-state", key)
+
+    def test_unparsable_generation_never_becomes_a_baseline(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_PROFILE="system-link")
+        ev = self.assert_read_failed(r, "pre-state")
+        self.assertIn("generation", ev["message"])
+
+    def test_malformed_closure_never_becomes_a_baseline(self):
+        (self.state / "current").write_text("/nix/store/not-a-system\n")
+        r = self.drive("--host", "hpp-1", "--switch")
+        ev = self.assert_read_failed(r, "pre-state")
+        self.assertIn("current_system", ev["message"])
+
+    def test_failed_read_in_the_switch_guard_stops_before_switching(self):
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                '*" --action check "*)',
+                '*" --action check "*)\n    echo "system-link" > "$STUB_STATE/generation"',
+            )
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "switch")
+        self.assertFalse(
+            any(a.endswith("--action switch") for a in self.helper_calls())
+        )
+
+    def test_inactive_upgrade_service_and_missing_timer_are_expected_states(self):
+        r = self.drive("--host", "hpp-1", STUB_UPGRADE="inactive")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["pre"]["upgrade_service"], "inactive")
+
+
+class Transport(Harness):
+    """#2: ssh must succeed AND report the marker; the first transport or
+    probe failure ends the stage with no further connection."""
+
+    def probe_connections(self):
+        return [a for _, a, _ in self.calls("ssh")]
+
+    def test_ssh_failure_with_a_marker_still_fails(self):
+        r = self.drive("--host", "hpp-1", STUB_SSH_EXIT=255)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertIn("ssh to ipreston@hpp-1 failed (exit 255)", ev["message"])
+        self.assertEqual(len(self.calls("ssh")), 1)
+
+    def test_dropped_probe_connection_stops_probing(self):
+        r = self.drive(
+            "--host", "hpp-1", "--probe", "true", "--probe", "true", "--probe", "true",
+            STUB_SSH_DROP_PROBE=1,
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("ssh to ipreston@hpp-1 failed (exit 255)", ev["message"])
+        # pre-state + post state read + the one dropped probe; nothing after
+        self.assertEqual(len(self.calls("ssh")), 3)
+        self.assertEqual(self.calls()[-1][0], "ssh")
+
+    def test_failing_probe_stops_further_probes_and_connections(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "exit 4", "--probe", "true", "--observe", "5s")  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertEqual([p["exit_code"] for p in ev["probes"]], [4])
+        # pre-state, switch guard, post state, one probe
+        self.assertEqual(len(self.calls("ssh")), 4)
+
+    def test_probes_run_under_pipefail(self):
+        r = self.drive("--host", "hpp-1", "--probe", "false | cat")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["probes"][0]["exit_code"], 1)
+
+
+class Redaction(Harness):
+    """#3: no probe text and no credential-like material in the evidence."""
+
+    def test_probe_text_never_reaches_the_evidence(self):
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"
+        probe = (
+            f"curl -fsS -H 'Authorization: Bearer {token}' https://x.invalid/ | exit 7"
+        )
+        r = self.drive("--host", "hpp-1", "--probe", probe)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        text = path.read_text()
+        self.assertNotIn(token, text)
+        self.assertNotIn("Authorization", text)
+        self.assertNotIn("curl", text)
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id(probe), "exit_code": 7}]
+        )
+        self.assertNotIn("curl", r.stderr)
+
+    def test_override_values_lose_userinfo_queries_and_tokens(self):
+        token = "Zx9" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk"
+        overrides = {
+            "a": ("git+https://alice:hunter2@example.invalid/r.git?ref=main&token=abc", "git+https://<redacted>@example.invalid/r.git?<redacted>"),
+            "b": ("github:o/r?rev=0123", "github:o/r?<redacted>"),
+            "c": (f"path:/srv/{token}/x", "path:/srv/<redacted>/x"),
+            "d": (f"path:{self.home}/src/nix-secrets", "path:~/src/nix-secrets"),
+        }  # fmt: skip
+        argv = ["--host", "hpp-1"]
+        for name, (value, _) in overrides.items():
+            argv += ["--override-input", name, value]
+        r = self.drive(*argv)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [{"name": n, "value": want} for n, (_, want) in overrides.items()],
+        )
+        text = path.read_text()
+        for leak in (
+            "hunter2",
+            "alice",
+            "token=abc",
+            "rev=0123",
+            token,
+            str(self.home),
+        ):
+            self.assertNotIn(leak, text)
+
+    def test_failure_messages_are_scrubbed(self):
+        token = "Zx9" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk"
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                'echo "activate-nixos: eval failed" >&2',
+                f'echo "activate-nixos: unsafe override https://u:p@h.invalid/x?k={token}" >&2',
+            )
+        )
+        r = self.drive("--host", "hpp-1", STUB_DRYRUN_RC=1)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        self.assertEqual(
+            ev["message"],
+            "activate-nixos: unsafe override https://<redacted>@h.invalid/x?<redacted>",
+        )
+        self.assertNotIn(token, path.read_text())
+
+
+class RunDirectory(Harness):
+    """#4: never create the run directory inside any Git repository."""
+
+    def git_repo(self, name):
+        d = self.tmp / name
+        d.mkdir()
+        subprocess.run(
+            ["git", *GIT_FLAGS, "init", "-q"], cwd=d, env=self.env, check=True
+        )
+        return d
+
+    def assert_refused(self, r, created):
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("inside a Git repository", r.stderr)
+        self.assertFalse(created.exists())
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
+
+    def test_run_dir_inside_another_checkout_is_refused(self):
+        other = self.git_repo("primary")
+        target = other / "logs" / "deep" / "run"
+        r = self.drive("--host", "hpp-1", "--run-dir", str(target))
+        self.assert_refused(r, other / "logs")
+
+    def test_default_state_dir_inside_a_repository_is_refused(self):
+        dotfiles = self.git_repo("dotfiles")
+        r = self.drive("--host", "hpp-1", XDG_STATE_HOME=dotfiles / "state")
+        self.assert_refused(r, dotfiles / "state")
+
+    def test_git_environment_cannot_hide_a_repository(self):
+        other = self.git_repo("primary")
+        r = self.drive(
+            "--host", "hpp-1", "--run-dir", str(other / "logs"),
+            GIT_DIR=str(self.tmp / "nowhere.git"), GIT_CEILING_DIRECTORIES=str(self.tmp),
+        )  # fmt: skip
+        self.assert_refused(r, other / "logs")
+
+    def test_run_dir_inside_a_git_dir_is_refused(self):
+        other = self.git_repo("primary")
+        r = self.drive(
+            "--host", "hpp-1", "--run-dir", str(other / ".git" / "logs" / "x")
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertFalse((other / ".git" / "logs" / "x").exists())
+
+
+class LocalSecrets(Harness):
+    """#5: the effective --local-secrets input is in the record."""
+
+    def secrets_repo(self, path):
+        path.mkdir(parents=True)
+        subprocess.run(
+            ["git", *GIT_FLAGS, "init", "-q"], cwd=path, env=self.env, check=True
+        )
+        (path / "a").write_text("1")
+        subprocess.run(
+            ["git", *GIT_FLAGS, "add", "a"], cwd=path, env=self.env, check=True
+        )
+        subprocess.run(
+            ["git", *GIT_FLAGS, "commit", "-qm", "x"],
+            cwd=path,
+            env=self.env,
+            check=True,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=path,
+            env=self.env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return head
+
+    def local(self, **env):
+        r = self.drive("--host", "hpp-1", "--local-secrets", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertTrue(all("--local-secrets" in a for a in self.helper_calls()))
+        return ev["inputs"]["local_secrets"]
+
+    def test_sibling_checkout_is_recorded_with_head_and_dirty_counts(self):
+        sibling = self.tmp / "nix-secrets"
+        head = self.secrets_repo(sibling)
+        clean = self.local()
+        self.assertEqual(
+            clean,
+            {
+                "path": str(sibling.resolve()),
+                "head": head,
+                "dirty": False,
+                "dirty_paths": 0,
+                "matches_lock": False,
+            },
+        )
+        (sibling / "a").write_text("changed")
+        (sibling / "b").write_text("new")
+        dirty = self.local()
+        self.assertEqual((dirty["dirty"], dirty["dirty_paths"]), (True, 2))
+        self.assertNotEqual(clean, dirty)
+        self.assertNotIn("changed", json.dumps(dirty))
+
+    def test_nix_secrets_path_wins_and_is_home_relative(self):
+        self.secrets_repo(self.tmp / "nix-secrets")
+        explicit = self.home / "src" / "secrets-b"
+        head = self.secrets_repo(explicit)
+        rec = self.local(NIX_SECRETS_PATH=explicit)
+        self.assertEqual(rec["path"], "~/src/secrets-b")
+        self.assertEqual(rec["head"], head)
+
+    def test_missing_checkout_fails_the_inputs_stage(self):
+        r = self.drive("--host", "hpp-1", "--local-secrets")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertIn("cannot find the nix-secrets checkout", ev["message"])
+        self.assertEqual(self.helper_calls(), [])
+
+
+class LaunchFailures(Harness):
+    """#6: after admission a command that cannot be launched is a failed
+    stage, and evidence.json is still written."""
+
+    def restricted_path(self, *tools):
+        d = self.tmp / "bin"
+        d.mkdir()
+        for tool in tools:
+            found = shutil.which(tool, path=self.env["PATH"].split(os.pathsep, 1)[1])
+            self.assertIsNotNone(found, tool)
+            (d / tool).symlink_to(found)
+        return f"{self.stubs}{os.pathsep}{d}"
+
+    def test_helper_that_cannot_be_launched(self):
+        path = self.restricted_path("git", "python3", "basename")  # no bash
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertEqual(ev["message"], "cannot launch bash: No such file or directory")
+        self.assertEqual(self.statuses(ev)["evidence"], "passed")
+
+    def test_ssh_that_cannot_be_launched(self):
+        (self.stubs / "ssh").unlink()
+        path = self.restricted_path("git", "python3", "basename", "bash")
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertEqual(ev["message"], "cannot launch ssh: No such file or directory")
+
+    def test_git_that_cannot_be_launched_refuses_before_any_connection(self):
+        # The run directory's Git membership cannot be checked: fail closed.
+        path = self.restricted_path("python3", "basename", "bash")
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("cannot ask git", r.stderr)
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
 
 
 if __name__ == "__main__":

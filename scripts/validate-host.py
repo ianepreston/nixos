@@ -33,12 +33,21 @@ Every host command goes through the helper or through one read-only ssh that
 asserts the hostname in the same process. There is no option to skip the
 helper's preflight or identity checks, no retry, no rollback and no kill of an
 activation: a switch that outlives its deadline is left running and reported as
-unknown. Exit status: 0 passed, 1 failed, 2 refused/usage, 3 switch outcome
-unknown, 130 interrupted.
+unknown. A required host read that fails, an ssh that fails or drops before
+its nonce marker, and a failing probe each stop the stage with no further
+connection. Once admitted, every run ends with evidence.json, including after
+a command that could not be launched.
+
+The evidence holds no probe text (only index, a short sha256 id and the exit
+code), and every recorded message or input value is scrubbed of $HOME,
+URL userinfo, query strings and token-like strings. Exit status: 0 passed,
+1 failed, 2 refused/usage, 3 switch outcome unknown (through Go Task, use
+`task --exit-code` to see it), 130 interrupted.
 """
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -60,6 +69,35 @@ HOST_RE = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?")
 CLOSURE_RE = r"/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}-nixos-system-%s-[0-9]{2}\.[0-9]{2}[0-9A-Za-z._+-]*"
 DURATION_RE = re.compile(r"([0-9]+)([smh]?)")
 GENERATION_RE = re.compile(r"(?:.*/)?system-([0-9]+)-link")
+SYSTEM_STATES = {
+    "initializing",
+    "starting",
+    "running",
+    "degraded",
+    "maintenance",
+    "stopping",
+    "offline",
+    "unknown",
+}
+# Known token prefixes, or a long run mixing upper case, lower case and digits
+# (store hashes and git revisions have no upper case, so they are kept).
+TOKEN_RE = re.compile(
+    r"(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-)[A-Za-z0-9_-]{8,}"
+    r"|(?=[A-Za-z0-9_+=-]*[A-Z])(?=[A-Za-z0-9_+=-]*[a-z])"
+    r"(?=[A-Za-z0-9_+=-]*[0-9])[A-Za-z0-9_+=-]{24,}"
+)
+USERINFO_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*@")
+URL_QUERY_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*:[^\s?#'\"]*)[?#][^\s'\"]*")
+# git variables that would point `git -C <dir>` at another repository
+GIT_REDIRECT_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_NAMESPACE",
+)
 
 MAX_OBSERVE = 4 * 3600
 ADMIT_TIMEOUT = 600
@@ -115,6 +153,30 @@ class StageFailed(Exception):
         self.summary = summary
         self.exit_code = exit_code
         self.outcome = outcome  # failed | unknown
+
+
+def launch_failed(argv, err):
+    return StageFailed(
+        f"cannot launch {Path(str(argv[0])).name}: {err.strerror or type(err).__name__}"
+    )
+
+
+def scrub(text):
+    """Strip $HOME, URL userinfo, query strings and token-like material from a
+    string that goes into the evidence record."""
+    if text is None:
+        return None
+    text = str(text)
+    home = os.path.expanduser("~")
+    if home and home != "/":
+        text = text.replace(home, "~")
+    text = USERINFO_RE.sub(r"\1<redacted>@", text)
+    text = URL_QUERY_RE.sub(r"\1?<redacted>", text)
+    return TOKEN_RE.sub("<redacted>", text)
+
+
+def probe_id(command):
+    return hashlib.sha256(command.encode()).hexdigest()[:12]
 
 
 def duration(text):
@@ -213,7 +275,11 @@ def parse_args(argv):
 
 
 def child_env():
-    env = {k: v for k, v in os.environ.items() if k != "NIX_SSHOPTS"}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k != "NIX_SSHOPTS" and k not in GIT_REDIRECT_VARS
+    }
     env.update(LC_ALL="C", SSH_ASKPASS_REQUIRE="never")
     return env
 
@@ -240,14 +306,19 @@ def run_capture(argv, timeout, stdin_text=None, log=None):
         if log:
             sink.write(f"$ {shlex.join(map(str, argv))}\n".encode())
             sink.flush()
-        proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=sink,
-            env=child_env(),
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=sink,
+                env=child_env(),
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as e:
+            if log:
+                sink.write(f"[cannot launch: {e}]\n".encode())
+            raise launch_failed(argv, e) from None
         try:
             out, _ = proc.communicate(
                 stdin_text.encode() if stdin_text is not None else None, timeout
@@ -276,14 +347,18 @@ def run_logged(argv, log, timeout, activation=False):
     with open(log, "ab") as sink:
         sink.write(f"$ {shlex.join(map(str, argv))}\n".encode())
         sink.flush()
-        proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=sink,
-            stderr=subprocess.STDOUT,
-            env=child_env(),
-            start_new_session=True,
-        )
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=sink,
+                stderr=subprocess.STDOUT,
+                env=child_env(),
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as e:
+            sink.write(f"[cannot launch: {e}]\n".encode())
+            raise launch_failed(argv, e) from None
         try:
             rc = proc.wait(timeout)
         except subprocess.TimeoutExpired:
@@ -315,9 +390,12 @@ def last_message(log, prefixes):
     return None
 
 
-def redact_home(value):
-    home = os.path.expanduser("~")
-    return value.replace(home, "~") if home and home != "/" else value
+def scrub_input(value):
+    """An input override value for the evidence: no query/fragment at all (flake
+    refs carry rev/ref/credentials there), then the general scrub."""
+    head, sep, _ = str(value).partition("?")
+    head, hsep, _ = head.partition("#")
+    return scrub(head + ("?<redacted>" if sep or hsep else ""))
 
 
 def admit(host):
@@ -325,7 +403,10 @@ def admit(host):
     if not HOST_RE.fullmatch(host):
         raise Refused(f"invalid host name {host!r}")
     attr = f"{REPO}#nixosConfigurations.{host}._module.specialArgs.hostSpec.serverEnvironment"
-    rc, out = run_capture(["nix", "eval", "--json", attr], ADMIT_TIMEOUT)
+    try:
+        rc, out = run_capture(["nix", "eval", "--json", attr], ADMIT_TIMEOUT)
+    except StageFailed as e:
+        raise Refused(f"refusing {host}: {e.summary}") from None
     if rc != 0:
         raise Refused(
             f"refusing {host}: no nixosConfigurations.{host} hostSpec could be evaluated (unknown host?)"
@@ -349,6 +430,28 @@ def default_run_dir(host):
     return Path(base) / "nixos-validate" / host / f"{stamp}-{os.getpid()}"
 
 
+def git_membership(directory):
+    """'inside', 'outside' or an error string for an existing directory, asked
+    of git itself (fails closed: anything but "not a git repository" counts as
+    a reason to refuse)."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(directory), "rev-parse", "--git-dir"],
+            env=child_env(),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"cannot ask git ({type(e).__name__})"
+    if r.returncode == 0:
+        return "inside"
+    if "not a git repository" in r.stderr.lower():
+        return "outside"
+    return f"git rev-parse failed (exit {r.returncode})"
+
+
 def make_run_dir(path):
     path = Path(os.path.abspath(path))
     repo = REPO.resolve()
@@ -357,11 +460,28 @@ def make_run_dir(path):
         raise Refused(
             f"run directory {path} is inside the checkout; logs stay outside git"
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Any Git repository or work tree (another checkout, the primary checkout,
+    # a dotfiles repo at $HOME, ...) is refused, judged from the deepest
+    # ancestor that already exists, before anything is created.
+    ancestor = resolved
+    while not ancestor.exists():
+        ancestor = ancestor.parent
+    if not ancestor.is_dir():
+        raise Refused(f"run directory {path}: {ancestor} is not a directory")
+    membership = git_membership(ancestor)
+    if membership == "inside":
+        raise Refused(
+            f"run directory {path} is inside a Git repository ({ancestor}); logs stay outside git"
+        )
+    if membership != "outside":
+        raise Refused(f"run directory {path}: {membership}; refusing")
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.mkdir(mode=0o700)
     except FileExistsError:
         raise Refused(f"run directory {path} already exists") from None
+    except OSError as e:
+        raise Refused(f"cannot create run directory {path}: {e.strerror}") from None
     return path
 
 
@@ -442,6 +562,17 @@ class Validation:
                 f"{self.target} did not report hostname {self.host}; stopping (inspect the ssh route)",
                 rc,
             )
+        failed = [x.split()[1] for x in lines if x.startswith("VALIDATE-READ-FAILED ")]
+        if failed:
+            raise StageFailed(
+                f"required read '{failed[0]}' failed on {self.host}; stopping", rc
+            )
+        # A marker alone is not enough: ssh itself must succeed too.
+        if rc != 0:
+            raise StageFailed(
+                f"ssh to {self.target} failed (exit {rc}); stopping, no further connections",
+                rc,
+            )
         return rc, lines, nonce
 
     def read_state(self, stage):
@@ -467,13 +598,36 @@ class Validation:
                 "upgrade_timer_next",
             ):
                 state[key] = value
+        # Every value is required and must parse: an empty or malformed read
+        # can never stand in for a baseline (two empty values would compare
+        # equal).
+        for key in ("current_system", "booted_system"):
+            if not self.closure_re.fullmatch(state.get(key, "")):
+                raise StageFailed(
+                    f"{key} read from {self.host} is not a nixos-system-{self.host} closure; stopping"
+                )
         m = GENERATION_RE.fullmatch(state.get("system_profile", ""))
-        state["generation"] = int(m.group(1)) if m else None
+        if not m:
+            raise StageFailed(
+                f"system profile generation read from {self.host} is unparsable; stopping"
+            )
+        state["generation"] = int(m.group(1))
+        if state.get("system_state") not in SYSTEM_STATES:
+            raise StageFailed(
+                f"system state read from {self.host} is unrecognised; stopping"
+            )
+        if not state.get("upgrade_service") or "upgrade_timer_next" not in state:
+            raise StageFailed(
+                f"nixos-upgrade read from {self.host} is incomplete; stopping"
+            )
         state["failed_unit_count"] = len(state["failed_units"])
         state["read_at"] = now()
         return state
 
-    def run_probe(self, stage, probe):
+    def run_probe(self, stage, index, probe):
+        """The probe's exit status. Any transport failure (ssh error, a
+        dropped connection before the marker) raises and ends the stage."""
+
         def command(nonce):
             delim = f"VALIDATE_PROBE_EOF_{nonce}"
             return f"probe <<'{delim}'\n{probe}\n{delim}"
@@ -485,30 +639,102 @@ class Validation:
             for x in lines
             if x.startswith(prefix) and x[len(prefix) :].isdigit()
         ]
-        return codes[-1] if codes else None
+        if not codes:
+            raise StageFailed(
+                f"probe #{index} did not report its exit status (ssh exit {rc}); stopping, no further connections",
+                rc,
+            )
+        return codes[-1]
 
-    def health(self, stage):
-        """The post/observe checks. Returns (state, probes, problems)."""
+    def health(self, stage, probes):
+        """The post/observe checks; probe results are appended to `probes` as
+        they complete. Returns (state, problems). The first failing probe
+        ends the probing (no further connections)."""
         state = self.read_state(stage)
         problems = []
-        if state.get("system_state") != "running":
-            problems.append(
-                f"system state is {state.get('system_state')!r}, not 'running'"
-            )
+        if state["system_state"] != "running":
+            problems.append(f"system state is {state['system_state']!r}, not 'running'")
         if state["failed_unit_count"]:
             problems.append(
                 f"{state['failed_unit_count']} failed unit(s): {', '.join(state['failed_units'][:10])}"
             )
-        probes = []
-        for probe in self.a.probe:
-            code = self.run_probe(stage, probe)
-            probes.append({"command": probe, "exit_code": code})
-            if code != 0:
+        for index, probe in enumerate(self.a.probe, 1):
+            record = {"index": index, "id": probe_id(probe), "exit_code": None}
+            probes.append(record)
+            record["exit_code"] = self.run_probe(stage, index, probe)
+            if record["exit_code"] != 0:
                 problems.append(
-                    f"probe {probe!r} "
-                    + ("did not complete" if code is None else f"exited {code}")
+                    f"probe #{index} (id {record['id']}) exited {record['exit_code']}"
                 )
-        return state, probes, problems
+                break
+        return state, problems
+
+    def resolve_local_secrets(self, log):
+        """The checkout activate-nixos.sh --local-secrets would use, found the
+        same way (read-only): $NIX_SECRETS_PATH, then ../nix-secrets beside
+        this checkout, then beside the primary checkout of a linked worktree."""
+        explicit = os.environ.get("NIX_SECRETS_PATH")
+        if explicit:
+            if not os.path.isdir(explicit):
+                raise StageFailed("NIX_SECRETS_PATH is not a directory")
+            return Path(os.path.abspath(explicit))
+        cand = REPO / ".." / "nix-secrets"
+        if cand.is_dir():
+            return Path(os.path.abspath(cand))
+        rc, common = run_capture(
+            [
+                "git",
+                "-C",
+                str(REPO),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            GIT_TIMEOUT,
+            log=log,
+        )
+        if rc == 0 and common.strip():
+            cand = Path(common.strip()) / ".." / ".." / "nix-secrets"
+            if cand.is_dir():
+                return Path(os.path.abspath(cand))
+        raise StageFailed(
+            "cannot find the nix-secrets checkout --local-secrets would use (set NIX_SECRETS_PATH or use a sibling ../nix-secrets)"
+        )
+
+    def local_secrets_record(self, locked, log):
+        """Path (home-relative), HEAD and dirty counts of the local override,
+        so different effective inputs never yield the same record."""
+        path = self.resolve_local_secrets(log)
+        rc, head = run_capture(
+            ["git", "-C", str(path), "rev-parse", "--verify", "HEAD"],
+            GIT_TIMEOUT,
+            log=log,
+        )
+        head = head.strip()
+        if rc != 0 or not re.fullmatch(r"[0-9a-f]{40}", head):
+            raise StageFailed("cannot read the local nix-secrets HEAD revision")
+        rc, status = run_capture(
+            [
+                "git",
+                "--no-optional-locks",
+                "-C",
+                str(path),
+                "status",
+                "--porcelain",
+                "--untracked-files=normal",
+            ],
+            GIT_TIMEOUT,
+        )
+        if rc != 0:
+            raise StageFailed("cannot read the local nix-secrets worktree status")
+        dirty = [x for x in status.splitlines() if x.strip()]
+        return {
+            "path": scrub(str(path)),
+            "head": head,
+            "dirty": bool(dirty),
+            "dirty_paths": len(dirty),
+            "matches_lock": head == locked,
+        }
 
     # --- stages ---------------------------------------------------------------
     def stage_inputs(self):
@@ -549,9 +775,11 @@ class Validation:
             ) from None
         self.evidence["inputs"] = {
             "nix_secrets_locked_rev": locked,
-            "local_secrets": self.a.local_secrets,
+            "local_secrets": (
+                self.local_secrets_record(locked, log) if self.a.local_secrets else None
+            ),
             "override_inputs": [
-                {"name": n, "value": redact_home(v)} for n, v in self.a.override_input
+                {"name": n, "value": scrub_input(v)} for n, v in self.a.override_input
             ],
         }
         rc, _ = run_logged(self.helper("--dry-run"), log, EVAL_TIMEOUT)
@@ -646,9 +874,9 @@ class Validation:
         return "switch completed"
 
     def stage_post(self):
-        state, probes, problems = self.health("post")
+        probes = self.evidence["probes"] = []
+        state, problems = self.health("post", probes)
         self.evidence["post"] = state
-        self.evidence["probes"] = probes
         pre, expected = self.evidence["pre"], self.evidence["expected_closure"]
         if self.a.switch:
             if state.get("current_system") != expected:
@@ -700,7 +928,8 @@ class Validation:
                     - time.monotonic(),
                 )
             )
-            state, _probes, problems = self.health("observe")
+            record["last_probes"] = []
+            state, problems = self.health("observe", record["last_probes"])
             record["iterations"] += 1
             record["elapsed_s"] = round(time.monotonic() - start)
             if state.get("current_system") != baseline:
@@ -741,14 +970,27 @@ class Validation:
                 st.update(status="running", started_at=now(), log=str(self.log(name)))
                 say(f"stage {name}: running (log {self.log(name)})")
                 try:
-                    st["summary"] = fn()
+                    st["summary"] = scrub(fn())
                     st["status"] = "passed"
                 except StageFailed as e:
                     st.update(
-                        status=e.outcome, summary=e.summary, exit_code=e.exit_code
+                        status=e.outcome,
+                        summary=scrub(e.summary),
+                        exit_code=e.exit_code,
                     )
                     failed = name
                     code = EXIT_UNKNOWN if e.outcome == "unknown" else EXIT_FAIL
+                except Exception as e:  # noqa: BLE001 - recorded, never swallowed
+                    # Anything unexpected still ends in a failed-stage record;
+                    # inside the switch the activation's state is unknown.
+                    outcome = "unknown" if name == "switch" else "failed"
+                    st.update(
+                        status=outcome,
+                        summary=scrub(f"internal error: {type(e).__name__}: {e}"),
+                        exit_code=None,
+                    )
+                    failed = name
+                    code = EXIT_UNKNOWN if outcome == "unknown" else EXIT_FAIL
                 st["finished_at"] = now()
                 say(f"stage {name}: {st['status']}: {st.get('summary', '')}")
         except KeyboardInterrupt:

@@ -19,29 +19,48 @@ if [ "$actual" != "$expected_host" ]; then
   exit 97
 fi
 
+# A required read that fails (or prints nothing) ends the read with
+# VALIDATE-READ-FAILED <key> and exit 98: the driver never records a missing
+# value as an empty or zero one.
+read_failed() {
+  printf 'VALIDATE-READ-FAILED %s\n' "$1"
+  exit 98
+}
+
 # Key=value lines only; values are store paths, unit names and states.
 state() {
-  local failed unit
+  local value failed unit link
   printf 'hostname=%s\n' "$actual"
-  printf 'current_system=%s\n' "$(readlink /run/current-system 2>/dev/null)"
-  printf 'booted_system=%s\n' "$(readlink /run/booted-system 2>/dev/null)"
-  printf 'system_profile=%s\n' "$(readlink /nix/var/nix/profiles/system 2>/dev/null)"
-  printf 'system_state=%s\n' "$(systemctl is-system-running 2>/dev/null)"
-  failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null) || failed=""
+  for link in current_system:/run/current-system booted_system:/run/booted-system \
+    system_profile:/nix/var/nix/profiles/system; do
+    value=$(readlink "${link#*:}" 2>/dev/null) && [ -n "$value" ] || read_failed "${link%%:*}"
+    printf '%s=%s\n' "${link%%:*}" "$value"
+  done
+  # Exits non-zero for degraded/starting/...; the printed state is the result.
+  value=$(systemctl is-system-running 2>/dev/null)
+  [ -n "$value" ] || read_failed system_state
+  printf 'system_state=%s\n' "$value"
+  failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null) || read_failed failed_units
   while read -r unit _; do
     [ -z "$unit" ] || printf 'failed_unit=%s\n' "$unit"
   done <<<"$failed"
-  printf 'upgrade_service=%s\n' "$(systemctl is-active nixos-upgrade.service 2>/dev/null)"
-  printf 'upgrade_timer_next=%s\n' "$(systemctl show nixos-upgrade.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
+  # Exits non-zero for inactive (the expected state); empty output is a failure.
+  value=$(systemctl is-active nixos-upgrade.service 2>/dev/null)
+  [ -n "$value" ] || read_failed upgrade_service
+  printf 'upgrade_service=%s\n' "$value"
+  # Empty when the host has no upgrade timer; a failing systemctl is an error.
+  value=$(systemctl show nixos-upgrade.timer -p NextElapseUSecRealtime --value 2>/dev/null) || read_failed upgrade_timer_next
+  printf 'upgrade_timer_next=%s\n' "$value"
   printf 'VALIDATE-END %s\n' "$nonce"
 }
 
 # The probe text arrives on this function's stdin (a here-document), so it can
-# never read the rest of this script; the probe itself gets /dev/null.
+# never read the rest of this script; the probe itself gets /dev/null and runs
+# under pipefail, so `curl -f ... | consumer` fails when curl does.
 probe() {
   local text rc
   text=$(cat)
-  bash -c "$text" </dev/null
+  bash -o pipefail -c "$text" </dev/null
   rc=$?
   printf '\nVALIDATE-PROBE-RC %s %s\n' "$nonce" "$rc"
 }

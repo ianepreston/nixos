@@ -124,11 +124,15 @@ packet and then the returned session/task handle. The packet contains:
   `--preflight` command with the same connection and input options as the
   deployment. On failure, stop and report `awaiting_manual` with the exact
   operator action from the preflight. For a dev host, give the validator
-  `task validate:<host> -- --switch --observe <duration> --probe '<cmd>'...`
-  ([host access](../_shared/host-access.md)): it runs that preflight first,
-  then check, switch, probes and observation with a log per stage, stops at
-  the first failure, and prints an evidence record path to attach to the
-  validation claim (it never writes factory state).
+  `task --exit-code validate:<host> -- --observe <duration> --probe '<cmd>'...`
+  ([host access](../_shared/host-access.md)), adding `--switch` only when the
+  packet's recorded host/action grant covers activating that host (AGENTS.md
+  **Authorization**); without it the driver checks and probes but activates
+  nothing. It runs that preflight first, then check, the switch when given,
+  probes and observation with a log per stage, stops at the first failure,
+  and prints an evidence record path to attach to the validation claim (it
+  never writes factory state). `--exit-code` keeps its status (3 = switch
+  outcome unknown) instead of Task's 201.
 - Required output: head SHA and PR URL where applicable, changed behavior,
   exact checks/results, validation still needed, blockers and pending questions.
   Ask the worker to finish within the dispatched turn when practical and to

@@ -271,11 +271,20 @@ evidence record whose path it prints. It only accepts hosts whose hostSpec has
 `serverEnvironment = "dev"` (refused before any ssh otherwise), has no option
 that skips the helper's checks, and stops at the first failure with no retry,
 rollback or kill; a switch past its deadline is left running and reported as
-unknown (exit 3). Arguments go after `--`:
+unknown (exit 3). A failed or empty required host read, an ssh that fails or
+drops, and a failing probe (run under `pipefail`) each stop the stage with no
+further connection. The record stores probes only as index, short sha256 id
+and exit code, scrubs `$HOME`, URL userinfo, query strings and token-like
+strings from messages and input values, and records the effective
+`--local-secrets` checkout (home-relative path, HEAD, dirty counts). A run
+directory inside any Git repository is refused. Go Task reports a failed
+command as exit 201; run `task --exit-code validate:<host> -- …` (or `-x`) to
+get the driver's own status (checked with go-task 3.48.0). Arguments go after
+`--`:
 
 ```sh
-task validate:hpp-1                      # check only
-task validate:hpp-1 -- --switch --observe 3m \
+task -x validate:hpp-1                   # check only
+task -x validate:hpp-1 -- --switch --observe 3m \
   --probe 'systemctl is-active caddy.service'
 ```
 

@@ -12,6 +12,8 @@
 # `serverEnvironment = "dev"` before it connects to anything, and rejects a
 # second --host. It prints the evidence record's path; logs live under
 # $XDG_STATE_HOME/nixos-validate (outside git). See scripts/validate-host.py.
+# Task turns a failing command into exit 201; `task --exit-code validate:<host>`
+# (or -x) keeps the driver's own status (1 failed, 2 refused, 3 switch unknown).
 version: '3'
 set: [pipefail]
 shopt: [globstar]
