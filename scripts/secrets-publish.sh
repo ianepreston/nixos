@@ -29,9 +29,10 @@
 # `nix flake update nix-secrets` and checks the lock the same way; with
 # --expect REV it first checks origin's main contains REV.
 #
-# Any failure restores flake.nix, flake.lock and the nix-secrets index to
-# what they were before the run. A commit that was made stays (it is local
-# until the push succeeds).
+# On failure: flake.nix and flake.lock are always restored. The nix-secrets
+# index is restored if the failure comes before the commit; after it, the
+# commit stays (local until the push succeeds; pushed if only the pin fails)
+# and the index matches it.
 set -euo pipefail
 
 die() {
@@ -64,6 +65,7 @@ main=main
 input=nix-secrets
 
 command -v jq >/dev/null || die "jq is required"
+command -v python3 >/dev/null || die "python3 is required"
 [ -n "$nixos_dir" ] || nixos_dir=$(git rev-parse --show-toplevel)
 nixos_dir=$(cd "$nixos_dir" && pwd)
 flake_nix=$nixos_dir/flake.nix
@@ -144,8 +146,9 @@ relock() {
 }
 
 # The lock's locked and original entries must both describe the url flake.nix
-# now declares: type git, the same repo url, ref REF, original.rev ORIG_REV
-# (absent when empty), and locked.rev REV (any full sha when empty).
+# now declares (always `shallow=1`): type git, the same repo url, ref REF,
+# shallow true, original.rev ORIG_REV (absent when empty), and locked.rev REV
+# (any full sha when empty).
 check_lock() {
   local ref=$1 orig_rev=$2 rev=$3
   jq -e --arg n "$node" --arg url "${base#git+}" --arg ref "$ref" \
@@ -155,6 +158,7 @@ check_lock() {
     and $x.locked.type == "git" and $x.original.type == "git"
     and $x.locked.url == $url and $x.original.url == $url
     and $x.locked.ref == $ref and $x.original.ref == $ref
+    and $x.locked.shallow == true and $x.original.shallow == true
     and ($x.locked.rev | type == "string" and test("^[0-9a-f]{40}$"))
     and ($rev == "" or $x.locked.rev == $rev)
     and (if $orev == "" then ($x.original | has("rev") | not) else $x.original.rev == $orev end)
@@ -214,6 +218,13 @@ case $head_ref in refs/heads/?*) ;; *) die "HEAD is $head_ref, not a branch" ;; 
 branch=${head_ref#refs/heads/}
 [[ $branch =~ ^[A-Za-z0-9._/-]+$ ]] || die "branch name '$branch' must match [A-Za-z0-9._/-]+ (it goes into the flake url)"
 
+# A merge, rebase, cherry-pick or revert in progress would add parents or
+# rewrite commits behind the guard's back.
+for state in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD REBASE_HEAD rebase-merge rebase-apply; do
+  [ ! -e "$(git rev-parse --git-path "$state")" ] ||
+    die "a merge/rebase/cherry-pick/revert is in progress in $secrets_dir ($state); finish or abort it first"
+done
+
 untracked=$(git ls-files --others --exclude-standard)
 if [ -n "$untracked" ]; then
   printf '%s\n' "$untracked" >&2
@@ -222,24 +233,28 @@ fi
 
 in_scope() { case $1 in .sops.yaml | sops/*) return 0 ;; *) return 1 ;; esac }
 
-unstaged=$(git diff --name-only)
-staged=$(git diff --cached --name-only)
-if [ -n "$unstaged$staged" ] && [ -z "$message" ]; then
+# Paths are always listed NUL-separated and without rename detection, so a
+# rename shows up as its source (a deletion) and its destination.
+unstaged=()
+while IFS= read -r -d '' p; do unstaged+=("$p"); done < <(git diff --no-renames --name-only -z)
+staged=()
+while IFS= read -r -d '' p; do staged+=("$p"); done < <(git diff --cached --no-renames --name-only -z)
+if [ $((${#unstaged[@]} + ${#staged[@]})) -gt 0 ] && [ -z "$message" ]; then
   git status --short >&2
   die "uncommitted changes in $secrets_dir; re-run with MSG=\"...\" to commit them"
 fi
-both=$(printf '%s\n' "$staged" | grep -Fxf <(printf '%s\n' "$unstaged") | grep -v '^$' || true)
-if [ -n "$both" ]; then
-  printf '%s\n' "$both" >&2
-  die "paths with both staged and unstaged changes; stage or restore them fully first"
-fi
-outside=""
-while IFS= read -r p; do
-  [ -z "$p" ] || in_scope "$p" || outside+="$p"$'\n'
-done <<<"$unstaged"$'\n'"$staged"
-if [ -n "$outside" ]; then
-  printf '%s' "$outside" >&2
-  die "changes outside sops/ and .sops.yaml; commit and push those yourself"
+problems=""
+for p in ${staged[@]+"${staged[@]}"}; do
+  for q in ${unstaged[@]+"${unstaged[@]}"}; do
+    [ "$p" != "$q" ] || problems+="$p (both staged and unstaged changes; stage or restore it fully)"$'\n'
+  done
+done
+for p in ${unstaged[@]+"${unstaged[@]}"} ${staged[@]+"${staged[@]}"}; do
+  in_scope "$p" || problems+="$p (outside sops/ and .sops.yaml; commit and push it yourself)"$'\n'
+done
+if [ -n "$problems" ]; then
+  printf '%s' "$problems" >&2
+  die "refusing to publish these changes"
 fi
 
 git fetch --quiet "$remote"
@@ -252,20 +267,31 @@ if [ -n "$old_rev" ]; then
     die "$branch does not contain the locked $input revision $old_rev; rebase it onto $remote/$main"
 fi
 
-# From here on the index may change; a failure puts the saved copy back.
+# From here until the commit the index may change; a failure puts the saved
+# copy back.
 index_path=$(git rev-parse --path-format=absolute --git-path index)
 cp "$index_path" "$work/index"
 keep_index=false
-if [ -n "$unstaged" ]; then
-  while IFS= read -r p; do git add -- "$p"; done <<<"$unstaged"
-fi
+for p in ${unstaged[@]+"${unstaged[@]}"}; do git add -- "$p"; done
 
 # --- plaintext guard ---
 enc_re='^ENC\[AES256_GCM,data:[A-Za-z0-9+/=]*,iv:[A-Za-z0-9+/=]+,tag:[A-Za-z0-9+/=]+,type:[a-z]+\]$'
+# Exit non-zero if a JSON document repeats a key in any object. yq-go keeps
+# duplicate YAML keys in its JSON output, so this covers YAML too.
+no_dup_keys='
+import json, sys
+def pairs(kv):
+    keys = [k for k, _ in kv]
+    if len(keys) != len(set(keys)):
+        sys.exit(1)
+    return dict(kv)
+json.load(open(sys.argv[1]), object_pairs_hook=pairs)
+'
 # check_doc OBJECT PATH: OBJECT (`<commit>:<path>` or `:<path>`) is a sops
-# document: one YAML/JSON object with a `sops` block carrying an encrypted
-# mac, every other leaf an ENC[...] envelope, and no comment that is not
-# itself an encrypted `#ENC[...]`.
+# document: one YAML/JSON object with no duplicate keys, a `sops` block
+# carrying an encrypted mac, every other leaf an ENC[...] envelope or null
+# (sops keeps null placeholders; they carry no data), and no comment that is
+# not itself an encrypted `#ENC[...]`.
 check_doc() {
   git show "$1" >"$work/doc"
   case $2 in
@@ -286,12 +312,20 @@ check_doc() {
       return 1
       ;;
   esac
-  jq -se --arg re "$enc_re" '
-    length == 1 and (.[0] | type == "object")
-    and (.[0].sops | type == "object")
-    and ((.[0].sops.mac // "") | type == "string" and test($re))
-    and (.[0] | del(.sops) | [paths(type != "object" and type != "array") as $p | getpath($p)]
-         | all(type == "string" and test($re)))
+  if [ "$(jq -s length "$work/json" 2>/dev/null)" != 1 ]; then
+    echo "not a single YAML/JSON document"
+    return 1
+  fi
+  python3 -I -c "$no_dup_keys" "$work/json" 2>/dev/null || {
+    echo "duplicate keys"
+    return 1
+  }
+  jq -e --arg re "$enc_re" '
+    type == "object"
+    and (.sops | type == "object")
+    and ((.sops.mac // "") | type == "string" and test($re))
+    and (del(.sops) | [paths(type != "object" and type != "array") as $p | getpath($p)]
+         | all(. == null or (type == "string" and test($re))))
   ' "$work/json" >/dev/null 2>&1 || {
     echo "a value outside the sops block is not an ENC[...] envelope"
     return 1
@@ -299,28 +333,31 @@ check_doc() {
 }
 
 bad=""
-guard() { # guard OBJECT PATH LABEL
+# guard OBJECT PATH LABEL: scope for every path; content for live sops/ files.
+guard() {
   local why
-  in_scope "$2" || {
+  if ! in_scope "$2"; then
     bad+="$3: $2 (outside sops/ and .sops.yaml)"$'\n'
-    return 0
-  }
-  case $2 in sops/*) ;; *) return 0 ;; esac
-  why=$(check_doc "$1" "$2") || bad+="$3: $2 ($why)"$'\n'
+  elif [[ $2 == sops/* ]] && git cat-file -e "$1" 2>/dev/null; then
+    why=$(check_doc "$1" "$2") || bad+="$3: $2 ($why)"$'\n'
+  fi
 }
-# Index: every path that differs from HEAD (deletions only need scope).
-while IFS= read -r p; do
-  [ -n "$p" ] || continue
-  if git cat-file -e ":$p" 2>/dev/null; then guard ":$p" "$p" index; else in_scope "$p" || bad+="index: $p (outside sops/ and .sops.yaml)"$'\n'; fi
-done < <(git diff --cached --name-only)
-# Every commit the push would publish: not on any $remote ref, not in the lock.
-while IFS= read -r c; do
-  [ -n "$c" ] || continue
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    if git cat-file -e "$c:$p" 2>/dev/null; then guard "$c:$p" "$p" "${c:0:12}"; else in_scope "$p" || bad+="${c:0:12}: $p (outside sops/ and .sops.yaml)"$'\n'; fi
-  done < <(git diff-tree -m -r --root --no-commit-id --name-only "$c" | sort -u)
-done < <(git rev-list HEAD --not --remotes="$remote" ${old_rev:+"$old_rev"})
+# Every commit the push would publish (all parents of merges): not on any
+# $remote ref and not in the lock.
+history_guard() {
+  local c p
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    while IFS= read -r -d '' p; do
+      guard "$c:$p" "$p" "${c:0:12}"
+    done < <(git diff-tree -m -r --root --no-renames --no-commit-id --name-only -z "$c")
+  done < <(git rev-list HEAD --not --remotes="$remote" ${old_rev:+"$old_rev"})
+}
+# Index: every path that differs from HEAD.
+while IFS= read -r -d '' p; do
+  guard ":$p" "$p" index
+done < <(git diff --cached --no-renames --name-only -z)
+history_guard
 if [ -n "$bad" ]; then
   printf '%s' "$bad" >&2
   die "plaintext guard failed; encrypt with sops (or push non-secret changes yourself)"
@@ -334,6 +371,14 @@ elif [ -n "$message" ]; then
 fi
 keep_index=true
 head=$(git rev-parse HEAD)
+
+# Re-check what is actually about to be pushed: a commit hook can change the
+# committed tree after the checks above.
+history_guard
+if [ -n "$bad" ]; then
+  printf '%s' "$bad" >&2
+  die "plaintext guard failed on the new commit $head; nothing was pushed. The commit stays local: inspect it, then \`git reset --soft HEAD^\` to undo it"
+fi
 
 say "pushing $head to $remote refs/heads/$branch"
 git push --set-upstream "$remote" "HEAD:refs/heads/$branch"

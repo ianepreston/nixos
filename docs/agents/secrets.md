@@ -42,20 +42,24 @@ explicitly, e.g. `task secrets:oidc APP=foo SECRETS_DIR=~/src/nix-secrets-foo`.
 
 `secrets:publish` (`scripts/secrets-publish.sh`):
 
-- refuses untracked files, a detached HEAD, uncommitted changes without
-  `MSG`, a path with both staged and unstaged changes, and any change (staged,
-  unstaged or committed) outside `sops/` and `.sops.yaml`. Push those by hand.
-  With `MSG` it stages the changed files whole and commits them;
+- refuses untracked files, a detached HEAD, a merge, rebase, cherry-pick or
+  revert in progress, uncommitted changes without `MSG`, a path with both
+  staged and unstaged changes, and any change (staged, unstaged or committed)
+  outside `sops/` and `.sops.yaml`. Push those by hand. Paths are listed
+  without rename detection, so a rename out of another directory counts as a
+  change there. With `MSG` it stages the changed files whole and commits them;
 - refuses when the branch does not contain the locked revision (a stale
   branch would drop published secrets);
 - plaintext guard: every `sops/` file in the index and in **every** commit the
   push would publish (not just the net diff) must be a single `.yaml`/`.json`
-  sops document. Every value outside its `sops` block must be an
-  `ENC[AES256_GCM,…]` envelope, `sops.mac` must be encrypted, and the file
-  must have no comments other than `#ENC[…]`. Keys that sops leaves in clear
+  sops document with no duplicate keys. Every value outside its `sops` block
+  must be an `ENC[AES256_GCM,…]` envelope or null (sops keeps null
+  placeholders), `sops.mac` must be encrypted, and the file must have no
+  comments other than `#ENC[…]`. Keys that sops leaves in clear
   (`_unencrypted` suffixes, `unencrypted_regex`) are refused too. If an
   earlier commit leaked plaintext, rewrite the unpushed history before
-  publishing;
+  publishing. The guard runs again on the commit it creates, before the push,
+  in case a commit hook changed the tree;
 - pushes `HEAD` to `origin`'s `refs/heads/<branch>` by explicit refspec and
   sets the upstream, so a new branch's first push works and a branch created
   from `origin/main` never pushes to `main`. It never force-pushes, so
@@ -63,11 +67,20 @@ explicitly, e.g. `task secrets:oidc APP=foo SECRETS_DIR=~/src/nix-secrets-foo`.
 - on `main`, pins `?ref=main&shallow=1`; on any other branch it rewrites the
   `flake.nix` url to `?ref=<branch>&rev=<commit>&shallow=1`. Then it runs
   `nix flake update nix-secrets`. It checks that the lock's `locked` and
-  `original` entries both carry that url, ref and (for a branch) rev, and
-  that no other lock node changed. Then it prints the pinned commit.
+  `original` entries both carry that url, ref, `shallow: true` and (for a
+  branch) rev, and that no other lock node changed. Then it prints the pinned commit.
 
-Any failure restores `flake.nix`, `flake.lock` and the `nix-secrets` index to
-their state before the run. A commit made before a failed push stays local.
+On failure `flake.nix` and `flake.lock` are always restored to their state
+before the run. What happens in `nix-secrets` depends on how far the run got:
+
+- before the commit (any refusal, a guard failure): the index is restored
+  exactly and nothing is committed or pushed;
+- after the commit but before the push (the post-commit guard or a rejected
+  push): the commit stays local and unpushed, and the index matches it.
+  `git reset --soft HEAD^` undoes it;
+- after the push (the pin or lock check failed): the branch is pushed. Fix
+  the cause and run `task secrets:publish` again; with a clean tree it only
+  re-pins.
 
 `secrets:pin-main` rewrites the url back to `?ref=main&shallow=1`, re-locks
 only `nix-secrets` and checks the lock entry the same way. With

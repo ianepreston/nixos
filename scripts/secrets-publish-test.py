@@ -64,7 +64,7 @@ sops:
 # repo in $STUB_REMOTE. Faults, to prove the helper notices and rolls back:
 # STUB_FAIL exits 1 without writing; STUB_TOUCH_OTHER edits another lock node;
 # STUB_DROP_REF drops locked.ref; STUB_STALE_ORIGINAL leaves original.ref at
-# main and drops original.rev. Any other nix command is logged as JSON and
+# main and drops original.rev; STUB_NO_SHALLOW drops original.shallow. Any other nix command is logged as JSON and
 # succeeds (for the matrix task).
 NIX_STUB = r"""
 import json, os, re, subprocess, sys
@@ -89,11 +89,14 @@ node = lock["nodes"][lock["root"]]
 node = lock["nodes"][node["inputs"]["nix-secrets"]]
 node["locked"] = {"lastModified": 1, "narHash": "sha256-stub", "ref": q["ref"], "rev": rev,
                   "shallow": True, "type": "git", "url": url.partition("?")[0][4:]}
-node["original"] = {"ref": q["ref"], "type": "git", "url": url.partition("?")[0][4:]}
+# Real Nix (2.33) records shallow in both entries for a `shallow=1` url.
+node["original"] = {"ref": q["ref"], "shallow": True, "type": "git", "url": url.partition("?")[0][4:]}
 if "rev" in q:
     node["original"]["rev"] = q["rev"]
 if os.environ.get("STUB_TOUCH_OTHER"):
     lock["nodes"]["nixpkgs"]["locked"]["rev"] = "0" * 40
+if os.environ.get("STUB_NO_SHALLOW"):
+    del node["original"]["shallow"]
 if os.environ.get("STUB_DROP_REF"):
     del node["locked"]["ref"]
 if os.environ.get("STUB_STALE_ORIGINAL"):
@@ -523,7 +526,12 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(self.flake_files(), before)
 
     def test_failed_lock_checks_restore_flake_files(self):
-        for fault in ("STUB_TOUCH_OTHER", "STUB_DROP_REF", "STUB_STALE_ORIGINAL"):
+        for fault in (
+            "STUB_TOUCH_OTHER",
+            "STUB_DROP_REF",
+            "STUB_STALE_ORIGINAL",
+            "STUB_NO_SHALLOW",
+        ):
             with self.subTest(fault=fault):
                 self.tmp.cleanup()
                 self.setUp()
@@ -603,7 +611,7 @@ class PublishTest(unittest.TestCase):
     def test_non_string_plaintext_values_are_refused(self):
         f = self.f
         f.git("switch", "-q", "-c", "feat/x")
-        for leaf in ("port: 5432", "flag: false", "empty: null", "_unencrypted: x"):
+        for leaf in ("port: 5432", "flag: false", "empty: ''", "_unencrypted: x"):
             with self.subTest(leaf=leaf):
                 f.write(
                     "sops/hpp-1.yaml",
@@ -744,6 +752,117 @@ class PublishTest(unittest.TestCase):
         )
         self.assertIn("restored", r.stderr)
         self.assertEqual(f.locked()["rev"], f.main0)
+
+    # --- cycle 2 ---------------------------------------------------------------
+
+    def test_duplicate_keys_are_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        docs = {
+            "sops/hpp-1.yaml": ENCRYPTED.replace(
+                "        db_password: ",
+                "        db_password: hunter2\n        db_password: ",
+            ),
+            "sops/top.yaml": "token: hunter2\n" + ENCRYPTED.replace("hpp-1:", "token:"),
+            "sops/x.json": '{"a": "hunter2", "a": "%s", "sops": {"mac": "%s"}}'
+            % (enc("eA=="), enc("bQ==")),
+        }
+        for path, text in docs.items():
+            with self.subTest(path=path):
+                f.write(path, text)
+                f.git("add", path)
+                r = self.refused(f.publish("--message", "m"), "duplicate keys")
+                self.assertIn(path, r.stderr)
+                f.git("reset", "-q", "--hard")
+        self.assert_untouched()
+
+    def test_merge_in_progress_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "side")
+        f.write("sops/side.yaml", "token: hunter2\n")
+        f.git("add", "sops/side.yaml")
+        f.git("commit", "-qm", "side")
+        f.git("switch", "-q", "-c", "feat/x", "main")
+        f.change_secret()
+        f.git("commit", "-qam", "own")
+        f.git("merge", "-q", "--no-commit", "--no-ff", "side")
+        r = self.refused(f.publish("--message", "m"), "in progress")
+        self.assertIn("MERGE_HEAD", r.stderr)
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+        self.assert_untouched()
+
+    def test_commit_hook_changing_the_tree_is_caught_before_push(self):
+        f = self.f
+        hooks = f.root / "hooks"
+        hooks.mkdir()
+        hook = hooks / "pre-commit"
+        hook.write_text(
+            "#!/bin/sh\nprintf 'token: hunter2\\n' > sops/hpp-1.yaml\n"
+            "git add sops/hpp-1.yaml\n"
+        )
+        hook.chmod(0o755)
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        r = self.refused(
+            f.publish("--message", "m", extra_env={"GIT_CONFIG_VALUE_0": str(hooks)}),
+            "on the new commit",
+        )
+        self.assertIn("nothing was pushed", r.stderr)
+        self.assertIn("hunter2", f.git("show", "HEAD:sops/hpp-1.yaml"))  # local only
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+        self.assert_untouched()
+
+    def test_null_leaves_from_sops_are_accepted(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write(
+            "sops/hpp-1.yaml",
+            ENCRYPTED.replace(
+                "hpp-1:\n", "hpp-1:\n    placeholder: null\n    empty:\n"
+            ),
+        )
+        self.ok(f.publish("--message", "m"))
+        self.assertEqual(f.locked()["rev"], f.rev("HEAD"))
+
+    def test_rename_out_of_an_unpublished_path_is_refused(self):
+        f = self.f
+        f.write("docs/keep.yaml", ENCRYPTED)
+        f.git("add", "docs/keep.yaml")
+        f.git("commit", "-qm", "keep")
+        f.git("push", "-q", "origin", "main")
+        self.ok(f.run("restore-main"))
+        f.log.write_text("")
+        locked = self.flake_files()
+        f.git("switch", "-q", "-c", "feat/x")
+        f.git("mv", "docs/keep.yaml", "sops/keep.yaml")
+        self.assertEqual(
+            f.git("diff", "--cached", "--name-only"), "sops/keep.yaml"
+        )  # what rename detection would have shown
+        r = self.refused(f.publish("--message", "m"), "outside sops/")
+        self.assertIn("docs/keep.yaml", r.stderr)
+        f.git("commit", "-qm", "rename")
+        r = self.refused(f.publish(), "outside sops/")
+        self.assertIn("docs/keep.yaml", r.stderr)
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+        self.assertEqual(self.flake_files(), locked)
+
+    def test_lock_records_shallow_in_both_entries(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+        node = f.lock()["nodes"]["nix-secrets"]
+        self.assertIs(node["locked"]["shallow"], True)
+        self.assertIs(node["original"]["shallow"], True)
+
+    def test_missing_shallow_fails_pin_main(self):
+        f = self.f
+        before = self.flake_files()
+        self.refused(
+            f.run("restore-main", extra_env={"STUB_NO_SHALLOW": "1"}),
+            "does not match ref=main",
+        )
+        self.assertEqual(self.flake_files(), before)
 
     def test_task_wiring_passes_an_explicit_checkout(self):
         f = self.f
