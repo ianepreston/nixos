@@ -382,6 +382,47 @@ class ScoreTrace(unittest.TestCase):
         self.assertEqual(good["total"], empty["total"])
         self.assertIn("*:complete", failed(empty))
 
+    def test_accepts_mirrors_per_action_schema(self):
+        rule = {
+            "tools": {"must": ["stats"]},
+            "accepts": {"stats": {"summary": ["start"], "review": ["days"]}},
+        }
+        ok = [("stats", {"action": "review", "days": 7})]
+        self.assertEqual(
+            failed(llm_eval.score_case(rule, chat_response(calls=ok))), set()
+        )
+        # `start` is valid on a sibling action, so only the call it bled into fails.
+        bled = ok + [("stats", {"action": "review", "start": "2026-01-01"})]
+        r = llm_eval.score_case(rule, chat_response(calls=bled))
+        self.assertEqual(failed(r), {"stats:accepts"})
+        detail = next(c["detail"] for c in r["checks"] if c["check"] == "accepts")
+        self.assertEqual(detail, "review: start")
+        sibling = [("stats", {"action": "summary", "start": "2026-01-01"})]
+        self.assertEqual(
+            failed(llm_eval.score_case(rule, chat_response(calls=sibling))), set()
+        )
+
+    def test_accepts_wildcard_unlisted_action_and_uncalled_tool(self):
+        rule = {
+            "tools": {"want": ["a", "b"]},
+            "accepts": {"a": {"*": ["q"]}, "b": {"x": []}},
+        }
+        r = llm_eval.score_case(
+            rule, chat_response(calls=[("a", {"q": 1}), ("b", {"action": "y", "z": 1})])
+        )
+        self.assertEqual(failed(r), set())
+        r = llm_eval.score_case(rule, chat_response(calls=[("a", {"q": 1, "r": 2})]))
+        self.assertEqual(failed(r), {"a:accepts"})
+        # Same denominator whether or not the tool was called.
+        answered = llm_eval.score_case(rule, chat_response("no call"))
+        self.assertEqual(answered["total"], r["total"])
+
+    def test_accepts_bad_shape_is_an_error(self):
+        with self.assertRaises(ValueError):
+            llm_eval.score_case(
+                {"tools": {}, "accepts": {"a": ["q"]}}, chat_response("x")
+            )
+
     def test_unparseable_tool_arguments(self):
         r = llm_eval.score_case(ROUTE, chat_response(calls=[("get_income", "{nope")]))
         self.assertIn("*:parses", failed(r))

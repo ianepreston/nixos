@@ -186,7 +186,7 @@ def score_text_case(expected: dict, response: dict) -> dict:
     return summarize(checks)
 
 
-TRACE_KEYS = {"tools", "args", "reply", "note"}
+TRACE_KEYS = {"tools", "args", "accepts", "reply", "note"}
 NUMBER_RULE_KEYS = {"any", "rel", "tol"}
 # A figure as a chat reply writes it: "$1,234.56", "12 345.67" (U+202F
 # thousands separator), "7.30%", "about 1.2k". Sign is ignored ("a loss of
@@ -237,6 +237,40 @@ def tool_calls_of(message: dict) -> list[tuple[str, dict | None]]:
     return calls
 
 
+def score_accepts(
+    tool: str, per_action: dict, calls: list[tuple[str, dict | None]]
+) -> dict:
+    """Would the app's own per-action schema accept every call to `tool`?
+
+    Apps that publish one flat argument list for a multi-action tool, but
+    validate each action strictly, reject a call that carries another
+    action's argument (`date` sent with an action that takes none). An
+    absent-argument rule can't express that, since the same key is valid on
+    a sibling action, so this mirrors the app's schema instead:
+    `{"<action>": [allowed keys]}`, with `*` for every action not listed.
+    The `action` key itself is always allowed. A call whose action isn't
+    listed (and no `*`) isn't judged. One check per tool, passing when the
+    tool isn't called, so every trial has the same total.
+    """
+    bad_shape = not isinstance(per_action, dict) or not all(
+        isinstance(keys, list) for keys in per_action.values()
+    )
+    if bad_shape:
+        raise ValueError(f"accepts.{tool}: want {{action: [keys]}}")
+    rejected = []
+    for name, args in calls:
+        if name != tool or args is None:
+            continue
+        action = args.get("action")
+        allowed = per_action.get(action, per_action.get("*"))
+        if allowed is None:
+            continue
+        extra = sorted(set(args) - set(allowed) - {"action"})
+        if extra:
+            rejected.append(f"{action or '*'}: {', '.join(extra)}")
+    return check(tool, "accepts", not rejected, "; ".join(rejected))
+
+
 def score_trace_case(expected: dict, response: dict) -> dict:
     """One turn of a tool-using chat (`tool-trace`): which tools it called,
     with what arguments, and what its reply says.
@@ -249,6 +283,8 @@ def score_trace_case(expected: dict, response: dict) -> dict:
       turn must answer without calling anything.
     - `args`: `"<tool>.<arg>"` (or `"<tool>.<a>|<b>"`: the first present) to
       a list rule over that argument's value in the tool's first call.
+    - `accepts`: `{"<tool>": {"<action>": [keys]}}`, the keys the app's
+      schema allows per action; see `score_accepts`.
     - `reply`: a list rule matched whole-word against the message content,
       plus `numbers`: `{label: {"any": [values], "rel": 0.005, "tol": 0}}`.
     """
@@ -283,6 +319,9 @@ def score_trace_case(expected: dict, response: dict) -> dict:
         )
         values = value if isinstance(value, list) else [] if value is None else [value]
         checks.extend(score_list_field(key, rule, {key: values}))
+
+    for tool, per_action in sorted((expected.get("accepts") or {}).items()):
+        checks.append(score_accepts(tool, per_action, calls))
 
     reply = expected.get("reply")
     if reply is not None:
@@ -1111,8 +1150,9 @@ def expected_values(fixtures: Path) -> tuple[set[str], list[str]]:
         for spellings in (expected.get("recover") or {}).values():
             values.update(str(v) for v in spellings)
         for field, rule in expected.items():
-            # Tool names come from the app's own tool list, not the fixture.
-            if field in ("recover", "tools") or not isinstance(rule, dict):
+            # Tool names, and the argument keys `accepts` lists, come from
+            # the app's own tool schema, not the fixture.
+            if field in ("recover", "tools", "accepts") or not isinstance(rule, dict):
                 continue
             # `args` nests one list rule per argument.
             for r in rule.values() if field == "args" else [rule]:
