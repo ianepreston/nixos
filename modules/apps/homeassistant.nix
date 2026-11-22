@@ -378,8 +378,8 @@
       };
 
       # Recorder role: peer auth on the unix socket, role == system user
-      # `hass` == db name, so there's no password to plumb (mirrors mealie's
-      # createLocally pattern per docs/agents/app-packaging.md). Merges into the shared cluster
+      # `hass` == db name, so there's no password to plumb (see the peer-auth
+      # pattern in docs/agents/app-packaging.md). Merges into the shared cluster
       # from modules/system/postgresql.nix.
       services.postgresql = {
         ensureDatabases = [ "hass" ];

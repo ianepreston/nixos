@@ -71,11 +71,11 @@ Check any upstream module for:
   unconditionally, colliding with `server-users.nix`; fix with
   `users.users.${kavitaUser}.group = lib.mkForce "servers";`. Read each
   module's `users.users` block first.
-- **Postgres connection style.** `database.createLocally = true` +
-  `DynamicUser` (mealie) gets unix-socket peer auth for free when the role name
-  doesn't collide. When it does (paperless wants `paperless`, ours is
-  `paperless_ngx`), keep `myPostgresApp` + TCP + sops password instead of a
-  destructive rename.
+- **Postgres connection style.** `services.miniflux.createDatabaseLocally = true`
+  with `DynamicUser` (see `modules/apps/miniflux.nix`) gets unix-socket peer
+  auth for free when the role name doesn't collide. When it does (paperless
+  wants `paperless`, ours is `paperless_ngx`), keep `myPostgresApp` + TCP +
+  sops password instead of a destructive rename.
 - **Multi-unit apps.** Every unit consuming the same OIDC env file
   (paperless-{web,scheduler,task-queue,consumer}) goes in
   `myAuthentik.oidcApps.<app>.appRestartUnit` (accepts a list).

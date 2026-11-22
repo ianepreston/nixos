@@ -38,7 +38,7 @@
 # are merged into a single env file stacked once onto authentik's
 # units, regardless of how many OIDC apps are registered. Whether the
 # app gets its own env file too depends on how it consumes credentials:
-# env-reading apps (mealie, miniflux, paperless-ngx, tandoor, komga,
+# env-reading apps (miniflux, paperless-ngx, tandoor, komga,
 # actualbudget) get one; DB/UI-configured apps (audiobookshelf, kavita,
 # seerr) skip it. Apps with non-OIDC env secrets (grimmory's db
 # password) opt in via `extraEnvLines`.

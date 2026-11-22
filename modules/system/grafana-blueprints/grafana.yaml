@@ -5,7 +5,7 @@ entries:
   # ========== Grafana — OIDC ==========
   # Grafana speaks OIDC natively. We use generic_oauth on the grafana
   # side (see modules/system/grafana.nix) and a stock OAuth2 provider
-  # here. Same shape as the mealie blueprint; client creds come from
+  # here. Same shape as the bookorbit blueprint; client creds come from
   # sops via the authentik worker's EnvironmentFile, injected by
   # myAuthentik.oidcApps.grafana.
   - model: authentik_providers_oauth2.oauth2provider
