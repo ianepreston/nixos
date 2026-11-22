@@ -437,6 +437,7 @@ tasks:
       # synced ../nix-secrets/ checkout. Set false to resolve via
       # flake.lock (no synced secrets needed on the target).
       LOCAL_SECRETS: '{{.LOCAL_SECRETS | default "true"}}'
+      SKIP_PREFLIGHT: '{{if kindIs "invalid" .SKIP_PREFLIGHT}}false{{else}}{{.SKIP_PREFLIGHT}}{{end}}'
     # User-supplied values are rendered with shellQuote into explicit helper
     # arguments, never `env:` (an inherited ACTIVATE_* variable would override
     # it); the helper validates them again.
@@ -448,11 +449,16 @@ tasks:
         user={{.TARGET_USER | shellQuote}}
         port={{.SSH_PORT | shellQuote}}
         printf '\033[32m[+] Rebuilding %s on %s\033[0m\n' "$host" "$dest"
-        secrets=()
+        flags=()
         case {{.LOCAL_SECRETS | shellQuote}} in
-          true) secrets=(--local-secrets) ;;
+          true) flags+=(--local-secrets) ;;
           false) ;;
           *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+        esac
+        case {{.SKIP_PREFLIGHT | shellQuote}} in
+          true) flags+=(--skip-preflight) ;;
+          false) ;;
+          *) echo "SKIP_PREFLIGHT must be true or false" >&2; exit 1 ;;
         esac
         # HOST is the identity the target must report; DEST is only where to
         # connect. The helper builds in the synced checkout on the target and
@@ -460,4 +466,4 @@ tasks:
         {{.ROOT_DIR | shellQuote}}/scripts/activate-nixos.sh \
           --host "$host" --dest "$dest" --user "$user" --port "$port" \
           --target-ssh-opt=-oForwardAgent=yes --remote-flake src/nixos \
-          ${secrets[@]+"${secrets[@]}"}
+          ${flags[@]+"${flags[@]}"}

@@ -91,14 +91,21 @@ case $1 in
   copy) exit "${STUB_COPY_RC:-0}" ;;
   config) printf '%s\n' "${STUB_BUILDERS:-}" ;;
   store)
-    if [ -n "${STUB_STORE_ERROR:-}" ]; then
-      printf '%s\n' "$STUB_STORE_ERROR" >&2
-      exit 1
+    if [ "$4" = "${STUB_STORE_URI:-ssh://ipreston@hpp-1}" ]; then
+      if [ -n "${STUB_STORE_ERROR:-}" ]; then
+        printf '%s\n' "$STUB_STORE_ERROR" >&2
+        exit "${STUB_STORE_RC:-1}"
+      fi
+      exit "${STUB_STORE_RC:-0}"
     fi ;;
 esac
 """,
     "nix-store": 'log "$@"; echo "$STUB_CLOSURE"',
-    "hostname": 'echo "$STUB_HOSTNAME"',
+    "hostname": r"""
+echo "$STUB_HOSTNAME"
+[ -z "${STUB_LOCAL_HOSTNAME_WARNING:-}" ] || printf '%s\n' "$STUB_LOCAL_HOSTNAME_WARNING" >&2
+exit "${STUB_LOCAL_HOSTNAME_RC:-0}"
+""",
     "sudo": 'log "$@"; exec "$@"',
     "nix-env": 'log "$@"',
     "systemd-run": 'log "$@"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
@@ -116,6 +123,10 @@ log "$@"
 case " $* " in
   *" -O check "*) exit "${STUB_MASTER_RC:-0}" ;;
   *" -G "*) # effective config: an explicit ControlPath wins, else "ssh_config"
+    if [ -n "${STUB_SSH_CONFIG_ERROR:-}" ]; then
+      printf '%s\n' "$STUB_SSH_CONFIG_ERROR" >&2
+      exit 255
+    fi
     cp=${STUB_SSH_CONTROLPATH-}
     for a in "$@"; do case $a in -oControlPath=*) cp=${a#-oControlPath=} ;; esac; done
     [ -z "$cp" ] || printf 'controlpath %s\n' "$cp"
@@ -129,11 +140,21 @@ while [ $# -gt 0 ]; do
 done
 destination=$1
 shift
-if [ "$*" = true ] && [ -n "${STUB_BUILDER_ERROR:-}" ] && [ "$destination" = "${STUB_FAILED_BUILDER:-terra}" ]; then
-  printf '%s\n' "$STUB_BUILDER_ERROR" >&2
-  exit 255
-fi
 case "$*" in
+  true)
+    if [ "$destination" = "${STUB_FAILED_BUILDER:-terra}" ]; then
+      if [ -n "${STUB_BUILDER_ERROR:-}" ]; then
+        printf '%s\n' "$STUB_BUILDER_ERROR" >&2
+        exit "${STUB_BUILDER_RC:-255}"
+      fi
+      exit "${STUB_BUILDER_RC:-0}"
+    fi ;;
+  hostname)
+    [ -z "${STUB_HOSTNAME_SSH_WARNING:-}" ] || printf '%s\n' "$STUB_HOSTNAME_SSH_WARNING" >&2
+    hostname
+    exit "${STUB_HOSTNAME_SSH_RC:-$?}" ;;
+  'bash -s -- '*)
+    PATH="${STUB_REMOTE_PROBE_PATH:-$PATH}" exec "$BASH" -c "$*" ;;
   'sudo bash -s '*)
     [ -z "${STUB_SSH_RC-}" ] || exit "$STUB_SSH_RC"
     if [ -n "${STUB_SSH_NULL_STDIN-}" ]; then # what `ssh -n` does
@@ -337,6 +358,109 @@ class TransportPreflight(Harness):
         self.assertEqual(self.lines("ssh-add"), [])
         self.assertEqual(self.lines("nix"), [])
 
+    def test_bootstrap_without_a_master_still_checks_the_store(self):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_MASTER_RC=255, STUB_STORE_ERROR="protocol mismatch",
+        )  # fmt: skip
+        self.assertIn("warning: no usable SSH master", r.stderr)
+        self.assert_probe_failed(r, "Nix store protocol mismatch")
+
+    def test_ssh_config_failure_stops_before_querying_agent(self):
+        r = self.probe(STUB_SSH_CONFIG_ERROR="Bad configuration: private-detail")
+        self.assert_probe_failed(
+            r, "cannot read effective SSH settings for ipreston@hpp-1"
+        )
+        self.assertEqual(self.lines("ssh-add"), [])
+        self.assertEqual(self.lines("nix"), [])
+
+    def test_remote_hostname_ignores_stderr_on_success(self):
+        r = self.probe(STUB_HOSTNAME_SSH_WARNING="Warning: private-detail")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+        self.assertNotIn("private-detail", r.stderr)
+
+    def test_local_hostname_ignores_stderr_on_success(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--preflight",
+            STUB_LOCAL_HOSTNAME_WARNING="Warning: private-detail",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+        self.assertNotIn("private-detail", r.stderr)
+
+    def test_preflight_rejects_an_unexpected_hostname(self):
+        self.assert_probe_failed(
+            self.probe(STUB_HOSTNAME="amos1"), "hostname was 'amos1', expected 'hpp-1'"
+        )
+
+    def test_probe_timeouts_are_classified_by_leg(self):
+        for code in (124, 137):
+            for reason, args, env in (
+                ("store transport ssh://ipreston@hpp-1", (), {"STUB_STORE_RC": code}),
+                ("store transport ssh-ng://builder@build1", ("--build-host", "builder@build1"),
+                 {"STUB_STORE_URI": "ssh-ng://builder@build1", "STUB_STORE_RC": code}),
+                ("builder terra", (), {"STUB_BUILDERS": "ssh://terra", "STUB_BUILDER_RC": code}),
+                ("builder builder@build1", ("--build-host", "builder@build1"),
+                 {"STUB_FAILED_BUILDER": "builder@build1", "STUB_BUILDER_RC": code}),
+                ("hostname probe for ipreston@hpp-1", (), {"STUB_HOSTNAME_SSH_RC": code}),
+            ):  # fmt: skip
+                with self.subTest(code=code, probe=reason):
+                    self.log.write_text("")
+                    self.assert_probe_failed(
+                        self.probe(*args, **env), f"{reason}: probe timed out"
+                    )
+            with self.subTest(code=code, probe="local hostname"):
+                self.log.write_text("")
+                r = self.run_helper(
+                    "--host", "hpp-1", "--preflight", STUB_LOCAL_HOSTNAME_RC=code
+                )
+                self.assert_probe_failed(r, "local hostname probe: probe timed out")
+
+    def test_hostname_permission_denied_is_classified_from_stderr(self):
+        r = self.probe(
+            STUB_HOSTNAME_SSH_WARNING="Permission denied (publickey). private-detail",
+            STUB_HOSTNAME_SSH_RC=255,
+        )
+        self.assert_probe_failed(
+            r,
+            "hostname probe for ipreston@hpp-1: SSH authentication denied in BatchMode",
+        )
+
+    def remote_probe_path(self, missing):
+        path = self.tmp / f"remote-without-{missing}"
+        path.mkdir()
+        for tool in ("bash", "basename", "timeout", "nix", "jq", "git"):
+            if tool != missing:
+                executable = shutil.which(tool, path=self.env["PATH"])
+                self.assertIsNotNone(executable, f"test fixture needs {tool}")
+                (path / tool).symlink_to(executable)
+        return path
+
+    def test_bootstrap_names_missing_remote_tools(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
+        for tool in ("timeout", "nix", "jq", "git"):
+            with self.subTest(tool=tool):
+                self.log.write_text("")
+                r = self.probe(
+                    "--remote-flake", "src/nixos", "--local-secrets",
+                    STUB_REMOTE_PROBE_PATH=self.remote_probe_path(tool),
+                )  # fmt: skip
+                self.assert_probe_failed(
+                    r, f"on ipreston@hpp-1: required tool '{tool}' is missing"
+                )
+                self.assertNotIn("Check flake.lock", r.stderr)
+
+    def test_bootstrap_with_locked_secrets_works_without_remote_jq(self):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_REMOTE_PROBE_PATH=self.remote_probe_path("jq"),
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+
     def test_agent_refusal_is_classified(self):
         self.assert_probe_failed(
             self.probe(STUB_AGENT="refused"), "agent refused operation"
@@ -362,6 +486,7 @@ class TransportPreflight(Harness):
     def test_split_host_signing_failure_requires_operator_action(self):
         r = self.probe(
             "--build-host", "builder@build1",
+            STUB_STORE_URI="ssh-ng://ipreston@hpp-1",
             STUB_STORE_ERROR="sign_and_send_pubkey: agent refused operation; private-detail\n"
             "error: protocol mismatch",
         )  # fmt: skip
@@ -369,6 +494,24 @@ class TransportPreflight(Harness):
         self.assertNotIn("Nix store protocol mismatch", r.stderr)
         self.assertTrue(self.lines("nix")[0][1].endswith("ssh-ng://ipreston@hpp-1"))
         self.assertFalse([row for row in self.lines("ssh") if "-O check" in row[1]])
+
+    def test_split_builder_store_failure_names_the_builder_store(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_STORE_URI="ssh-ng://builder@build1",
+            STUB_STORE_ERROR="Permission denied (publickey). private-detail",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "store transport ssh-ng://builder@build1: SSH authentication denied in BatchMode",
+        )
+        self.assertEqual(
+            [row[1] for row in self.lines("nix") if row[1].startswith("store ")],
+            [
+                "store info --store ssh-ng://ipreston@hpp-1",
+                "store info --store ssh-ng://builder@build1",
+            ],
+        )
 
     def test_split_host_preflights_both_stores_with_isolated_options(self):
         r = self.probe(
@@ -463,7 +606,14 @@ class RemoteActivation(Harness):
             self.assertNotIn("/inherited/socket", row[2])
 
     def test_hostname_mismatch_blocks_activation(self):
-        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_HOSTNAME="amos1")
+        r = self.run_helper(
+            "--host",
+            "hpp-1",
+            "--dest",
+            "hpp-1",
+            "--skip-preflight",
+            STUB_HOSTNAME="amos1",
+        )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("expected 'hpp-1'", r.stderr)
         self.assertFalse(self.activated())
@@ -1296,6 +1446,50 @@ class TaskRouting(Harness):
         self.assertIn("expected 'hpp-1'", r.stderr)
         self.assertFalse(self.activated())
 
+    def activation_tasks(self):
+        return (
+            ("rebuild",),
+            ("rebuild:hpp-1",),
+            ("deploy:hpp-1",),
+            (
+                "bootstrap:rebuild",
+                "HOST=hpp-1",
+                "DEST=192.0.2.9",
+                "LOCAL_SECRETS=false",
+            ),
+        )
+
+    def test_skip_preflight_through_each_activation_task(self):
+        (self.repo / "src" / "nixos").mkdir(parents=True)
+        for argv in self.activation_tasks():
+            for skip in ("true", "false"):
+                with self.subTest(argv=argv, skip=skip):
+                    self.log.write_text("")
+                    r = self.task(*argv, f"SKIP_PREFLIGHT={skip}")
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertEqual(
+                        "preflight: passed for hpp-1" in r.stderr, skip == "false"
+                    )
+                    self.assertEqual(
+                        "config show builders" in self.nix_args(), skip == "false"
+                    )
+                    self.assertTrue(self.activated())
+
+        self.log.write_text("")
+        r = self.task("deploy:hpp-1", "LOCAL_SECRETS=true", "SKIP_PREFLIGHT=true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--override-input nix-secrets", self.nix_args())
+        self.assertNotIn("config show builders", self.nix_args())
+
+    def test_invalid_skip_preflight_is_rejected_before_probing(self):
+        for argv in self.activation_tasks():
+            for value in ("", "TRUE", "yes", "1"):
+                with self.subTest(argv=argv, value=value):
+                    r = self.task(*argv, f"SKIP_PREFLIGHT={value}")
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn("SKIP_PREFLIGHT must be true or false", r.stderr)
+                    self.assertEqual(self.lines(), [])
+
     def test_ssh_preflight_task_runs_only_the_probes(self):
         r = self.task("ssh:preflight", "HOST=hpp-1")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1317,9 +1511,12 @@ class TaskRouting(Harness):
         repo.mkdir(parents=True)
         make_secrets(repo, self.base_env)
         r = self.task(
-            "bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", "SSH_PORT=2200"
-        )
+            "bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", "SSH_PORT=2200",
+            STUB_MASTER_RC=255,
+        )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no usable SSH master for ipreston@192.0.2.9", r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
         ssh = self.operational_ssh()
         self.assertEqual(len(ssh), 2)
         for row in ssh:

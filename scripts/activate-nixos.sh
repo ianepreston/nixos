@@ -403,6 +403,18 @@ preflight_fail() {
   exit 1
 }
 
+require_preflight_tools() {
+  local tool
+  for tool in "$@"; do
+    if ! command -v "$tool" >/dev/null; then
+      case $tool in
+        timeout) preflight_fail "required tool 'timeout' is missing. Install GNU coreutils." ;;
+        *) preflight_fail "required tool '$tool' is missing. Install it on the machine running this probe." ;;
+      esac
+    fi
+  done
+}
+
 # Place these before caller options (OpenSSH uses the first value it sees).
 # A probe cannot accept/update host keys, add identities, or set up forwards.
 probe_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
@@ -437,7 +449,8 @@ ssh_probe_failure() {
 probe_agent() {
   local endpoint=$1 cfg agent var status output
   shift
-  cfg=$(bounded 4s ssh "${probe_opts[@]}" "$@" -G -T "$endpoint" </dev/null 2>&1) ||
+  require_preflight_tools awk
+  cfg=$(bounded 4s ssh "${probe_opts[@]}" "$@" -G -T "$endpoint" </dev/null 2>/dev/null) ||
     preflight_fail "cannot read effective SSH settings for $endpoint. Check the SSH configuration for errors or a stalled Match command."
   agent=$(awk '$1 == "identityagent" {sub(/^[^ ]+ +/, ""); print; exit}' <<<"$cfg")
   case $agent in
@@ -492,6 +505,7 @@ probe_store() {
 probe_builders() {
   local builders machine endpoint identity output port
   local -a opts
+  require_preflight_tools nix
   builders=$(bounded 4s nix config show builders </dev/null 2>/dev/null) ||
     preflight_fail "cannot read Nix builders on the build machine. Check its Nix configuration."
   # Nix accepts semicolon/newline-delimited machine specs or @/path/to/file.
@@ -500,6 +514,7 @@ probe_builders() {
       machine=${builders#@}
       # Nix treats an absent builders file (including the default) as empty.
       [ -e "$machine" ] || return 0
+      require_preflight_tools cat
       builders=$(bounded 4s cat -- "$machine" 2>/dev/null) ||
         preflight_fail "cannot read the Nix builders file. Check its permissions."
       ;;
@@ -522,13 +537,15 @@ probe_builders() {
     endpoint=${endpoint//[\[\]]/}
     [[ $endpoint =~ ^([a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?([a-zA-Z0-9_][a-zA-Z0-9._:%-]*|::[a-zA-Z0-9._:%-]*)$ ]] ||
       preflight_fail "invalid SSH builder destination. Check the Nix builders configuration."
-    output=$(bounded 12s ssh "${probe_opts[@]}" -oControlMaster=no "${opts[@]+"${opts[@]}"}" -T "$endpoint" true </dev/null 2>&1) ||
+    require_preflight_tools ssh
+    output=$(bounded 12s ssh "${probe_opts[@]}" -oControlMaster=no "${opts[@]+"${opts[@]}"}" -T "$endpoint" true </dev/null 2>&1 >/dev/null) ||
       ssh_probe_failure "builder $endpoint" "$?" "$output"
   done <<<"${builders//;/$'\n'}"
 }
 
 probe_secrets() {
   local lock=$1 dir=$2 locked head dirty state
+  require_preflight_tools jq git
   locked=$(bounded 4s jq -er 'getpath(["nodes", .nodes[.root].inputs["nix-secrets"], "locked", "rev"]) |
     select(type == "string" and test("^[a-f0-9]{40}$"))' "$lock" 2>/dev/null) ||
     preflight_fail "cannot read the locked nix-secrets revision. Check flake.lock."
@@ -553,10 +570,11 @@ probe_remote_build_environment() {
   # For bootstrap, compare the synced checkout with that machine's flake.lock.
   output=$(
     {
-      declare -f bounded preflight_fail ssh_probe_failure probe_builders probe_secrets
+      declare -f bounded preflight_fail require_preflight_tools ssh_probe_failure probe_builders probe_secrets
       declare -p probe_opts
       cat <<'REMOTE'
 set -euo pipefail
+require_preflight_tools timeout nix
 if [ "$2" = true ]; then probe_secrets "$1/flake.lock" "$1/../nix-secrets"; fi
 probe_builders
 REMOTE
@@ -578,15 +596,35 @@ REMOTE
   esac
 }
 
+probe_hostname() {
+  local leg=$1 deadline=$2 stderr status
+  shift 2
+  # Send hostname stdout to the caller and collect only stderr for failures.
+  stderr=$(bounded "$deadline" "$@" </dev/null 2>&1 >&3) || {
+    status=$?
+    if [ "$leg" = "local hostname probe" ]; then
+      case $status in
+        124 | 137) preflight_fail "$leg: probe timed out. Check the local hostname command." ;;
+        *) preflight_fail "$leg: could not determine the local hostname (exit $status)." ;;
+      esac
+    fi
+    ssh_probe_failure "$leg" "$status" "$stderr"
+  }
+} 3>&1
+
 run_preflight() {
   local actual output
-  command -v timeout >/dev/null || preflight_fail "GNU timeout is required. Install GNU coreutils."
+  require_preflight_tools timeout
   if [ -n "$dest" ]; then
     local target_argv=(${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"})
     if [ -z "$build_host" ]; then
       target_argv=(-oControlMaster=no ${target_argv[@]+"${target_argv[@]}"})
-      bounded 4s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -O check -T "$target" </dev/null >/dev/null 2>&1 ||
-        preflight_fail "no usable SSH master for $target. Open it from an operator terminal using the same destination and SSH options."
+      if ! bounded 4s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -O check -T "$target" </dev/null >/dev/null 2>&1; then
+        if [ -z "$remote_flake" ]; then
+          preflight_fail "no usable SSH master for $target. Open it from an operator terminal using the same destination and SSH options."
+        fi
+        printf 'preflight: warning: no usable SSH master for %s. Continuing with BatchMode probes.\n' "$target" >&2
+      fi
     fi
     probe_agent "$target" "${target_argv[@]+"${target_argv[@]}"}"
     if [ -n "$build_host" ]; then
@@ -594,7 +632,7 @@ run_preflight() {
     fi
     probe_store "$(target_store_scheme)://$target" "$(target_nix_sshopts)"
     if [ -n "$build_host" ]; then
-      output=$(bounded 12s ssh "${probe_opts[@]}" "${build_opts[@]}" -T "$build_host" true </dev/null 2>&1) ||
+      output=$(bounded 12s ssh "${probe_opts[@]}" "${build_opts[@]}" -T "$build_host" true </dev/null 2>&1 >/dev/null) ||
         ssh_probe_failure "builder $build_host" "$?" "$output"
       probe_store "ssh-ng://$build_host" "$(sshopts_string "${build_opts[@]}")"
       probe_remote_build_environment "$build_host" . false "${build_opts[@]}"
@@ -603,11 +641,10 @@ run_preflight() {
     else
       probe_builders
     fi
-    actual=$(bounded 12s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -T "$target" hostname </dev/null 2>&1) ||
-      ssh_probe_failure "hostname probe for $target" "$?" "$actual"
+    actual=$(probe_hostname "hostname probe for $target" 12s ssh "${probe_opts[@]}" "${target_argv[@]+"${target_argv[@]}"}" -T "$target" hostname)
   else
     probe_builders
-    actual=$(bounded 4s hostname 2>/dev/null) || preflight_fail "cannot determine the local hostname."
+    actual=$(probe_hostname "local hostname probe" 4s hostname)
   fi
   if [ "$actual" != "$host" ]; then
     [[ $actual =~ $host_re ]] || actual='(unexpected output)'

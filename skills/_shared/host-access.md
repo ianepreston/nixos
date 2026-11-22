@@ -56,17 +56,20 @@ Plain `ssh <host>` succeeding proves nothing — it silently reuses
 `~/.ssh/master-%r@%n:%p` (`ControlPersist yes`) and never re-authenticates. Any
 command that opens its *own* connection will hang.
 
-The master check is necessary for single-host activation and only confirms
-that a socket is listening. Run `task ssh:preflight HOST=<host>` to also
-check the effective agent, Nix store transport, builders, and target hostname.
+The master check is required for single-host deploys and only confirms
+that a socket is listening. Bootstrap rebuilds warn if there is no master
+and continue with the BatchMode probes. Run `task ssh:preflight HOST=<host>`
+to also check the effective agent, Nix store transport, builders, and target
+hostname.
 For a deploy with custom SSH options or a separate build host, run
 `scripts/activate-nixos.sh --preflight` with the same arguments as the deploy.
-If a probe reports that a touch or PIN is needed, stop and report the operator
-action.
+Split-host and builder probes can open connections that authenticate in
+BatchMode. If a probe reports that a touch or PIN is needed, stop and report
+the operator action.
 
-If there is no master, ask the user to open one (`! ssh <host>` in the session,
-or their own terminal). Do this at the start of a task, not at the point of
-use: discovering it after a 20-minute build wastes the build.
+When the task requires a master and none is open, ask the user to open one
+from their terminal or with `! ssh <host>` in the session. Check at the start
+of the task so a missing master surfaces before the build.
 
 ## Reading state off a host
 
@@ -144,7 +147,8 @@ scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --action check  # preflight,
 scripts/activate-nixos.sh --host hpp-1 --dest hpp-1            # switch
 ```
 
-Use `--skip-preflight` to bypass the probes explicitly. With
+Use `--skip-preflight` on the helper or `SKIP_PREFLIGHT=true` with deploy,
+rebuild, or bootstrap rebuild tasks to bypass the probes explicitly. With
 `--local-secrets`, the preflight compares the checkout's HEAD with the
 locked revision and reports uncommitted changes. A builder failure stops
 the run before the build.
