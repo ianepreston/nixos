@@ -122,6 +122,10 @@ with the active context, KV-cache types and MoE offload filled in from
 which `task llm:radar` (the `model-radar` skill) and `task llm:gate`
 read. Eval code reads that export and never the router's private preset.
 
+The radar's sizing and issue-deduplication policy has offline unit tests
+(`scripts/llm-radar-test.py`), run by CI and `task check` as the `llm-radar`
+flake check: `nix build .#checks.<system>.llm-radar`.
+
 **Fixtures live in the private sibling checkout `../nix-eval-fixtures`**
 (`ianepreston/nix-eval-fixtures`). Like `../nix-secrets` it sits next to
 this repo, but unlike it it is *not* a flake input: the harness reads it
