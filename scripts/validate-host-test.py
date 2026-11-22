@@ -52,6 +52,10 @@ def probe_id(command):
     return hashlib.sha256(command.encode()).hexdigest()[:12]
 
 
+def fingerprint(value):
+    return hashlib.sha256(value.encode()).hexdigest()[:12]
+
+
 LOGGER = r"""
 log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOPTS-}" >> "$STUB_LOG"; }
 """
@@ -366,7 +370,8 @@ class Sequence(Harness):
         r = self.drive("--host", "hpp-1", "--override-input", "nix-secrets", f"path:{self.home}/src/nix-secrets")  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
         _, ev = self.evidence(r)
-        self.assertEqual(ev["inputs"]["override_inputs"], [{"name": "nix-secrets", "value": "path:~/src/nix-secrets"}])  # fmt: skip
+        value = f"path:{self.home}/src/nix-secrets"
+        self.assertEqual(ev["inputs"]["override_inputs"], [{"name": "nix-secrets", "value": "path:~/src/nix-secrets", "fingerprint": fingerprint(value)}])  # fmt: skip
         for args in self.helper_calls():
             self.assertIn(f"--override-input nix-secrets path:{self.home}/src/nix-secrets", args)  # fmt: skip
 
@@ -740,10 +745,12 @@ class Redaction(Harness):
     def test_override_values_lose_userinfo_queries_and_tokens(self):
         token = "Zx9" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk"
         overrides = {
-            "a": ("git+https://alice:hunter2@example.invalid/r.git?ref=main&token=abc", "git+https://<redacted>@example.invalid/r.git?<redacted>"),
-            "b": ("github:o/r?rev=0123", "github:o/r?<redacted>"),
-            "c": (f"path:/srv/{token}/x", "path:/srv/<redacted>/x"),
-            "d": (f"path:{self.home}/src/nix-secrets", "path:~/src/nix-secrets"),
+            # not a recognised form: origin only, plus the safe ref
+            "a": ("git+https://alice:hunter2@example.invalid/r.git?ref=main&token=abc", {"value": "git+https://example.invalid", "ref": "main"}),
+            # recognised form, too short to be a revision: rev dropped
+            "b": ("github:o/r?rev=0123", {"value": "github:o/r"}),
+            "c": (f"path:/srv/{token}/x", {"value": "path:/srv/<redacted>/x"}),
+            "d": (f"path:{self.home}/src/nix-secrets", {"value": "path:~/src/nix-secrets"}),
         }  # fmt: skip
         argv = ["--host", "hpp-1"]
         for name, (value, _) in overrides.items():
@@ -753,7 +760,10 @@ class Redaction(Harness):
         path, ev = self.evidence(r)
         self.assertEqual(
             ev["inputs"]["override_inputs"],
-            [{"name": n, "value": want} for n, (_, want) in overrides.items()],
+            [
+                {**want, "name": n, "fingerprint": fingerprint(value)}
+                for n, (value, want) in overrides.items()
+            ],
         )
         text = path.read_text()
         for leak in (
@@ -943,6 +953,87 @@ class LaunchFailures(Harness):
         self.assertIn("cannot ask git", r.stderr)
         self.assertEqual(self.calls("ssh"), [])
         self.assertEqual(self.helper_calls(), [])
+
+
+class CycleTwo(Harness):
+    """Re-review fixes: URL paths, cross-filesystem discovery, and the post
+    snapshot surviving a probe disconnect."""
+
+    def overrides(self, *pairs):
+        argv = ["--host", "hpp-1"]
+        for name, value in pairs:
+            argv += ["--override-input", name, value]
+        r = self.drive(*argv)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        return path.read_text(), ev["inputs"]["override_inputs"]
+
+    def test_credential_bearing_url_paths_keep_only_the_origin(self):
+        token = "k3yAbcd" + "Efgh1234"  # 15 chars: below the generic token pattern
+        url = f"https://files.example.invalid:8443/s/{token}/download/input.tar.gz"
+        text, recs = self.overrides(("blob", url))
+        self.assertEqual(
+            recs,
+            [
+                {
+                    "name": "blob",
+                    "value": "https://files.example.invalid:8443",
+                    "fingerprint": fingerprint(url),
+                }
+            ],
+        )
+        self.assertNotIn(token, text)
+        self.assertNotIn("download", text)
+
+    def test_different_pins_stay_distinguishable(self):
+        rev_a, rev_b = "a" * 40, "b" * 40
+        text, recs = self.overrides(
+            ("x", f"https://h.invalid/t/secretpath.tar.gz?rev={rev_a}"),
+            ("y", f"https://h.invalid/t/secretpath.tar.gz?rev={rev_b}"),
+            ("z", "https://h.invalid/t/otherpath.tar.gz"),
+        )
+        self.assertEqual([r["value"] for r in recs], ["https://h.invalid"] * 3)
+        self.assertEqual([r.get("rev") for r in recs], [rev_a, rev_b, None])
+        self.assertEqual(len({r["fingerprint"] for r in recs}), 3)
+        self.assertNotIn("secretpath", text)
+
+    def test_recognised_refs_keep_their_location_and_revision(self):
+        rev = "0123456789abcdef0123456789abcdef01234567"
+        value = f"git+ssh://git@github.com/ianepreston/nix-secrets.git?ref=main&rev={rev}&shallow=1"
+        _, recs = self.overrides(("nix-secrets", value), ("gh", "github:o/r/feature-x"))
+        self.assertEqual(
+            recs,
+            [
+                {"name": "nix-secrets", "value": "git+ssh://<redacted>@github.com/ianepreston/nix-secrets.git", "fingerprint": fingerprint(value), "rev": rev, "ref": "main"},
+                {"name": "gh", "value": "github:o/r/feature-x", "fingerprint": fingerprint("github:o/r/feature-x")},
+            ],
+        )  # fmt: skip
+
+    def test_membership_check_discovers_across_filesystems(self):
+        real_git = shutil.which("git", path=self.env["PATH"].split(os.pathsep, 1)[1])
+        wrapper = self.stubs / "git"
+        wrapper.write_text(
+            SHEBANG
+            + 'case "$*" in *"rev-parse --git-dir"*) printf \'discovery=%s\\n\' "${GIT_DISCOVERY_ACROSS_FILESYSTEM-unset}" >> "$STUB_LOG.git" ;; esac\n'
+            + f'exec {real_git} "$@"\n'
+        )  # fmt: skip
+        wrapper.chmod(0o755)
+        r = self.drive("--host", "hpp-1", GIT_DISCOVERY_ACROSS_FILESYSTEM="0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(Path(f"{self.log}.git").read_text(), "discovery=1\n")
+
+    def test_probe_disconnect_keeps_the_verified_post_snapshot(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "true", STUB_SSH_DROP_PROBE=1)  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("ssh to ipreston@hpp-1 failed", ev["message"])
+        self.assertEqual(ev["post"]["current_system"], NEW)
+        self.assertEqual(ev["post"]["generation"], 42)
+        self.assertTrue(ev["generation_changed"])
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id("true"), "exit_code": None}]
+        )
 
 
 if __name__ == "__main__":

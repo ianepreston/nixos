@@ -58,6 +58,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO = SCRIPTS.parent
@@ -390,12 +391,49 @@ def last_message(log, prefixes):
     return None
 
 
-def scrub_input(value):
-    """An input override value for the evidence: no query/fragment at all (flake
-    refs carry rev/ref/credentials there), then the general scrub."""
-    head, sep, _ = str(value).partition("?")
-    head, hsep, _ = head.partition("#")
-    return scrub(head + ("?<redacted>" if sep or hsep else ""))
+# Flake-ref forms whose path names a repository, not a credential: they keep
+# their (scrubbed) location. Any other URL keeps only scheme + origin.
+SAFE_REF_PREFIXES = (
+    "github:",
+    "gitlab:",
+    "sourcehut:",
+    "path:",
+    "git+ssh://",
+    "git+file:",
+    "file:",
+    "/",
+)
+SAFE_REV_RE = re.compile(r"[0-9a-f]{7,40}")
+SAFE_REF_RE = re.compile(r"[A-Za-z0-9._/-]{1,100}")
+
+
+def describe_input(name, value):
+    """An input override for the evidence: its location without query,
+    fragment, userinfo or (for unrecognised URLs) path; safe `rev`/`ref`
+    values as separate fields; and a short sha256 fingerprint of the full
+    value, so different pins stay distinguishable without being recorded."""
+    value = str(value)
+    base = value.partition("?")[0].partition("#")[0]
+    query = value.partition("?")[2].partition("#")[0]
+    rec = {"name": name, "fingerprint": hashlib.sha256(value.encode()).hexdigest()[:12]}
+    if base.startswith(SAFE_REF_PREFIXES) or "://" not in base:
+        rec["value"] = scrub(base)
+    else:
+        parts = urllib.parse.urlsplit(base)
+        origin = parts.hostname or ""
+        try:
+            port = parts.port
+        except ValueError:
+            port = None
+        rec["value"] = f"{parts.scheme}://{origin}" + (f":{port}" if port else "")
+    params = urllib.parse.parse_qs(query, keep_blank_values=False)
+    rev = (params.get("rev") or [None])[-1]
+    if rev and SAFE_REV_RE.fullmatch(rev):
+        rec["rev"] = rev
+    ref = (params.get("ref") or [None])[-1]
+    if ref and SAFE_REF_RE.fullmatch(ref) and not TOKEN_RE.search(ref):
+        rec["ref"] = ref
+    return rec
 
 
 def admit(host):
@@ -437,7 +475,9 @@ def git_membership(directory):
     try:
         r = subprocess.run(
             ["git", "-C", str(directory), "rev-parse", "--git-dir"],
-            env=child_env(),
+            # Cross mount points, so a volume mounted inside a checkout still
+            # counts as inside it.
+            env={**child_env(), "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1"},
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
@@ -646,12 +686,14 @@ class Validation:
             )
         return codes[-1]
 
-    def health(self, stage, probes):
+    def health(self, stage, probes, on_state=None):
         """The post/observe checks; probe results are appended to `probes` as
-        they complete. Returns (state, problems). The first failing probe
-        ends the probing (no further connections)."""
+        they complete. `on_state(state)` runs before the first probe
+        connection (so a later transport failure cannot discard the verified
+        snapshot) and returns extra problems. Returns (state, problems). The
+        first failing probe ends the probing (no further connections)."""
         state = self.read_state(stage)
-        problems = []
+        problems = list(on_state(state)) if on_state else []
         if state["system_state"] != "running":
             problems.append(f"system state is {state['system_state']!r}, not 'running'")
         if state["failed_unit_count"]:
@@ -778,9 +820,7 @@ class Validation:
             "local_secrets": (
                 self.local_secrets_record(locked, log) if self.a.local_secrets else None
             ),
-            "override_inputs": [
-                {"name": n, "value": scrub_input(v)} for n, v in self.a.override_input
-            ],
+            "override_inputs": [describe_input(n, v) for n, v in self.a.override_input],
         }
         rc, _ = run_logged(self.helper("--dry-run"), log, EVAL_TIMEOUT)
         if rc != 0:
@@ -875,7 +915,17 @@ class Validation:
 
     def stage_post(self):
         probes = self.evidence["probes"] = []
-        state, problems = self.health("post", probes)
+        state, problems = self.health("post", probes, self.record_post)
+        if problems:
+            raise StageFailed("; ".join(problems))
+        return (
+            f"generation {state['generation']}, running, {len(probes)} probe(s) passed"
+        )
+
+    def record_post(self, state):
+        """Store the verified post snapshot and the generation comparison in
+        the evidence, and return the closure/generation problems."""
+        problems = []
         self.evidence["post"] = state
         pre, expected = self.evidence["pre"], self.evidence["expected_closure"]
         if self.a.switch:
@@ -901,11 +951,7 @@ class Validation:
             self.evidence["generation_changed"] = (
                 state["generation"] != pre["generation"]
             )
-        if problems:
-            raise StageFailed("; ".join(problems))
-        return (
-            f"generation {state['generation']}, running, {len(probes)} probe(s) passed"
-        )
+        return problems
 
     def stage_observe(self):
         a = self.a
