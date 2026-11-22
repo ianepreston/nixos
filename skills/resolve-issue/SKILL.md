@@ -1,6 +1,6 @@
 ---
 name: resolve-issue
-description: Take a GitHub issue number in ianepreston/nixos from read through merged-ready PR — preflight the systems the fix needs, work in a throwaway worktree off origin/main, implement, sweep for ancillary changes the fix obsoletes, validate, self-review, open the PR, tear the worktree down. Use when asked to resolve/fix/implement/work an issue by number ("resolve #631", "take a look at 458", "/resolve-issue 512").
+description: Take a GitHub issue number in ianepreston/nixos from read through merged-ready PR — preflight the systems the fix needs, work in a throwaway worktree off origin/main, implement, sweep for ancillary changes the fix obsoletes, validate, self-review, open the PR, tear the worktree down. Use only on an explicit request to resolve/fix/implement/work an issue by number ("resolve #631", "fix 458", "/resolve-issue 512"); a request to inspect one ("take a look at 458", "what is #458") is read-and-report, not this workflow.
 ---
 
 # Resolve an issue
@@ -9,7 +9,16 @@ Argument: one issue number (`631`, `#631`, or a full issue URL). If none was
 given, ask for it — do not guess from recent activity.
 
 **Read `skills/_shared/host-access.md` first.** It covers the fleet roles,
-authorization, bounded SSH probes, and Git transport fallbacks.
+bounded SSH probes, and Git transport fallbacks. What needs approval is set
+only by the **Authorization** section of `AGENTS.md`.
+
+Run this workflow only on an explicit request to resolve, fix, implement or
+work the issue. That request authorizes the whole workflow: worktree, commit,
+push, PR, and (per `AGENTS.md`) deploying this change to `hpp-1` with
+non-destructive validation there. An agent dispatched by a supervisor holds
+only the authority its packet passes down from the user. A request only to
+inspect an issue gets Phase 1 and a report, then stops: no implementation,
+commit, push or PR.
 
 ## 1. Read the issue
 
@@ -21,8 +30,8 @@ Read the comments too — the design gets renegotiated there. Note explicitly:
 
 - What it asks for, and anything it rules *out* (issues here often say "no
   vmalert rule, that's #458's call"). Out-of-scope statements are binding.
-- Options the issue leaves open. Those are Phase 3 questions for the user, not
-  choices to make silently.
+- Options the issue leaves open. Those the topic guides don't settle are
+  Phase 4 questions for the user, not choices to make silently.
 - Linked issues/PRs. Skim them; they usually carry the constraint that made the
   issue necessary.
 
@@ -37,10 +46,14 @@ Server-app, module, and blueprint changes normally need live validation on
 `hpp-1` (dev). Workstation-only changes (`modules/programs/*` and
 `luna`/`terra` config) validate by build.
 
-If live validation calls for activating `hpp-1`, request authorization for
-the named host and action now unless the user already granted it. A missing
-reply leaves activation and the checks that depend on it deferred. Continue
-independent work while waiting.
+When the user invoked this workflow, activating `hpp-1` for this change and
+running non-destructive checks there is already authorized; do not ask again
+per switch. A dispatched agent activates `hpp-1` only if its packet grants
+it. Any other host, or a destructive or otherwise protected step, needs an
+explicit user grant naming that host and action, or a packet granting it. If
+one already covers the exact step, proceed under it. Otherwise ask now; a
+missing reply leaves that step and the checks that depend on it deferred.
+Continue independent work meanwhile.
 
 Check `gh auth status --hostname github.com` for GitHub work. For each
 required live stage, use the relevant bounded SSH or transport preflight from
@@ -49,8 +62,9 @@ runner lacks access, record the unmet prerequisite and defer the dependent
 stages. Continue inspection, implementation, and local checks that the runner
 can support. Ask for operator action only for work that depends on it.
 
-If the issue needs secrets that don't exist yet, note it here and raise it in
-Phase 3: `task secrets:*` is ask-first.
+If the issue needs secrets that don't exist yet, note it here. `task
+secrets:*` is ask-first: raise it in Phase 4 unless a user grant or the packet
+already covers that exact operation.
 
 ## 3. Worktree
 
@@ -90,14 +104,18 @@ container, NFS UID alignment, sops/`restartUnits` placement, the recovery and
 `myAppState` obligations for a new app. Read the guide that covers what you're
 touching before writing it; most of it exists because something broke once.
 
-**Ask, don't guess.** Stop and ask the user whenever a choice is a trade-off
-rather than a detail:
+**Ask, don't guess — but don't ask what the guides decide.** Where the issue,
+`AGENTS.md` or a topic guide settles a choice (the packaging order in
+`app-packaging.md`, module placement and option surfaces in
+`architecture.md`), follow it and note the call in the PR. Stop and ask only
+when a choice is a material trade-off they leave open:
 
-- Architecture: native module vs container, new option surface vs hardcode,
-  where a module lives.
+- Architecture the guides don't settle, or a departure from what they say.
 - Semantics the issue left open (absent-vs-zero, failure direction, defaults).
 - Anything that would change the shape of an existing cross-cutting option
   (`myCaddy.apps`, `myPostgresApp`, `myAuthentik.*`, `myRuntimeCredentials`).
+- Scope beyond the issue, or a newly protected operation (`AGENTS.md`
+  **Authorization**).
 - Anything touching disko — those can never be deployed, only reinstalled, so
   the user needs to know up front.
 
@@ -119,13 +137,14 @@ Repo rules that bite most often:
 Run `task check` and the applicable local builds or tests. This can proceed
 while live validation is deferred, subject to each check's own prerequisites.
 
-For live validation, follow the host-access authorization and preflight steps.
-Once access and host-specific activation authorization are established, use
-`scripts/activate-nixos.sh` or `task deploy:hpp-1`. The helper asserts the
-target hostname and closure identity in the activation chain. See host-access
-for `--dry-run`, `--action check` and per-host SSH options. Don't pipe the
-activation. If it errors or the target stops answering, stop and report without
-retrying.
+For live validation, run the host-access preflight. Once access is
+established, deploy to `hpp-1` if authorized as in Phase 2 (the user's
+invocation, or a dispatched agent's packet; other hosts per `AGENTS.md`
+**Authorization**) with `scripts/activate-nixos.sh` or
+`task deploy:hpp-1`. The helper asserts the target hostname and closure
+identity in the activation chain. See host-access for `--dry-run`,
+`--action check` and per-host SSH options. Don't pipe the activation. If it
+errors or the target stops answering, stop and report without retrying.
 
 Exercise the change on the target after a successful activation. Check the
 unit status, journal, endpoint, or metric the issue requires. Record each
@@ -145,10 +164,17 @@ rg -n '#<N>\b' --glob '!flake.lock'      # explicit references to this issue
 rg -n -i 'workaround|FIXME|TODO|for now|until <thing>' <touched modules>
 ```
 
-Present what you find as a short list, with a recommendation per item. Default
-is to fold it into this PR when it's directly entailed by the fix — but the user
-decides per item, so wait for the answer. Anything they split off gets a
-follow-up issue, linked from the PR.
+Cleanup the accepted fix directly entails (a stale comment, dead workaround,
+obsolete gotcha) is already authorized by the request to resolve the issue:
+fold it in without a separate question and list each item in the PR; it
+counts as approved for the Phase 7 scope check. Ask, with a recommendation per
+item, about items that are optional, widen scope or are genuine trade-offs,
+and about any item needing a protected operation under `AGENTS.md`
+**Authorization** (`task secrets:*`, other live mutations, destructive
+actions, disko) even when the fix entails it, unless a user grant or the
+packet already covers that exact operation. Continue the rest while
+waiting. Anything the user splits off gets a follow-up issue, linked from the
+PR.
 
 ## 7. Self-review
 

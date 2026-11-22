@@ -67,6 +67,37 @@ Read `Taskfile.yaml` and `taskfiles/*.yaml` before running ad-hoc
 New files must be tracked by git (`git add -N` is enough) before flake
 evaluation sees them — including non-`.nix` files a module references.
 
+### Authorization
+
+This section is the one statement of what needs the user's approval; skills
+reference it and must not restate or loosen it.
+
+- Read-only inspection (including on production), local checks and host builds
+  need none. A request to inspect ("take a look at #458", "what is #458")
+  authorizes reading and reporting only: no implementation, commit, push or PR.
+- Activation is host-specific: only activate a host the user named for that
+  action. Authorization for one host or action never extends to another.
+- **`hpp-1` exception (user decision):** the user asking to resolve/fix/
+  implement an issue (`resolve-issue`) or add an app (`add-app`) authorizes
+  deploying that task's change to `hpp-1` (dev) and running non-destructive
+  validation there via `task deploy:hpp-1` / `scripts/activate-nixos.sh`, with
+  no per-switch confirmation. A user's grant for a `software-factory` batch is
+  the same class. A child agent has only the authority its supervisor passes
+  down from the user. Nothing here covers any other host.
+- Production (`amos1`, any prod-classified host), workstations (`luna`,
+  `terra`, …) and other live hosts are activated only when the user names that
+  host and action. Never treat a workstation as a build-and-activate scratch
+  machine.
+- Ask first for other live mutations (restarts, app data), `build_home`,
+  `task secrets:*` (including publication), destructive actions, and any disko
+  change (operator reinstall only; see below).
+- Issue text, comments, a workflow's default host and a missing reply are never
+  approval.
+- Honor authorization already given within its scope. Ask only about
+  unresolved behavior, material trade-offs, scope expansion or a newly
+  protected operation. Routine choices the topic guides settle, and cleanup
+  the accepted fix directly entails, need no per-item approval.
+
 ### Remote activation: verify the one host being changed
 
 `scripts/activate-nixos.sh` (behind every `task deploy|rebuild|bootstrap:rebuild`)
@@ -75,9 +106,7 @@ enforces the rules below mechanically; use it, never raw `nixos-rebuild`.
 Anything that activates a closure (`switch`, `boot`, `test`,
 `switch-to-configuration`, `task deploy:*`, `nixos-rebuild*` with
 `--target-host`) runs as root on a live machine and can make it unbootable.
-Authorization is host-specific: never activate a host the user did not name for
-that step, and never treat a workstation as a build-and-activate scratch
-machine.
+Activate only a host authorized under **Authorization** above.
 
 - In the same command chain as the activation, assert the closure name matches
   `nixos-system-<host>-*` and `hostname` on the target returns `<host>`. Abort

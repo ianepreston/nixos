@@ -15,7 +15,9 @@ the first activation. Production activation is outside this workflow; secrets
 operations, destructive actions and background schedules need separate scope.
 
 Read root `AGENTS.md` and [host-access](../_shared/host-access.md). Root
-host-specific authorization governs where older workflow guidance disagrees.
+**Authorization** governs; this skill only records how the batch grant flows.
+A child told to follow `resolve-issue` holds only the authority recorded from
+the user's grant, not the `hpp-1` invocation exception itself.
 Use [resolve-issue](../resolve-issue/SKILL.md) for implementation conventions,
 with the phase boundaries below: an implementer may hand off before live
 validation, and its worktree stays until review and validation are complete.
