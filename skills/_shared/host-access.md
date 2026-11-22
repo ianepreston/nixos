@@ -56,9 +56,20 @@ Plain `ssh <host>` succeeding proves nothing — it silently reuses
 `~/.ssh/master-%r@%n:%p` (`ControlPersist yes`) and never re-authenticates. Any
 command that opens its *own* connection will hang.
 
-If there is no master, ask the user to open one (`! ssh <host>` in the session,
-or their own terminal). Do this at the start of a task, not at the point of
-use: discovering it after a 20-minute build wastes the build.
+The master check is required for single-host deploys and only confirms
+that a socket is listening. Bootstrap rebuilds warn if there is no master
+and continue with the BatchMode probes. Run `task ssh:preflight HOST=<host>`
+to also check the effective agent, Nix store transport, builders, and target
+hostname.
+For a deploy with custom SSH options or a separate build host, run
+`scripts/activate-nixos.sh --preflight` with the same arguments as the deploy.
+Split-host and builder probes can open connections that authenticate in
+BatchMode. If a probe reports that a touch or PIN is needed, stop and report
+the operator action.
+
+When the task requires a master and none is open, ask the user to open one
+from their terminal or with `! ssh <host>` in the session. Check at the start
+of the task so a missing master surfaces before the build.
 
 ## Reading state off a host
 
@@ -100,8 +111,10 @@ local-time incident window.
 ## Deploying to a host
 
 Use the repo helper, `scripts/activate-nixos.sh` (what `task deploy:<host>`,
-`task rebuild[:<host>]` and `task bootstrap:rebuild` all call). It builds, then
-copies, then activates through **one** connection that runs
+`task rebuild[:<host>]` and `task bootstrap:rebuild` all call). Its bounded,
+read-only preflight runs before building, including for `--action check` and
+`bootstrap:rebuild`. It then builds, copies when needed, and activates through
+**one** connection that runs
 `scripts/_activate-nixos/activate.sh` as root. Before anything is copied, and
 again on the target in the same process as `switch-to-configuration`, it
 requires:
@@ -118,7 +131,7 @@ back, the run fails even if ssh exited 0 (so an ssh that never fed it the script
 cannot pass as success). The activation's own stdin is `/dev/null` and its
 stdout goes to stderr, so it can neither swallow the script nor fuse its output
 with a sentinel. No retries, no fallback host. The target `hostname` is checked
-after the copy (copy only needs the connection; the check runs in the same
+again after the copy (copy only needs the connection; the check runs in the same
 process as the switch). `task bootstrap:rebuild` always switches; use
 `scripts/activate-nixos.sh --remote-flake src/nixos --action check|test|boot`
 directly for another action.
@@ -129,9 +142,16 @@ directly for another action.
 # checkout portably (of the main checkout when run from a worktree;
 # $NIX_SECRETS_PATH wins)
 scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --dry-run  # eval + print plan only
-scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --action check  # build, assert identity on the target, activate nothing
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --preflight  # transport and identity probes only
+scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --action check  # preflight, build, assert identity
 scripts/activate-nixos.sh --host hpp-1 --dest hpp-1            # switch
 ```
+
+Use `--skip-preflight` on the helper or `SKIP_PREFLIGHT=true` with deploy,
+rebuild, or bootstrap rebuild tasks to bypass the probes explicitly. With
+`--local-secrets`, the preflight compares the checkout's HEAD with the
+locked revision and reports uncommitted changes. A builder failure stops
+the run before the build.
 
 `task deploy:hpp-1` is the same thing (`LOCAL_SECRETS=true task deploy:hpp-1`
 adds `--local-secrets`); `ACTION=check|test|boot` selects the action. Task passes host and action as explicit `shellQuote`d arguments, never

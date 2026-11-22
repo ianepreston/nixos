@@ -14,6 +14,7 @@ _: {
               gitMinimal
               gnugrep
               go-task
+              jq
               python3
             ];
           }

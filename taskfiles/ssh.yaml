@@ -1,6 +1,6 @@
 ---
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
-# SSH key verification.
+# SSH transport preflight and key verification.
 #
 # The point of `verify-keys` is to prove a key works *before* the old key
 # it replaces is removed from any `authorized_keys`. It never edits
@@ -10,8 +10,17 @@ version: '3'
 set: [pipefail]
 shopt: [globstar]
 tasks:
+  preflight:
+    desc: Run the read-only activation transport preflight for HOST
+    requires:
+      vars: [HOST]
+    cmd: |
+      {{.ROOT_DIR | shellQuote}}/scripts/activate-nixos.sh --preflight \
+        --host {{.HOST | shellQuote}} --dest {{.HOST | shellQuote}}
+
   verify-keys:
     desc: 'Prove each SSH key authenticates to each host, without touching authorized_keys. Vars: HOSTS, KEYS, SIGN=false for a no-token pubkey-installed check'
+    # For a pre-activation transport check, run task ssh:preflight HOST=<host>.
     # One PIN entry + one touch per (host, key) pair — sk keys enrolled
     # with verify-required need both per *signature*, and no agent can
     # absorb that. Budget accordingly, or narrow HOSTS.

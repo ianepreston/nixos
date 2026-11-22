@@ -107,6 +107,11 @@ packet and then the returned session/task handle. The packet contains:
 - Role (`implement`, `review`, `validate`, or `explore`), worker reservation,
   the supervisor to contact, and whether further delegation is permitted.
 - Allowed actions and any **actual user-granted** host/action authority.
+- Validator packets include a read-only transport preflight as the first host
+  step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
+  `--preflight` command with the same connection and input options as the
+  deployment. On failure, stop and report `awaiting_manual` with the exact
+  operator action from the preflight.
 - Required output: head SHA and PR URL where applicable, changed behavior,
   exact checks/results, validation still needed, blockers and pending questions.
 
@@ -178,9 +183,10 @@ operator; no automatic retry, rollback, kill or recovery command.
    harnesses do not enforce isolation. Destructive tests and disk-layout
    changes need separate authorization; disko changes require the documented
    operator reinstall workflow, never an in-place deploy.
-5. Use supported repository deployment tooling and enforce root's hostname,
-   closure-name and per-host SSH rules in the activation command chain. Verify
-   the running closure/generation afterward and exercise the acceptance
+5. Run the validator packet's transport preflight before any live build or
+   activation. Use supported repository deployment tooling and enforce root's
+   hostname, closure-name and per-host SSH rules in the activation command
+   chain. Verify the running closure/generation afterward and exercise the acceptance
    probes. Hold the claim through the required observation period. Unexpected
    host changes invalidate evidence; reconcile before continuing.
 6. Record source SHA, effective inputs, commands, outcomes, deployed closure

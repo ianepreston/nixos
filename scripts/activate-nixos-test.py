@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mocked identity/failure tests for scripts/activate-nixos.sh (#1018).
+"""Mocked transport and identity tests for scripts/activate-nixos.sh.
 
 Every external command (nix, ssh, sudo, hostname, nix-env, systemd-run, ...) is
 a logging stub on PATH. ssh "connects" by running the remote command string
@@ -9,6 +9,7 @@ but nothing ever reaches a real host and no real closure is activated.
 usage: activate-nixos-test.py REPO_ROOT
 """
 
+import json
 import os
 from pathlib import Path
 import shlex
@@ -88,34 +89,83 @@ case $1 in
       *) echo "$STUB_CLOSURE" ;;
     esac ;;
   copy) exit "${STUB_COPY_RC:-0}" ;;
+  config) printf '%s\n' "${STUB_BUILDERS:-}" ;;
+  store)
+    if [ "$4" = "${STUB_STORE_URI:-ssh://ipreston@hpp-1}" ]; then
+      if [ -n "${STUB_STORE_ERROR:-}" ]; then
+        printf '%s\n' "$STUB_STORE_ERROR" >&2
+        exit "${STUB_STORE_RC:-1}"
+      fi
+      exit "${STUB_STORE_RC:-0}"
+    fi ;;
 esac
 """,
     "nix-store": 'log "$@"; echo "$STUB_CLOSURE"',
-    "hostname": 'echo "$STUB_HOSTNAME"',
+    "hostname": r"""
+echo "$STUB_HOSTNAME"
+[ -z "${STUB_LOCAL_HOSTNAME_WARNING:-}" ] || printf '%s\n' "$STUB_LOCAL_HOSTNAME_WARNING" >&2
+exit "${STUB_LOCAL_HOSTNAME_RC:-0}"
+""",
     "sudo": 'log "$@"; exec "$@"',
     "nix-env": 'log "$@"',
     "systemd-run": 'log "$@"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
+    "ssh-add": r"""
+printf 'ssh-add\t%s\tSOCKET=[%s]\n' "$*" "${SSH_AUTH_SOCK-}" >> "$STUB_LOG"
+case ${STUB_AGENT:-ok} in
+  refused) echo 'error fetching identities: agent refused operation' >&2; exit 1 ;;
+  empty) echo 'The agent has no identities.' >&2; exit 1 ;;
+  hang) trap '' TERM; sleep 90 ;;
+  ok) echo '256 SHA256:abcdefg private-comment (ED25519-SK)' ;;
+esac
+""",
     "ssh": r"""
 log "$@"
 case " $* " in
+  *" -O check "*) exit "${STUB_MASTER_RC:-0}" ;;
   *" -G "*) # effective config: an explicit ControlPath wins, else "ssh_config"
+    if [ -n "${STUB_SSH_CONFIG_ERROR:-}" ]; then
+      printf '%s\n' "$STUB_SSH_CONFIG_ERROR" >&2
+      exit 255
+    fi
     cp=${STUB_SSH_CONTROLPATH-}
     for a in "$@"; do case $a in -oControlPath=*) cp=${a#-oControlPath=} ;; esac; done
     [ -z "$cp" ] || printf 'controlpath %s\n' "$cp"
     printf 'controlmaster auto\n'
+    [ -z "${STUB_IDENTITY_AGENT:-}" ] || printf 'identityagent %s\n' "$STUB_IDENTITY_AGENT"
     exit 0 ;;
 esac
-[ -z "${STUB_SSH_RC-}" ] || exit "$STUB_SSH_RC"
 # skip options to find the destination, then run the command string locally
 while [ $# -gt 0 ]; do
-  case $1 in -p | -o) shift 2 ;; -*) shift ;; *) break ;; esac
+  case $1 in -p | -o | -i) shift 2 ;; -*) shift ;; *) break ;; esac
 done
-shift # destination
-if [ -n "${STUB_SSH_NULL_STDIN-}" ]; then # what `ssh -n` does
-  exec bash -c "$*" < /dev/null
-fi
-cat > "$STUB_LOG.stdin" || true
-exec bash -c "$*" < "$STUB_LOG.stdin"
+destination=$1
+shift
+case "$*" in
+  true)
+    if [ "$destination" = "${STUB_FAILED_BUILDER:-terra}" ]; then
+      if [ -n "${STUB_BUILDER_ERROR:-}" ]; then
+        printf '%s\n' "$STUB_BUILDER_ERROR" >&2
+        exit "${STUB_BUILDER_RC:-255}"
+      fi
+      exit "${STUB_BUILDER_RC:-0}"
+    fi ;;
+  hostname)
+    [ -z "${STUB_HOSTNAME_SSH_WARNING:-}" ] || printf '%s\n' "$STUB_HOSTNAME_SSH_WARNING" >&2
+    hostname
+    exit "${STUB_HOSTNAME_SSH_RC:-$?}" ;;
+  'bash -s -- '*)
+    [ -z "${STUB_REMOTE_PROBE_WARNING:-}" ] || printf '%s\n' "$STUB_REMOTE_PROBE_WARNING" >&2
+    [ -z "${STUB_REMOTE_PROBE_RC:-}" ] || exit "$STUB_REMOTE_PROBE_RC"
+    PATH="${STUB_REMOTE_PROBE_PATH:-$PATH}" exec "$BASH" -c "$*" ;;
+  'sudo bash -s '*)
+    [ -z "${STUB_SSH_RC-}" ] || exit "$STUB_SSH_RC"
+    if [ -n "${STUB_SSH_NULL_STDIN-}" ]; then # what `ssh -n` does
+      exec bash -c "$*" < /dev/null
+    fi
+    cat > "$STUB_LOG.stdin" || true
+    exec bash -c "$*" < "$STUB_LOG.stdin" ;;
+  *) exec bash -c "$*" ;;
+esac
 """,
 }
 
@@ -139,7 +189,7 @@ def make_repo(dest, store, env):
         if text.startswith(ENV_SHEBANG):
             f.write_text(SHEBANG + text[len(ENV_SHEBANG) :])
             f.chmod(0o755)
-    (dest / "nix-secrets").mkdir()
+    make_secrets(repo, env)
     # A throwaway git repo, so nothing depends on the caller's checkout (the
     # sandbox copy has no .git).
     for args in (
@@ -149,6 +199,23 @@ def make_repo(dest, store, env):
     ):
         git(*args, cwd=repo, env=env)
     return repo
+
+
+def make_secrets(repo, env):
+    secrets = repo.parent / "nix-secrets"
+    secrets.mkdir()
+    git("init", "-q", "--template=", "-b", "main", cwd=secrets, env=env)
+    git("commit", "-q", "--allow-empty", "-m", "locked", cwd=secrets, env=env)
+    rev = git("rev-parse", "HEAD", cwd=secrets, env=env).stdout.decode().strip()
+    lock = {
+        "root": "root",
+        "nodes": {
+            "root": {"inputs": {"nix-secrets": "nix-secrets_2"}},
+            "nix-secrets_2": {"locked": {"rev": rev}},
+        },
+    }
+    (repo / "flake.lock").write_text(json.dumps(lock))
+    return secrets
 
 
 class Harness(unittest.TestCase):
@@ -182,6 +249,10 @@ class Harness(unittest.TestCase):
             "STUB_CLOSURE": str(self.closure),
             "STUB_DRV": str(self.store / f"{HASH}-nixos-system.drv"),
             "NIX_SSHOPTS": "-o ControlPath=/inherited/socket",
+            "SSH_AUTH_SOCK": "/stub/default-agent.sock",
+            "STUB_IDENTITY_AGENT": "/stub/effective-agent.sock",
+            "STUB_AGENT": "ok",
+            "STUB_BUILDERS": "",
         }
 
     def make_closure(self, host, name=None, etc_host=None, store=None):
@@ -223,6 +294,13 @@ class Harness(unittest.TestCase):
         rows = [ln.split("\t") for ln in self.log.read_text().splitlines() if ln]
         return [r for r in rows if prefix is None or r[0] == prefix]
 
+    def operational_ssh(self):
+        return [
+            row
+            for row in self.lines("ssh")
+            if not row[1].startswith("-oBatchMode=yes ")
+        ]
+
     def copies(self):
         return [x for x in self.lines("nix") if x[1].startswith("copy")]
 
@@ -230,16 +308,369 @@ class Harness(unittest.TestCase):
         return bool(self.lines("ACTIVATED"))
 
 
+class TransportPreflight(Harness):
+    def probe(self, *args, **env):
+        return self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--preflight", *args, **env
+        )
+
+    def assert_probe_failed(self, result, reason):
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(reason, result.stderr)
+        self.assertNotIn("private-detail", result.stderr)
+        self.assertFalse(self.activated())
+        self.assertEqual(self.copies(), [])
+        self.assertFalse(
+            [row for row in self.lines("nix") if row[1].startswith(("build", "eval"))]
+        )
+
+    def test_preflight_only_reuses_the_target_options_and_probes_each_builder(self):
+        machines = self.tmp / "builders"
+        machines.write_text(
+            "# comment\nssh://terra x86_64-linux\n"
+            "ssh-ng://builder@build2:2200 x86_64-linux /stub/key\n"
+        )
+        r = self.probe(
+            "--port", "2222", "--target-ssh-opt=-oControlPath=/stub/master",
+            "--target-ssh-opt=-oBatchMode=no", STUB_BUILDERS=f"@{machines}",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("IdentityAgent, which differs from SSH_AUTH_SOCK", r.stderr)
+        self.assertIn("SHA256:abcdefg (ED25519-SK)", r.stderr)
+        self.assertNotIn("private-comment", r.stderr)
+        self.assertNotIn("/stub/effective-agent.sock", r.stderr)
+        self.assertEqual(
+            self.lines("ssh-add")[0][2], "SOCKET=[/stub/effective-agent.sock]"
+        )
+        ssh = self.lines("ssh")
+        self.assertIn("-O check -T ipreston@hpp-1", ssh[0][1])
+        self.assertTrue(all(row[1].startswith("-oBatchMode=yes ") for row in ssh))
+        self.assertIn(" terra true", ssh[2][1])
+        self.assertIn("-i /stub/key -p 2200 -T builder@build2 true", ssh[3][1])
+        self.assertTrue(ssh[-1][1].endswith("ipreston@hpp-1 hostname"))
+        store, config = self.lines("nix")
+        self.assertEqual(store[1], "store info --store ssh://ipreston@hpp-1")
+        self.assertIn("-oControlMaster=no -p 2222 -oControlPath=/stub/master", store[2])
+        self.assertTrue(store[2].startswith("NIX_SSHOPTS=[-oBatchMode=yes "))
+        self.assertEqual(config[1], "config show builders")
+        self.assertFalse(self.activated())
+
+    def test_missing_master_blocks_before_the_agent_and_store(self):
+        self.assert_probe_failed(self.probe(STUB_MASTER_RC=255), "no usable SSH master")
+        self.assertEqual(self.lines("ssh-add"), [])
+        self.assertEqual(self.lines("nix"), [])
+
+    def test_bootstrap_without_a_master_still_checks_the_store(self):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_MASTER_RC=255, STUB_STORE_ERROR="protocol mismatch",
+        )  # fmt: skip
+        self.assertIn("warning: no usable SSH master", r.stderr)
+        self.assertIn("SKIP_PREFLIGHT=true or --skip-preflight", r.stderr)
+        self.assert_probe_failed(r, "Nix store protocol mismatch")
+
+    def test_ssh_config_failure_stops_before_querying_agent(self):
+        r = self.probe(STUB_SSH_CONFIG_ERROR="Bad configuration: private-detail")
+        self.assert_probe_failed(
+            r, "cannot read effective SSH settings for ipreston@hpp-1"
+        )
+        self.assertEqual(self.lines("ssh-add"), [])
+        self.assertEqual(self.lines("nix"), [])
+
+    def test_remote_hostname_ignores_stderr_on_success(self):
+        r = self.probe(STUB_HOSTNAME_SSH_WARNING="Warning: private-detail")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+        self.assertNotIn("private-detail", r.stderr)
+
+    def test_local_hostname_ignores_stderr_on_success(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--preflight",
+            STUB_LOCAL_HOSTNAME_WARNING="Warning: private-detail",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+        self.assertNotIn("private-detail", r.stderr)
+
+    def test_preflight_rejects_an_unexpected_hostname(self):
+        self.assert_probe_failed(
+            self.probe(STUB_HOSTNAME="amos1"), "hostname was 'amos1', expected 'hpp-1'"
+        )
+
+    def test_probe_timeouts_are_classified_by_leg(self):
+        for code in (124, 137):
+            for reason, args, env in (
+                ("store transport ssh://ipreston@hpp-1", (), {"STUB_STORE_RC": code}),
+                ("store transport ssh-ng://builder@build1", ("--build-host", "builder@build1"),
+                 {"STUB_STORE_URI": "ssh-ng://builder@build1", "STUB_STORE_RC": code}),
+                ("builder terra", (), {"STUB_BUILDERS": "ssh://terra", "STUB_BUILDER_RC": code}),
+                ("builder builder@build1", ("--build-host", "builder@build1"),
+                 {"STUB_FAILED_BUILDER": "builder@build1", "STUB_BUILDER_RC": code}),
+                ("hostname probe for ipreston@hpp-1", (), {"STUB_HOSTNAME_SSH_RC": code}),
+            ):  # fmt: skip
+                with self.subTest(code=code, probe=reason):
+                    self.log.write_text("")
+                    self.assert_probe_failed(
+                        self.probe(*args, **env), f"{reason}: probe timed out"
+                    )
+            with self.subTest(code=code, probe="local hostname"):
+                self.log.write_text("")
+                r = self.run_helper(
+                    "--host", "hpp-1", "--preflight", STUB_LOCAL_HOSTNAME_RC=code
+                )
+                self.assert_probe_failed(r, "local hostname probe: probe timed out")
+
+    def test_hostname_permission_denied_is_classified_from_stderr(self):
+        r = self.probe(
+            STUB_HOSTNAME_SSH_WARNING="Permission denied (publickey). private-detail",
+            STUB_HOSTNAME_SSH_RC=255,
+        )
+        self.assert_probe_failed(
+            r,
+            "hostname probe for ipreston@hpp-1: SSH authentication denied in BatchMode",
+        )
+
+    def remote_probe_path(self, missing):
+        path = self.tmp / f"remote-without-{missing}"
+        path.mkdir()
+        for tool in ("bash", "basename", "timeout", "nix", "jq", "git"):
+            if tool != missing:
+                executable = shutil.which(tool, path=self.env["PATH"])
+                self.assertIsNotNone(executable, f"test fixture needs {tool}")
+                (path / tool).symlink_to(executable)
+        return path
+
+    def test_bootstrap_names_missing_remote_tools(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
+        for tool in ("timeout", "nix", "jq", "git"):
+            with self.subTest(tool=tool):
+                self.log.write_text("")
+                r = self.probe(
+                    "--remote-flake", "src/nixos", "--local-secrets",
+                    STUB_REMOTE_PROBE_PATH=self.remote_probe_path(tool),
+                )  # fmt: skip
+                self.assert_probe_failed(
+                    r, f"on ipreston@hpp-1: required tool '{tool}' is missing"
+                )
+                self.assertNotIn("Check flake.lock", r.stderr)
+
+    def test_bootstrap_reports_builder_failure_after_successful_secrets_check(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
+        for message, code, reason in (
+            ("Host key verification failed. private-detail", 255, "Host key verification failed"),
+            ("Connection refused. private-detail", 255, "unreachable over SSH"),
+            ("", 124, "probe timed out"),
+            ("", 137, "probe timed out"),
+        ):  # fmt: skip
+            with self.subTest(message=message, code=code):
+                self.log.write_text("")
+                r = self.probe(
+                    "--remote-flake", "src/nixos", "--local-secrets",
+                    STUB_BUILDERS="ssh://terra x86_64-linux",
+                    STUB_BUILDER_ERROR=message, STUB_BUILDER_RC=code,
+                )  # fmt: skip
+                self.assert_probe_failed(
+                    r, f"preflight: on ipreston@hpp-1: builder terra: {reason}"
+                )
+                self.assertNotIn("matches the locked revision", r.stderr)
+
+    def test_bootstrap_reports_stale_secrets_before_checking_builders(self):
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        secrets = make_secrets(repo, self.base_env)
+        git(
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "stale",
+            cwd=secrets,
+            env=self.base_env,
+        )
+        r = self.probe(
+            "--remote-flake", "src/nixos", "--local-secrets",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="Host key verification failed",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r, "preflight: on ipreston@hpp-1: stale local nix-secrets"
+        )
+        self.assertFalse(
+            [row for row in self.lines("nix") if row[1] == "config show builders"]
+        )
+
+    def test_split_build_environment_reports_its_own_builder_failure(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="Host key verification failed",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "preflight: on builder@build1: builder terra: Host key verification failed",
+        )
+
+    def test_remote_build_environment_classifies_ssh_failure_without_remote_marker(
+        self,
+    ):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail\nPermission denied (publickey)",
+            STUB_REMOTE_PROBE_RC=255,
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "build environment on ipreston@hpp-1: SSH authentication denied in BatchMode",
+        )
+
+    def test_bootstrap_with_locked_secrets_works_without_remote_jq(self):
+        r = self.probe(
+            "--remote-flake", "src/nixos",
+            STUB_REMOTE_PROBE_PATH=self.remote_probe_path("jq"),
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+
+    def test_agent_refusal_is_classified(self):
+        self.assert_probe_failed(
+            self.probe(STUB_AGENT="refused"), "agent refused operation"
+        )
+
+    def test_agent_no_identities_is_classified(self):
+        self.assert_probe_failed(
+            self.probe(STUB_AGENT="empty"), "agent has no identities"
+        )
+
+    def test_agent_hang_requires_operator_action(self):
+        self.assert_probe_failed(
+            self.probe(STUB_AGENT="hang"), "SSH agent unresponsive"
+        )
+
+    def test_protocol_mismatch_blocks_check_before_build(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--action", "check",
+            STUB_STORE_ERROR="error: protocol mismatch, got 'private-detail'",
+        )  # fmt: skip
+        self.assert_probe_failed(r, "Nix store protocol mismatch")
+
+    def test_split_host_signing_failure_requires_operator_action(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_STORE_URI="ssh-ng://ipreston@hpp-1",
+            STUB_STORE_ERROR="sign_and_send_pubkey: agent refused operation; private-detail\n"
+            "error: protocol mismatch",
+        )  # fmt: skip
+        self.assert_probe_failed(r, "needs touch/PIN")
+        self.assertNotIn("Nix store protocol mismatch", r.stderr)
+        self.assertTrue(self.lines("nix")[0][1].endswith("ssh-ng://ipreston@hpp-1"))
+        self.assertFalse([row for row in self.lines("ssh") if "-O check" in row[1]])
+
+    def test_split_builder_store_failure_names_the_builder_store(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_STORE_URI="ssh-ng://builder@build1",
+            STUB_STORE_ERROR="Permission denied (publickey). private-detail",
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r,
+            "store transport ssh-ng://builder@build1: SSH authentication denied in BatchMode",
+        )
+        self.assertEqual(
+            [row[1] for row in self.lines("nix") if row[1].startswith("store ")],
+            [
+                "store info --store ssh-ng://ipreston@hpp-1",
+                "store info --store ssh-ng://builder@build1",
+            ],
+        )
+
+    def test_split_host_preflights_both_stores_with_isolated_options(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            "--target-ssh-opt=-oIdentityAgent=~/target-agent",
+            "--build-ssh-opt=-oIdentityAgent=~/builder-agent",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        target, builder = [x for x in self.lines("nix") if x[1].startswith("store ")]
+        self.assertTrue(target[1].endswith("ssh-ng://ipreston@hpp-1"))
+        self.assertTrue(builder[1].endswith("ssh-ng://builder@build1"))
+        for row, good, forbidden in (
+            (target, "target-agent", "builder-agent"),
+            (builder, "builder-agent", "target-agent"),
+        ):
+            self.assertIn("-oBatchMode=yes", row[2])
+            self.assertIn("-oControlPath=none", row[2])
+            self.assertIn(f"-oIdentityAgent=~/{good}", row[2])
+            self.assertNotIn(forbidden, row[2])
+        self.assertFalse(self.copies())
+
+    def test_builder_host_key_failure_aborts_before_building(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="Host key verification failed. private-detail",
+        )  # fmt: skip
+        self.assert_probe_failed(r, "builder terra: Host key verification failed")
+
+    def test_builder_unreachable_aborts_before_building(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1",
+            STUB_BUILDERS="ssh://terra x86_64-linux",
+            STUB_BUILDER_ERROR="ssh: connect to host terra port 22: Connection refused",
+        )  # fmt: skip
+        self.assert_probe_failed(r, "builder terra: unreachable over SSH")
+
+    def test_stale_local_secrets_report_dirty_state_only_with_override(self):
+        secrets = self.tmp / "nix-secrets"
+        git(
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "stale",
+            cwd=secrets,
+            env=self.base_env,
+        )
+        (secrets / "private-detail").write_text("secret contents")
+        r = self.probe("--local-secrets")
+        self.assert_probe_failed(r, "stale local nix-secrets (has uncommitted changes)")
+        self.assertIn("differs from locked", r.stderr)
+        self.assertEqual(self.probe().returncode, 0)
+
+    def test_matching_local_secrets_report_uncommitted_changes_without_paths(self):
+        (self.tmp / "nix-secrets" / "private-detail").write_text("secret contents")
+        r = self.probe("--local-secrets")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("matches the locked revision (has uncommitted changes)", r.stderr)
+        self.assertNotIn("private-detail", r.stderr)
+
+    def test_explicit_skip_preserves_the_build_path(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--skip-preflight",
+            STUB_MASTER_RC=255, STUB_AGENT="empty",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: skipped (explicit)", r.stderr.splitlines())
+        self.assertEqual(self.lines("ssh"), self.operational_ssh())
+        self.assertEqual(self.lines("ssh-add"), [])
+        self.assertEqual(
+            [row[1].split()[0] for row in self.lines("nix")], ["build", "copy"]
+        )
+
+
 class RemoteActivation(Harness):
     def test_success_runs_build_copy_activate_in_order(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
         self.assertEqual(r.returncode, 0, r.stderr)
         order = [row[0] + ":" + row[1].split(" ")[0] for row in self.lines()]
-        self.assertEqual(
-            [o for o in order if o.split(":")[0] != "hostname"][:3],
-            ["nix:build", "nix:copy", "ssh:-T"],
-        )
-        self.assertTrue(self.lines("ssh")[0][1].startswith("-T ipreston@hpp-1 "))
+        build = order.index("nix:build")
+        self.assertLess(order.index("nix:store"), build)
+        self.assertEqual(order[build : build + 3], ["nix:build", "nix:copy", "ssh:-T"])
+        self.assertTrue(self.operational_ssh()[0][1].startswith("-T ipreston@hpp-1 "))
         self.assertTrue(self.activated())
         self.assertEqual(self.lines("nix-env")[0][1].split()[-1], str(self.closure))
         # the requested action is what switch-to-configuration receives
@@ -251,7 +682,14 @@ class RemoteActivation(Harness):
             self.assertNotIn("/inherited/socket", row[2])
 
     def test_hostname_mismatch_blocks_activation(self):
-        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_HOSTNAME="amos1")
+        r = self.run_helper(
+            "--host",
+            "hpp-1",
+            "--dest",
+            "hpp-1",
+            "--skip-preflight",
+            STUB_HOSTNAME="amos1",
+        )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("expected 'hpp-1'", r.stderr)
         self.assertFalse(self.activated())
@@ -262,7 +700,7 @@ class RemoteActivation(Harness):
         other = self.make_closure("amos1")
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_CLOSURE=other)
         self.assertNotEqual(r.returncode, 0)
-        self.assertEqual(self.lines("ssh"), [])
+        self.assertEqual(self.operational_ssh(), [])
         self.assertEqual(self.copies(), [])
         self.assertFalse(self.activated())
 
@@ -295,7 +733,7 @@ class RemoteActivation(Harness):
                 self.assertNotEqual(r.returncode, 0, why)
                 self.assertIn("refusing", r.stderr)
                 self.assertEqual(self.copies(), [], why)
-                self.assertEqual(self.lines("ssh"), [], why)
+                self.assertEqual(self.operational_ssh(), [], why)
                 self.assertFalse(self.activated(), why)
 
     def test_target_script_rejects_wrong_closure_on_its_own(self):
@@ -323,7 +761,7 @@ class RemoteActivation(Harness):
 
     def test_identity_checks_share_the_activation_command_chain(self):
         self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
-        ssh = self.lines("ssh")
+        ssh = self.operational_ssh()
         self.assertEqual(len(ssh), 1, "exactly one connection carries the activation")
         self.assertIn(
             "sudo bash -s -- hpp-1 " + str(self.closure) + " switch ", ssh[0][1]
@@ -342,13 +780,13 @@ class RemoteActivation(Harness):
     def test_connection_failure_is_not_retried(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_SSH_RC=255)
         self.assertNotEqual(r.returncode, 0)
-        self.assertEqual(len(self.lines("ssh")), 1)
+        self.assertEqual(len(self.operational_ssh()), 1)
         self.assertFalse(self.activated())
 
     def test_copy_failure_stops_before_activation(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_COPY_RC=1)
         self.assertNotEqual(r.returncode, 0)
-        self.assertEqual(self.lines("ssh"), [])
+        self.assertEqual(self.operational_ssh(), [])
         self.assertFalse(self.activated())
 
     def test_activation_failure_is_reported_once_and_not_retried(self):
@@ -357,7 +795,7 @@ class RemoteActivation(Harness):
         self.assertIn("not retried", r.stderr)
         self.assertEqual(len(self.lines("ACTIVATED")), 1, "exactly one attempt")
         self.assertEqual(len(self.lines("systemd-run")), 1)
-        self.assertEqual(len(self.lines("ssh")), 1)
+        self.assertEqual(len(self.operational_ssh()), 1)
         self.assertNotIn("ACTIVATE-NIXOS-DONE", r.stdout)
 
     def test_script_that_never_ran_fails_the_activation(self):
@@ -431,7 +869,10 @@ class RemoteActivation(Harness):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", "--action", "check")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(self.activated())
-        self.assertEqual([x for x in self.lines("nix") if x[1].startswith("copy")], [])
+        self.assertEqual(
+            [x[1].split()[0] for x in self.lines("nix")], ["store", "config", "build"]
+        )
+        self.assertEqual(self.copies(), [])
         self.assertEqual(self.lines("nix-env"), [])
         bad = self.run_helper(
             "--host",
@@ -545,7 +986,7 @@ class RemoteActivation(Harness):
         self.assertIn("-oForwardAgent=yes", cp[2])
         self.assertIn("--to ssh://ipreston@10.0.0.5", cp[1])
         self.assertTrue(
-            self.lines("ssh")[0][1].startswith(
+            self.operational_ssh()[0][1].startswith(
                 "-p 2222 -oForwardAgent=yes -T ipreston@10.0.0.5"
             )
         )
@@ -612,7 +1053,9 @@ class RemoteActivation(Harness):
             )
 
     def test_remote_flake_builds_and_activates_on_the_same_target_only(self):
-        (self.tmp / "src" / "nixos").mkdir(parents=True)
+        repo = self.tmp / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
         r = self.run_helper(
             "--host",
             "hpp-1",
@@ -623,11 +1066,11 @@ class RemoteActivation(Harness):
             "--local-secrets",
         )
         self.assertEqual(r.returncode, 0, r.stderr)
-        # the only nix call is the one the stub ssh ran as the "remote" build
         self.assertEqual(
-            [x[1].split()[0] for x in self.lines("nix")], ["build"], "nothing copied"
+            [x[1].split()[0] for x in self.lines("nix")], ["store", "config", "build"]
         )
-        ssh = self.lines("ssh")
+        self.assertIn("local nix-secrets on ipreston@10.0.0.5 matches", r.stderr)
+        ssh = self.operational_ssh()
         self.assertEqual(len(ssh), 2)
         self.assertIn("cd src/nixos && nix build", ssh[0][1])
         self.assertIn("--override-input nix-secrets path:../nix-secrets", ssh[0][1])
@@ -691,7 +1134,7 @@ class BuildHost(Harness):
 
     def test_activation_goes_only_to_the_target(self):
         self.run_split()
-        ssh_dests = [r[1] for r in self.lines("ssh")]
+        ssh_dests = [r[1] for r in self.operational_ssh()]
         self.assertEqual(
             [d for d in ssh_dests if "switch" in d or "bash -s" in d].__len__(), 1
         )
@@ -717,7 +1160,7 @@ class BuildHost(Harness):
     def split_rows(self):
         """Every ssh and every nix copy that touches a host, with its options."""
         rows = []
-        for r in self.lines("ssh"):
+        for r in self.operational_ssh():
             rows.append((r[0], r[1].split(), r[2]))
         for r in self.lines("nix"):
             if r[1].startswith("copy"):
@@ -1079,6 +1522,65 @@ class TaskRouting(Harness):
         self.assertIn("expected 'hpp-1'", r.stderr)
         self.assertFalse(self.activated())
 
+    def activation_tasks(self):
+        return (
+            ("rebuild",),
+            ("rebuild:hpp-1",),
+            ("deploy:hpp-1",),
+            (
+                "bootstrap:rebuild",
+                "HOST=hpp-1",
+                "DEST=192.0.2.9",
+                "LOCAL_SECRETS=false",
+            ),
+        )
+
+    def test_skip_preflight_through_each_activation_task(self):
+        (self.repo / "src" / "nixos").mkdir(parents=True)
+        for argv in self.activation_tasks():
+            for skip in ("true", "false"):
+                with self.subTest(argv=argv, skip=skip):
+                    self.log.write_text("")
+                    r = self.task(*argv, f"SKIP_PREFLIGHT={skip}")
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertEqual(
+                        "preflight: passed for hpp-1" in r.stderr, skip == "false"
+                    )
+                    self.assertEqual(
+                        "preflight: skipped (explicit)" in r.stderr.splitlines(),
+                        skip == "true",
+                    )
+                    self.assertEqual(
+                        "config show builders" in self.nix_args(), skip == "false"
+                    )
+                    self.assertTrue(self.activated())
+
+        self.log.write_text("")
+        r = self.task("deploy:hpp-1", "LOCAL_SECRETS=true", SKIP_PREFLIGHT="true")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("preflight: skipped (explicit)", r.stderr.splitlines())
+        self.assertIn("--override-input nix-secrets", self.nix_args())
+        self.assertNotIn("config show builders", self.nix_args())
+
+    def test_invalid_skip_preflight_is_rejected_before_probing(self):
+        for argv in self.activation_tasks():
+            for value in ("", "TRUE", "yes", "1"):
+                with self.subTest(argv=argv, value=value):
+                    r = self.task(*argv, f"SKIP_PREFLIGHT={value}")
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn("SKIP_PREFLIGHT must be true or false", r.stderr)
+                    self.assertEqual(self.lines(), [])
+
+    def test_ssh_preflight_task_runs_only_the_probes(self):
+        r = self.task("ssh:preflight", "HOST=hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            [row[1] for row in self.lines("nix")],
+            ["store info --store ssh://ipreston@hpp-1", "config show builders"],
+        )
+        self.assertEqual(self.operational_ssh(), [])
+        self.assertFalse(self.activated())
+
     def test_deploy_activates_the_named_host_with_action(self):
         r = self.task("deploy:hpp-1", "ACTION=boot")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1086,12 +1588,17 @@ class TaskRouting(Harness):
         self.assertEqual([x[1] for x in self.lines("ACTIVATED")], ["boot"])
 
     def test_bootstrap_rebuild_keeps_host_and_dest_distinct(self):
-        (self.repo / "src" / "nixos").mkdir(parents=True)
+        repo = self.repo / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
         r = self.task(
-            "bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", "SSH_PORT=2200"
-        )
+            "bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", "SSH_PORT=2200",
+            STUB_MASTER_RC=255,
+        )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
-        ssh = self.lines("ssh")
+        self.assertIn("warning: no usable SSH master for ipreston@192.0.2.9", r.stderr)
+        self.assertIn("preflight: passed for hpp-1", r.stderr)
+        ssh = self.operational_ssh()
         self.assertEqual(len(ssh), 2)
         for row in ssh:
             self.assertTrue(
@@ -1104,7 +1611,7 @@ class TaskRouting(Harness):
             "bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", "LOCAL_SECRETS=false"
         )
         self.assertEqual(off.returncode, 0, off.stderr)
-        self.assertNotIn("nix-secrets", self.lines("ssh")[0][1])
+        self.assertNotIn("nix-secrets", self.operational_ssh()[0][1])
 
     def test_shell_metacharacters_never_execute(self):
         marker = self.tmp / "pwned"
@@ -1112,7 +1619,9 @@ class TaskRouting(Harness):
             f"$(touch {marker})", f"`touch {marker}`", f"x;touch {marker}",
             f"x && touch {marker}", f"x | touch {marker}", f"x touch {marker}",
         ]  # fmt: skip
-        (self.repo / "src" / "nixos").mkdir(parents=True)
+        repo = self.repo / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
         for p in payloads:
             invocations = [
                 (f"deploy:{p}",), (f"rebuild:{p}",), ("rebuild", f"ACTION={p}"),
@@ -1135,7 +1644,9 @@ class TaskRouting(Harness):
                     )
 
     def test_inherited_activate_variables_cannot_redirect_or_change_the_action(self):
-        (self.repo / "src" / "nixos").mkdir(parents=True)
+        repo = self.repo / "src" / "nixos"
+        repo.mkdir(parents=True)
+        make_secrets(repo, self.base_env)
         hostile = {
             "ACTIVATE_HOST": "amos1", "ACTIVATE_DEST": "amos1", "ACTIVATE_ACTION": "switch",
             "ACTIVATE_USER": "root", "ACTIVATE_PORT": "1", "ACTIVATE_LOCAL_SECRETS": "false",
@@ -1160,7 +1671,7 @@ class TaskRouting(Harness):
         self.log.write_text("")
         r = self.task("bootstrap:rebuild", "HOST=hpp-1", "DEST=192.0.2.9", **hostile)
         self.assertEqual(r.returncode, 0, r.stderr)
-        rows = self.lines("ssh")
+        rows = self.operational_ssh()
         self.assertTrue(rows)
         for row in rows:
             self.assertTrue(

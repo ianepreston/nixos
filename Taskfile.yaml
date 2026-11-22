@@ -66,14 +66,16 @@ tasks:
       - nix build .#nixosConfigurations.terra.config.system.build.toplevel
       - nix build .#nixosConfigurations.hpp-1.config.system.build.toplevel
       - nix build .#nixosConfigurations.amos1.config.system.build.toplevel
-  # All three activate through scripts/activate-nixos.sh, which builds, copies,
-  # then asserts the target hostname, closure name and the closure's own
-  # etc/hostname in the same process that runs switch-to-configuration (#1018).
-  # Pass ACTION=boot|test|check to change the action (default switch; `check`
-  # asserts identity and activates nothing). Host and action are passed as
-  # explicit arguments rendered with shellQuote, never through `env:` (Task lets
-  # an inherited environment variable of the same name override `env:`, which
-  # could redirect a deploy), and the helper validates them again.
+  # All three use scripts/activate-nixos.sh, which runs a transport preflight
+  # before building. Run task ssh:preflight HOST=<host> to probe a remote
+  # target without building. SKIP_PREFLIGHT=true bypasses the probes. The
+  # helper checks the target hostname, closure name and its etc/hostname in
+  # the same process that runs switch-to-configuration (#1018).
+  # Pass ACTION=boot|test|check to change the default action (switch).
+  # check probes transport, asserts identity and activates nothing. Host and
+  # action are explicit arguments rendered with shellQuote. Task lets an
+  # inherited environment variable override an env: entry, which could
+  # redirect a deploy. The helper validates the arguments again.
   #
   # nix-secrets resolves from flake.lock, the revision `task build` and CI use
   # (auto-upgrade reads the lock from the GitHub flake, which can differ from a
@@ -84,41 +86,59 @@ tasks:
     desc: Rebuild this NixOS host (refuses unless hostname matches the configuration)
     vars:
       LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+      SKIP_PREFLIGHT: '{{if kindIs "invalid" .SKIP_PREFLIGHT}}false{{else}}{{.SKIP_PREFLIGHT}}{{end}}'
     cmd: |
       set -euo pipefail
-      secrets=()
+      flags=()
       case {{.LOCAL_SECRETS | shellQuote}} in
-        true) secrets=(--local-secrets) ;;
+        true) flags+=(--local-secrets) ;;
         false) ;;
         *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
       esac
-      ./scripts/activate-nixos.sh --host "$(hostname)" ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
+      case {{.SKIP_PREFLIGHT | shellQuote}} in
+        true) flags+=(--skip-preflight) ;;
+        false) ;;
+        *) echo "SKIP_PREFLIGHT must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host "$(hostname)" ${flags[@]+"${flags[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   rebuild:*:
     desc: Rebuild a particular config on this machine, pass :[hostname] (refuses unless it equals this machine's hostname)
     vars:
       LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+      SKIP_PREFLIGHT: '{{if kindIs "invalid" .SKIP_PREFLIGHT}}false{{else}}{{.SKIP_PREFLIGHT}}{{end}}'
     cmd: |
       set -euo pipefail
-      secrets=()
+      flags=()
       case {{.LOCAL_SECRETS | shellQuote}} in
-        true) secrets=(--local-secrets) ;;
+        true) flags+=(--local-secrets) ;;
         false) ;;
         *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
       esac
-      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
+      case {{.SKIP_PREFLIGHT | shellQuote}} in
+        true) flags+=(--skip-preflight) ;;
+        false) ;;
+        *) echo "SKIP_PREFLIGHT must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} ${flags[@]+"${flags[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   deploy:*:
     desc: Build locally, copy, and activate on a live remote host, pass :[hostname] for the target
     vars:
       LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+      SKIP_PREFLIGHT: '{{if kindIs "invalid" .SKIP_PREFLIGHT}}false{{else}}{{.SKIP_PREFLIGHT}}{{end}}'
     cmd: |
       set -euo pipefail
-      secrets=()
+      flags=()
       case {{.LOCAL_SECRETS | shellQuote}} in
-        true) secrets=(--local-secrets) ;;
+        true) flags+=(--local-secrets) ;;
         false) ;;
         *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
       esac
-      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
+      case {{.SKIP_PREFLIGHT | shellQuote}} in
+        true) flags+=(--skip-preflight) ;;
+        false) ;;
+        *) echo "SKIP_PREFLIGHT must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} ${flags[@]+"${flags[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   build_home:*:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}
