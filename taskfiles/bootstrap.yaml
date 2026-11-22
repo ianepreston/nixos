@@ -273,8 +273,8 @@ tasks:
         echo "            - *yk2"
         echo "            - *{{.HOST}}"
         echo ""
-        echo "Then: cd ../nix-secrets && sops updatekeys sops/*.yaml && git add -A && git commit -m 'add {{.HOST}} keys' && git push"
-        echo "Then: nix flake update nix-secrets  (back in this repo)"
+        echo "Then: cd ../nix-secrets && sops updatekeys sops/*.yaml"
+        echo "Then: task secrets:publish MSG='add {{.HOST}} keys'  (back in this repo; commits, pushes the branch, pins it)"
 
   secrets:
     desc: Add host age key to nix-secrets, create host secrets file, and commit

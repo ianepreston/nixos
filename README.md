@@ -1912,9 +1912,9 @@ task bootstrap:secrets HOST=newhostname DEST=192.168.1.50
 ```
 
 The rebuild uses `--override-input nix-secrets path:../nix-secrets`, so the
-local commit is sufficient during bootstrap. After the host is up, push
-nix-secrets and run `nix flake update nix-secrets` in this repo so normal
-rebuilds work without the override.
+local commit is sufficient during bootstrap. After the host is up, run
+`task secrets:publish` to push that commit and pin it in this repo, so normal
+rebuilds work without the override (see `docs/agents/secrets.md`).
 
 ### Reinstalling an existing host
 
@@ -1938,8 +1938,9 @@ The `task vm:*` namespace drives a single quickemu VM at a time under
 `~/vms/nixos-vm/`, with a persistent SSH host key (and matching age identity)
 preserved across teardowns. Authorize the VM key onto the secrets it needs once
 via `task vm:sops-authorize TARGET=<host>` (uncommitted edit in
-`../nix-secrets`; commit + push via `task secrets:publish` to make sticky, or
-`git restore` to revoke).
+`../nix-secrets`, built by `vm:install` with `LOCAL_SECRETS=true`; commit it
+and pin it with `task secrets:publish` to make it sticky, or `git restore` to
+revoke).
 
 ```bash
 # Bring up the VM (builds latest.iso if absent; FORCE_ISO=true to rebuild)

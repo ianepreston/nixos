@@ -196,7 +196,8 @@ the helper directly with the synced `--remote-flake` path and
 
 ```sh
 # from any checkout or worktree; nix-secrets comes from flake.lock by default.
-# For unpublished secrets work, --local-secrets uses NIX_SECRETS_PATH if set.
+# --local-secrets (bootstrap, VM and recovery drills only; routine secrets
+# changes are pinned with `task secrets:publish`) uses NIX_SECRETS_PATH if set.
 # Otherwise the helper looks beside the current checkout, then beside the
 # primary checkout when run from a linked worktree.
 scripts/activate-nixos.sh --host hpp-1 --dest hpp-1 --dry-run  # eval + print plan only

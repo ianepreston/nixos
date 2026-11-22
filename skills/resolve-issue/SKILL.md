@@ -92,9 +92,12 @@ Two worktree gotchas:
   `PRE_COMMIT_ALLOW_NO_CONFIG=1`: it papers over the missing config and can
   make the local hook a no-op. `task check` remains the full pre-push gate.
 - `task deploy:*` / `task rebuild` resolve `nix-secrets` from `flake.lock`, so
-  no sibling checkout is needed. For unpublished secrets work,
-  `LOCAL_SECRETS=true` enables the helper's local checkout lookup. See
-  host-access for worktree resolution and `NIX_SECRETS_PATH`.
+  no sibling checkout is needed. For unpublished secrets, publish them on a
+  `nix-secrets` branch and deploy that pin (`task secrets:publish`, then
+  `task secrets:pin-main` before the PR; see
+  [secrets.md](../../docs/agents/secrets.md)). `LOCAL_SECRETS=true` is only
+  for bootstrap, VM and recovery drills; see host-access for its worktree
+  resolution and `NIX_SECRETS_PATH`.
 
 ## 4. Implement
 
