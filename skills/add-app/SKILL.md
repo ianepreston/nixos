@@ -45,9 +45,10 @@ Read the surfaces' docs as you touch them:
 ## 3. Secrets
 
 `task secrets:*` (creating and publishing) is ask-first under `AGENTS.md`
-**Authorization**, even though the app needs it: list the secrets and key
-names, ask, and defer the dependent deploy until approved. Once approved,
-follow [docs/agents/secrets.md](../../docs/agents/secrets.md): `task secrets:oidc`,
+**Authorization**, even though the app needs it. If a user grant or the packet
+already covers those exact operations, proceed under it. Otherwise list the
+secrets and key names, ask, and defer the dependent deploy until approved.
+Once covered, follow [docs/agents/secrets.md](../../docs/agents/secrets.md): `task secrets:oidc`,
 `task secrets:dbpw`, `task secrets:secret` as needed, with the standard key
 names. Publish with `task secrets:publish` before a deploy that needs them.
 

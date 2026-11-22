@@ -49,9 +49,11 @@ Server-app, module, and blueprint changes normally need live validation on
 When the user invoked this workflow, activating `hpp-1` for this change and
 running non-destructive checks there is already authorized; do not ask again
 per switch. A dispatched agent activates `hpp-1` only if its packet grants
-it. Any other host, or a destructive or otherwise protected step, needs the
-user to authorize that host and action. Ask now; a missing reply leaves that step and
-the checks that depend on it deferred. Continue independent work meanwhile.
+it. Any other host, or a destructive or otherwise protected step, needs an
+explicit user grant naming that host and action, or a packet granting it. If
+one already covers the exact step, proceed under it. Otherwise ask now; a
+missing reply leaves that step and the checks that depend on it deferred.
+Continue independent work meanwhile.
 
 Check `gh auth status --hostname github.com` for GitHub work. For each
 required live stage, use the relevant bounded SSH or transport preflight from
@@ -60,8 +62,9 @@ runner lacks access, record the unmet prerequisite and defer the dependent
 stages. Continue inspection, implementation, and local checks that the runner
 can support. Ask for operator action only for work that depends on it.
 
-If the issue needs secrets that don't exist yet, note it here and raise it in
-Phase 4: `task secrets:*` is ask-first.
+If the issue needs secrets that don't exist yet, note it here. `task
+secrets:*` is ask-first: raise it in Phase 4 unless a user grant or the packet
+already covers that exact operation.
 
 ## 3. Worktree
 
@@ -168,7 +171,8 @@ counts as approved for the Phase 7 scope check. Ask, with a recommendation per
 item, about items that are optional, widen scope or are genuine trade-offs,
 and about any item needing a protected operation under `AGENTS.md`
 **Authorization** (`task secrets:*`, other live mutations, destructive
-actions, disko) even when the fix entails it. Continue the rest while
+actions, disko) even when the fix entails it, unless a user grant or the
+packet already covers that exact operation. Continue the rest while
 waiting. Anything the user splits off gets a follow-up issue, linked from the
 PR.
 
