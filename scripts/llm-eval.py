@@ -42,6 +42,7 @@ import urllib.request
 import zlib
 
 LIST_RULE_KEYS = {"must", "must_not", "want", "may_be_empty", "link", "ignore", "note"}
+TYPOGRAPHY = str.maketrans({**dict.fromkeys("‐‑‒–—−", "-"), "‘": "'", "’": "'"})
 
 
 # --------------------------------------------------------------------------
@@ -55,7 +56,10 @@ def norm(value: object) -> str:
     "Home Office" and "home-office" are the same *name*. Whether the model
     also linked it to the existing object is a separate `link` check.
     """
-    text = str(value).lower().replace("-", " ").replace("_", " ")
+    # Models print typographic dashes and apostrophes (gpt-oss writes
+    # "ACME‑CORP" with U+2011 and "aren’t" with U+2019); fold them to
+    # the ASCII a fixture author types.
+    text = str(value).lower().translate(TYPOGRAPHY).replace("-", " ").replace("_", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -182,9 +186,123 @@ def score_text_case(expected: dict, response: dict) -> dict:
     return summarize(checks)
 
 
+TRACE_KEYS = {"tools", "args", "reply", "note"}
+NUMBER_RULE_KEYS = {"any", "rel", "tol"}
+# A figure as a chat reply writes it: "$1,234.56", "12 345.67" (U+202F
+# thousands separator), "7.30%", "about 1.2k". Sign is ignored ("a loss of
+# $1,234" and "-1,234" are the same answer).
+THOUSANDS = ",  "
+NUMBER_RE = re.compile(
+    rf"(?<![\w.])(?:\d{{1,3}}(?:[{THOUSANDS}]\d{{3}})+|\d+)(?:\.\d+)?(?:\s?[kK]\b)?"
+)
+
+
+def numbers_in(text: str) -> list[float]:
+    out = []
+    for match in NUMBER_RE.finditer(text):
+        raw = re.sub(f"[{THOUSANDS}]", "", match.group(0)).strip()
+        scale = 1
+        if raw[-1] in "kK":
+            raw, scale = raw[:-1].strip(), 1000
+        try:
+            out.append(float(raw) * scale)
+        except ValueError:
+            continue
+    return out
+
+
+def number_found(rule: dict, found: list[float]) -> bool:
+    """Any accepted value appears, within max(tol, rel * value). The default
+    0.5% lets "about $1,235" stand for 1,234.56 and "7.3%" for 7.31234%."""
+    unknown = set(rule) - NUMBER_RULE_KEYS
+    if unknown:
+        raise ValueError(f"number rule: unknown keys {sorted(unknown)}")
+    rel, tol = rule.get("rel", 0.005), rule.get("tol", 0)
+    return any(
+        abs(n - abs(v)) <= max(tol, rel * abs(v)) for v in rule["any"] for n in found
+    )
+
+
+def tool_calls_of(message: dict) -> list[tuple[str, dict | None]]:
+    calls = []
+    for call in message.get("tool_calls") or []:
+        fn = call.get("function") or {}
+        raw = fn.get("arguments")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw) if raw.strip() else {}
+            except json.JSONDecodeError:
+                raw = None
+        calls.append((fn.get("name") or "", raw if isinstance(raw, dict) else None))
+    return calls
+
+
+def score_trace_case(expected: dict, response: dict) -> dict:
+    """One turn of a tool-using chat (`tool-trace`): which tools it called,
+    with what arguments, and what its reply says.
+
+    The captured request freezes everything the turn depends on (the app's
+    date context, earlier tool results), so expected values are fixed to that
+    snapshot. Rules reuse the list-rule vocabulary:
+
+    - `tools`: called tool names. `{"may_be_empty": true}` alone means the
+      turn must answer without calling anything.
+    - `args`: `"<tool>.<arg>"` (or `"<tool>.<a>|<b>"`: the first present) to
+      a list rule over that argument's value in the tool's first call.
+    - `reply`: a list rule matched whole-word against the message content,
+      plus `numbers`: `{label: {"any": [values], "rel": 0.005, "tol": 0}}`.
+    """
+    unknown = set(expected) - TRACE_KEYS
+    if unknown:
+        raise ValueError(f"tool-trace: unknown keys {sorted(unknown)}")
+    try:
+        choice = response["choices"][0]
+        message = choice["message"] or {}
+        finish = choice.get("finish_reason")
+    except (KeyError, IndexError, TypeError):
+        message, finish = {}, None
+    content = message.get("content") or ""
+    calls = tool_calls_of(message)
+    names = [name for name, _ in calls]
+    bad_args = sum(args is None for _, args in calls)
+    checks = [
+        check("*", "complete", bool(content.strip() or calls) and finish != "length"),
+        check(
+            "*", "parses", not bad_args, f"{bad_args} unparseable" if bad_args else ""
+        ),
+    ]
+
+    if "tools" in expected:
+        checks.extend(score_list_field("tools", expected["tools"], {"tools": names}))
+
+    for key, rule in (expected.get("args") or {}).items():
+        tool, _, arg_names = key.partition(".")
+        args = next((a for n, a in calls if n == tool and a is not None), {})
+        value = next(
+            (args[a] for a in arg_names.split("|") if args.get(a) is not None), None
+        )
+        values = value if isinstance(value, list) else [] if value is None else [value]
+        checks.extend(score_list_field(key, rule, {key: values}))
+
+    reply = expected.get("reply")
+    if reply is not None:
+        unknown = set(reply) - LIST_RULE_KEYS - {"numbers"}
+        if unknown:
+            raise ValueError(f"reply: unknown rule keys {sorted(unknown)}")
+        list_rule = {k: v for k, v in reply.items() if k != "numbers"}
+        texts = [content] if content.strip() else []
+        checks.extend(score_list_field("reply", list_rule, {"reply": texts}))
+        found = numbers_in(content)
+        for label_, rule in (reply.get("numbers") or {}).items():
+            checks.append(check("reply", f"number:{label_}", number_found(rule, found)))
+    return summarize(checks)
+
+
 def score_case(expected: dict, response: dict) -> dict:
     if "recover" in expected:
         return score_text_case(expected, response)
+    if expected.keys() & {"tools", "reply"}:
+        return score_trace_case(expected, response)
     args, error = extract_arguments(response)
     finish = ((response.get("choices") or [{}])[0] or {}).get("finish_reason")
     if error and finish == "length":
@@ -993,13 +1111,27 @@ def expected_values(fixtures: Path) -> tuple[set[str], list[str]]:
         for spellings in (expected.get("recover") or {}).values():
             values.update(str(v) for v in spellings)
         for field, rule in expected.items():
-            if field == "recover" or not isinstance(rule, dict):
+            # Tool names come from the app's own tool list, not the fixture.
+            if field in ("recover", "tools") or not isinstance(rule, dict):
                 continue
-            for key in ("must", "must_not", "want", "examples"):
-                values.update(str(v) for v in rule.get(key) or [])
-            values.update(str(v) for v in rule.get("link") or {})
+            # `args` nests one list rule per argument.
+            for r in rule.values() if field == "args" else [rule]:
+                for key in ("must", "must_not", "want", "examples"):
+                    values.update(str(v) for v in r.get(key) or [])
+                values.update(str(v) for v in r.get("link") or {})
+                for number in (r.get("numbers") or {}).values():
+                    for v in number["any"]:
+                        values.update(number_spellings(v))
     # One-character names can't be told apart from ordinary text.
     return {v for v in values if len(norm(v)) > 1}, idents
+
+
+def number_spellings(value: float) -> set[str]:
+    """How an expected figure would likely be written in a draft."""
+    out = {f"{value:,.2f}", f"{value:.2f}"}
+    if abs(value) >= 100:
+        out |= {f"{value:,.0f}", f"{value:.0f}"}
+    return out
 
 
 def loose_pattern(value: str) -> re.Pattern:
