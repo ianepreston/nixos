@@ -1634,7 +1634,10 @@ input and managed with [sops-nix](https://github.com/Mic92/sops-nix).
 - Secrets are YAML files in the `nix-secrets` repo: `sops/<hostname>.yaml`,
   plus per-consumer files (`common.yaml`, `tailnet.yaml`, `llm.yaml`,
   `server-shared.yaml`, ...) each encrypted to exactly the hosts that read
-  them. `task secrets:matrix` checks that.
+  them. `task secrets:matrix` checks that. Its assertion logic has synthetic
+  unit tests, run by CI and `task check` as the `sops-recipient-matrix` flake
+  check (`nix build .#checks.<system>.sops-recipient-matrix`); they read no
+  secrets and contact no host.
 - Age encryption keys are bootstrapped from host SSH keys
   (`/etc/ssh/ssh_host_ed25519_key`)
 - Home-manager secrets use `~/.config/sops/age/host.txt`, which activation
