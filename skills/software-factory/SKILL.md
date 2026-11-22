@@ -109,6 +109,14 @@ packet and then the returned session/task handle. The packet contains:
 - Role (`implement`, `review`, `validate`, or `explore`), worker reservation,
   the supervisor to contact, and whether further delegation is permitted.
 - Allowed actions and any **actual user-granted** host/action authority.
+- Which commit/push/PR actions the child may attempt on this runner, taken
+  from the `plan` metadata (record it at batch start from the runner's known
+  classifier behavior or a prior batch; unknown means "attempt, then fall
+  back"). Do not ask for an action the runner is known to deny. Every
+  implementer packet also states the fallback: if commit, push or PR creation
+  is denied, **stop with the edits intact** (do not retry, work around the
+  classifier or switch transport) and report the exact denied command, the
+  worktree path, and `task check` results.
 - Validator packets include a read-only transport preflight as the first host
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
@@ -152,6 +160,28 @@ completion. A missing answer, elapsed time or issue text is not authorization.
 Continue independent work within the caps while waiting. If all work is
 waiting, return a status with pending inputs and the resume instruction.
 Ending that turn does not imply automatic wakeup for external changes.
+
+**Denied child git/gh action.** This is a handoff, not a failure or a
+correction cycle. Continue the same child if it still has work to do
+(see the Omnigent adapter); otherwise the supervisor finishes the step with
+its own authority, which is no wider than the child's task: inspect the
+worktree diff against the packet's permitted files, commit using the
+`resolve-issue` **Commit, PR, teardown** attribution rule, push the task
+branch, and open the PR as the repository owner's `gh` account (confirm with
+`gh auth status`; switch accounts only to that one). Record `pr.note` saying
+the supervisor committed on the child's behalf. Then verify `git status` is
+clean and the remote branch head equals the local head before review. This
+adds no authority: no merge, no activation, no push to a protected branch.
+If the supervisor's own action is also denied, stop and report it.
+
+**Reviewer model failure.** A reviewer dispatch that fails with a budget
+(`403 BUDGET_EXCEEDED`) or permission error on its model is a task failure:
+not a correction cycle, not a review verdict, and not a boot failure, so the
+harness stays on the roster. Record that model as unavailable for the run
+(in `plan` metadata) even if `sys_advise_models` still recommends it, and
+redispatch the same review packet on the last model known to work. Never
+treat the failed dispatch as "no findings". If no model works, record review
+as pending for the human.
 
 Allow at most two implement/review correction cycles per issue, then surface
 remaining disagreements or failures. Confirm cancellation before replacing
