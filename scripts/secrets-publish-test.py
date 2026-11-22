@@ -39,24 +39,44 @@ FLAKE_NIX = f"""{{
 }}
 """
 
-ENCRYPTED = """hpp-1:
+
+def enc(data, kind="str"):
+    return f"ENC[AES256_GCM,data:{data},iv:aXY=,tag:dGFn,type:{kind}]"
+
+
+ENCRYPTED = f"""hpp-1:
     app:
-        db_password: ENC[AES256_GCM,data:abc,type:str]
+        db_password: {enc("abc")}
+        port: {enc("MTA=", "int")}
+#{enc("Y29tbWVudA==", "comment")}
 sops:
-    mac: ENC[AES256_GCM,data:def,type:str]
+    age:
+        - recipient: age1example
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdl
+            -----END AGE ENCRYPTED FILE-----
+    mac: {enc("def")}
     version: 3.9.0
 """
 
 # `nix flake update nix-secrets`: lock the url in flake.nix against the bare
-# repo in $STUB_REMOTE. STUB_TOUCH_OTHER=1 also edits another lock node, to
-# prove the helper notices.
+# repo in $STUB_REMOTE. Faults, to prove the helper notices and rolls back:
+# STUB_FAIL exits 1 without writing; STUB_TOUCH_OTHER edits another lock node;
+# STUB_DROP_REF drops locked.ref; STUB_STALE_ORIGINAL leaves original.ref at
+# main and drops original.rev. Any other nix command is logged as JSON and
+# succeeds (for the matrix task).
 NIX_STUB = r"""
 import json, os, re, subprocess, sys
 from urllib.parse import parse_qs
 with open(os.environ["STUB_LOG"], "a") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
 if sys.argv[1:] != ["flake", "update", "nix-secrets"]:
-    sys.exit("nix stub: unexpected args %r" % sys.argv[1:])
+    with open(os.environ["STUB_LOG"], "a") as f:
+        f.write(json.dumps(sys.argv[1:]) + "\n")
+    sys.exit(0)
+if os.environ.get("STUB_FAIL"):
+    sys.exit("nix stub: simulated fetch failure")
 url = re.search(r'url = "(git\+ssh://[^"]*nix-secrets\.git[^"]*)";', open("flake.nix").read()).group(1)
 q = {k: v[0] for k, v in parse_qs(url.partition("?")[2]).items()}
 git = ["git", "--git-dir", os.environ["STUB_REMOTE"]]
@@ -74,6 +94,11 @@ if "rev" in q:
     node["original"]["rev"] = q["rev"]
 if os.environ.get("STUB_TOUCH_OTHER"):
     lock["nodes"]["nixpkgs"]["locked"]["rev"] = "0" * 40
+if os.environ.get("STUB_DROP_REF"):
+    del node["locked"]["ref"]
+if os.environ.get("STUB_STALE_ORIGINAL"):
+    node["original"]["ref"] = "stale"
+    node["original"].pop("rev", None)
 json.dump(lock, open("flake.lock", "w"), indent=2)
 """
 
@@ -184,7 +209,7 @@ class Fixture:
 
     def change_secret(self, cwd=None, n=1):
         self.write(
-            "sops/hpp-1.yaml", ENCRYPTED.replace("data:abc", f"data:v{n}"), cwd=cwd
+            "sops/hpp-1.yaml", ENCRYPTED.replace("data:abc,", f"data:v{n},"), cwd=cwd
         )
 
     def publish(self, *args, secrets_dir=None, extra_env=None):
@@ -330,23 +355,22 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(f.rev("HEAD"), f.main0)
         self.assert_untouched()
 
-    def test_explicitly_staged_change_outside_sops_is_published(self):
+    def test_explicitly_staged_change_outside_sops_is_refused(self):
         f = self.f
         f.git("switch", "-q", "-c", "feat/x")
         f.change_secret()
         f.write("README.md", "documented\n")
         f.git("add", "README.md")
-        self.ok(f.publish("--message", "m"))
-        self.assertEqual(
-            f.git("show", "--name-only", "--format=", "HEAD").split(),
-            ["README.md", "sops/hpp-1.yaml"],
-        )
+        r = self.refused(f.publish("--message", "m"), "outside sops/")
+        self.assertIn("README.md", r.stderr)
+        self.assertEqual(f.rev("HEAD"), f.main0)
+        self.assert_untouched()
 
     def test_plaintext_under_sops_is_refused_and_left_unstaged(self):
         f = self.f
         f.git("switch", "-q", "-c", "feat/x")
         f.write("sops/hpp-1.yaml", "app:\n  db_password: hunter2\n")
-        r = self.refused(f.publish("--message", "m"), "without sops metadata")
+        r = self.refused(f.publish("--message", "m"), "plaintext guard failed")
         self.assertIn("sops/hpp-1.yaml", r.stderr)
         self.assertEqual(f.git("diff", "--cached", "--name-only"), "")
         self.assertEqual(f.rev("HEAD"), f.main0)
@@ -358,7 +382,7 @@ class PublishTest(unittest.TestCase):
         f.write("sops/new.yaml", "token: hunter2\n")
         f.git("add", "sops/new.yaml")
         f.git("commit", "-qm", "oops")
-        self.refused(f.publish(), "without sops metadata")
+        self.refused(f.publish(), "plaintext guard failed")
         self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
         self.assert_untouched()
 
@@ -469,6 +493,258 @@ class PublishTest(unittest.TestCase):
         f.git("push", "-q", "origin", ":refs/heads/feat/x")
         self.assertEqual(f.locked()["rev"], merged)
 
+    def flake_files(self):
+        return (
+            (self.f.nixos / "flake.nix").read_bytes(),
+            (self.f.nixos / "flake.lock").read_bytes(),
+        )
+
+    def index_state(self, cwd=None):
+        """Index entries plus worktree diff: what a refusal must not change."""
+        f = self.f
+        return (
+            f.git("ls-files", "-s", cwd=cwd),
+            f.git("diff", "--cached", cwd=cwd),
+            f.git("diff", cwd=cwd),
+        )
+
+    # --- finding 1: flake.nix / flake.lock changes are transactional -------
+
+    def test_failed_nix_update_restores_flake_files(self):
+        f = self.f
+        before = self.flake_files()
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        r = self.refused(
+            f.publish("--message", "m", extra_env={"STUB_FAIL": "1"}),
+            "nix flake update nix-secrets failed",
+        )
+        self.assertIn("restored flake.nix and flake.lock", r.stderr)
+        self.assertEqual(self.flake_files(), before)
+
+    def test_failed_lock_checks_restore_flake_files(self):
+        for fault in ("STUB_TOUCH_OTHER", "STUB_DROP_REF", "STUB_STALE_ORIGINAL"):
+            with self.subTest(fault=fault):
+                self.tmp.cleanup()
+                self.setUp()
+                f = self.f
+                before = self.flake_files()
+                f.git("switch", "-q", "-c", "feat/x")
+                f.change_secret()
+                r = f.publish("--message", "m", extra_env={fault: "1"})
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(self.flake_files(), before)
+
+    def test_pin_main_expect_before_merge_keeps_the_branch_pin(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+        head = f.rev("HEAD")
+        pinned = self.flake_files()
+        f.log.write_text("")
+        self.refused(
+            f.run("restore-main", "--secrets-dir", str(f.secrets), "--expect", head),
+            "does not contain",
+        )
+        self.assertEqual(self.flake_files(), pinned)
+        self.assertEqual(f.log.read_text(), "")  # refused before any nix run
+
+    def test_pin_main_failure_restores_the_branch_pin(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+        pinned = self.flake_files()
+        for fault in ("STUB_FAIL", "STUB_STALE_ORIGINAL"):
+            with self.subTest(fault=fault):
+                self.assertNotEqual(
+                    f.run("restore-main", extra_env={fault: "1"}).returncode, 0
+                )
+                self.assertEqual(self.flake_files(), pinned)
+
+    # --- finding 2: plaintext guard covers every pushed commit -------------
+
+    def test_plaintext_in_an_intermediate_commit_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("sops/new.yaml", "token: hunter2\n")
+        f.git("add", "sops/new.yaml")
+        f.git("commit", "-qm", "plaintext")
+        f.write("sops/new.yaml", ENCRYPTED)
+        f.git("commit", "-qam", "encrypt it")
+        r = self.refused(f.publish(), "plaintext guard failed")
+        self.assertIn("sops/new.yaml", r.stderr)
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+        self.assert_untouched()
+
+    def test_plaintext_deleted_in_a_later_commit_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("sops/leak.yaml", "token: hunter2\n")
+        f.git("add", "sops/leak.yaml")
+        f.git("commit", "-qm", "oops")
+        f.git("rm", "-q", "sops/leak.yaml")
+        f.git("commit", "-qm", "remove it")
+        self.refused(f.publish(), "plaintext guard failed")
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+
+    def test_plaintext_value_beside_sops_metadata_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write(
+            "sops/hpp-1.yaml",
+            ENCRYPTED.replace("hpp-1:\n", "hpp-1:\n    leaked: hunter2\n"),
+        )
+        r = self.refused(f.publish("--message", "m"), "plaintext guard failed")
+        self.assertIn("not an ENC[...] envelope", r.stderr)
+        self.assert_untouched()
+
+    def test_non_string_plaintext_values_are_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        for leaf in ("port: 5432", "flag: false", "empty: null", "_unencrypted: x"):
+            with self.subTest(leaf=leaf):
+                f.write(
+                    "sops/hpp-1.yaml",
+                    ENCRYPTED.replace("hpp-1:\n", f"hpp-1:\n    {leaf}\n"),
+                )
+                self.refused(f.publish("--message", "m"), "plaintext guard failed")
+        self.assert_untouched()
+
+    def test_plaintext_comment_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("sops/hpp-1.yaml", "# password is hunter2\n" + ENCRYPTED)
+        r = self.refused(f.publish("--message", "m"), "plaintext comment")
+        self.assertIn("sops/hpp-1.yaml", r.stderr)
+        self.assert_untouched()
+
+    def test_sops_metadata_without_encrypted_mac_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("sops/hpp-1.yaml", f"a: {enc('x')}\nsops:\n    version: 3.9.0\n")
+        self.refused(f.publish("--message", "m"), "plaintext guard failed")
+
+    def test_json_sops_documents_are_checked(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        good = {"a": {"b": [enc("eA==")]}, "sops": {"mac": enc("bQ=="), "version": "3"}}
+        f.write("sops/x.json", json.dumps(good))
+        f.git("add", "sops/x.json")
+        self.ok(f.publish("--message", "json"))
+        f.log.write_text("")
+        good["a"]["c"] = "hunter2"
+        f.write("sops/x.json", json.dumps(good))
+        self.refused(f.publish("--message", "leak"), "plaintext guard failed")
+
+    def test_other_formats_under_sops_are_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("sops/key.txt", "secret\n")
+        f.git("add", "sops/key.txt")
+        self.refused(f.publish("--message", "m"), "not a .yaml/.json sops file")
+
+    def test_committed_change_outside_sops_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.write("README.md", "edit\n")
+        f.git("commit", "-qam", "docs")
+        r = self.refused(f.publish(), "outside sops/")
+        self.assertIn("README.md", r.stderr)
+        self.assertIsNone(f.remote_ref("refs/heads/feat/x"))
+
+    def test_commits_already_on_the_remote_are_not_rechecked(self):
+        # A README change already pushed to main (by hand) does not block a
+        # later secrets publish from a branch on top of it.
+        f = self.f
+        f.write("README.md", "edit\n")
+        f.git("commit", "-qam", "docs")
+        f.git("push", "-q", "origin", "main")
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+
+    # --- finding 3: the index is never mutated destructively ---------------
+
+    def test_path_with_staged_and_unstaged_changes_is_refused(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret(n=1)
+        f.git("add", "sops/hpp-1.yaml")
+        f.change_secret(n=2)
+        before = self.index_state()
+        r = self.refused(f.publish("--message", "m"), "both staged and unstaged")
+        self.assertIn("sops/hpp-1.yaml", r.stderr)
+        self.assertEqual(self.index_state(), before)
+        self.assert_untouched()
+
+    def test_guard_failure_restores_the_exact_index(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        # An index-only intermediate version of one file...
+        f.change_secret(n=1)
+        f.git("add", "sops/hpp-1.yaml")
+        # ...and an unstaged plaintext file the guard will reject.
+        f.write("sops/other.yaml", ENCRYPTED)
+        f.git("add", "sops/other.yaml")
+        f.git("commit", "-qm", "base")
+        f.write("sops/other.yaml", "token: hunter2\n")
+        f.change_secret(n=1)  # worktree == index for hpp-1.yaml
+        before = self.index_state()
+        self.refused(f.publish("--message", "m"), "plaintext guard failed")
+        self.assertEqual(self.index_state(), before)
+        self.assertIn("data:v1,", f.git("show", ":sops/hpp-1.yaml"))
+
+    # --- finding 4: the full branch ref, never an ambiguous short name -----
+
+    def test_branch_with_a_same_named_tag_pushes_the_branch(self):
+        f = self.f
+        f.git("tag", "feat/app")
+        f.git("switch", "-q", "-c", "feat/app")
+        self.assertEqual(f.git("rev-parse", "--abbrev-ref", "HEAD"), "heads/feat/app")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+        head = f.rev("HEAD")
+        self.assertEqual(f.remote_ref("refs/heads/feat/app"), head)
+        self.assertIsNone(f.remote_ref("refs/heads/heads/feat/app"))
+        self.assertEqual(f.flake_url(), f"{BASE}?ref=feat/app&rev={head}&shallow=1")
+
+    # --- finding 6: locked and original must both match flake.nix ----------
+
+    def test_branch_pin_records_matching_locked_and_original(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.ok(f.publish("--message", "m"))
+        head = f.rev("HEAD")
+        node = f.lock()["nodes"]["nix-secrets"]
+        self.assertEqual(
+            (node["locked"]["ref"], node["locked"]["rev"]), ("feat/x", head)
+        )
+        self.assertEqual(
+            (node["original"]["ref"], node["original"]["rev"]), ("feat/x", head)
+        )
+
+    def test_missing_locked_ref_fails_a_branch_pin(self):
+        f = self.f
+        f.git("switch", "-q", "-c", "feat/x")
+        f.change_secret()
+        self.refused(
+            f.publish("--message", "m", extra_env={"STUB_DROP_REF": "1"}),
+            "does not match ref=feat/x",
+        )
+        self.assertEqual(f.flake_url(), CANONICAL)
+
+    def test_pin_main_without_expect_checks_lock_consistency(self):
+        f = self.f
+        r = self.refused(
+            f.run("restore-main", extra_env={"STUB_STALE_ORIGINAL": "1"}),
+            "does not match ref=main",
+        )
+        self.assertIn("restored", r.stderr)
+        self.assertEqual(f.locked()["rev"], f.main0)
+
     def test_task_wiring_passes_an_explicit_checkout(self):
         f = self.f
         (f.nixos / "scripts").mkdir()
@@ -479,7 +755,7 @@ class PublishTest(unittest.TestCase):
         (f.nixos / "Taskfile.yaml").write_text(
             "version: '3'\nincludes:\n  secrets: ./taskfiles/secrets.yaml\n"
         )
-        wt = f.root / "elsewhere" / "secrets-wt"
+        wt = f.root / "elsewhere" / 'wt $HOME "q" x'
         f.git("worktree", "add", "-q", "-b", "feat/task", str(wt), "origin/main")
         f.change_secret(cwd=wt, n=7)
         r = subprocess.run(
@@ -494,6 +770,140 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(f.git("log", "-1", "--format=%s", cwd=wt), "it's a test")
         self.assertEqual(f.remote_ref("refs/heads/feat/task"), head)
         self.assertEqual(f.locked()["rev"], head)
+
+
+LOG_STUB = r"""
+import json, os, sys
+name = os.path.basename(sys.argv[0])
+with open(os.environ["STUB_LOG"], "a") as f:
+    f.write(json.dumps([name, os.getcwd(), sys.argv[1:]]) + "\n")
+if name == "sops" and sys.argv[1:2] == ["-d"]:
+    print("{}")
+if name == "openssl":
+    print("ab" * int(sys.argv[-1]))
+"""
+
+
+class TaskQuotingTest(unittest.TestCase):
+    """Every user value in taskfiles/secrets.yaml reaches the shell quoted: a
+    checkout path with `$`, a space and a quote is used verbatim, and names
+    that could break the sops/yq paths are refused."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name).resolve()
+        self.nixos = root / "nixos"
+        (self.nixos / "scripts" / "_sops-matrix").mkdir(parents=True)
+        (self.nixos / "taskfiles").mkdir()
+        for name in ("secrets-publish.sh", "secrets-dir.sh"):
+            shutil.copy(REPO / "scripts" / name, self.nixos / "scripts" / name)
+        (self.nixos / "scripts" / "_sops-matrix" / "consumers.nix").write_text(
+            "_: { }\n"
+        )
+        shutil.copy(REPO / "taskfiles" / "secrets.yaml", self.nixos / "taskfiles")
+        (self.nixos / "Taskfile.yaml").write_text(
+            "version: '3'\nincludes:\n  secrets: ./taskfiles/secrets.yaml\n"
+        )
+        self.secrets = root / 'nix-secrets $HOME "q" x'
+        (self.secrets / "sops").mkdir(parents=True)
+        (self.secrets / "sops" / "hpp-1.yaml").write_text(ENCRYPTED)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        for name in ("sops", "openssl", "nix"):
+            stub = bin_dir / name
+            stub.write_text(f"#!{sys.executable}\n{LOG_STUB}")
+            stub.chmod(0o755)
+        self.log = root / "log"
+        self.log.touch()
+        self.env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("SECRETS_DIR", "NIX_SECRETS_PATH")
+        }
+        self.env.update(
+            PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            STUB_LOG=str(self.log),
+            HOME=str(root),
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def task(self, *argv, env=None):
+        return subprocess.run(
+            ["task", *argv],
+            cwd=self.nixos,
+            env=dict(self.env, **(env or {})),
+            capture_output=True,
+            text=True,
+        )
+
+    def calls(self, name):
+        rows = [json.loads(line) for line in self.log.read_text().splitlines()]
+        return [(cwd, args) for n, cwd, args in rows if n == name]
+
+    def test_checkout_path_with_shell_metacharacters_is_used_verbatim(self):
+        cases = {
+            "secrets:edit:hpp-1": ["sops/hpp-1.yaml"],
+            "secrets:view:hpp-1": ["-d", "sops/hpp-1.yaml"],
+            "secrets:rekey": ["updatekeys", "--yes", "sops/hpp-1.yaml"],
+        }
+        for argv, want in cases.items():
+            for via_env in (False, True):
+                with self.subTest(task=argv, via_env=via_env):
+                    self.log.write_text("")
+                    if via_env:
+                        r = self.task(argv, env={"SECRETS_DIR": str(self.secrets)})
+                    else:
+                        r = self.task(argv, f"SECRETS_DIR={self.secrets}")
+                    self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                    self.assertEqual(self.calls("sops"), [(str(self.secrets), want)])
+
+    def test_generators_use_the_quoted_checkout_and_names(self):
+        cases = [
+            (("secrets:dbpw", "APP=foo"), ['["foo"]["db_password"]']),
+            (
+                ("secrets:oidc", "APP=foo"),
+                ['["foo"]["oidc_client_id"]', '["foo"]["oidc_client_secret"]'],
+            ),
+            (("secrets:secret", "APP=foo", "KEY=bar", "LEN=4"), ['["foo"]["bar"]']),
+        ]
+        for argv, paths in cases:
+            with self.subTest(task=argv[0]):
+                self.log.write_text("")
+                r = self.task(*argv, f"SECRETS_DIR={self.secrets}")
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                sets = [a for cwd, a in self.calls("sops") if a[0] == "set"]
+                self.assertEqual([a[2] for a in sets], paths)
+                self.assertTrue(all(a[1] == "sops/hpp-1.yaml" for a in sets))
+                self.assertTrue(
+                    all(cwd == str(self.secrets) for cwd, _ in self.calls("sops"))
+                )
+
+    def test_unsafe_names_are_refused_before_sops_runs(self):
+        for argv in (
+            ("secrets:dbpw", 'APP=x"]["y'),
+            ("secrets:dbpw", "APP=x; touch pwned"),
+            ("secrets:secret", "APP=a", "KEY=$(touch pwned)"),
+            ("secrets:secret", "APP=a", "KEY=b", "LEN=4; touch pwned"),
+            ("secrets:oidc", "APP=a", "HOST=../x"),
+            ("secrets:dbpw", "APP=a", "FORCE=yes"),
+        ):
+            with self.subTest(argv=argv):
+                self.log.write_text("")
+                r = self.task(*argv, f"SECRETS_DIR={self.secrets}")
+                self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(self.calls("sops"), [])
+                self.assertFalse((self.nixos / "pwned").exists())
+                self.assertFalse((self.secrets / "pwned").exists())
+
+    def test_matrix_passes_the_quoted_checkout_to_nix(self):
+        r = self.task("secrets:matrix", "OFFLINE=true", f"SECRETS_DIR={self.secrets}")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        argvs = [a for _, a in self.calls("nix")]
+        self.assertIn(f"path:{self.secrets}", argvs[0])
+        i = argvs[1].index("--secrets-dir")
+        self.assertEqual(argvs[1][i + 1], str(self.secrets))
 
 
 class SecretsDirTest(unittest.TestCase):

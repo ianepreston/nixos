@@ -17,6 +17,7 @@ _: {
               go-task
               jq
               python3
+              yq-go
             ];
           }
           ''

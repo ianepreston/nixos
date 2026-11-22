@@ -1938,9 +1938,9 @@ The `task vm:*` namespace drives a single quickemu VM at a time under
 `~/vms/nixos-vm/`, with a persistent SSH host key (and matching age identity)
 preserved across teardowns. Authorize the VM key onto the secrets it needs once
 via `task vm:sops-authorize TARGET=<host>` (uncommitted edit in
-`../nix-secrets`, built by `vm:install` with `LOCAL_SECRETS=true`; commit it
-and pin it with `task secrets:publish` to make it sticky, or `git restore` to
-revoke).
+`../nix-secrets`, built by `vm:install` with `LOCAL_SECRETS=true`; to make it
+sticky, switch `../nix-secrets` to a branch and run
+`task secrets:publish MSG="authorize VM"`, or `git restore` to revoke).
 
 ```bash
 # Bring up the VM (builds latest.iso if absent; FORCE_ISO=true to rebuild)

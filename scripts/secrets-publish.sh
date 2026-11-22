@@ -10,22 +10,28 @@
 # publish, in the nix-secrets checkout DIR (primary checkout or any linked
 # worktree; HEAD must be a branch):
 #   1. refuses untracked files, a detached HEAD, a branch name outside
-#      [A-Za-z0-9._/-], and uncommitted changes unless --message is given;
-#   2. with --message, stages unstaged tracked changes under sops/ and in
-#      .sops.yaml (refusing unstaged changes anywhere else; changes you staged
-#      yourself are kept) and commits them;
-#   3. refuses unless HEAD descends from the revision flake.lock pins now and
-#      every file under sops/ that differs from it carries sops metadata;
-#   4. pushes HEAD to origin's refs/heads/<branch> by explicit refspec, never
+#      [A-Za-z0-9._/-], a path with both staged and unstaged changes, any
+#      change outside sops/ and .sops.yaml, and uncommitted changes unless
+#      --message is given;
+#   2. refuses unless HEAD descends from the revision flake.lock pins now;
+#   3. with --message, stages the (wholly unstaged) changed files and commits;
+#   4. plaintext guard: every sops/ file in the index and in every commit that
+#      would be pushed must be a sops document whose every value outside the
+#      `sops` block is an ENC[...] envelope, with no plaintext comments;
+#   5. pushes HEAD to origin's refs/heads/<branch> by explicit refspec, never
 #      forced, setting the upstream (so a new branch's first push works and a
 #      branch tracking origin/main does not push to main);
-#   5. points flake.nix at ?ref=main (on main) or ?ref=<branch>&rev=<HEAD>,
-#      runs `nix flake update nix-secrets`, and checks that the lock records
-#      HEAD and that no other lock node changed.
+#   6. points flake.nix at ?ref=main (on main) or ?ref=<branch>&rev=<HEAD>,
+#      runs `nix flake update nix-secrets`, and checks the lock's locked and
+#      original entries match that url and no other lock node changed.
 #
 # restore-main points flake.nix back at ?ref=main, runs
-# `nix flake update nix-secrets` and checks the other lock nodes are intact;
-# with --expect REV it also checks the new pin descends from REV.
+# `nix flake update nix-secrets` and checks the lock the same way; with
+# --expect REV it first checks origin's main contains REV.
+#
+# Any failure restores flake.nix, flake.lock and the nix-secrets index to
+# what they were before the run. A commit that was made stays (it is local
+# until the push succeeds).
 set -euo pipefail
 
 die() {
@@ -64,6 +70,38 @@ flake_nix=$nixos_dir/flake.nix
 flake_lock=$nixos_dir/flake.lock
 [ -f "$flake_nix" ] && [ -f "$flake_lock" ] || die "no flake.nix/flake.lock in $nixos_dir"
 
+# --- rollback ----------------------------------------------------------------
+# $work holds snapshots. On any exit before keep_flake / keep_index is set,
+# the snapshots are copied back over the live files.
+work=$(mktemp -d)
+flake_saved=false
+keep_flake=false
+index_path=""
+keep_index=true
+cleanup() {
+  local status=$?
+  if [ "$flake_saved" = true ] && [ "$keep_flake" != true ]; then
+    cat "$work/flake.nix" >"$flake_nix"
+    cat "$work/flake.lock" >"$flake_lock"
+    printf '\033[33m[~] restored flake.nix and flake.lock\033[0m\n' >&2
+  fi
+  if [ -n "$index_path" ] && [ "$keep_index" != true ]; then
+    cp "$work/index" "$index_path"
+    printf '\033[33m[~] restored the nix-secrets index\033[0m\n' >&2
+  fi
+  rm -rf "$work"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+save_flake() {
+  cp "$flake_nix" "$work/flake.nix"
+  cp "$flake_lock" "$work/flake.lock"
+  flake_saved=true
+}
+
+# --- flake.nix / flake.lock ----------------------------------------------------
 # The single `url = "git+ssh://.../nix-secrets.git?..."` line in flake.nix.
 url_re='^([[:space:]]*url = )"(git\+ssh://[^"?]*/nix-secrets\.git)(\?[^"]*)?";[[:space:]]*$'
 
@@ -80,68 +118,100 @@ input_base() {
 }
 
 set_input_url() {
-  local new=$1 line tmp
-  tmp=$(mktemp)
+  local new=$1 line
   while IFS= read -r line || [ -n "$line" ]; do
     if [[ $line =~ $url_re ]]; then line="${BASH_REMATCH[1]}\"$new\";"; fi
     printf '%s\n' "$line"
-  done <"$flake_nix" >"$tmp"
-  cat "$tmp" >"$flake_nix"
-  rm -f "$tmp"
+  done <"$flake_nix" >"$work/flake.nix.new"
+  cat "$work/flake.nix.new" >"$flake_nix"
 }
 
-lock_node() { jq -er '.nodes[.root].inputs["'"$input"'"]' "$flake_lock"; }
-locked_field() { jq -r --arg n "$node" '.nodes[$n].locked.'"$1"' // ""' "$flake_lock"; }
+lock_node() { jq -er '.nodes[.root].inputs["'"$input"'"] | strings' "$flake_lock"; }
+locked_rev() { jq -r --arg n "$node" '.nodes[$n].locked.rev // ""' "$flake_lock"; }
 other_nodes() { jq -S --arg n "$node" 'del(.nodes[$n])' "$flake_lock"; }
 
-# Rewrite the input url, re-lock just that input, and check nothing else in
-# the lock moved. Prints nothing; callers read the lock afterwards.
+# Rewrite the input url and re-lock just that input (callers have run
+# save_flake). Fails if anything else in the lock moved.
 relock() {
   local url=$1 before after
   before=$(other_nodes)
   set_input_url "$url"
   say "nix flake update $input ($url)"
-  (cd "$nixos_dir" && nix flake update "$input")
+  (cd "$nixos_dir" && nix flake update "$input") || die "nix flake update $input failed"
   node=$(lock_node) || die "flake.lock has no $input input after the update"
   after=$(other_nodes)
-  [ "$before" = "$after" ] || die "flake.lock changed outside the $input node; inspect with git diff flake.lock"
+  [ "$before" = "$after" ] || die "flake.lock changed outside the $input node"
+}
+
+# The lock's locked and original entries must both describe the url flake.nix
+# now declares: type git, the same repo url, ref REF, original.rev ORIG_REV
+# (absent when empty), and locked.rev REV (any full sha when empty).
+check_lock() {
+  local ref=$1 orig_rev=$2 rev=$3
+  jq -e --arg n "$node" --arg url "${base#git+}" --arg ref "$ref" \
+    --arg orev "$orig_rev" --arg rev "$rev" '
+    .nodes[$n] as $x
+    | ($x.locked | type == "object") and ($x.original | type == "object")
+    and $x.locked.type == "git" and $x.original.type == "git"
+    and $x.locked.url == $url and $x.original.url == $url
+    and $x.locked.ref == $ref and $x.original.ref == $ref
+    and ($x.locked.rev | type == "string" and test("^[0-9a-f]{40}$"))
+    and ($rev == "" or $x.locked.rev == $rev)
+    and (if $orev == "" then ($x.original | has("rev") | not) else $x.original.rev == $orev end)
+  ' "$flake_lock" >/dev/null || {
+    jq --arg n "$node" '.nodes[$n]' "$flake_lock" >&2
+    die "flake.lock $input entry does not match ref=$ref${orig_rev:+ rev=$orig_rev}${rev:+ (expected locked rev $rev)}"
+  }
 }
 
 base=$(input_base)
 node=$(lock_node) || die "flake.lock has no $input input"
-locked_rev=$(locked_field rev)
+old_rev=$(locked_rev)
 canonical="$base?ref=$main&shallow=1"
 
 if [ "$mode" = restore-main ]; then
   if [ -n "$expect" ]; then
     [ -n "$secrets_dir" ] || die "--expect needs --secrets-dir to check ancestry"
     [ -d "$secrets_dir" ] || die "nix-secrets checkout not found: $secrets_dir"
+    # Check before touching anything: origin's main must already contain it.
+    git -C "$secrets_dir" fetch --quiet "$remote" "refs/heads/$main"
+    tip=$(git -C "$secrets_dir" rev-parse FETCH_HEAD)
+    git -C "$secrets_dir" merge-base --is-ancestor "$expect" "$tip" 2>/dev/null ||
+      die "$remote/$main ($tip) does not contain $expect; merge the secrets branch first (or, after a squash/rebase merge, compare trees and omit EXPECT)"
   fi
+  save_flake
   relock "$canonical"
-  rev=$(locked_field rev)
-  [ -n "$rev" ] || die "flake.lock records no $input rev"
+  check_lock "$main" "" ""
+  rev=$(locked_rev)
   if [ -n "$expect" ]; then
-    git -C "$secrets_dir" fetch --quiet "$remote" "$main"
     git -C "$secrets_dir" cat-file -e "$rev^{commit}" 2>/dev/null ||
-      die "pinned $rev is not in $secrets_dir after fetching $remote/$main"
-    git -C "$secrets_dir" merge-base --is-ancestor "$expect" "$rev" ||
-      die "pinned $main $rev does not contain $expect (merged under a new hash? compare the trees before opening the PR)"
+      git -C "$secrets_dir" fetch --quiet "$remote" "refs/heads/$main"
+    git -C "$secrets_dir" merge-base --is-ancestor "$expect" "$rev" 2>/dev/null ||
+      die "pinned $main $rev does not contain $expect"
     say "pin contains $expect"
   fi
-  say "pinned $input to $main at $rev (was ${locked_rev:-none})"
+  keep_flake=true
+  say "pinned $input to $main at $rev (was ${old_rev:-none})"
   exit 0
 fi
 
-# --- publish ---------------------------------------------------------------
+# --- publish -------------------------------------------------------------------
 [ -n "$secrets_dir" ] || die "--secrets-dir is required"
 [ -d "$secrets_dir" ] || die "nix-secrets checkout not found: $secrets_dir (pass SECRETS_DIR=<checkout>)"
+case $(yq --version 2>&1 || true) in
+  *mikefarah*) ;;
+  *) die "yq (mikefarah/yq-go) is required for the plaintext guard; run inside nix develop" ;;
+esac
 cd "$secrets_dir"
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$secrets_dir is not a git checkout"
 secrets_dir=$(git rev-parse --show-toplevel)
 cd "$secrets_dir"
 say "nix-secrets checkout: $secrets_dir"
 
-branch=$(git symbolic-ref --quiet --short HEAD) || die "detached HEAD in $secrets_dir; check out a branch"
+# Full ref, never --short: a same-named tag makes the short form ambiguous.
+head_ref=$(git symbolic-ref -q HEAD) || die "detached HEAD in $secrets_dir; check out a branch"
+case $head_ref in refs/heads/?*) ;; *) die "HEAD is $head_ref, not a branch" ;; esac
+branch=${head_ref#refs/heads/}
 [[ $branch =~ ^[A-Za-z0-9._/-]+$ ]] || die "branch name '$branch' must match [A-Za-z0-9._/-]+ (it goes into the flake url)"
 
 untracked=$(git ls-files --others --exclude-standard)
@@ -154,50 +224,106 @@ in_scope() { case $1 in .sops.yaml | sops/*) return 0 ;; *) return 1 ;; esac }
 
 unstaged=$(git diff --name-only)
 staged=$(git diff --cached --name-only)
-if [ -n "$unstaged$staged" ]; then
-  if [ -z "$message" ]; then
-    git status --short >&2
-    die "uncommitted changes in $secrets_dir; re-run with MSG=\"...\" to commit them"
-  fi
-  outside=""
-  while IFS= read -r p; do
-    [ -z "$p" ] || in_scope "$p" || outside+="$p"$'\n'
-  done <<<"$unstaged"
-  if [ -n "$outside" ]; then
-    printf '%s' "$outside" >&2
-    die "unstaged changes outside sops/ and .sops.yaml; commit, stage or restore them yourself"
-  fi
+if [ -n "$unstaged$staged" ] && [ -z "$message" ]; then
+  git status --short >&2
+  die "uncommitted changes in $secrets_dir; re-run with MSG=\"...\" to commit them"
+fi
+both=$(printf '%s\n' "$staged" | grep -Fxf <(printf '%s\n' "$unstaged") | grep -v '^$' || true)
+if [ -n "$both" ]; then
+  printf '%s\n' "$both" >&2
+  die "paths with both staged and unstaged changes; stage or restore them fully first"
+fi
+outside=""
+while IFS= read -r p; do
+  [ -z "$p" ] || in_scope "$p" || outside+="$p"$'\n'
+done <<<"$unstaged"$'\n'"$staged"
+if [ -n "$outside" ]; then
+  printf '%s' "$outside" >&2
+  die "changes outside sops/ and .sops.yaml; commit and push those yourself"
 fi
 
+git fetch --quiet "$remote"
 # The locked revision must be an ancestor: otherwise the pin would drop
 # secrets that are already published (a stale branch or checkout).
-if [ -n "$locked_rev" ]; then
-  git cat-file -e "$locked_rev^{commit}" 2>/dev/null || git fetch --quiet "$remote"
-  git cat-file -e "$locked_rev^{commit}" 2>/dev/null ||
-    die "locked $input revision $locked_rev is not in $secrets_dir even after fetching $remote"
-  git merge-base --is-ancestor "$locked_rev" HEAD ||
-    die "$branch does not contain the locked $input revision $locked_rev; rebase it onto $remote/$main"
+if [ -n "$old_rev" ]; then
+  git cat-file -e "$old_rev^{commit}" 2>/dev/null ||
+    die "locked $input revision $old_rev is not in $secrets_dir even after fetching $remote"
+  git merge-base --is-ancestor "$old_rev" HEAD ||
+    die "$branch does not contain the locked $input revision $old_rev; rebase it onto $remote/$main"
 fi
 
+# From here on the index may change; a failure puts the saved copy back.
+index_path=$(git rev-parse --path-format=absolute --git-path index)
+cp "$index_path" "$work/index"
+keep_index=false
 if [ -n "$unstaged" ]; then
   while IFS= read -r p; do git add -- "$p"; done <<<"$unstaged"
 fi
 
-# Plaintext guard: everything under sops/ that differs from the lock (in
-# commits or about to be committed) must be a sops-encrypted document.
-plain=""
+# --- plaintext guard ---
+enc_re='^ENC\[AES256_GCM,data:[A-Za-z0-9+/=]*,iv:[A-Za-z0-9+/=]+,tag:[A-Za-z0-9+/=]+,type:[a-z]+\]$'
+# check_doc OBJECT PATH: OBJECT (`<commit>:<path>` or `:<path>`) is a sops
+# document: one YAML/JSON object with a `sops` block carrying an encrypted
+# mac, every other leaf an ENC[...] envelope, and no comment that is not
+# itself an encrypted `#ENC[...]`.
+check_doc() {
+  git show "$1" >"$work/doc"
+  case $2 in
+    *.yaml | *.yml)
+      sed -E 's/#?ENC\[[^]]*\]//g' "$work/doc" >"$work/stripped"
+      if grep '#' "$work/stripped" >/dev/null; then
+        echo "plaintext comment"
+        return 1
+      fi
+      yq -o=json -I=0 '.' "$work/doc" >"$work/json" 2>/dev/null || {
+        echo "not valid YAML"
+        return 1
+      }
+      ;;
+    *.json) cp "$work/doc" "$work/json" ;;
+    *)
+      echo "not a .yaml/.json sops file"
+      return 1
+      ;;
+  esac
+  jq -se --arg re "$enc_re" '
+    length == 1 and (.[0] | type == "object")
+    and (.[0].sops | type == "object")
+    and ((.[0].sops.mac // "") | type == "string" and test($re))
+    and (.[0] | del(.sops) | [paths(type != "object" and type != "array") as $p | getpath($p)]
+         | all(type == "string" and test($re)))
+  ' "$work/json" >/dev/null 2>&1 || {
+    echo "a value outside the sops block is not an ENC[...] envelope"
+    return 1
+  }
+}
+
+bad=""
+guard() { # guard OBJECT PATH LABEL
+  local why
+  in_scope "$2" || {
+    bad+="$3: $2 (outside sops/ and .sops.yaml)"$'\n'
+    return 0
+  }
+  case $2 in sops/*) ;; *) return 0 ;; esac
+  why=$(check_doc "$1" "$2") || bad+="$3: $2 ($why)"$'\n'
+}
+# Index: every path that differs from HEAD (deletions only need scope).
 while IFS= read -r p; do
   [ -n "$p" ] || continue
-  case $p in sops/*) ;; *) continue ;; esac
-  # No grep -q: an early exit would SIGPIPE git show and fail the pipeline.
-  git show ":$p" | grep -E '^sops:|"sops":[[:space:]]*\{' >/dev/null || plain+="$p"$'\n'
-done < <(git diff --cached --name-only --diff-filter=d ${locked_rev:+"$locked_rev"})
-if [ -n "$plain" ]; then
-  printf '%s' "$plain" >&2
-  if [ -n "$unstaged" ]; then
-    while IFS= read -r p; do git reset --quiet -- "$p"; done <<<"$unstaged"
-  fi
-  die "files under sops/ without sops metadata (plaintext?); encrypt them with sops first"
+  if git cat-file -e ":$p" 2>/dev/null; then guard ":$p" "$p" index; else in_scope "$p" || bad+="index: $p (outside sops/ and .sops.yaml)"$'\n'; fi
+done < <(git diff --cached --name-only)
+# Every commit the push would publish: not on any $remote ref, not in the lock.
+while IFS= read -r c; do
+  [ -n "$c" ] || continue
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if git cat-file -e "$c:$p" 2>/dev/null; then guard "$c:$p" "$p" "${c:0:12}"; else in_scope "$p" || bad+="${c:0:12}: $p (outside sops/ and .sops.yaml)"$'\n'; fi
+  done < <(git diff-tree -m -r --root --no-commit-id --name-only "$c" | sort -u)
+done < <(git rev-list HEAD --not --remotes="$remote" ${old_rev:+"$old_rev"})
+if [ -n "$bad" ]; then
+  printf '%s' "$bad" >&2
+  die "plaintext guard failed; encrypt with sops (or push non-secret changes yourself)"
 fi
 
 if ! git diff --cached --quiet; then
@@ -206,23 +332,23 @@ if ! git diff --cached --quiet; then
 elif [ -n "$message" ]; then
   say "nothing to commit; MSG ignored"
 fi
+keep_index=true
 head=$(git rev-parse HEAD)
 
 say "pushing $head to $remote refs/heads/$branch"
 git push --set-upstream "$remote" "HEAD:refs/heads/$branch"
-pushed=$(git ls-remote "$remote" "refs/heads/$branch" | cut -f1)
+pushed=$(git ls-remote "$remote" "refs/heads/$branch" | awk -v r="refs/heads/$branch" '$2 == r { print $1 }')
 [ "$pushed" = "$head" ] || die "$remote refs/heads/$branch is ${pushed:-missing}, expected $head"
 
+save_flake
 if [ "$branch" = "$main" ]; then
-  url=$canonical
+  relock "$canonical"
+  check_lock "$main" "" "$head"
 else
-  url="$base?ref=$branch&rev=$head&shallow=1"
+  relock "$base?ref=$branch&rev=$head&shallow=1"
+  check_lock "$branch" "$head" "$head"
 fi
-relock "$url"
-rev=$(locked_field rev)
-ref=$(locked_field ref)
-[ "$rev" = "$head" ] || die "flake.lock pins $input at ${rev:-nothing}, expected $head ($remote/$branch moved?)"
-[ -z "$ref" ] || [ "$ref" = "$branch" ] || die "flake.lock pins ref '$ref', expected '$branch'"
+keep_flake=true
 
 say "pinned $input to $branch at $head"
 if [ "$branch" != "$main" ]; then

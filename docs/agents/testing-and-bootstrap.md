@@ -38,7 +38,8 @@ with an SSH host key (and matching age identity) preserved across
   `../nix-secrets/.sops.yaml`. The edit stays uncommitted, and `vm:install`
   builds it with the default `LOCAL_SECRETS=true`, so nothing needs
   publishing. `git restore` in `../nix-secrets` revokes it. To keep it, commit
-  it on a `nix-secrets` branch and pin that branch with `task secrets:publish`
+  it on a `nix-secrets` branch and pin that branch with
+  `task secrets:publish MSG="authorize VM"`
   ([secrets.md](secrets.md#workflow-for-a-change-that-needs-new-or-updated-secrets)).
 - `task vm:install HOST=<flake-host>` — `bootstrap:reinstall` against the VM
   reusing the persistent key. HOST must be on the allow-list (`tests-server`,
