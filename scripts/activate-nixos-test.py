@@ -32,11 +32,43 @@ ENV_SHEBANG = "#!/usr/bin/env bash\n"
 GIT_ENV = {
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
     "GIT_AUTHOR_NAME": "t",
     "GIT_AUTHOR_EMAIL": "t@example.invalid",
     "GIT_COMMITTER_NAME": "t",
     "GIT_COMMITTER_EMAIL": "t@example.invalid",
 }
+# Per-invocation git settings for fixtures: no hooks, no signing, no templates.
+GIT_FLAGS = ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"]
+
+
+def controlled_env(home, base=None):
+    """The caller's environment minus everything git (or a caller's HOME/XDG
+    config) could inject: all GIT_* variables are dropped, HOME and
+    XDG_CONFIG_HOME point at an empty temp dir, and global/system git config
+    are disabled."""
+    env = {
+        k: v
+        for k, v in (os.environ if base is None else base).items()
+        if not k.startswith("GIT_")
+    }
+    home = Path(home)
+    (home / "xdg").mkdir(parents=True, exist_ok=True)
+    env.update(HOME=str(home), XDG_CONFIG_HOME=str(home / "xdg"), **GIT_ENV)
+    return env
+
+
+def git(*args, cwd, env):
+    """A fixture git command in a controlled environment."""
+    return subprocess.run(
+        ["git", *GIT_FLAGS, *args],
+        cwd=cwd,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+
+
 HASH = "abcdfghijklmnpqrsvwxyz0123456789"  # 32 nix-base32 chars
 VERSION = "26.05.20261115.b349185"
 
@@ -87,7 +119,7 @@ exec bash -c "$*" < "$STUB_LOG.stdin"
 }
 
 
-def make_repo(dest, store):
+def make_repo(dest, store, env):
     """A copy of the repo's scripts and Taskfiles with the store dir pointed at
     a temp directory: the only edit, asserted to hit exactly one line each."""
     repo = dest / "repo"
@@ -110,17 +142,11 @@ def make_repo(dest, store):
     # A throwaway git repo, so nothing depends on the caller's checkout (the
     # sandbox copy has no .git).
     for args in (
-        ("init", "-q", "-b", "main"),
+        ("init", "-q", "--template=", "-b", "main"),
         ("add", "-A"),
         ("commit", "-q", "-m", "init"),
     ):
-        subprocess.run(
-            ["git", *args],
-            cwd=repo,
-            env={**os.environ, **GIT_ENV},
-            check=True,
-            capture_output=True,
-        )
+        git(*args, cwd=repo, env=env)
     return repo
 
 
@@ -130,7 +156,10 @@ class Harness(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.store = self.tmp / "store"
         self.store.mkdir()
-        self.repo = make_repo(self.tmp, self.store)
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.base_env = controlled_env(self.home)
+        self.repo = make_repo(self.tmp, self.store, self.base_env)
         self.helper = self.repo / "scripts" / "activate-nixos.sh"
         self.target_script = self.repo / "scripts" / "_activate-nixos" / "activate.sh"
         self.bin = self.tmp / "bin"
@@ -144,7 +173,7 @@ class Harness(unittest.TestCase):
         self.host = "hpp-1"
         self.closure = self.make_closure(self.host)
         self.env = {
-            **os.environ,
+            **self.base_env,
             "PATH": f"{self.bin}:{os.environ['PATH']}",
             "STUB_LOG": str(self.log),
             "STUB_HOSTNAME": self.host,
@@ -433,12 +462,32 @@ class RemoteActivation(Harness):
         rows = [r[0] for r in self.lines() if r[0] in ("nix-env", "ACTIVATED")]
         self.assertEqual(rows, ["nix-env", "ACTIVATED"], "generation recorded first")
 
-    # nix starts its own ssh master; ControlMaster/ControlPath from ssh config
-    # collide with it ("protocol mismatch, got 'started'"), so every nix copy
-    # leg is forced to these, ahead of anything the caller passes.
-    COPY_FORCED = ["-oControlMaster=no", "-oControlPath=none"]
+    # Single-host copies must reuse the user's pre-opened ssh master (hardware
+    # key auth cannot be answered by an agent). ssh-ng:// always starts Nix's
+    # own master, so single-host mode copies over the legacy ssh:// store, with
+    # only ControlMaster=no (never become a master) ahead of caller options, and
+    # never ControlPath=none, which would defeat reuse of the existing socket.
+    COPY_FORCED = ["-oControlMaster=no"]
 
-    def test_single_host_copy_forces_no_multiplexing_first(self):
+    def test_single_host_copy_uses_ssh_store_and_never_disables_controlpath(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cp = self.copies()[0]
+        self.assertEqual(
+            cp[1].split()[-2:], ["ssh://ipreston@hpp-1", str(self.closure)]
+        )
+        self.assertNotIn("ssh-ng", cp[1])
+        self.assertNotIn("ControlPath", cp[2])
+        # a caller-pinned socket is still honoured
+        self.log.write_text("")
+        self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1",
+            "--target-ssh-opt=-oControlPath=/sock/CALLER",
+        )  # fmt: skip
+        self.assertIn("-oControlPath=/sock/CALLER", self.copies()[0][2])
+        self.assertNotIn("-oControlPath=none", self.copies()[0][2])
+
+    def test_single_host_copy_forces_no_master_first(self):
         r = self.run_helper(
             "--host", "hpp-1", "--dest", "hpp-1", "--port", "2222",
             "--target-ssh-opt=-oControlPath=/sock/CALLER",
@@ -452,9 +501,8 @@ class RemoteActivation(Harness):
         )
         # ssh keeps the first value it sees, so the caller's cannot win
         words = nixopts.removeprefix("NIX_SSHOPTS=[").removesuffix("]").split()
-        self.assertLess(
-            words.index("-oControlPath=none"), words.index("-oControlPath=/sock/CALLER")
-        )
+        self.assertNotIn("-oControlPath=none", words)
+        self.assertIn("-oControlPath=/sock/CALLER", words)
         self.assertLess(
             words.index("-oControlMaster=no"), words.index("-oControlMaster=auto")
         )
@@ -465,10 +513,21 @@ class RemoteActivation(Harness):
             self.copies()[0][2], "NIX_SSHOPTS=[" + " ".join(self.COPY_FORCED) + "]"
         )
 
-    def test_dry_run_single_host_shows_forced_copy_options(self):
+    def test_dry_run_single_host_shows_ssh_store_copy(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", "--dry-run")
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("nix copy --to ssh://ipreston@hpp-1", r.stdout)
         self.assertIn("NIX_SSHOPTS=" + " ".join(self.COPY_FORCED), r.stdout)
+        self.assertNotIn("ControlPath=none", r.stdout)
+        self.assertNotIn("ssh-ng", r.stdout)
+
+    def test_dry_run_check_plan_says_copy_is_skipped(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--action", "check", "--dry-run"
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("plan: copy: skipped (check)", r.stdout)
+        self.assertNotIn("nix copy", r.stdout)
 
     def test_port_and_target_options_scoped_to_target(self):
         self.run_helper(
@@ -483,7 +542,7 @@ class RemoteActivation(Harness):
         cp = [x for x in self.lines("nix") if x[1].startswith("copy")][0]
         self.assertIn("-p 2222", cp[2])
         self.assertIn("-oForwardAgent=yes", cp[2])
-        self.assertIn("ssh-ng://ipreston@10.0.0.5", cp[1])
+        self.assertIn("--to ssh://ipreston@10.0.0.5", cp[1])
         self.assertTrue(
             self.lines("ssh")[0][1].startswith(
                 "-p 2222 -oForwardAgent=yes -T ipreston@10.0.0.5"
@@ -738,12 +797,26 @@ class BuildHost(Harness):
         self.assertEqual(self.split_rows(), [])
         self.assertFalse(self.activated())
 
-    def test_single_host_activation_ssh_may_still_multiplex(self):
-        # only the nix copy transport is forced; the direct ssh is untouched
-        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+    def test_single_host_never_disables_multiplexing_anywhere(self):
+        # the pre-opened master must stay usable by the copy and the activation
+        for action in ("switch", "check"):
+            self.log.write_text("")
+            r = self.run_helper(
+                "--host", "hpp-1", "--dest", "hpp-1", "--action", action
+            )
+            self.assertEqual(r.returncode, 0, r.stderr)
+            rows = self.split_rows()
+            self.assertTrue(rows)
+            for cmd, argv, nixopts in rows:
+                self.assertNotIn("-oControlPath=none", argv)
+                self.assertNotIn("ControlPath=none", nixopts)
+
+    def test_split_host_copies_still_use_ssh_ng_with_isolation(self):
+        r = self.run_split()
         self.assertEqual(r.returncode, 0, r.stderr)
-        for cmd, argv, _ in self.split_rows():
-            self.assertNotIn("-oControlPath=none", argv)
+        push = [x for x in self.copies() if "--to ssh-ng://ipreston@hpp-1" in x[1]]
+        self.assertEqual(len(push), 1, self.copies())
+        self.assertTrue(push[0][2].startswith("NIX_SSHOPTS=[" + " ".join(self.FORCED)))
 
     def test_dry_run_split_host_shows_forced_options(self):
         r = self.run_helper(
@@ -779,18 +852,15 @@ class LocalSecrets(Harness):
         main = src / "nixos"
         shutil.copytree(self.repo / "scripts", main / "scripts")
         (src / "nix-secrets").mkdir()
-        git_env = {**self.env, **GIT_ENV}
 
-        def git(*a, cwd=main):
-            subprocess.run(
-                ["git", *a], cwd=cwd, env=git_env, check=True, capture_output=True
-            )
+        def g(*a, cwd=main):
+            git(*a, cwd=cwd, env=self.base_env)
 
-        git("init", "-q", "-b", "main")
-        git("add", "-A")
-        git("commit", "-q", "-m", "init")
+        g("init", "-q", "--template=", "-b", "main")
+        g("add", "-A")
+        g("commit", "-q", "-m", "init")
         wt = src / "nixos-worktrees" / "wt"
-        git("worktree", "add", "-q", str(wt), "-b", "feature")
+        g("worktree", "add", "-q", str(wt), "-b", "feature")
         return src, main, wt
 
     def override_of(self, r):
@@ -887,7 +957,7 @@ class TaskRouting(Harness):
     def test_deploy_activates_the_named_host_with_action(self):
         r = self.task("deploy:hpp-1", "ACTION=boot")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.copies()[0][1].split()[-2], "ssh-ng://ipreston@hpp-1")
+        self.assertEqual(self.copies()[0][1].split()[-2], "ssh://ipreston@hpp-1")
         self.assertEqual([x[1] for x in self.lines("ACTIVATED")], ["boot"])
 
     def test_bootstrap_rebuild_keeps_host_and_dest_distinct(self):
@@ -948,7 +1018,7 @@ class TaskRouting(Harness):
         }  # fmt: skip
         r = self.task("deploy:hpp-1", **hostile)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.copies()[0][1].split()[-2], "ssh-ng://ipreston@hpp-1")
+        self.assertEqual(self.copies()[0][1].split()[-2], "ssh://ipreston@hpp-1")
         self.assertEqual([x[1] for x in self.lines("ACTIVATED")], ["switch"])
         self.assertFalse([x for x in self.lines() if "amos1" in "".join(x)])
         # an inherited ACTIVATE_ACTION must not turn `check` into a switch
@@ -980,6 +1050,45 @@ class TaskRouting(Harness):
                 for n, line in enumerate(text.splitlines(), 1):
                     if banned in line and not line.lstrip().startswith(("#", "desc:")):
                         self.fail(f"{f.name}:{n} calls {banned} directly")
+
+
+class HostileGitEnvironment(unittest.TestCase):
+    """The fixtures and the helper's own git lookups must not depend on the
+    caller's git state: rerun the git-using suites with hostile GIT_* injected."""
+
+    def test_suites_pass_under_injected_git_state(self):
+        if os.environ.get("ACTIVATE_TEST_NESTED"):
+            self.skipTest("already the nested run")
+        with tempfile.TemporaryDirectory() as d:
+            gitconfig = Path(d) / "gitconfig"
+            gitconfig.write_text(
+                "[commit]\n\tgpgsign = true\n[init]\n\ttemplateDir = /nonexistent\n"
+            )
+            env = {
+                **os.environ,
+                "ACTIVATE_TEST_NESTED": "1",
+                "GIT_CONFIG_COUNT": "2",
+                "GIT_CONFIG_KEY_0": "commit.gpgsign",
+                "GIT_CONFIG_VALUE_0": "true",
+                "GIT_CONFIG_KEY_1": "core.hooksPath",
+                "GIT_CONFIG_VALUE_1": "/nonexistent",
+                "GIT_CONFIG_PARAMETERS": "'commit.gpgsign=true'",
+                "GIT_CONFIG_GLOBAL": str(gitconfig),
+                "GIT_DIR": str(Path(d) / "elsewhere.git"),
+                "GIT_WORK_TREE": str(Path(d) / "elsewhere"),
+                "GIT_INDEX_FILE": str(Path(d) / "elsewhere.index"),
+                "GIT_TEMPLATE_DIR": "/nonexistent",
+                "GIT_AUTHOR_NAME": "hostile",
+                "HOME": d,
+                "XDG_CONFIG_HOME": d,
+            }
+            r = subprocess.run(
+                [sys.executable, __file__, str(REPO), "LocalSecrets", "Harness",
+                 "BuildHost.test_split_host_copies_still_use_ssh_ng_with_isolation"],
+                env=env, capture_output=True, text=True, timeout=300,
+            )  # fmt: skip
+            self.assertEqual(r.returncode, 0, r.stderr[-3000:])
+            self.assertIn("OK", r.stderr)
 
 
 if __name__ == "__main__":

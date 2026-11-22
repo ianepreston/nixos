@@ -1691,9 +1691,12 @@ copy, in the same process as the activation. With a separate build host every
 ssh leg (including `nix copy`) is forced to `ControlMaster=no`,
 `ControlPath=none`, `ProxyJump=none` and `ProxyCommand=none`, and explicit
 `-J`/`ProxyJump` options are rejected (a jump client would not inherit them);
-single-host deploys still accept `-J`, and their `nix copy` leg is also forced
-to `ControlMaster=no`/`ControlPath=none` (nix's own ssh master collides with a
-`ControlMaster`/`ControlPath` from `~/.ssh/config`).
+single-host deploys still accept `-J` and reuse your pre-opened ssh master
+(needed for hardware-key auth): the closure is copied over the legacy `ssh://`
+store (one plain `ssh` per command, which picks up the master's `ControlPath`),
+because `ssh-ng://` always opens its own ssh master and so can never use the
+pre-opened one. In split-host mode every leg authenticates afresh, so a
+hardware key needs a touch per leg.
 The one accepted exception is `system.autoUpgrade`
 (`modules/system/auto-rebuild.nix`): it only ever activates the local host from
 `main`, so there is no remote target and no cross-host identity risk.

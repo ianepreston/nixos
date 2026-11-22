@@ -44,18 +44,24 @@
 #
 # SSH options are per host and never shared: NIX_SSHOPTS from the environment is
 # discarded, and each nix copy sees only the options of the one host it talks to.
-# Every nix copy to the target (single-host mode too) is forced to
-# -oControlMaster=no -oControlPath=none ahead of caller options: nix starts its
-# own ssh master, and a ControlMaster/ControlPath from ~/.ssh/config collides
-# with it ("protocol mismatch, got 'started'"). The direct ssh activation
-# connection is not forced, so in single-host mode it may still multiplex.
+# Single-host mode REUSES the ssh master you pre-opened (hardware-key ssh auth
+# cannot be answered by an agent): the closure is copied over the legacy
+# ssh:// store, which runs one plain `ssh` per command, so each of those picks
+# up the ControlPath socket from ~/.ssh/config. ssh-ng:// is NOT used there: it
+# always starts Nix's own ssh master on a private socket, so it can never use
+# the pre-opened one and would demand a fresh authentication. The copy leg is
+# given -oControlMaster=no (use an existing master, never become one) and never
+# ControlPath=none, which would defeat the reuse. The direct ssh activation
+# connection reuses the same master.
 # With --build-host, every ssh connection to EITHER host (build, pull, push,
 # activate; including the transports nix copy spawns) is forced to
 # -oControlMaster=no -oControlPath=none, placed before any user option so it
 # wins (ssh keeps the first value it sees, and command-line -o beats
 # ~/.ssh/config, `Match` blocks included). Nothing is multiplexed, so no socket
 # can carry a command meant for one host to the other; isolation does not
-# depend on parsing or comparing socket paths. A jump host would be a separate
+# depend on parsing or comparing socket paths. The price: every leg in split
+# mode authenticates afresh (ssh-ng:// opens one Nix master per copy), so a
+# hardware key needs a touch per leg. A jump host would be a separate
 # ssh client that never sees those forced options (and could reuse a shared
 # master), so split-host mode also rejects -J/-oProxyJump and forces
 # -oProxyJump=none -oProxyCommand=none, overriding any jump or proxy from
@@ -296,18 +302,26 @@ sshopts_string() { # prints the options of one host as a NIX_SSHOPTS string
   printf '%s' "$out"
 }
 
-# The nix copy transport must never multiplex: nix starts its own ssh master
-# (-M, LocalCommand 'echo started'), and a ControlMaster/ControlPath from
-# ~/.ssh/config collides with it ("protocol mismatch, got 'started'"). Split-host
-# mode already forces these (and more) at the head of target_opts; single-host
-# mode adds just these two here, ahead of any caller option so they win. The
-# direct activation ssh (ssh_target) is unaffected and may still multiplex.
+# Options for the copy to the target. Split-host mode already forces no
+# multiplexing (and more) at the head of target_opts. Single-host mode must
+# reuse the pre-opened master, so it adds only -oControlMaster=no (an existing
+# ControlPath socket is still used as a client; this ssh just never becomes a
+# master) and never ControlPath=none. Caller options follow and may still set
+# -oControlPath explicitly.
 target_nix_sshopts() {
   local s
   local forced=()
-  [ -n "$build_host" ] || forced=(-oControlMaster=no -oControlPath=none)
+  [ -n "$build_host" ] || forced=(-oControlMaster=no)
   s=$(sshopts_string ${forced[@]+"${forced[@]}"} ${port:+-p "$port"} ${target_opts[@]+"${target_opts[@]}"})
   printf '%s' "$s"
+}
+
+# ssh:// reuses the caller's pre-opened master (one plain ssh per command);
+# ssh-ng:// always opens its own master, so it is only used where multiplexing
+# is forbidden anyway (split-host mode: one authentication per copy, not per
+# store command).
+target_store_scheme() {
+  if [ -n "$build_host" ]; then printf 'ssh-ng'; else printf 'ssh'; fi
 }
 
 ssh_target() {
@@ -354,7 +368,11 @@ if [ "$dry_run" = true ]; then
     printf 'plan: activate locally: sudo bash %s %s %s %s <nonce>\n' "$activate_script" "$host" "$closure" "$action"
   else
     [ -z "$build_host" ] || printf 'plan: build on %s, pull to this machine, then copy\n' "$build_host"
-    printf 'plan: nix copy --to ssh-ng://%s (NIX_SSHOPTS=%s)\n' "$target" "$(target_nix_sshopts)"
+    if [ "$action" = check ]; then
+      printf 'plan: copy: skipped (check)\n'
+    else
+      printf 'plan: nix copy --to %s://%s (NIX_SSHOPTS=%s)\n' "$(target_store_scheme)" "$target" "$(target_nix_sshopts)"
+    fi
     printf 'plan: ssh -T %s sudo bash -s -- %s %s %s <nonce>  < activate.sh\n' "$target" "$host" "$closure" "$action"
   fi
   exit 0
@@ -389,11 +407,12 @@ fi
 # Local activation needs no copy. A remote build host's closure was pulled to
 # this machine above and is pushed to the target here, as two separate
 # single-host commands with multiplexing disabled, so neither host's options (or
-# control socket) can reach the other. The identity-only `check` action copies
-# nothing to the target.
+# control socket) can reach the other. Without a build host the copy reuses the
+# pre-opened ssh master (see the header). The identity-only `check` action
+# copies nothing to the target.
 if [ -n "$dest" ] && [ -z "$remote_flake" ] && [ "$action" != check ]; then
   printf '[+] Copying closure to %s\n' "$target" >&2
-  NIX_SSHOPTS=$(target_nix_sshopts) nix copy --to "ssh-ng://$target" "$closure"
+  NIX_SSHOPTS=$(target_nix_sshopts) nix copy --to "$(target_store_scheme)://$target" "$closure"
 fi
 
 # --- 3. activate (identity checks + switch in one process on the target) ------

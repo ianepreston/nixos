@@ -143,10 +143,15 @@ then pushed to the target, as two single-host commands). With a build host,
 every connection to either host (including the `nix copy` transports) is forced
 to `-oControlMaster=no -oControlPath=none -oProxyJump=none -oProxyCommand=none`,
 ahead of any option you pass, so no socket can be shared whatever
-`~/.ssh/config` says. In single-host mode only the `nix copy` leg is forced to
-`-oControlMaster=no -oControlPath=none` (also ahead of your options): nix starts
-its own ssh master, and a `ControlMaster`/`ControlPath` in `~/.ssh/config`
-collides with it (`protocol mismatch, got 'started'`). A jump host is a separate ssh client that never sees those
+`~/.ssh/config` says. Consequently, in split-host mode every leg authenticates afresh (ssh-ng opens
+a Nix-owned master per copy), so a hardware key needs a touch per leg.
+Single-host mode instead reuses your pre-opened master: the closure is copied
+over the legacy `ssh://` store (one plain `ssh` per command, picking up the
+`ControlPath` from `~/.ssh/config`) with only `-oControlMaster=no` added, never
+`ControlPath=none`. `ssh-ng://` is not used there because it always starts its
+own ssh master on a private socket, so it can never use the pre-opened one and
+would demand a fresh authentication (a failed touch shows as `failed to start
+SSH master connection`). A jump host is a separate ssh client that never sees those
 options, so with `--build-host` an explicit `-J`/`-oProxyJump` is rejected and
 any jump or proxy from `~/.ssh/config` is disabled; single-host mode still
 accepts `-J`/`-oProxyJump`. Every target ssh also passes `-T`, so a
@@ -161,7 +166,7 @@ where stdin goes, or which config/socket is used (`-n`, `-N`, `-f`, `-W`, `-O`,
 `-S`, `-F`, `-l`, `RemoteCommand`, `ProxyCommand`, `User`, …) is rejected. Use
 `--port` and `--user` rather than `-p`/`-l`. The helper opens plain `ssh`
 connections, so (single-host only) an existing master from `~/.ssh/config` is
-reused for the activation ssh (never for `nix copy`, see above); to pin one
+reused for both the closure copy and the activation ssh; to pin one
 explicitly pass `--target-ssh-opt=-oControlPath=$HOME/.ssh/master-ipreston@<host>:22
 --target-ssh-opt=-oControlMaster=no`.
 
