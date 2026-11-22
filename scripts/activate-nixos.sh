@@ -36,7 +36,7 @@
 #                       nothing is built or copied locally (bootstrap rebuild)
 #   --flake DIR         local flake (default: the checkout containing this script)
 #   --override-input N V  passed to nix build/eval (repeatable)
-#   --local-secrets     override nix-secrets with the sibling checkout, found
+#   --local-secrets     override nix-secrets (default: flake.lock) with the sibling checkout, found
 #                       portably from worktrees ($NIX_SECRETS_PATH wins)
 #   --action A          switch (default) | boot | test | check
 #                       check = identity assertions only, activates nothing

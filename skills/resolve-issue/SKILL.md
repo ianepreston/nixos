@@ -71,9 +71,11 @@ Two worktree gotchas:
   Commit normally once that succeeds. Do **not** set
   `PRE_COMMIT_ALLOW_NO_CONFIG=1`: it papers over the missing config and can
   make the local hook a no-op. `task check` remains the full pre-push gate.
-- `task deploy:*` / `task rebuild` go through `scripts/activate-nixos.sh
-  --local-secrets`, which finds `../nix-secrets` from a worktree via the main
-  checkout. Set `NIX_SECRETS_PATH` if yours lives elsewhere.
+- `task deploy:*` / `task rebuild` resolve `nix-secrets` from `flake.lock`, so
+  no sibling checkout is needed. `LOCAL_SECRETS=true` adds
+  `scripts/activate-nixos.sh --local-secrets`, which finds `../nix-secrets` from
+  a worktree via the main checkout (`NIX_SECRETS_PATH` if yours lives
+  elsewhere).
 
 ## 4. Implement
 

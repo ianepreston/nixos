@@ -40,7 +40,19 @@ tasks:
     # branch (.github/workflows/renovate-hashes.yml). Run it by hand after
     # editing a pinned `rev`/`tag` yourself — a stale hash silently builds the
     # old source on any host whose store already has it (#625).
-    cmd: REGEN_NIX_ARGS='--override-input nix-secrets path:../nix-secrets' ./scripts/regen-fetch-hashes.sh {{.CLI_ARGS}}
+    # nix-secrets resolves from flake.lock, like CI. `LOCAL_SECRETS=true task
+    # hashes` opts into the sibling ../nix-secrets checkout (#1042).
+    vars:
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+    cmd: |
+      set -euo pipefail
+      case {{.LOCAL_SECRETS | shellQuote}} in
+        true) export REGEN_NIX_ARGS='--override-input nix-secrets path:../nix-secrets' ;;
+        # an inherited REGEN_NIX_ARGS must not smuggle in an override
+        false) unset REGEN_NIX_ARGS ;;
+        *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/regen-fetch-hashes.sh {{.CLI_ARGS}}
   build:
     desc: Build a specific host (default luna)
     vars:
@@ -62,15 +74,51 @@ tasks:
   # explicit arguments rendered with shellQuote, never through `env:` (Task lets
   # an inherited environment variable of the same name override `env:`, which
   # could redirect a deploy), and the helper validates them again.
+  #
+  # nix-secrets resolves from flake.lock, the revision `task build` and CI use
+  # (auto-upgrade reads the lock from the GitHub flake, which can differ from a
+  # local checkout) (#1042). `LOCAL_SECRETS=true task deploy:<host>` opts into
+  # the sibling checkout (--local-secrets) for unpublished secrets work; it is
+  # validated true|false like taskfiles/bootstrap.yaml.
   rebuild:
     desc: Rebuild this NixOS host (refuses unless hostname matches the configuration)
-    cmd: ./scripts/activate-nixos.sh --host "$(hostname)" --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
+    vars:
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+    cmd: |
+      set -euo pipefail
+      secrets=()
+      case {{.LOCAL_SECRETS | shellQuote}} in
+        true) secrets=(--local-secrets) ;;
+        false) ;;
+        *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host "$(hostname)" ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   rebuild:*:
     desc: Rebuild a particular config on this machine, pass :[hostname] (refuses unless it equals this machine's hostname)
-    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
+    vars:
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+    cmd: |
+      set -euo pipefail
+      secrets=()
+      case {{.LOCAL_SECRETS | shellQuote}} in
+        true) secrets=(--local-secrets) ;;
+        false) ;;
+        *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   deploy:*:
     desc: Build locally, copy, and activate on a live remote host, pass :[hostname] for the target
-    cmd: ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} --local-secrets --action {{.ACTION | default "switch" | shellQuote}}
+    vars:
+      LOCAL_SECRETS: '{{if kindIs "invalid" .LOCAL_SECRETS}}false{{else}}{{.LOCAL_SECRETS}}{{end}}'
+    cmd: |
+      set -euo pipefail
+      secrets=()
+      case {{.LOCAL_SECRETS | shellQuote}} in
+        true) secrets=(--local-secrets) ;;
+        false) ;;
+        *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
+      esac
+      ./scripts/activate-nixos.sh --host {{index .MATCH 0 | shellQuote}} --dest {{index .MATCH 0 | shellQuote}} ${secrets[@]+"${secrets[@]}"} --action {{.ACTION | default "switch" | shellQuote}}
   build_home:*:
     desc: Rebuild standalone home-manager, pass :[flaketarget] for the target
     cmd: nix shell nixpkgs#home-manager -c home-manager -b bak switch --flake .#{{ index .MATCH 0 }}
