@@ -276,6 +276,139 @@ class Gates(unittest.TestCase):
         self.assertTrue(png.endswith(b"IEND\xaeB`\x82"))
 
 
+def chat_response(content: str = "", calls: list | None = None, finish="stop") -> dict:
+    tool_calls = [
+        {
+            "function": {
+                "name": n,
+                "arguments": a if isinstance(a, str) else json.dumps(a),
+            }
+        }
+        for n, a in calls or []
+    ]
+    return {
+        "choices": [
+            {
+                "message": {"content": content, "tool_calls": tool_calls},
+                "finish_reason": finish,
+            }
+        ]
+    }
+
+
+ROUTE = {
+    "tools": {"must": ["get_income"], "must_not": ["record_activity"]},
+    "args": {
+        "get_income.period": {"want": ["YTD"], "may_be_empty": True},
+        "search.query|symbol": {"want": ["ACME"]},
+    },
+}
+ANSWER = {
+    "tools": {"may_be_empty": True},
+    "reply": {
+        "must": ["ACME"],
+        "must_not": ["WIDGETCO"],
+        "numbers": {"total": {"any": [1234.56]}, "rate": {"any": [7.31234, 3.3]}},
+    },
+}
+
+
+class ScoreTrace(unittest.TestCase):
+    def test_route_pass(self):
+        r = llm_eval.score_case(
+            ROUTE,
+            chat_response(
+                calls=[
+                    ("get_income", {"period": "YTD"}),
+                    ("search", {"symbol": "acme"}),
+                ]
+            ),
+        )
+        self.assertEqual(failed(r), set())
+
+    def test_route_defaulted_arg_passes_wrong_tool_fails(self):
+        r = llm_eval.score_case(ROUTE, chat_response(calls=[("get_income", {})]))
+        self.assertEqual(failed(r), {"search.query|symbol:want"})
+        r = llm_eval.score_case(
+            ROUTE,
+            chat_response(
+                calls=[("record_activity", {}), ("get_income", {"period": "ALL"})]
+            ),
+        )
+        self.assertIn("tools:must_not:record_activity", failed(r))
+        self.assertIn("get_income.period:want-or-empty", failed(r))
+
+    def test_clarifying_question_instead_of_a_call_fails(self):
+        r = llm_eval.score_case(ROUTE, chat_response("Which account do you mean?"))
+        self.assertIn("tools:must:get_income", failed(r))
+        self.assertNotIn("*:complete", failed(r))
+
+    def test_answer_numbers_tolerate_formatting(self):
+        r = llm_eval.score_case(
+            ANSWER, chat_response("**ACME** paid about $1.23k, a return of 7.3% (-$12)")
+        )
+        self.assertEqual(failed(r), set())
+        r = llm_eval.score_case(ANSWER, chat_response("ACME paid $1,234.56, up 3.30%."))
+        self.assertEqual(failed(r), set())
+        # gpt-oss typography: U+202F thousands separator, U+2011 hyphen.
+        r = llm_eval.score_case(
+            ANSWER, chat_response("A‑CME? No: ACME paid 1 234.56, up 3.3 %.")
+        )
+        self.assertEqual(failed(r), set())
+
+    def test_typographic_hyphen_matches_ascii_name(self):
+        rule = {"reply": {"must_not": ["WIDGET-CO"], "want": ["aren't any"]}}
+        r = llm_eval.score_case(rule, chat_response("WIDGET‑CO: there aren’t any"))
+        self.assertEqual(failed(r), {"reply:must_not:WIDGET-CO"})
+
+    def test_answer_wrong_figure_or_extra_call_fails(self):
+        r = llm_eval.score_case(
+            ANSWER,
+            chat_response("ACME and WIDGETCO paid $7,100.", [("get_holdings", {})]),
+        )
+        self.assertEqual(
+            failed(r),
+            {
+                "tools:empty",
+                "reply:must_not:WIDGETCO",
+                "reply:number:total",
+                "reply:number:rate",
+            },
+        )
+
+    def test_same_total_whatever_the_reply(self):
+        good = llm_eval.score_case(ANSWER, chat_response("ACME $1,234.56 7.3%"))
+        empty = llm_eval.score_case(ANSWER, chat_response("", finish="length"))
+        self.assertEqual(good["total"], empty["total"])
+        self.assertIn("*:complete", failed(empty))
+
+    def test_unparseable_tool_arguments(self):
+        r = llm_eval.score_case(ROUTE, chat_response(calls=[("get_income", "{nope")]))
+        self.assertIn("*:parses", failed(r))
+
+    def test_unknown_keys_are_errors(self):
+        with self.assertRaises(ValueError):
+            llm_eval.score_case({"tools": {}, "bogus": 1}, chat_response("x"))
+        with self.assertRaises(ValueError):
+            llm_eval.score_case(
+                {"reply": {"numbers": {"x": {"any": [1], "pct": 1}}}},
+                chat_response("1"),
+            )
+
+    def test_audit_sees_reply_values_and_numbers_not_tool_names(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case = Path(tmp) / "app-chat" / "income"
+            case.mkdir(parents=True)
+            (case / "expected.json").write_text(json.dumps({**ROUTE, **ANSWER}))
+            hits, _ = llm_eval.audit(
+                "get_income was called; ACME paid 1,234.56 (YTD)", Path(tmp)
+            )
+        self.assertLessEqual({"ACME", "1,234.56", "YTD"}, set(hits))
+        self.assertFalse({"get_income", "record_activity"} & set(hits))
+
+
 class Compare(unittest.TestCase):
     def run_of(self, trials: list[dict]) -> dict:
         return {
