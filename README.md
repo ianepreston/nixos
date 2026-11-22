@@ -139,7 +139,8 @@ blueprint (if SSO-protected), and a homepage tile — all in one place.
 [`modules/apps/bookorbit.nix`](modules/apps/bookorbit.nix) is the canonical
 container/Postgres/OIDC example: BookOrbit runs in Podman, uses the shared
 Postgres instance, and stores its OIDC settings in its own database after UI
-setup. For a native service with OIDC credentials supplied through an env file,
+setup. For a native service with OIDC credentials supplied as JSON through a
+rendered env file,
 see [`modules/apps/tandoor.nix`](modules/apps/tandoor.nix).
 
 App modules contribute to a small set of aggregator options declared inline next
@@ -255,14 +256,15 @@ Container state under `/var/lib/containers` is preserved as a whole by
 excluding Podman's image store. State outside that tree needs its own
 `myAppState` declaration.
 
-SQLite-backed native apps additionally opt into the `mySqliteQuiesce` helper
+SQLite-backed apps additionally opt into the `mySqliteQuiesce` helper
 (`modules/system/sqlite-quiesce.nix`), which runs `sqlite3 .backup` for each
 declared database into `/var/backup/sqlite/<app>/` immediately before each
 restic run. The staging root is added to the restic paths automatically, so each
-snapshot contains both the (hot, possibly torn) live file under
-`/var/lib/<app>/...` and a guaranteed-consistent copy under
-`/var/backup/sqlite/<app>/`. Apps currently using it: jellyfin, sonarr, radarr,
-lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf.
+snapshot contains both the (hot, possibly torn) live file in the app's state
+directory and a guaranteed-consistent copy under `/var/backup/sqlite/<app>/`.
+Apps currently declaring it: audiobookshelf, bambuddy, bazarr, bindery, gatus,
+jellyfin, komga, lidarr, minuspod, pinchflat, prowlarr, radarr, shelfmark, sonarr,
+wealthfolio. The enabled set depends on the host's module imports.
 
 Only server-local app state is in scope. NAS-resident media under `/mnt/content`
 is protected NAS-side via Synology snapshots / Hyper Backup, not by restic.
@@ -384,7 +386,11 @@ sudo restic -r /mnt/backups/restic/<host> \
 
 `pg_dumpall` writes one combined file with every database and role. The awk
 filter below extracts a single database's section by tracking `\connect <name>`
-markers. Roles are managed by NixOS `ensureUsers` and don't need to be replayed.
+markers. It also stops at `CREATE DATABASE`, because `pg_dumpall` emits the
+next database's creation statement before its `\connect` marker; replaying
+that statement can fail on an already-provisioned database. This matches the
+filter in `taskfiles/recovery.yaml`. Roles are managed by NixOS `ensureUsers`
+and don't need to be replayed.
 
 ##### Containerized app with volume + postgres database (bookorbit)
 
@@ -411,6 +417,7 @@ sudo -u postgres createdb -O bookorbit bookorbit
 sudo systemctl restart bookorbit-db-extensions.service
 zcat /var/backup/postgresql/all.sql.gz | awk '
   /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "bookorbit"); next }
+  /^CREATE DATABASE / { in_target = 0; next }
   in_target { print }
 ' | sudo -u postgres psql -v ON_ERROR_STOP=1 bookorbit
 
@@ -436,6 +443,7 @@ sudo -u postgres dropdb --if-exists miniflux
 sudo -u postgres createdb -O miniflux miniflux
 zcat /var/backup/postgresql/all.sql.gz | awk '
   /^\\connect / { db = $2; gsub(/"/, "", db); in_target = (db == "miniflux"); next }
+  /^CREATE DATABASE / { in_target = 0; next }
   in_target { print }
 ' | sudo -u postgres psql -v ON_ERROR_STOP=1 miniflux
 sudo systemctl start miniflux.service
@@ -444,7 +452,7 @@ sudo systemctl start miniflux.service
 Authentik fits the same shape (everything in the `authentik` postgres db, no
 host state worth restoring) — same recipe with the names swapped.
 
-##### Native service with on-disk state + SQLite (jellyfin, \*arr, kavita, …)
+##### Native service with on-disk state + SQLite (jellyfin, \*arr, komga, …)
 
 Jellyfin keeps everything under `/var/lib/jellyfin` — XML config, plugins,
 metadata cache, and the library SQLite database at
@@ -504,10 +512,10 @@ sudo systemctl start jellyfin.service
 Media files themselves live on the NAS under `/mnt/content` and are out of scope
 for restic — Synology snapshots cover them.
 
-The same pattern applies to every app that opts into `mySqliteQuiesce` (sonarr,
-radarr, lidarr, prowlarr, bazarr, kavita, komga, audiobookshelf): stop
-the unit, `restic restore` both `/var/lib/<app>` (or `/var/lib/private/<app>`
-for DynamicUser apps like prowlarr) and `/var/backup/sqlite/<app>`,
+The same pattern applies to other apps declared in `mySqliteQuiesce.apps`
+(see the current list above): stop every consumer unit, then `restic restore`
+both the app's state directory and `/var/backup/sqlite/<app>`
+(the state path may be under `/var/lib/private` or `/var/lib/containers`),
 then `install` each staged `.db` over the live path declared in the app's
 module. Check `mySqliteQuiesce.apps.<app>.databases` in the module for the exact
 source paths to overwrite (e.g. sonarr →
@@ -809,11 +817,16 @@ original store paths) all fail with "Invalid blueprint path". Real files via
 Apps that speak OIDC natively register via the `myAuthentik.oidcApps` aggregator
 from `modules/apps/authentik.nix`. The aggregator generates the sops secret
 pair, contributes the per-app blueprint dir, and stacks one merged worker-side
-env file onto authentik so blueprint `!Env` placeholders resolve. Apps that read
-OIDC creds from env vars (miniflux, paperless-ngx, tandoor, komga,
-actualbudget) get their own per-app env file too; apps that store creds in their
-own DB/UI (bookorbit, audiobookshelf, kavita, seerr) opt out via
-`clientCredsInAppEnv = false`.
+env file onto authentik so blueprint `!Env` placeholders resolve.
+
+Miniflux, Komga, and Actual Budget use the aggregator's generated client-ID and
+client-secret env vars. Tandoor and Paperless-ngx instead set
+`clientCredsInAppEnv = false` and supply OIDC credentials in JSON settings
+through `extraEnvLines`; they still consume the rendered per-app env file.
+Tandoor remains a native env-file OIDC example. Apps that configure OIDC in
+their own DB/UI (BookOrbit, Audiobookshelf, Seerr) also set
+`clientCredsInAppEnv = false`, with no OIDC env file consumed by the app.
+BookOrbit has a separate env template for its non-OIDC secrets.
 
 Blueprint secrets must reference `!Env <APP>_OIDC_CLIENT_ID` /
 `<APP>_OIDC_CLIENT_SECRET` (uppercased app name with hyphens → underscores) so

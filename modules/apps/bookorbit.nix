@@ -4,7 +4,7 @@
 # fallback" rule applies. The upstream image runs as root, repairs
 # ownership of /data, then drops to PUID:PGID, so we pin those to
 # server-${env}:servers for NFS UID alignment (the library lives on the
-# Synology share at /mnt/content/books, same path komga/kavita read).
+# Synology share under /mnt/content).
 #
 # Postgres via myPostgresApp (TCP + sops `bookorbit/db_password`). The
 # app needs the `uuid-ossp`, `pg_trgm`, and `vector` (pgvector)
@@ -19,7 +19,7 @@
 # OIDC is configured in the app UI (Settings -> OIDC / SSO) and stored
 # in bookorbit's own postgres, not via env — so this registers via
 # myAuthentik.oidcApps with clientCredsInAppEnv = false (audiobookshelf /
-# kavita / readmeabook pattern). After first boot, complete the local
+# seerr pattern). After first boot, complete the local
 # admin setup (the SETUP_BOOTSTRAP_TOKEN is sent as the x-setup-token
 # header by the setup wizard), then under Settings -> OIDC / SSO add a
 # provider with:
