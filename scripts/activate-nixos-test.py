@@ -107,6 +107,22 @@ echo "$STUB_HOSTNAME"
 exit "${STUB_LOCAL_HOSTNAME_RC:-0}"
 """,
     "sudo": 'log "$@"; exec "$@"',
+    # the store-copy user and its logind state (#1076): STUB_NO_COPY_USER removes
+    # the user; STUB_LOGIND_BUSY_POLLS=N makes the first N polls see a session.
+    "id": r"""
+if [ "$*" = "-u nix-ssh" ]; then
+  [ -z "${STUB_NO_COPY_USER:-}" ] || exit 1
+  echo 981; exit 0
+fi
+PATH=${PATH#"$(dirname "$0")":} exec id "$@"
+""",
+    "loginctl": r"""
+log "$@"
+n=$(cat "$STUB_LOG.polls" 2>/dev/null || echo 0)
+echo $((n + 1)) > "$STUB_LOG.polls"
+[ "$n" -lt "${STUB_LOGIND_BUSY_POLLS:-0}" ]
+""",
+    "systemctl": 'log "$@"; echo inactive',
     "nix-env": 'log "$@"',
     "systemd-run": 'log "$@"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"',
     "ssh-add": r"""
@@ -788,6 +804,53 @@ class RemoteActivation(Harness):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.operational_ssh(), [])
         self.assertFalse(self.activated())
+
+    def test_lingering_copy_session_is_waited_out_before_activation(self):
+        r = self.run_helper(
+            "--host",
+            "hpp-1",
+            "--dest",
+            "hpp-1",
+            STUB_LOGIND_BUSY_POLLS=3,
+            ACTIVATE_SETTLE_INTERVAL=0.05,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("waiting for the nix-ssh session", r.stderr)
+        self.assertEqual(len(self.lines("loginctl")), 4, "3 busy polls, then clear")
+        self.assertEqual(len(self.lines("ACTIVATED")), 1)
+        self.assertEqual(
+            len(self.operational_ssh()), 1, "waiting opens no extra connection"
+        )
+
+    def test_no_copy_session_means_no_wait(self):
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("waiting", r.stderr)
+        self.assertEqual(len(self.lines("loginctl")), 1, "one poll, no wait")
+        r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_NO_COPY_USER=1)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.lines("loginctl")), 1, "no user, no poll")
+        self.assertEqual(len(self.lines("ACTIVATED")), 2)
+
+    def test_copy_session_that_never_ends_fails_before_activation(self):
+        r = self.run_helper(
+            "--host",
+            "hpp-1",
+            "--dest",
+            "hpp-1",
+            STUB_LOGIND_BUSY_POLLS=100000,
+            ACTIVATE_SETTLE_TIMEOUT=1,
+            ACTIVATE_SETTLE_INTERVAL=0.05,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did not end", r.stderr)
+        self.assertIn("safe to retry", r.stderr)
+        self.assertNotIn("failed (not retried)", r.stderr)
+        self.assertFalse(self.activated())
+        self.assertEqual(self.lines("nix-env"), [], "profile untouched")
+        self.assertEqual(self.lines("systemd-run"), [])
+        self.assertEqual(len(self.operational_ssh()), 1)
+        self.assertNotIn("ACTIVATE-NIXOS-DONE", r.stdout)
 
     def test_activation_failure_is_reported_once_and_not_retried(self):
         r = self.run_helper("--host", "hpp-1", "--dest", "hpp-1", STUB_SWITCH_RC=1)

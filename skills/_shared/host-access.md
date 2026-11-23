@@ -190,7 +190,10 @@ cannot pass as success). The activation's own stdin is `/dev/null` and its
 stdout goes to stderr, so it can neither swallow the script nor fuse its output
 with a sentinel. No retries, no fallback host. The target `hostname` is checked
 again after the copy (copy only needs the connection; the check runs in the same
-process as the switch). `task bootstrap:rebuild` always switches; use
+process as the switch). Before activating, the target script also waits (up to 60s, no wait when
+there is none) for the `nix-ssh` store-copy session to end, so the switch's user-unit reload
+cannot race its teardown (#1076); if it never ends the run fails before activating and is
+safe to retry. `task bootstrap:rebuild` always switches; use
 the helper directly with the synced `--remote-flake` path and
 `--action check|test|boot` for another action.
 

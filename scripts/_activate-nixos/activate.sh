@@ -61,6 +61,39 @@ fi
 
 [ -x "$closure/bin/switch-to-configuration" ] || die "closure is not a NixOS system: $closure"
 
+# Wait for the store-copy user's logind session to go away (#1076). The closure
+# is copied to this machine as `nix-ssh`; its session and user@<uid>.service are
+# torn down moments after the copy ends. If switch-to-configuration reloads user
+# units in that same second it can fail looking up the vanishing logind object
+# ("Failed to get GID for nix-ssh"), after the switch has already landed. So
+# activation starts only once that user has no session or user manager. No
+# session means no delay. If it never settles we stop HERE, before touching the
+# profile or the running system, and say so: that failure is safe to retry.
+# This is a wait, not a retry of the activation, and changes no sshd/PAM/linger
+# setting. The two knobs are for tests; sudo scrubs them on a real target.
+copy_user=nix-ssh
+settle_timeout=${ACTIVATE_SETTLE_TIMEOUT:-60}
+settle_interval=${ACTIVATE_SETTLE_INTERVAL:-1}
+
+copy_user_active() { # logind still knows the user, or its user manager is not down
+  local uid=$1 state
+  loginctl show-user "$uid" >/dev/null 2>&1 && return 0
+  state=$(systemctl show -p ActiveState --value "user@$uid.service" 2>/dev/null || true)
+  case $state in '' | inactive | failed) return 1 ;; *) return 0 ;; esac
+}
+
+if copy_uid=$(id -u "$copy_user" 2>/dev/null) && copy_user_active "$copy_uid"; then
+  printf 'activate: waiting for the %s session (uid %s) to end before activating\n' "$copy_user" "$copy_uid" >&2
+  deadline=$((SECONDS + settle_timeout))
+  while copy_user_active "$copy_uid"; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      printf 'ACTIVATE-NIXOS-NOT-ACTIVATED %s %s\n' "$nonce" "$host"
+      die "the $copy_user session (uid $copy_uid) did not end within ${settle_timeout}s; nothing was activated, so it is safe to retry"
+    fi
+    sleep "$settle_interval"
+  done
+fi
+
 # Same bookkeeping nixos-rebuild does: record the generation first (switch and
 # boot only), then run switch-to-configuration as a transient systemd unit with
 # the flags nixos-rebuild uses. That gives it its own cgroup outside this login
