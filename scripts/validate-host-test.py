@@ -119,6 +119,20 @@ esac
 # changes the stub target's running system and generation.
 HELPER = r"""
 log "$@"
+if [ -n "${STUB_REJECT_OVERRIDE:-}" ]; then
+  # like activate-nixos.sh safe(): the whole NAME=VALUE is echoed verbatim
+  prev2="" prev1="" name="" value=""
+  for a in "$@"; do
+    if [ "$prev2" = --override-input ]; then name=$prev1 value=$a; fi
+    prev2=$prev1 prev1=$a
+  done
+  case $STUB_REJECT_OVERRIDE:" $* " in
+    dry-run:*" --dry-run "*)
+      echo "activate-nixos: unsafe or empty override: '$name=$value'" >&2; exit 1 ;;
+    preflight-path:*" --preflight "*)
+      path=${value#*://*/}; echo "preflight: cannot read /${path%%\?*} on the build machine" >&2; exit 1 ;;
+  esac
+fi
 case " $* " in
   *" --dry-run "*)
     [ "${STUB_DRYRUN_RC:-0}" = 0 ] || { echo "activate-nixos: eval failed" >&2; exit "$STUB_DRYRUN_RC"; }
@@ -788,9 +802,10 @@ class Redaction(Harness):
         r = self.drive("--host", "hpp-1", STUB_DRYRUN_RC=1)
         self.assertEqual(r.returncode, 1, r.stderr)
         path, ev = self.evidence(r)
+        # mentions an override: never copied, even when it is not one we know
         self.assertEqual(
             ev["message"],
-            "activate-nixos: unsafe override https://<redacted>@h.invalid/x?<redacted>",
+            "helper rejected an override input; details in the local stage log",
         )
         self.assertNotIn(token, path.read_text())
 
@@ -1034,6 +1049,57 @@ class CycleTwo(Harness):
         self.assertEqual(
             ev["probes"], [{"index": 1, "id": probe_id("true"), "exit_code": None}]
         )
+
+
+class HelperDiagnostics(Harness):
+    """A helper diagnostic that echoes an override value never reaches the
+    evidence or the printed summaries: only the input name and fingerprint."""
+
+    TOKEN = "k3yAbcd" + "Efgh1234"  # split so ripsecrets ignores the fixture
+    URL = f"https://files.example.invalid/s/{TOKEN}/download/input.tar.gz?download=1"
+
+    def run_rejected(self, mode):
+        r = self.drive("--host", "hpp-1", "--override-input", "blob", self.URL, STUB_REJECT_OVERRIDE=mode)  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        text = path.read_text()
+        for leak in (self.TOKEN, "/s/", "input.tar.gz", "download=1"):
+            self.assertNotIn(leak, text)
+            self.assertNotIn(leak, r.stderr)
+            self.assertNotIn(leak, r.stdout)
+        marker = f"<input:blob {fingerprint(self.URL)}>"
+        return ev, marker
+
+    def test_rejected_override_in_dry_run_reports_name_and_fingerprint(self):
+        ev, marker = self.run_rejected("dry-run")
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertEqual(
+            ev["message"],
+            f"helper diagnostic concerns override input {marker}; details in the local stage log",
+        )
+        self.assertEqual(self.statuses(ev)["inputs"], "failed")
+        # the full diagnostic stays in the local log
+        log = Path(next(s["log"] for s in ev["stages"] if s["name"] == "inputs"))
+        self.assertIn(self.TOKEN, log.read_text())
+
+    def test_url_path_alone_in_a_later_stage_is_masked(self):
+        ev, marker = self.run_rejected("preflight-path")
+        self.assertEqual(ev["failed_stage"], "preflight")
+        self.assertIn(marker, ev["message"])
+
+    def test_masks_cover_raw_decoded_and_parsed_forms(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "vh", REPO / "scripts" / "validate-host.py"
+        )
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        encoded = self.URL.replace("/s/", "/s%2F", 1)
+        masks = dict(vh.input_masks([("blob", encoded)]))
+        marker = f"<input:blob {fingerprint(encoded)}>"
+        for form in (encoded, self.URL, self.URL.split("?")[0], "download=1"):
+            self.assertEqual(masks.get(form), marker, form)
 
 
 if __name__ == "__main__":

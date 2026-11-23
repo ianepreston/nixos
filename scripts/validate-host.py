@@ -407,6 +407,25 @@ SAFE_REV_RE = re.compile(r"[0-9a-f]{7,40}")
 SAFE_REF_RE = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 
 
+def input_masks(overrides):
+    """(form, marker) pairs, longest form first, for every override value: the
+    raw value, its decoded form, the value without query/fragment, and the URL
+    path, authority and query. Each occurrence becomes `<input:NAME FP>`."""
+    masks = {}
+    for name, value in overrides:
+        value = str(value)
+        marker = f"<input:{name} {describe_input(name, value)['fingerprint']}>"
+        forms = {value, urllib.parse.unquote(value)}
+        for v in list(forms):
+            forms.add(v.partition("?")[0].partition("#")[0])
+            parts = urllib.parse.urlsplit(v)
+            forms.update({parts.path, parts.netloc, parts.query})
+        for form in forms:
+            if len(form) >= 4 and form not in masks:
+                masks[form] = marker
+    return sorted(masks.items(), key=lambda kv: -len(kv[0]))
+
+
 def describe_input(name, value):
     """An input override for the evidence: its location without query,
     fragment, userinfo or (for unrecognised URLs) path; safe `rev`/`ref`
@@ -535,6 +554,7 @@ class Validation:
         for name, value in args.override_input:
             self.input_flags += ["--override-input", name, value]
         self.closure_re = re.compile(CLOSURE_RE % re.escape(self.host))
+        self.input_masks = input_masks(args.override_input)
         self.stages = {
             name: {"name": name, "status": "not-run", "log": None} for name in STAGES
         }
@@ -562,6 +582,32 @@ class Validation:
         }
 
     # --- plumbing -------------------------------------------------------------
+    def clean(self, text):
+        """Evidence/summary text: every known override value masked, then the
+        general scrub."""
+        if text is None:
+            return None
+        text = str(text)
+        for form, marker in self.input_masks:
+            text = text.replace(form, marker)
+        return scrub(text)
+
+    def helper_message(self, log, prefixes):
+        """The helper's last classified diagnostic, safe for the evidence. A
+        line that names an override (the helper echoes a rejected
+        `NAME=VALUE` verbatim) is never copied: only the input names and
+        fingerprints are reported; the full text stays in the local log."""
+        line = last_message(log, prefixes)
+        if line is None:
+            return None
+        masked = self.clean(line)
+        hits = sorted(set(re.findall(r"<input:[^ >]+ [0-9a-f]{12}>", masked)))
+        if hits:
+            return f"helper diagnostic concerns override input {', '.join(hits)}; details in the local stage log"
+        if "override" in line:
+            return "helper rejected an override input; details in the local stage log"
+        return masked
+
     def log(self, stage):
         return self.run_dir / f"{STAGES.index(stage) + 1:02d}-{stage}.log"
 
@@ -825,7 +871,7 @@ class Validation:
         rc, _ = run_logged(self.helper("--dry-run"), log, EVAL_TIMEOUT)
         if rc != 0:
             raise StageFailed(
-                last_message(log, ("activate-nixos:",))
+                self.helper_message(log, ("activate-nixos:",))
                 or f"helper --dry-run failed (exit {rc})",
                 rc,
             )
@@ -845,7 +891,7 @@ class Validation:
         log = self.log("preflight")
         rc, _ = run_logged(self.helper("--preflight"), log, PREFLIGHT_TIMEOUT)
         if rc != 0:
-            msg = last_message(log, ("preflight:", "activate-nixos:"))
+            msg = self.helper_message(log, ("preflight:", "activate-nixos:"))
             raise StageFailed(
                 msg
                 or (
@@ -855,7 +901,7 @@ class Validation:
                 ),
                 rc,
             )
-        return last_message(log, ("preflight: passed",)) or "passed"
+        return self.helper_message(log, ("preflight: passed",)) or "passed"
 
     def stage_pre_state(self):
         state = self.read_state("pre-state")
@@ -870,7 +916,9 @@ class Validation:
         log = self.log("check")
         rc, _ = run_logged(self.helper("--action", "check"), log, self.a.build_timeout)
         if rc != 0:
-            msg = last_message(log, ("preflight:", "activate-nixos:", "activate:"))
+            msg = self.helper_message(
+                log, ("preflight:", "activate-nixos:", "activate:")
+            )
             raise StageFailed(
                 msg
                 or ("check timed out" if rc is None else f"check failed (exit {rc})"),
@@ -906,7 +954,9 @@ class Validation:
                 outcome="unknown",
             )
         if rc != 0:
-            msg = last_message(log, ("preflight:", "activate-nixos:", "activate:"))
+            msg = self.helper_message(
+                log, ("preflight:", "activate-nixos:", "activate:")
+            )
             raise StageFailed(
                 f"{msg or f'switch failed (exit {rc})'}; not retried, inspect {self.host}",
                 rc,
@@ -1016,12 +1066,12 @@ class Validation:
                 st.update(status="running", started_at=now(), log=str(self.log(name)))
                 say(f"stage {name}: running (log {self.log(name)})")
                 try:
-                    st["summary"] = scrub(fn())
+                    st["summary"] = self.clean(fn())
                     st["status"] = "passed"
                 except StageFailed as e:
                     st.update(
                         status=e.outcome,
-                        summary=scrub(e.summary),
+                        summary=self.clean(e.summary),
                         exit_code=e.exit_code,
                     )
                     failed = name
@@ -1032,7 +1082,7 @@ class Validation:
                     outcome = "unknown" if name == "switch" else "failed"
                     st.update(
                         status=outcome,
-                        summary=scrub(f"internal error: {type(e).__name__}: {e}"),
+                        summary=self.clean(f"internal error: {type(e).__name__}: {e}"),
                         exit_code=None,
                     )
                     failed = name
