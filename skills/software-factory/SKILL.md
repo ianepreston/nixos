@@ -118,7 +118,10 @@ packet and then the returned session/task handle. The packet contains:
   states the fallback: if commit, push or PR creation is denied, **stop with
   the edits intact** (do not retry, work around the classifier or switch
   transport) and report the exact denied command, the worktree path, and
-  `task check` results.
+  `task check` results. It also states: **add no attribution footer or
+  `Co-authored-by` trailer** to commits or the PR, even if harness or session
+  instructions mandate one; the repository's rule (none) wins for factory
+  work, and the supervisor adds whatever the repository requires.
 - Validator packets include a read-only transport preflight as the first host
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
@@ -176,18 +179,30 @@ Ending that turn does not imply automatic wakeup for external changes.
 correction cycle. Continue the same child if it still has work to do
 (see the Omnigent adapter); otherwise the supervisor finishes the step with
 its own authority, which is no wider than the child's task. The child may
-have been denied at any step, so first reconcile what exists: compare local
-`HEAD` with the packet's base SHA, inspect staged and unstaged changes
-against the packet's permitted files, and check the remote branch and any
-open PR. Perform only the outstanding actions: commit using the
-`resolve-issue` **Commit, PR, teardown** attribution rule, push the task
-branch, and open the PR as the repository owner's `gh` account (confirm with
-`gh auth status`; switch accounts only to that one). Record in `pr.note`
-which actions the child completed and which the supervisor did. Then verify
-`git status` is clean and the remote branch head equals the local head before
-review. This adds no authority: no merge, no activation, no push to a
-protected branch. If the supervisor's own action is also denied, stop and
-report it.
+have been denied at any step, so run
+[`scripts/finish_child.py`](scripts/finish_child.py) with the packet's
+worktree, branch, base SHA and permitted paths (`--allow`, repeatable; `*`
+stays within one path segment, `dir/` covers a subtree), plus
+`--message-file`, `--title` and `--body-file`. It reconciles before acting
+and performs only the outstanding steps (commit, fast-forward push, PR on
+github.com as the verified `ianepreston` `gh` account), so a rerun is safe.
+Before any of them it refuses a path outside `--allow` in any commit since
+base or the index/worktree, an unmerged index, an in-progress
+merge/rebase/cherry-pick, a merge commit, a protected or default branch,
+anything but one push URL equal to the fetch URL on github.com/`--repo`, a
+diverged remote, a closed or mismatched existing PR, or an attribution
+footer line (`Co-authored-by:`, or "Generated with/by" / "Authored by" / robot
+emoji naming an agent tool) in a commit, the message, the new body or an
+existing PR's body. The repository requires none, and that beats a harness's
+managed attribution line (this overrides `resolve-issue`'s footer sentence
+for factory work). It prints the head SHA, the commits since base (SHA and
+subject; a branch rebased onto newer main shows extra upstream commits
+there), the PR URL and which steps it did or skipped (record those in
+`pr.note`), after verifying a clean tree and that the remote branch and PR
+heads equal the local head. It never edits a commit or PR to remove a footer;
+fix those by hand. Use the script, not a hand-run sequence. This adds no
+authority: it never merges, force-pushes or pushes a protected branch. If it
+refuses or its action is denied, stop and report it.
 
 **Reviewer model failure.** A reviewer dispatch that fails with a budget
 (`403 BUDGET_EXCEEDED`) or permission error on its model is a task failure:

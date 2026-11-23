@@ -1,4 +1,5 @@
-# Queue/ownership invariants use disposable Git repos, never agents or live hosts.
+# Queue/ownership invariants and the denied-action finisher (finish_child.py)
+# use disposable Git repos and a stub gh, never agents, GitHub or live hosts.
 _: {
   perSystem =
     { pkgs, ... }:
@@ -18,6 +19,7 @@ _: {
             mkdir -p "$HOME"
             cp -r ${../../skills/software-factory/scripts} scripts
             python3 scripts/factory_test.py
+            python3 scripts/finish_child_test.py
             touch "$out"
           '';
     };
