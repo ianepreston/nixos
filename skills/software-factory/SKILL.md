@@ -37,12 +37,14 @@ decide. This section applies once per fresh batch; for a resume use
    its own, and takeover of a supervisor that still holds claims needs the
    user's decision on them first.
 2. To take over a previous supervisor, derive its owner from `show`
-   (`supervisor.owner`) and its runtime handle from the `session` field in
-   `plan` metadata (record your own session ID there when you `init`), then
-   read that session's status from the runtime (in Omnigent
-   `sys_session_get_info`: no running turn and no pending prompt) rather than
-   asking. If the handle is missing or the status cannot be resolved, takeover
-   is blocked: ask the user. Run `takeover` only once it has stopped.
+   (`supervisor.owner`) and its runtime handle from the `session` and
+   `session_owner` fields in `plan` metadata (record your session ID and owner
+   there at `init`, and update both after every `takeover`), then read that
+   session's status from the runtime (in Omnigent `sys_session_get_info`: no
+   running turn and no pending prompt) rather than asking. If the handle is
+   missing, `session_owner` differs from `supervisor.owner`, or the status
+   cannot be resolved, takeover is blocked: ask the user. Run `takeover` only
+   once it has stopped.
 3. Gather context yourself: `origin/main`, open PRs with head SHAs, whether
    the PRs recorded in `show` are merged, tasks waiting on a human force-push
    (a local branch rebased after its PR head was published), open issues
@@ -62,7 +64,9 @@ decide. This section applies once per fresh batch; for a resume use
    baseline fault or imminent auto-upgrade is known before it spoils a run.
    The `validate:<host>` driver repeats the transport probe itself but goes
    on to check and any authorized switch, so it does not replace this report.
-   A batch with no live stage skips the host items.
+   Repeat the report at the point of use, immediately before each live
+   validation (see **Review and validate**). A batch with no live stage skips
+   the host items.
 
 ## Start or resume
 
@@ -76,7 +80,7 @@ decide. This section applies once per fresh batch; for a resume use
    Keep the batch finite; stop after its handoffs rather than replenishing it.
 2. Start serial: one active issue, at most two active child agents (an
    implementer or validator and an independent reviewer). If the user requests
-   overlap, allow two active issues, still two children total. Count all
+   overlap, allow two active issues, still within the configured child cap. Count all
    descendants, including workers behind an issue-level Polly. There is one
    live-validation slot across the batch, regardless of target host. Admit
    only one expensive build/check at a time using the `build` reservation.
@@ -140,8 +144,8 @@ Recheck for an existing PR or a superseding fix before claiming an issue.
 An already satisfied issue needs an explanation, not a manufactured diff;
 closing it on GitHub needs user authorization.
 
-Claim `issue:<number>` before starting it. Overlap only issues with disjoint
-file/contract scopes and no ordering dependency. Shared workflow edits,
+Claim `issue:<number>` before starting it. Overlap only per **Parallel
+pairing** above. Shared workflow edits,
 shared secrets input, and whole-system validation often make apparently
 separate issues serial. A claimed issue waiting for you still occupies its
 issue slot, but its stopped child need not occupy a worker slot.
@@ -286,8 +290,7 @@ operator; no automatic retry, rollback, kill or recovery command.
 ## Review and validate
 
 First sync: fetch and rebase onto the latest `origin/main` before the final
-review, final checks and any live run, because a rebase invalidates review,
-check and live evidence. If the PR head must change, do not force-push: give
+review, final checks and any live run. If the PR head must change, do not force-push: give
 the human the exact `git push --force-with-lease origin <branch>` command
 from the worktree and wait; the published PR head must equal the local head
 (`gh pr view --json headRefOid`) before final review or live validation, and
@@ -309,7 +312,8 @@ is verified again afterwards.
    expensive commands with the `build` claim, including commands run by children.
    Missing live access defers that stage; it need not stop independent edits
    or local checks. A deferred/failed check is never a pass.
-3. Before live validation, claim `validation` and record its issue, target,
+3. Before live validation, report the host's current next `nixos-upgrade`
+   timer fire and running state (not an earlier report), claim `validation` and record its issue, target,
    source SHA, effective input overrides, expected closure, pre-change
    generation, user authority and behavioral probes. Check for other sessions,
    CI resource contention and auto-upgrade activity; the local claim cannot
@@ -342,8 +346,8 @@ is verified again afterwards.
 7. Record source SHA, effective inputs, commands, outcomes, deployed closure
    and generation, plus manual results; `task validate:<host>`'s evidence
    record carries all but the manual results. No secret contents belong in state or
-   public evidence. Rebase or edit invalidates affected review/check/live
-   evidence; rerun the affected stages against the final PR head.
+   public evidence. An edit or rebase invalidates affected
+   review/check/live evidence; rerun the affected stages against the final PR head.
 
 ## Handoff and stop
 
@@ -371,7 +375,7 @@ work for cleanup.
 Report each PR with: head SHA; rebased onto current `origin/main` (yes/no);
 CI status; review verdicts (reviewer, model, revision); what was and was not
 validated, locally and live; and follow-ups. Include the friction and
-enabling-work recommendation from **Triage** and list leftover worktrees.
+enabling-work recommendation from **Triage**.
 
 Finish with issue → PR/status, evidence and omissions, outstanding questions,
 retained worktrees/reservations, and how to resume this supervisor. When the
@@ -396,4 +400,4 @@ Codex can use `$software-factory` with the same request. For queue discovery:
 
 To resume: `Resume the software factory from its recorded state; my answer
 for issue #A is …`. To overlap later: explicitly request two active issues,
-one implementing while the other validates, with two children total.
+one implementing while the other validates, within the child cap.
