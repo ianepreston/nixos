@@ -349,6 +349,13 @@
         config = {
           default_config = { };
 
+          # Core config is YAML-owned: the nixpkgs module already renders
+          # `homeassistant.time_zone` from `time.timeZone` (profiles/base.nix),
+          # and any core key in YAML makes HA lock the UI location fields.
+          # So elevation (metres) must be declared here; the UI can't set it.
+          # Latitude/longitude are deliberately not set here (public repo).
+          homeassistant.elevation = 1045;
+
           # UI-authored automations/scripts/scenes write to these files in the
           # config dir (the visual editors are file-based, not .storage-based).
           # The `!include` lines are what wire them in — without them the UI
