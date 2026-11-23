@@ -1,8 +1,7 @@
 # Review packet template
 
-Use for every `review` dispatch so cycles converge. Give the reviewer a saved
-diff file (absolute path), base and head SHAs and the acceptance contract; not
-the implementer's conclusions. Review is read-only.
+Use for every `review` dispatch so cycles converge, alongside the inputs
+required by **Review and validate** in `SKILL.md`.
 
 Include in the packet:
 
@@ -12,15 +11,12 @@ Include in the packet:
 - **All findings of a class in one pass.** When a defect is one instance of a
   class (for example, every sink that copies a value into evidence or a log),
   enumerate the whole class now rather than the first instance found.
-- **Plausibility ceiling.** For scripts that handle credentials, evidence or
-  redaction, flag only failure modes plausible in normal operator use, not
-  adversarial constructions.
+- **Plausibility ceiling.** For security-sensitive scripts (credentials,
+  evidence, redaction, anything parsing untrusted input), flag failure modes
+  plausible at the documented trust boundary, including attacker-controlled
+  input the tool is meant to process; skip contrived constructions that
+  require a capability the boundary already grants.
 - **Scope.** Judge the diff against the acceptance contract; do not widen it.
 
-For implementers of evidence, logging or credential-handling work, the packet
-asks for a short list of sinks and trust boundaries in the final report, so the
-first review can check them.
-
-When the correction cap is reached on a security-adjacent change, the
-supervisor surfaces the open class of findings to the user, not only the
-latest item. The two-cycle default and the review bar are unchanged.
+The review bar and the two-cycle default are unchanged. Implementer sink
+lists and cap escalation are in `SKILL.md`.

@@ -49,18 +49,16 @@ technical deployment gate. Do not claim sandboxing or permission enforcement.
 
 ## Dispatch arguments
 
-- Call `sys_advise_models` before every dispatch and pass its recommended
-  model as `args.model`. Model IDs carry the `system.ai.` prefix. A model
-  recorded unavailable in `plan` metadata overrides the advice. Fallbacks when
-  advice is unusable: `system.ai.gpt-6-2-sol` for `codex`,
+- Call `sys_advise_models` before every dispatch. For a **new** session pass
+  its recommended model as `args.model` (IDs carry the `system.ai.` prefix);
+  a model recorded unavailable in `plan` metadata overrides the advice, and
+  when advice is unusable fall back to `system.ai.gpt-6-2-sol` for `codex` or
   `system.ai.claude-opus-5-5` for `claude_code`.
-- Set `purpose` on every `sys_session_send`, including continuations by
-  `session_id`.
-- Reusing a title continues that session on its **original** model; use a new
-  title to change model or vendor.
-- A reviewer is a different vendor from the implementer. A `403
-  BUDGET_EXCEEDED` is a task failure, not a correction cycle (see
-  **Budget errors**).
+- A continuation (same title, or `session_id`) runs on the session's
+  **original** model and ignores `args.model`; start a new title to change
+  model or vendor, and keep the same session when a denied-action follow-up or
+  a pending report needs the same child.
+- Set `purpose` on every `sys_session_send`, including continuations.
 
 ## Collect, interrupt and resume
 
