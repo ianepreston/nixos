@@ -275,9 +275,9 @@ apply, including its optional attribution footer rule):
   needs a grant covering it; ask only if the existing one does not.
 
 For published adopt/peer work, follow **Commit, PR, teardown** in
-`resolve-issue`: verify the checked-out branch and exact remote/local HEAD
-equality, check tracked, untracked and ignored files, and use ordinary
-`git worktree remove`. Any status output beyond that procedure's explicit
+`resolve-issue`: verify the checked-out branch and publication, check
+tracked, untracked and ignored files, and use ordinary `git worktree remove`.
+Any status output beyond that procedure's explicit
 generated-file allowance, failed verification or refused removal means
 preserve the worktree and report its path and state without publishing private
 contents or sensitive paths. Never automatically stage, commit, delete or
