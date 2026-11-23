@@ -47,6 +47,21 @@ a direct coder instead. Generic Polly workers may use approval bypass and
 have access to the caller's credentials; a prompt prohibition is not a
 technical deployment gate. Do not claim sandboxing or permission enforcement.
 
+## Dispatch arguments
+
+- Call `sys_advise_models` before every dispatch and pass its recommended
+  model as `args.model`. Model IDs carry the `system.ai.` prefix. A model
+  recorded unavailable in `plan` metadata overrides the advice. Fallbacks when
+  advice is unusable: `system.ai.gpt-6-2-sol` for `codex`,
+  `system.ai.claude-opus-5-5` for `claude_code`.
+- Set `purpose` on every `sys_session_send`, including continuations by
+  `session_id`.
+- Reusing a title continues that session on its **original** model; use a new
+  title to change model or vendor.
+- A reviewer is a different vendor from the implementer. A `403
+  BUDGET_EXCEEDED` is a task failure, not a correction cycle (see
+  **Budget errors**).
+
 ## Collect, interrupt and resume
 
 Omnigent child completion may wake the parent with an inbox notice; collect

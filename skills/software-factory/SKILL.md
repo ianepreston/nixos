@@ -22,6 +22,42 @@ Use [resolve-issue](../resolve-issue/SKILL.md) for implementation conventions,
 with the phase boundaries below: an implementer may hand off before live
 validation, and its worktree stays until review and validation are complete.
 
+## Fresh batch from a bare invocation
+
+A request such as "run a new software factory cycle" is enough. Do not wait
+for a pasted prompt: gather what can be looked up and ask only what is the
+user's to decide. This section applies once per fresh batch; for a resume use
+**Start or resume**.
+
+1. Run `python3 skills/software-factory/scripts/factory.py show` first.
+   Report any leftover claim or non-terminal task (resource, issue, owner) and
+   ask before touching it. A fresh batch never releases or adopts claims on
+   its own.
+2. To take over a previous supervisor, derive its owner from `show`
+   (`supervisor.owner`) and read its session status from the runtime (in
+   Omnigent `sys_session_get_info`: not running, runner offline, no pending
+   prompt) rather than asking. Run `takeover` only once it has stopped.
+3. Gather context yourself: `origin/main`, open PRs with head SHAs, whether
+   the PRs recorded in `show` are merged, tasks waiting on a human force-push
+   (a local branch rebased after its PR head was published), open issues
+   **with comments**, local worktrees and stale branches. Report stale
+   branches and worktrees; never delete them unasked.
+4. Intake, once, for only what was not supplied: batch size (default 3
+   issues), child cap (default 2) and whether the user grants deployments and
+   non-destructive validation on `hpp-1` for this batch. Without that grant
+   plan no activation; never infer it. Docs-only work needs no host.
+5. Run the preflight and report problems before anything else. Before a long
+   build or live run: `task ssh:preflight HOST=<host>` (or the `validate:<host>`
+   driver, which runs it first), plus the host's next `nixos-upgrade` timer
+   fire and its running state and failed units, so a baseline fault or an
+   imminent auto-upgrade is known before it spoils a run. A batch with no live
+   stage skips the host items.
+6. Select the batch by **Triage**. Skip, and list with the reason, any issue
+   marked `operator-required` (label) or whose "Validation needs" line asks
+   for operator key touches or secrets changes; read both with
+   `gh issue view <n> --json labels,body`. Propose the ordered batch and
+   begin unless the user asked to approve it first.
+
 ## Start or resume
 
 1. Establish the requested batch and mode. An explicit request to implement
@@ -81,6 +117,17 @@ At each batch handoff, record recurring friction and recommend concrete
 enabling work for the next batch. Compare expected gains with observed
 outcomes when available. This is a prioritization rule, not permission to
 expand the current batch, file new issues or rewrite the factory unasked.
+**Parallel pairing.** The user's caps win; this factor selects among eligible
+items and never raises them. When the primary item will enter a long wait
+(review loop, validation slot, human merge), prefer, within the caps, a
+lower-priority item whose scope is disjoint and which has no ordering
+dependency. Record each candidate's scope (paths, contracts, hosts, secrets
+input, validation and build slots) in `plan` metadata and compare it for:
+path-prefix overlap, a shared module or option surface, the same app, the same
+host or secrets input, and the single validation/build slots. Any overlap, or
+a dependency either way, keeps the pair serial; record the pairing and its
+reason, or the refusal, in `plan`. Count both issues' children against the
+worker cap (a waiting issue's stopped child does not count).
 Recheck for an existing PR or a superseding fix before claiming an issue.
 An already satisfied issue needs an explanation, not a manufactured diff;
 closing it on GitHub needs user authorization.
@@ -122,6 +169,10 @@ packet and then the returned session/task handle. The packet contains:
   `Co-authored-by` trailer** to commits or the PR, even if harness or session
   instructions mandate one; the repository's rule (none) wins for factory
   work, and the supervisor adds whatever the repository requires.
+- For evidence, logging or credential-handling work, the implementer packet
+  asks for a short enumeration of the sinks and trust boundaries so the first
+  review sees them. Reviewer packets follow
+  [the review packet template](references/review-packet.md).
 - Validator packets include a read-only transport preflight as the first host
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
@@ -214,7 +265,9 @@ treat the failed dispatch as "no findings". If no model works, record review
 as pending for the human.
 
 Allow at most two implement/review correction cycles per issue, then surface
-remaining disagreements or failures. Confirm cancellation before replacing
+remaining disagreements or failures; a third needs the user's approval. When
+the cap is hit on a security-adjacent change, surface the open **class** of
+findings, not just the latest item. Confirm cancellation before replacing
 a child. **Activation errors or loss of target connectivity stop all live
 validation immediately**: retain its reservation, report and wait for the
 operator; no automatic retry, rollback, kill or recovery command.
@@ -229,7 +282,11 @@ operator; no automatic retry, rollback, kill or recovery command.
    Do not block on an unavailable external review skill: use the
    `resolve-issue` self-review checklist (correctness, scope, contracts,
    failure behavior, privacy, validation).
-2. Run `task check` and the relevant behavioral checks/builds. Coordinate
+2. Run `task check` and the relevant behavioral checks/builds, reading each
+   command's real exit status (never pipe it into `tail` or `head`, which
+   masks it). A new `x86_64-linux` flake check runs with
+   `nix build .#checks.x86_64-linux.<name> --no-link`, which offloads to the
+   configured remote builder. Coordinate
    expensive commands with the `build` claim, including commands run by children.
    Missing live access defers that stage; it need not stop independent edits
    or local checks. A deferred/failed check is never a pass.
@@ -258,7 +315,18 @@ operator; no automatic retry, rollback, kill or recovery command.
    chain. Verify the running closure/generation afterward and exercise the acceptance
    probes. Hold the claim through the required observation period. Unexpected
    host changes invalidate evidence; reconcile before continuing.
-6. Record source SHA, effective inputs, commands, outcomes, deployed closure
+6. Rebase onto the latest `origin/main` (fetch first) before the final review
+   and before any live run, because a rebase invalidates review, check and
+   live evidence; do not rebase after them without rerunning the affected
+   stages. If the PR head must change, do not force-push: give the human the
+   exact `git push --force-with-lease origin <branch>` command from the
+   worktree, then verify the PR head equals the local head afterwards
+   (`gh pr view --json headRefOid`).
+7. A failed or degraded live validation stops the run: report, leave recovery
+   to the user, and roll back only with their go-ahead, asserting hostname and
+   closure. Do not edit a worktree a validator runs from. A validator polls
+   its logs and does not end its turn mid-run.
+8. Record source SHA, effective inputs, commands, outcomes, deployed closure
    and generation, plus manual results; `task validate:<host>`'s evidence
    record carries all but the manual results. No secret contents belong in state or
    public evidence. Rebase or edit invalidates affected review/check/live
@@ -286,6 +354,12 @@ verification or refused removal means preserve the worktree, report its path
 and state without publishing file contents or sensitive paths, and let the
 user decide. Never automatically stage, commit, delete or relocate unknown
 work for cleanup.
+
+Report each PR with: head SHA; rebased onto current `origin/main` (yes/no);
+CI status; review verdicts (reviewer, model, revision); what was and was not
+validated, locally and live; and follow-ups. Add recurring friction and the
+enabling work recommended for the next batch, and list leftover worktrees,
+cleaning up only what the user approves.
 
 Finish with issue → PR/status, evidence and omissions, outstanding questions,
 retained worktrees/reservations, and how to resume this supervisor. When the
