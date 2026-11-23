@@ -133,8 +133,12 @@ args=…)` (the `purpose` argument is still required, e.g. `implement`),
 under its worker claim: reuse the claim if the child still holds one (a
 claim cannot be taken twice, and a second token would use a second slot), and
 reserve a new token only if the earlier claim was released. Do not ask it to
-retry the denied action. If the remaining step is only commit/push/PR, the
-supervisor does it instead, as the factory skill describes.
+retry the denied action, and do not ask it to add an attribution footer.
+If the remaining step is only commit/push/PR, the supervisor runs
+`skills/software-factory/scripts/finish_child.py` from its own shell, as the
+factory skill describes (no `Co-authored-by` trailer, whatever the child's
+harness mandates). A supervisor without a shell reports the outstanding
+steps and the exact script command for the human instead.
 
 **Budget errors.** A model whose budget is exhausted fails the dispatch (or
 the child's first turn) with a 403 whose body carries `BUDGET_EXCEEDED`, e.g.
