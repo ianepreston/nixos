@@ -191,7 +191,7 @@
       };
     in
     {
-      myObservability.monitoredSystemdUnits = [ "podman-homeassistant" ];
+      myObservability.monitoredSystemdUnits = [ "home-assistant" ];
 
       myRecovery.apps.homeassistant = {
         kind = "postgres";
