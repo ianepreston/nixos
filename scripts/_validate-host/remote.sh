@@ -56,7 +56,10 @@ state() {
         StateChangeTimestampMonotonic) since=$prop ;;
       esac
     done <<<"$value"
-    printf 'failed_unit_mark=%s %s %s\n' "$unit" "${invocation:--}" "${since:--}"
+    # Both parts must be well-formed (32 hex digits; a positive integer): an
+    # empty or malformed mark is a failed read, never a baseline.
+    [[ $invocation =~ ^[0-9a-f]{32}$ && $since =~ ^[1-9][0-9]*$ ]] || read_failed failed_unit_mark
+    printf 'failed_unit_mark=%s %s %s\n' "$unit" "$invocation" "$since"
   done <<<"$failed"
   # Exits non-zero for inactive (the expected state); empty output is a failure.
   value=$(systemctl is-active nixos-upgrade.service 2>/dev/null)

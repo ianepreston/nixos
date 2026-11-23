@@ -758,7 +758,7 @@ class Baseline(Harness):
         # the second probe run re-fails stale.service
         probe = (
             f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n + 1)) > {counter}; "
-            f'[ "$n" -lt 1 ] || printf "InvocationID=-\\nStateChangeTimestampMonotonic=3000\\n" > {self.state}/mark-stale.service'
+            f'[ "$n" -lt 1 ] || printf "InvocationID={"f" * 32}\\nStateChangeTimestampMonotonic=3000\\n" > {self.state}/mark-stale.service'
         )
         r = self.drive("--host", "hpp-1", "--probe", probe, "--observe", "3s", "--interval", "1s")  # fmt: skip
         self.assertEqual(r.returncode, 1, r.stderr)
@@ -767,14 +767,100 @@ class Baseline(Harness):
         self.assertIn("changed state since pre-state: stale.service", ev["message"])
         self.assertEqual(ev["observe"]["last"]["changed_failed_units"], ["stale.service"])  # fmt: skip
 
-    def test_unreadable_mark_is_never_tolerated(self):
+    LEAK = "someone" + "@" + "example.invalid"
+
+    def assert_bad_baseline_stops_before_check(self, mark_text):
+        """A failed unit whose mark is empty or malformed stops pre-state:
+        nothing is checked or switched, even if the unit later disappears,
+        and no mark text reaches the evidence."""
         self.stale_baseline()
-        (self.state / "mark-stale.service").write_text("Other=1\n")
-        r = self.drive("--host", "hpp-1")
+        (self.state / "mark-stale.service").write_text(mark_text)
+        # were the run to go on, the unit would vanish during the switch
+        self.on_switch('echo running > "$STUB_STATE/system_state"; : > "$STUB_STATE/failed"')  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch")
         self.assertEqual(r.returncode, 1, r.stderr)
-        _, ev = self.evidence(r)
-        self.assertEqual(ev["pre"]["failed_unit_marks"], {"stale.service": "- -"})
-        self.assertEqual(ev["failed_units"]["changed"], ["stale.service"])
+        path, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertEqual(ev["result"], "failed")
+        self.assertIn("required read 'failed_unit_mark' failed", ev["message"])
+        self.assertIsNone(ev["pre"])
+        self.assertIsNone(ev["failed_units"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+        self.assertNotIn(self.LEAK, path.read_text())
+        self.assertNotIn(self.LEAK, r.stderr)
+
+    def test_empty_mark_stops_pre_state(self):
+        for text in ("", "InvocationID=\nStateChangeTimestampMonotonic=\n"):
+            with self.subTest(text=text):
+                self.log.write_text("")
+                self.assert_bad_baseline_stops_before_check(text)
+
+    def test_malformed_mark_stops_pre_state(self):
+        for text in (
+            "Other=1\n",
+            f"InvocationID={INVOCATION}\nStateChangeTimestampMonotonic=0\n",
+            f"InvocationID={INVOCATION}\nStateChangeTimestampMonotonic=12x\n",
+            f"InvocationID={INVOCATION.upper()}\nStateChangeTimestampMonotonic=5\n",
+            f"InvocationID={INVOCATION[:-1]}\nStateChangeTimestampMonotonic=5\n",
+            "InvocationID=-\nStateChangeTimestampMonotonic=5\n",
+        ):
+            with self.subTest(text=text):
+                self.log.write_text("")
+                self.assert_bad_baseline_stops_before_check(text)
+
+    def test_arbitrary_text_in_a_mark_is_rejected_and_never_recorded(self):
+        for text in (
+            f"InvocationID={self.LEAK}\nStateChangeTimestampMonotonic=5\n",
+            f"InvocationID={INVOCATION}\nStateChangeTimestampMonotonic=5 {self.LEAK}\n",
+        ):
+            with self.subTest(text=text):
+                self.log.write_text("")
+                self.assert_bad_baseline_stops_before_check(text)
+
+    def parse(self, lines):
+        """read_state() on canned remote output (the parser's own checks,
+        independent of remote.sh's)."""
+        import importlib.util
+        import types
+
+        spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        nonce = "n" * 8
+        base = [
+            "hostname=hpp-1",
+            f"current_system={OLD}",
+            f"booted_system={OLD}",
+            "system_profile=system-41-link",
+            "system_state=degraded",
+            "upgrade_service=inactive",
+            "upgrade_timer_next=",
+        ]
+        v = types.SimpleNamespace(
+            host="hpp-1",
+            target="ipreston@hpp-1",
+            closure_re=vh.re.compile(vh.CLOSURE_RE % "hpp-1"),
+            remote=lambda *_: (0, base + lines + [f"VALIDATE-END {nonce}"], nonce),
+        )
+        return vh, lambda: vh.Validation.read_state(v, "pre-state")
+
+    def test_parser_rejects_malformed_missing_and_stray_marks(self):
+        good = f"failed_unit_mark=stale.service {INVOCATION} 5"
+        vh, read = self.parse(["failed_unit=stale.service", good])
+        self.assertEqual(read()["failed_unit_marks"], {"stale.service": f"{INVOCATION} 5"})  # fmt: skip
+        for lines, why in (
+            (["failed_unit=stale.service", f"failed_unit_mark=stale.service {self.LEAK} 5"], "malformed"),
+            (["failed_unit=stale.service", "failed_unit_mark=stale.service - -"], "malformed"),
+            (["failed_unit=stale.service"], "incomplete"),
+            ([good], "incomplete"),
+            (["failed_unit=stale.service", good, "failed_unit=other.service"], "incomplete"),
+        ):  # fmt: skip
+            with self.subTest(lines=lines):
+                mod, read = self.parse(lines)
+                with self.assertRaises(mod.StageFailed) as cm:
+                    read()
+                self.assertIn(why, cm.exception.summary)
+                self.assertNotIn(self.LEAK, cm.exception.summary)
 
     def test_failing_mark_read_fails_the_stage(self):
         self.stale_baseline()

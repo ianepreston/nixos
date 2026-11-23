@@ -86,7 +86,8 @@ SYSTEM_STATES = {
     "offline",
     "unknown",
 }
-FAILED_UNIT_MARK_RE = re.compile(r"(?:[0-9a-f]{32}|-) [1-9][0-9]*")
+# InvocationID and StateChangeTimestampMonotonic of a failed unit.
+FAILED_UNIT_MARK_RE = re.compile(r"[0-9a-f]{32} [1-9][0-9]*")
 # Known token prefixes, or a long run mixing upper case, lower case and digits
 # (store hashes and git revisions have no upper case, so they are kept).
 TOKEN_RE = re.compile(
@@ -765,6 +766,12 @@ class Validation:
                 state["failed_units"].append(value)
             elif key == "failed_unit_mark":
                 unit, _, mark = value.partition(" ")
+                # Only a well-formed mark is ever stored (no arbitrary text
+                # reaches the evidence); anything else fails the read.
+                if not FAILED_UNIT_MARK_RE.fullmatch(mark):
+                    raise StageFailed(
+                        f"failed-unit mark read from {self.host} is malformed; stopping"
+                    )
                 state["failed_unit_marks"][unit] = mark
             elif key in (
                 "hostname",
@@ -797,6 +804,12 @@ class Validation:
         if not state.get("upgrade_service") or "upgrade_timer_next" not in state:
             raise StageFailed(
                 f"nixos-upgrade read from {self.host} is incomplete; stopping"
+            )
+        # Every failed unit needs exactly one mark, and no mark may name a
+        # unit that is not listed: an incomplete set is never a baseline.
+        if set(state["failed_unit_marks"]) != set(state["failed_units"]):
+            raise StageFailed(
+                f"failed-unit marks read from {self.host} are incomplete; stopping"
             )
         state["failed_unit_count"] = len(state["failed_units"])
         state["read_at"] = now()
