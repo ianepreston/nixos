@@ -4,6 +4,7 @@
     hostName = "hpp-1";
     isMinimal = false;
     serverEnvironment = "dev";
+    validationTarget = true;
     serverDomain = "dnix.ipreston.net";
     serverLanIp = "192.168.10.10";
     iotTrunkInterface = "enp1s0";

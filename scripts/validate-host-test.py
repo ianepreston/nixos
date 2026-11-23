@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for scripts/validate-host.py (#1063).
+"""Offline tests for scripts/validate-host.py (#1063, #1071).
 
 The activation helper, nix, ssh and the target's hostname/systemctl/readlink
 are logging stubs on PATH. ssh "connects" by running its command locally, so
@@ -45,7 +45,18 @@ OLD = f"/nix/store/{HASH_OLD}-nixos-system-hpp-1-26.05.20261101.aaaaaaa"
 NEW = f"/nix/store/{HASH_NEW}-nixos-system-hpp-1-26.05.20261115.b349185"
 OTHER = f"/nix/store/{HASH_OLD[::-1]}-nixos-system-hpp-1-26.05.20261110.ccccccc"
 SECRETS_REV = "1" * 40
-ENVS = {"hpp-1": "dev", "tests-server": "dev", "amos1": "prod", "terra": None}
+# hostSpec admission fields per host, as `nix eval --apply ADMIT_APPLY` returns
+# them. `rogue` is marked but not dev; `legacy` predates the marker.
+SPECS = {
+    "hpp-1": {"serverEnvironment": "dev", "validationTarget": True},
+    "tests-server": {"serverEnvironment": "dev", "validationTarget": False},
+    "amos1": {"serverEnvironment": "prod", "validationTarget": False},
+    "terra": {"serverEnvironment": None, "validationTarget": False},
+    "rogue": {"serverEnvironment": "prod", "validationTarget": True},
+    "legacy": {"serverEnvironment": "dev", "validationTarget": None},
+    "stringly": {"serverEnvironment": "dev", "validationTarget": "true"},
+}
+INVOCATION = "0123456789abcdef0123456789abcdef"
 
 
 def probe_id(command):
@@ -61,21 +72,22 @@ log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOP
 """
 
 STUBS = {
-    # Only `nix eval --json <flake>#nixosConfigurations.<h>._module.specialArgs.hostSpec.serverEnvironment`.
+    # Only `nix eval --json <flake>#nixosConfigurations.<h>._module.specialArgs.hostSpec --apply <expr>`.
     "nix": r"""
 log "$@"
-[ "$1 $2" = "eval --json" ] || exit 64
+[ "$1 $2 $4 $#" = "eval --json --apply 5" ] || exit 64
+case $5 in *validationTarget*serverEnvironment* | *serverEnvironment*validationTarget*) ;; *) exit 64 ;; esac
 attr=${3#*#nixosConfigurations.}
-h=${attr%%._module.specialArgs.hostSpec.serverEnvironment}
+h=${attr%%._module.specialArgs.hostSpec}
 [ "$h" != "$attr" ] || exit 64
-printf '%s' "$STUB_ENVS" | python3 -c '
+printf '%s' "$STUB_SPECS" | python3 -c '
 import json, sys
-envs = json.load(sys.stdin)
+specs = json.load(sys.stdin)
 h = sys.argv[1]
-if h not in envs:
+if h not in specs:
     print("error: flake does not provide attribute", file=sys.stderr)
     sys.exit(1)
-print(json.dumps(envs[h]))
+print(json.dumps(specs[h]))
 ' "$h"
 """,
     "ssh": r"""
@@ -108,6 +120,11 @@ esac
 case "$*" in
   is-system-running) state=$(cat "$STUB_STATE/system_state"); echo "$state"; [ "$state" = running ] ;;
   "list-units --state=failed --no-legend --plain") [ -z "${STUB_LIST_UNITS_FAIL:-}" ] || exit 1; cat "$STUB_STATE/failed" ;;
+  "show -p InvocationID -p StateChangeTimestampMonotonic -- "*)
+    [ -z "${STUB_SHOW_FAIL:-}" ] || exit 1
+    unit=${!#}
+    if [ -f "$STUB_STATE/mark-$unit" ]; then cat "$STUB_STATE/mark-$unit"
+    else printf 'InvocationID=%s\nStateChangeTimestampMonotonic=1000\n' "$STUB_INVOCATION"; fi ;;
   "is-active nixos-upgrade.service") echo "${STUB_UPGRADE:-inactive}"; [ "${STUB_UPGRADE:-inactive}" = active ] ;;
   "show nixos-upgrade.timer -p NextElapseUSecRealtime --value") echo "Mon 2026-11-23 04:40:00 UTC" ;;
   *) exit 1 ;;
@@ -161,7 +178,9 @@ EVIDENCE_KEYS = {
     "host",
     "target",
     "server_environment",
+    "validation_target",
     "switch_requested",
+    "require_clean",
     "run_dir",
     "started_at",
     "finished_at",
@@ -174,6 +193,7 @@ EVIDENCE_KEYS = {
     "pre",
     "post",
     "generation_changed",
+    "failed_units",
     "probes",
     "observe",
     "stages",
@@ -244,7 +264,8 @@ class Harness(unittest.TestCase):
             XDG_STATE_HOME=str(self.xdg_state),
             STUB_LOG=str(self.log),
             STUB_STATE=str(self.state),
-            STUB_ENVS=json.dumps(ENVS),
+            STUB_SPECS=json.dumps(SPECS),
+            STUB_INVOCATION=INVOCATION,
             STUB_OLD=OLD,
             STUB_NEW=NEW,
             STUB_OTHER=OTHER,
@@ -361,10 +382,12 @@ class Sequence(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         path, ev = self.evidence(r)
         self.assertEqual(set(ev), EVIDENCE_KEYS)
-        self.assertEqual(ev["schema"], "nixos-validate-host/1")
+        self.assertEqual(ev["schema"], "nixos-validate-host/2")
         self.assertEqual(ev["host"], "hpp-1")
         self.assertEqual(ev["target"], "ipreston@hpp-1")
         self.assertEqual(ev["server_environment"], "dev")
+        self.assertIs(ev["validation_target"], True)
+        self.assertIs(ev["require_clean"], False)
         self.assertEqual(ev["inputs"]["nix_secrets_locked_rev"], SECRETS_REV)
         self.assertFalse(ev["inputs"]["local_secrets"])
         self.assertRegex(ev["source"]["sha"], r"^[0-9a-f]{40}$")
@@ -479,12 +502,21 @@ class Failures(Harness):
         self.assertEqual(ev["message"], f"probe #1 (id {probe_id('exit 3')}) exited 3")
 
     def test_degraded_system_fails_post(self):
-        (self.state / "system_state").write_text("degraded\n")
-        (self.state / "failed").write_text("foo.service loaded failed failed Foo\n")
+        # foo.service fails during the switch: a new failure
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                'touch "$STUB_STATE/switch-finished"',
+                'echo degraded > "$STUB_STATE/system_state"; echo "foo.service loaded failed failed Foo" > "$STUB_STATE/failed"; touch "$STUB_STATE/switch-finished"',
+            )
+        )
         r = self.drive("--host", "hpp-1", "--switch")
         ev = self.assert_stopped_at(r, "post")
         self.assertEqual(ev["post"]["failed_units"], ["foo.service"])
-        self.assertIn("degraded", ev["message"])
+        self.assertEqual(ev["post"]["system_state"], "degraded")
+        self.assertIn(
+            "1 new failed unit(s) since pre-state: foo.service", ev["message"]
+        )
 
     def test_observation_catches_a_later_regression(self):
         counter = self.state / "probe-count"
@@ -504,10 +536,17 @@ class Admission(Harness):
         self.assertEqual(self.run_dirs(), [])
         self.assertFalse((self.xdg_state / "nixos-validate").exists())
 
-    def test_non_dev_and_unknown_hosts_are_refused_before_any_ssh(self):
+    def test_unmarked_non_dev_and_unknown_hosts_are_refused_before_any_ssh(self):
         for host, why in (
-            ("amos1", 'serverEnvironment is "prod"'),
-            ("terra", "serverEnvironment is null"),
+            # dev, but not a real ssh target: no marker (#1071)
+            ("tests-server", "validationTarget is false"),
+            ("amos1", "validationTarget is false"),
+            ("terra", "validationTarget is false"),
+            # the marker alone is not enough
+            ("rogue", 'serverEnvironment is "prod"'),
+            # a missing or non-boolean marker refuses like false
+            ("legacy", "validationTarget is null"),
+            ("stringly", 'validationTarget is "true"'),
             ("nosuch", "unknown host"),
         ):
             with self.subTest(host=host):
@@ -525,8 +564,11 @@ class Admission(Harness):
                 self.assertEqual(self.calls("nix"), [])
 
     def test_admission_eval_failure_fails_closed(self):
-        r = self.drive("--host", "hpp-1", STUB_ENVS="not json")
-        self.assert_refused_offline(r)
+        for specs in ("not json", json.dumps({"hpp-1": "dev"}), json.dumps({"hpp-1": True})):  # fmt: skip
+            with self.subTest(specs=specs):
+                self.log.write_text("")
+                r = self.drive("--host", "hpp-1", STUB_SPECS=specs)
+                self.assert_refused_offline(r)
 
     def test_no_option_skips_helper_assertions(self):
         for extra in (
@@ -608,12 +650,15 @@ class TaskWrapper(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(any("--action switch" in a for a in self.helper_calls()))
 
-    def test_task_refuses_a_prod_host_before_any_ssh(self):
-        r = self.task("validate:amos1", "--", "--switch")
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn('serverEnvironment is "prod"', r.stderr)
-        self.assertEqual(self.calls("ssh"), [])
-        self.assertEqual(self.helper_calls(), [])
+    def test_task_refuses_unmarked_hosts_before_any_ssh(self):
+        for host in ("amos1", "tests-server"):
+            with self.subTest(host=host):
+                self.log.write_text("")
+                r = self.task(f"validate:{host}", "--", "--switch")
+                self.assertNotEqual(r.returncode, 0)
+                self.assertIn("validationTarget is false", r.stderr)
+                self.assertEqual(self.calls("ssh"), [])
+                self.assertEqual(self.helper_calls(), [])
 
     def test_exit_code_flag_keeps_the_driver_status(self):
         # Documented in host-access.md: Task alone reports 201.
@@ -627,6 +672,172 @@ class TaskWrapper(Harness):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("--host may be given only once", r.stderr)
         self.assertEqual(self.calls(), [])
+
+
+class Baseline(Harness):
+    """#1071: failed units that predate the run are tolerated (and reported)
+    by default; new or re-failed units fail; --require-clean fails on any."""
+
+    UNIT = "stale.service loaded failed failed Stale\n"
+
+    def stale_baseline(self):
+        (self.state / "system_state").write_text("degraded\n")
+        (self.state / "failed").write_text(self.UNIT)
+
+    def on_switch(self, shell):
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                'touch "$STUB_STATE/switch-finished"',
+                f'{shell}; touch "$STUB_STATE/switch-finished"',
+            )
+        )
+
+    def test_pre_existing_failure_is_tolerated_and_reported(self):
+        self.stale_baseline()
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "true", "--observe", "2s", "--interval", "1s")  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["result"], "passed")
+        self.assertEqual(ev["pre"]["failed_units"], ["stale.service"])
+        self.assertEqual(ev["pre"]["failed_unit_marks"], {"stale.service": f"{INVOCATION} 1000"})  # fmt: skip
+        self.assertEqual(
+            ev["failed_units"],
+            {
+                "baseline": ["stale.service"],
+                "new": [],
+                "changed": [],
+                "tolerated": ["stale.service"],
+                "cleared": [],
+                "stage": "observe",
+            },
+        )
+        self.assertTrue(ev["observe"]["ok"])
+        post = next(s for s in ev["stages"] if s["name"] == "post")
+        self.assertIn("degraded with 1 pre-existing failed unit(s) tolerated (stale.service)", post["summary"])  # fmt: skip
+        self.assertIn("WARNING: 1 failed unit(s) predate this run and were tolerated: stale.service", r.stderr)  # fmt: skip
+
+    def test_new_failure_beside_a_pre_existing_one_fails(self):
+        self.stale_baseline()
+        self.on_switch('echo "new.service loaded failed failed New" >> "$STUB_STATE/failed"')  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertEqual(ev["message"], "1 new failed unit(s) since pre-state: new.service")  # fmt: skip
+        self.assertEqual(ev["failed_units"]["new"], ["new.service"])
+        self.assertEqual(ev["failed_units"]["tolerated"], ["stale.service"])
+
+    def test_new_failure_on_a_clean_host_fails(self):
+        self.on_switch('echo degraded > "$STUB_STATE/system_state"; echo "new.service loaded failed failed New" > "$STUB_STATE/failed"')  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("1 new failed unit(s) since pre-state: new.service", ev["message"])  # fmt: skip
+
+    def test_pre_existing_unit_that_failed_again_fails(self):
+        self.stale_baseline()
+        self.on_switch(
+            f'printf "InvocationID={INVOCATION[::-1]}\\nStateChangeTimestampMonotonic=2000\\n" > "$STUB_STATE/mark-stale.service"'
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertEqual(
+            ev["message"],
+            "1 pre-existing failed unit(s) changed state since pre-state: stale.service",
+        )
+        self.assertEqual(ev["failed_units"]["changed"], ["stale.service"])
+        self.assertEqual(ev["failed_units"]["tolerated"], [])
+
+    def test_unit_failing_again_during_observation_fails(self):
+        self.stale_baseline()
+        counter = self.state / "probe-count"
+        # the second probe run re-fails stale.service
+        probe = (
+            f"n=$(cat {counter} 2>/dev/null || echo 0); echo $((n + 1)) > {counter}; "
+            f'[ "$n" -lt 1 ] || printf "InvocationID=-\\nStateChangeTimestampMonotonic=3000\\n" > {self.state}/mark-stale.service'
+        )
+        r = self.drive("--host", "hpp-1", "--probe", probe, "--observe", "3s", "--interval", "1s")  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "observe")
+        self.assertIn("changed state since pre-state: stale.service", ev["message"])
+        self.assertEqual(ev["observe"]["last"]["changed_failed_units"], ["stale.service"])  # fmt: skip
+
+    def test_unreadable_mark_is_never_tolerated(self):
+        self.stale_baseline()
+        (self.state / "mark-stale.service").write_text("Other=1\n")
+        r = self.drive("--host", "hpp-1")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["pre"]["failed_unit_marks"], {"stale.service": "- -"})
+        self.assertEqual(ev["failed_units"]["changed"], ["stale.service"])
+
+    def test_failing_mark_read_fails_the_stage(self):
+        self.stale_baseline()
+        r = self.drive("--host", "hpp-1", "--switch", STUB_SHOW_FAIL=1)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertIn("required read 'failed_unit_mark' failed", ev["message"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+
+    def test_cleared_failure_is_recorded(self):
+        self.stale_baseline()
+        self.on_switch('echo running > "$STUB_STATE/system_state"; : > "$STUB_STATE/failed"')  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_units"]["cleared"], ["stale.service"])
+        self.assertEqual(ev["failed_units"]["tolerated"], [])
+
+    def test_degraded_without_failed_units_still_fails(self):
+        self.on_switch('echo degraded > "$STUB_STATE/system_state"')
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["message"], "system state is 'degraded', not 'running'")
+
+    def test_require_clean_fails_on_a_pre_existing_failure_before_check(self):
+        self.stale_baseline()
+        r = self.drive("--host", "hpp-1", "--switch", "--require-clean")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertIs(ev["require_clean"], True)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertIn("--require-clean", ev["message"])
+        self.assertIn("1 failed unit(s) before the change: stale.service", ev["message"])  # fmt: skip
+        self.assertEqual(ev["failed_units"]["baseline"], ["stale.service"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+
+    def test_require_clean_fails_on_a_new_failure(self):
+        self.on_switch('echo degraded > "$STUB_STATE/system_state"; echo "new.service loaded failed failed New" > "$STUB_STATE/failed"')  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch", "--require-clean")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("1 failed unit(s) (--require-clean): new.service", ev["message"])  # fmt: skip
+
+    def test_require_clean_passes_on_a_clean_host(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--require-clean")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_task_passes_require_clean_through(self):
+        task = shutil.which("task")
+        if task is None:
+            self.skipTest("go-task not available")
+        self.stale_baseline()
+        r = subprocess.run(
+            [task, "--silent", "-x", "validate:hpp-1", "--", "--require-clean"],
+            cwd=self.repo, env=self.env, capture_output=True, text=True,
+            stdin=subprocess.DEVNULL, timeout=120,
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
 
 
 class HostReads(Harness):

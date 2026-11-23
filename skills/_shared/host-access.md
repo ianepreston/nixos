@@ -264,15 +264,21 @@ path for that destination. Do not share that option across hosts.
 `task validate:<host>` (`scripts/validate-host.py`) runs the whole live
 validation sequence through this helper: inputs (source SHA, locked
 nix-secrets rev, overrides, expected closure from `--dry-run`), `--preflight`,
-a read-only pre-change read (running closure, generation, failed units, next
-`nixos-upgrade` run), `--action check`, then with `-- --switch` the switch,
-post-switch checks (expected closure running, `is-system-running` = running,
-no failed units, each `--probe` command exits 0 on the target) and an
-optional `--observe <duration>` window. Each stage logs to its own file under
+a read-only pre-change read (running closure, generation, failed units as the
+baseline, next `nixos-upgrade` run), `--action check`, then with `-- --switch`
+the switch, post-switch checks (expected closure running, no failed unit that
+is new or changed state since the baseline, `is-system-running` = running or,
+with only tolerated pre-existing failures, degraded; each `--probe` command
+exits 0 on the target) and an optional `--observe <duration>` window. A unit
+already failing before the run is tolerated but reported as a warning and in
+the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
+or a non-running system instead (already at pre-state, before check or
+switch). Each stage logs to its own file under
 `$XDG_STATE_HOME/nixos-validate/<host>/` and the run ends with one JSON
 evidence record whose path it prints. It only accepts hosts whose hostSpec has
-`serverEnvironment = "dev"` (refused before any ssh otherwise), has no option
-that skips the helper's checks, and stops at the first failure with no retry,
+`validationTarget = true` and `serverEnvironment = "dev"` (today only
+`hpp-1`; `tests-server`, unmarked and unknown hosts are refused before any
+ssh), has no option that skips the helper's checks, and stops at the first failure with no retry,
 rollback or kill; a switch past its deadline is left running and reported as
 unknown (exit 3). A failed or empty required host read, an ssh that fails or
 drops, and a failing probe (run under `pipefail`) each stop the stage with no

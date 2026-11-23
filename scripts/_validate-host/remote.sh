@@ -29,7 +29,7 @@ read_failed() {
 
 # Key=value lines only; values are store paths, unit names and states.
 state() {
-  local value failed unit link
+  local value failed unit link invocation since key prop
   printf 'hostname=%s\n' "$actual"
   for link in current_system:/run/current-system booted_system:/run/booted-system \
     system_profile:/nix/var/nix/profiles/system; do
@@ -41,8 +41,22 @@ state() {
   [ -n "$value" ] || read_failed system_state
   printf 'system_state=%s\n' "$value"
   failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null) || read_failed failed_units
+  # Each failed unit also gets a mark (InvocationID and the monotonic time of
+  # its last state change), so the driver can tell a unit that has been
+  # failing since before the change from one that failed again since.
   while read -r unit _; do
-    [ -z "$unit" ] || printf 'failed_unit=%s\n' "$unit"
+    [ -n "$unit" ] || continue
+    printf 'failed_unit=%s\n' "$unit"
+    value=$(systemctl show -p InvocationID -p StateChangeTimestampMonotonic -- "$unit" 2>/dev/null) ||
+      read_failed failed_unit_mark
+    invocation="" since=""
+    while IFS='=' read -r key prop; do
+      case $key in
+        InvocationID) invocation=$prop ;;
+        StateChangeTimestampMonotonic) since=$prop ;;
+      esac
+    done <<<"$value"
+    printf 'failed_unit_mark=%s %s %s\n' "$unit" "${invocation:--}" "${since:--}"
   done <<<"$failed"
   # Exits non-zero for inactive (the expected state); empty output is a failure.
   value=$(systemctl is-active nixos-upgrade.service 2>/dev/null)
