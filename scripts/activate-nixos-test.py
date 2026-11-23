@@ -493,7 +493,8 @@ class TransportPreflight(Harness):
 
     def test_preflight_rejects_an_unexpected_hostname(self):
         self.assert_probe_failed(
-            self.probe(STUB_HOSTNAME="amos1"), "hostname was 'amos1', expected 'hpp-1'"
+            self.probe(STUB_HOSTNAME="amos1"),
+            "hostname probe did not report the expected hostname 'hpp-1'",
         )
 
     def test_probe_timeouts_are_classified_by_leg(self):
@@ -573,7 +574,8 @@ class TransportPreflight(Harness):
                     STUB_BUILDER_ERROR=message, STUB_BUILDER_RC=code,
                 )  # fmt: skip
                 self.assert_probe_failed(
-                    r, f"preflight: on ipreston@hpp-1: builder terra: {reason}"
+                    r,
+                    f"preflight: on ipreston@hpp-1: a Nix builder configured there: {reason}",
                 )
                 self.assertNotIn("matches the locked revision", r.stderr)
 
@@ -611,7 +613,7 @@ class TransportPreflight(Harness):
         )  # fmt: skip
         self.assert_probe_failed(
             r,
-            "preflight: on builder@build1: builder terra: Host key verification failed",
+            "preflight: on builder@build1: a Nix builder configured there: Host key verification failed",
         )
 
     def test_remote_build_environment_classifies_ssh_failure_without_remote_marker(
@@ -799,52 +801,190 @@ class TransportPreflight(Harness):
                     if "handshake" not in reason:
                         self.assertNotIn("start handshake", r.stderr)
 
-    def test_remote_preflight_never_echoes_unrecognized_remote_text(self):
-        fallback = "the remote preflight failed with an unrecognized error"
-        injected = (
-            "preflight-error: private-detail",
-            "preflight-error: builder terra: Host key verification failed. private-detail",
-            "preflight-error: builder private-detail\u001b[2J: probe timed out. "
-            "Check connectivity and any pending SSH touch/PIN prompt.",
-            "preflight-error: required tool 'private-detail' is missing. "
-            "Install it on the machine running this probe.",
-            "preflight-error: stale local nix-secrets (clean): HEAD private-detail",
+    # Cause classes in precedence order: (name, output text, exit status).
+    # Mirrors the comment above ssh_failure_class in activate-nixos.sh.
+    SSH_CLASSES = (
+        ("hostkey", "Host key verification failed.", 1),
+        ("signing", "sign_and_send_pubkey: signing failed for ED25519-SK", 1),
+        ("denied", "Permission denied (publickey).", 1),
+        ("protocol", "error: protocol mismatch, got 'x'", 1),
+        ("unreachable", "ssh: Could not resolve hostname x: unknown", 1),
+        ("timeout", "", 124),
+        ("handshake", "error: failed to start SSH connection to 'hpp-1'", 1),
+        ("failed", "", 1),
+    )
+    SSH_MESSAGES = {
+        "hostkey": "Host key verification failed",
+        "signing": "SSH signing failed",
+        "denied": "SSH authentication denied in BatchMode",
+        "protocol": "Nix store protocol mismatch",
+        "unreachable": "unreachable over SSH",
+        "timeout": "probe timed out",
+        "handshake": "Nix's SSH session did not complete its start handshake",
+        "failed": "probe failed. Verify the SSH connection",
+    }
+
+    @staticmethod
+    def pairs(classes):
+        """Every pair of distinct classes, in both orders, with the winner."""
+        for i, high in enumerate(classes):
+            for low in classes[i + 1 :]:
+                for first, second in ((high, low), (low, high)):
+                    text = "\n".join(x[1] for x in (first, second) if x[1])
+                    status = max(first[2], second[2])
+                    yield high[0], (first[0], second[0]), text, status
+
+    def test_classifier_precedence_for_every_pair_of_causes(self):
+        legs = (
+            ("store transport ssh://ipreston@hpp-1", (), {}),
+            ("store transport ssh-ng://builder@build1",
+             ("--build-host", "builder@build1"),
+             {"STUB_STORE_URI": "ssh-ng://builder@build1"}),
+        )  # fmt: skip
+        for leg, args, env in legs:
+            for winner, order, text, status in self.pairs(self.SSH_CLASSES):
+                with self.subTest(leg=leg, order=order):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args, STUB_STORE_ERROR=text, STUB_STORE_RC=status, **env
+                    )
+                    self.assert_probe_failed(r, f"{leg}: {self.SSH_MESSAGES[winner]}")
+                    for other, message in self.SSH_MESSAGES.items():
+                        if other != winner:
+                            self.assertNotIn(message, r.stderr)
+
+    def test_remote_decoder_precedence_for_every_pair_of_causes(self):
+        # A recognised code beats every ssh cause; an unrecognised marker sits
+        # between the deadline and Nix's generic handshake message.
+        classes = (
+            ("code", "preflight-error: builders-file-unreadable", 1),
+            *self.SSH_CLASSES[:6],
+            ("unrecognized", "preflight-error: private-detail", 1),
+            *self.SSH_CLASSES[6:],
         )
         for args, endpoint in (
             (("--remote-flake", "src/nixos"), "ipreston@hpp-1"),
             (("--build-host", "builder@build1"), "builder@build1"),
         ):
-            for line in injected:
-                with self.subTest(args=args, line=line):
+            expected = {
+                "code": f"preflight: on {endpoint}: cannot read the Nix builders file",
+                "unrecognized": f"preflight: on {endpoint}: the remote preflight "
+                "failed with an unrecognized error",
+                **{
+                    name: f"preflight: build environment on {endpoint}: {message}"
+                    for name, message in self.SSH_MESSAGES.items()
+                },
+            }
+            for winner, order, text, status in self.pairs(classes):
+                with self.subTest(args=args, order=order):
                     self.log.write_text("")
                     r = self.probe(
                         *args,
-                        STUB_REMOTE_PROBE_WARNING=f"noise private-detail\n{line}",
+                        STUB_REMOTE_PROBE_WARNING=f"noise private-detail\n{text}",
+                        STUB_REMOTE_PROBE_RC=status,
+                    )
+                    self.assert_probe_failed(r, expected[winner])
+                    self.assertTrue(
+                        r.stderr.splitlines()[-1].startswith(expected[winner])
+                    )
+
+    FORGED = ("forged-builder", "forgedhost", "217", "c0ffee", "deadbeef")
+
+    def assert_nothing_forged(self, r):
+        for token in (*self.FORGED, "private-detail"):
+            self.assertNotIn(token, r.stdout)
+            self.assertNotIn(token, r.stderr)
+
+    def test_forged_remote_values_never_reach_local_output(self):
+        rev = "c0ffee" * 6 + "dead"
+        old_style = (
+            "preflight-error: builder forged-builder@forgedhost: probe failed "
+            "(exit 217). Verify the SSH connection from an operator terminal.",
+            "preflight-error: builder forged-builder: Host key verification failed. "
+            "Verify the host key out of band and update the SSH trust entry.",
+            f"preflight-error: stale local nix-secrets (clean): HEAD {rev} differs "
+            f"from locked {'deadbeef' * 5}. Check out the locked revision or omit "
+            "--local-secrets.",
+            "preflight-error: required tool 'forgedhost' is missing. Install it on "
+            "the machine running this probe.",
+        )
+        for args, endpoint in (
+            (("--remote-flake", "src/nixos", "--local-secrets"), "ipreston@hpp-1"),
+            (("--build-host", "builder@build1"), "builder@build1"),
+        ):
+            for line in old_style:
+                with self.subTest(args=args, line=line):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args, STUB_REMOTE_PROBE_WARNING=line, STUB_REMOTE_PROBE_RC=217
+                    )
+                    # "Host key verification failed" text is itself a cause
+                    reason = (
+                        f"build environment on {endpoint}: Host key verification failed"
+                        if "Host key" in line
+                        else f"on {endpoint}: the remote preflight failed with an "
+                        "unrecognized error"
+                    )
+                    self.assert_probe_failed(r, reason)
+                    self.assert_nothing_forged(r)
+            with self.subTest(args=args, exit_status=217):
+                self.log.write_text("")
+                r = self.probe(*args, STUB_REMOTE_PROBE_RC=217)
+                self.assert_probe_failed(
+                    r, f"build environment on {endpoint}: probe failed."
+                )
+                self.assert_nothing_forged(r)
+
+    def test_secrets_codes_count_only_where_the_secrets_check_ran(self):
+        for code in ("secrets-stale-clean", "secrets-head-unreadable", "tool-git"):
+            for path, args in (
+                ("split-host", ("--build-host", "builder@build1")),
+                ("bootstrap without --local-secrets", ("--remote-flake", "src/nixos")),
+            ):
+                with self.subTest(code=code, path=path):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_REMOTE_PROBE_WARNING=f"preflight-error: {code}",
                         STUB_REMOTE_PROBE_RC=1,
                     )
-                    self.assert_probe_failed(r, f"preflight: on {endpoint}: {fallback}")
-                    self.assertNotIn("private-detail", r.stdout)
-                    self.assertNotIn("\u001b", r.stderr)
+                    self.assert_probe_failed(r, "failed with an unrecognized error")
+                    self.assertNotIn("nix-secrets", r.stderr)
+                    self.assertNotIn("'git'", r.stderr)
+        self.log.write_text("")
+        r = self.probe(
+            "--remote-flake", "src/nixos", "--local-secrets",
+            STUB_REMOTE_PROBE_WARNING="preflight-error: secrets-stale-dirty",
+            STUB_REMOTE_PROBE_RC=1,
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r, "preflight: on ipreston@hpp-1: stale local nix-secrets (has "
+            "uncommitted changes): HEAD differs from the locked revision",
+        )  # fmt: skip
+        # a forged success line is ignored where no comparison ran
+        self.log.write_text("")
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_REMOTE_PROBE_WARNING="preflight-ok: secrets-clean",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("matches the locked revision", r.stderr)
 
-    def test_remote_preflight_known_messages_keep_their_classification(self):
-        for line in (
-            "builder terra: probe failed (exit 255). "
-            "Verify the SSH connection from an operator terminal.",
-            "builder nix@build-2.lan: unreachable over SSH. "
-            "Check the host, network and SSH port.",
-            "cannot read the Nix builders file. Check its permissions.",
-            "stale local nix-secrets (has uncommitted changes): HEAD "
-            + "a" * 40 + " differs from locked " + "b" * 40
-            + ". Check out the locked revision or omit --local-secrets.",
-        ):  # fmt: skip
-            with self.subTest(line=line):
+    def test_hostname_replies_are_never_printed(self):
+        for args in ((), ("--remote-flake", "src/nixos")):
+            with self.subTest(args=args):
                 self.log.write_text("")
-                r = self.probe(
-                    "--build-host", "builder@build1",
-                    STUB_REMOTE_PROBE_WARNING=f"noise private-detail\npreflight-error: {line}",
-                    STUB_REMOTE_PROBE_RC=1,
-                )  # fmt: skip
-                self.assert_probe_failed(r, f"preflight: on builder@build1: {line}")
+                r = self.probe(*args, STUB_HOSTNAME="forgedhost")
+                self.assert_probe_failed(
+                    r, "did not report the expected hostname 'hpp-1'"
+                )
+                self.assert_nothing_forged(r)
+        self.log.write_text("")
+        r = self.run_helper(
+            "--host", "hpp-1", "--preflight", STUB_HOSTNAME="forgedhost"
+        )  # fmt: skip
+        self.assert_probe_failed(r, "did not report the expected hostname 'hpp-1'")
+        self.assert_nothing_forged(r)
 
     def test_agent_diagnostics_stay_distinct(self):
         messages = {
@@ -1896,7 +2036,8 @@ class TaskRouting(Harness):
     def test_rebuild_host_refuses_a_hostname_mismatch(self):
         r = self.task("rebuild:hpp-1", STUB_HOSTNAME="amos1")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("expected 'hpp-1'", r.stderr)
+        self.assertIn("expected hostname 'hpp-1'", r.stderr)
+        self.assertNotIn("amos1", r.stderr)
         self.assertFalse(self.activated())
 
     def activation_tasks(self):
