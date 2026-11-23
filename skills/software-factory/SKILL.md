@@ -365,9 +365,9 @@ Parked or blocked work can free an issue slot after confirming its children
 have stopped and its reservations are safely released; retain its context.
 Keep worktrees while review, live validation or manual work remains. Before
 cleanup follow **Commit, PR, teardown** in `resolve-issue`: verify the
-checked-out branch and exact remote/local HEAD equality, check tracked,
-untracked and ignored files, and use ordinary `git worktree remove`. Any status
-output beyond that procedure's explicit generated-file allowance, failed
+checked-out branch and publication, check tracked, untracked and ignored
+files, and use ordinary `git worktree remove`. Any status output beyond that
+procedure's explicit generated-file allowance, failed
 verification or refused removal means preserve the worktree, report its path
 and state without publishing file contents or sensitive paths, and let the
 user decide. Never automatically stage, commit, delete or relocate unknown
