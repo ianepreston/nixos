@@ -711,14 +711,23 @@ nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 transcript=$(mktemp)
 trap 'rm -f "$transcript"' EXIT
 
+# activate.sh prints this marker only when it stopped before activating anything
+# (the store-copy session did not end in time, #1076): safe to rerun as is.
+activation_failed() {
+  if grep -qx "ACTIVATE-NIXOS-NOT-ACTIVATED $nonce $host" "$transcript"; then
+    die "activation of $host did not start: the store-copy session on the target did not end in time. Nothing was activated; it is safe to retry"
+  fi
+  die "$1"
+}
+
 if [ -z "$dest" ]; then
   printf '[+] Activating %s locally (%s)\n' "$host" "$action" >&2
   if [ "$(id -u)" -eq 0 ]; then
     bash "$activate_script" "$host" "$closure" "$action" "$nonce" | tee "$transcript" ||
-      die "activation of $host failed (not retried)"
+      activation_failed "activation of $host failed (not retried)"
   else
     sudo bash "$activate_script" "$host" "$closure" "$action" "$nonce" | tee "$transcript" ||
-      die "activation of $host failed (not retried)"
+      activation_failed "activation of $host failed (not retried)"
   fi
 else
   printf '[+] Activating %s on %s (%s)\n' "$host" "$target" "$action" >&2
@@ -727,7 +736,7 @@ else
   verified=""
   [ "$action" != check ] || [ -n "$remote_flake" ] || verified=" caller-verified"
   ssh_target "sudo bash -s -- $host $closure $action $nonce$verified" <"$activate_script" | tee "$transcript" ||
-    die "activation of $host on $target failed (not retried); inspect the target before doing anything else"
+    activation_failed "activation of $host on $target failed (not retried); inspect the target before doing anything else"
 fi
 
 grep -qx "ACTIVATE-NIXOS-VERIFIED $nonce $host $action" "$transcript" ||
