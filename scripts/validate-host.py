@@ -407,19 +407,37 @@ SAFE_REV_RE = re.compile(r"[0-9a-f]{7,40}")
 SAFE_REF_RE = re.compile(r"[A-Za-z0-9._/-]{1,100}")
 
 
+def input_fingerprint(value):
+    return hashlib.sha256(str(value).encode()).hexdigest()[:12]
+
+
+def mask_forms(value):
+    """The forms an override value can take in a diagnostic. The original URL
+    is parsed once; its components (authority, password, host, path, query,
+    fragment) are decoded separately, never re-parsed after decoding."""
+    unquote = urllib.parse.unquote
+    base = value.partition("?")[0].partition("#")[0]
+    forms = {value, unquote(value), base, unquote(base)}
+    parts = urllib.parse.urlsplit(value)
+    userinfo, at, hostport = parts.netloc.rpartition("@")
+    password = userinfo.partition(":")[2] if at else ""
+    for component in (parts.netloc, hostport, password, parts.path, parts.query, parts.fragment):  # fmt: skip
+        forms.update({component, unquote(component)})
+    return forms
+
+
 def input_masks(overrides):
-    """(form, marker) pairs, longest form first, for every override value: the
-    raw value, its decoded form, the value without query/fragment, and the URL
-    path, authority and query. Each occurrence becomes `<input:NAME FP>`."""
+    """(form, marker) pairs, longest form first, for every override value.
+    Each occurrence becomes `<input:NAME FP>`. Building them can never abort a
+    run: if a value cannot be taken apart, only its raw form is masked."""
     masks = {}
     for name, value in overrides:
         value = str(value)
-        marker = f"<input:{name} {describe_input(name, value)['fingerprint']}>"
-        forms = {value, urllib.parse.unquote(value)}
-        for v in list(forms):
-            forms.add(v.partition("?")[0].partition("#")[0])
-            parts = urllib.parse.urlsplit(v)
-            forms.update({parts.path, parts.netloc, parts.query})
+        marker = f"<input:{name} {input_fingerprint(value)}>"
+        try:
+            forms = mask_forms(value)
+        except Exception:  # noqa: BLE001 - malformed input: raw value only
+            forms = {value}
         for form in forms:
             if len(form) >= 4 and form not in masks:
                 masks[form] = marker
@@ -434,17 +452,18 @@ def describe_input(name, value):
     value = str(value)
     base = value.partition("?")[0].partition("#")[0]
     query = value.partition("?")[2].partition("#")[0]
-    rec = {"name": name, "fingerprint": hashlib.sha256(value.encode()).hexdigest()[:12]}
+    rec = {"name": name, "fingerprint": input_fingerprint(value)}
     if base.startswith(SAFE_REF_PREFIXES) or "://" not in base:
         rec["value"] = scrub(base)
     else:
-        parts = urllib.parse.urlsplit(base)
-        origin = parts.hostname or ""
+        scheme = base.partition("://")[0]
         try:
+            parts = urllib.parse.urlsplit(base)
+            origin = parts.hostname or ""
             port = parts.port
-        except ValueError:
-            port = None
-        rec["value"] = f"{parts.scheme}://{origin}" + (f":{port}" if port else "")
+            rec["value"] = f"{parts.scheme}://{origin}" + (f":{port}" if port else "")
+        except ValueError:  # malformed authority (e.g. an unbalanced bracket)
+            rec["value"] = scrub(f"{scheme}://<unparsable>")
     params = urllib.parse.parse_qs(query, keep_blank_values=False)
     rev = (params.get("rev") or [None])[-1]
     if rev and SAFE_REV_RE.fullmatch(rev):

@@ -1102,5 +1102,84 @@ class HelperDiagnostics(Harness):
             self.assertEqual(masks.get(form), marker, form)
 
 
+class MalformedInputs(Harness):
+    """Override values that urllib cannot (re)parse never crash a run: the
+    evidence is written, with the name and fingerprint, and leaks nothing."""
+
+    SECRET = "p%5B" + "ss"  # split so ripsecrets ignores the fixture
+    AUTH_URL = (
+        "https://build" + ":" + SECRET + "@" + "artifacts.example.invalid/source.tar.gz"
+    )
+    BROKEN_URL = "https://[unbalanced" + "Qw8x/src.tar.gz?k=v"
+
+    def drive_with(self, value, **env):
+        r = self.drive("--host", "hpp-1", "--override-input", "src", value, **env)
+        path = Path(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        self.assertIsNotNone(path, r.stderr)
+        self.assertTrue(path.is_file(), r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        return r, path.read_text(), json.loads(path.read_text())
+
+    def assert_no_leak(self, r, text, *leaks):
+        for leak in leaks:
+            self.assertNotIn(leak, text)
+            self.assertNotIn(leak, r.stdout)
+            self.assertNotIn(leak, r.stderr)
+
+    def test_encoded_bracket_in_password_passes_and_leaks_nothing(self):
+        r, text, ev = self.drive_with(self.AUTH_URL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [{"name": "src", "value": "https://artifacts.example.invalid", "fingerprint": fingerprint(self.AUTH_URL)}],
+        )  # fmt: skip
+        self.assert_no_leak(r, text, self.SECRET, "p[ss", "build:")
+
+    def test_encoded_bracket_in_password_rejected_by_the_helper(self):
+        r, text, ev = self.drive_with(self.AUTH_URL, STUB_REJECT_OVERRIDE="dry-run")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertIn(f"<input:src {fingerprint(self.AUTH_URL)}>", ev["message"])
+        self.assert_no_leak(r, text, self.SECRET, "p[ss", "build:")
+
+    def test_unbalanced_bracket_does_not_crash(self):
+        r, text, ev = self.drive_with(self.BROKEN_URL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [{"name": "src", "value": "https://<unparsable>", "fingerprint": fingerprint(self.BROKEN_URL)}],
+        )  # fmt: skip
+        self.assert_no_leak(r, text, "unbalanced", "src.tar.gz")
+
+    def test_unbalanced_bracket_rejected_by_the_helper(self):
+        r, text, ev = self.drive_with(self.BROKEN_URL, STUB_REJECT_OVERRIDE="dry-run")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn(f"<input:src {fingerprint(self.BROKEN_URL)}>", ev["message"])
+        self.assert_no_leak(r, text, "unbalanced", "src.tar.gz")
+
+    def test_mask_building_never_raises(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        for value in (
+            self.AUTH_URL,
+            self.BROKEN_URL,
+            "http://[::1",
+            "x://]",
+            "%%%",
+            "",
+        ):
+            with self.subTest(value=value):
+                masks = dict(vh.input_masks([("v", value)]))
+                if len(value) >= 4:
+                    self.assertEqual(masks[value], f"<input:v {fingerprint(value)}>")
+                vh.describe_input("v", value)
+        masks = dict(vh.input_masks([("src", self.AUTH_URL)]))
+        for form in (self.SECRET, "p[ss", "artifacts.example.invalid"):
+            self.assertIn(form, masks)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
