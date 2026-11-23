@@ -102,8 +102,17 @@ script=${script%x}
 case $script in
   *"probe <<'"*) [ -z "${STUB_SSH_DROP_PROBE:-}" ] || exit 255 ;;
 esac
-printf '%s' "$script" | "$@"
+# Optional lines spliced into the output around the end marker (state reads
+# only), standing in for a remote that sends something remote.sh never would.
+out=$STUB_STATE/ssh-out.$$
+printf '%s' "$script" | "$@" > "$out"
 rc=$?
+while IFS= read -r line || [ -n "$line" ]; do
+  case $line in VALIDATE-END\ *) [ ! -f "$STUB_STATE/inject-before-end" ] || cat "$STUB_STATE/inject-before-end" ;; esac
+  printf '%s\n' "$line"
+  case $line in VALIDATE-END\ *) [ ! -f "$STUB_STATE/inject-after-end" ] || cat "$STUB_STATE/inject-after-end" ;; esac
+done < "$out"
+rm -f "$out"
 exit "${STUB_SSH_EXIT:-$rc}"
 """,
     "hostname": 'echo "${STUB_HOSTNAME:-hpp-1}"',
@@ -817,7 +826,7 @@ class Baseline(Harness):
                 self.log.write_text("")
                 self.assert_bad_baseline_stops_before_check(text)
 
-    def parse(self, lines):
+    def parse(self, lines, after=()):
         """read_state() on canned remote output (the parser's own checks,
         independent of remote.sh's)."""
         import importlib.util
@@ -840,7 +849,11 @@ class Baseline(Harness):
             host="hpp-1",
             target="ipreston@hpp-1",
             closure_re=vh.re.compile(vh.CLOSURE_RE % "hpp-1"),
-            remote=lambda *_: (0, base + lines + [f"VALIDATE-END {nonce}"], nonce),
+            remote=lambda *_, **__: (
+                0,
+                base + lines + [f"VALIDATE-END {nonce}", *after],
+                nonce,
+            ),
         )
         return vh, lambda: vh.Validation.read_state(v, "pre-state")
 
@@ -924,6 +937,130 @@ class Baseline(Harness):
         self.assertEqual(r.returncode, 1, r.stderr)
         _, ev = self.evidence(r)
         self.assertEqual(ev["failed_stage"], "pre-state")
+
+    # #1071 review 2: a snapshot is accepted only if it is unambiguous;
+    # systemd's explicit empty InvocationID is a valid mark; a rejected mark
+    # payload never reaches any file in the run dir.
+
+    def test_remote_rejects_repeated_missing_or_unexpected_properties(self):
+        ok_ts = "StateChangeTimestampMonotonic=5\n"
+        for text in (
+            # an earlier malformed value cannot hide behind a later valid one
+            f"InvocationID={self.LEAK}\nInvocationID={INVOCATION}\n{ok_ts}",
+            f"InvocationID={INVOCATION}\nInvocationID={INVOCATION}\n{ok_ts}",
+            f"InvocationID={INVOCATION}\nStateChangeTimestampMonotonic=x\n{ok_ts}",
+            f"InvocationID={INVOCATION}\n{ok_ts}{ok_ts}",
+            f"InvocationID={INVOCATION}\n",
+            ok_ts,
+            f"InvocationID={INVOCATION}\n{ok_ts}Other=1\n",
+            f"InvocationID={INVOCATION}\n\n{ok_ts}",
+        ):
+            with self.subTest(text=text):
+                self.log.write_text("")
+                self.assert_bad_baseline_stops_before_check(text)
+
+    def test_empty_invocation_id_with_a_timestamp_is_a_valid_mark(self):
+        self.stale_baseline()
+        (self.state / "mark-stale.service").write_text(
+            "InvocationID=\nStateChangeTimestampMonotonic=1000\n"
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["pre"]["failed_unit_marks"], {"stale.service": "- 1000"})
+        self.assertEqual(ev["failed_units"]["tolerated"], ["stale.service"])
+
+    def test_empty_invocation_id_still_detects_a_later_failure(self):
+        self.stale_baseline()
+        (self.state / "mark-stale.service").write_text(
+            "InvocationID=\nStateChangeTimestampMonotonic=1000\n"
+        )
+        self.on_switch(
+            'printf "InvocationID=\\nStateChangeTimestampMonotonic=2000\\n" > "$STUB_STATE/mark-stale.service"'
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertEqual(ev["failed_units"]["changed"], ["stale.service"])
+
+    def test_parser_rejects_every_ambiguous_snapshot(self):
+        unit = "failed_unit=stale.service"
+        good = f"failed_unit_mark=stale.service {INVOCATION} 5"
+        other = f"failed_unit_mark=stale.service {INVOCATION} 6"
+        for lines, after, why in (
+            ([unit, unit, good], (), "repeats a unit"),
+            ([unit, good, good], (), "repeats a unit"),
+            ([unit, good, other], (), "repeats a unit"),
+            (["failed_unit=", good], (), "malformed"),
+            ([unit, good, f"failed_unit_mark= {INVOCATION} 5"], (), "malformed"),
+            ([unit, f"failed_unit_mark=stale.service  {INVOCATION} 5"], (), "malformed"),
+            ([unit, good, "system_state=running"], (), "system_state read from hpp-1 is repeated"),
+            ([unit, good, "hostname=hpp-1"], (), "hostname read from hpp-1 is repeated"),
+            # a later (old) mark must not overwrite the snapshot's own
+            ([unit, other], [good], "output after its end marker"),
+            ([unit, good], ["failed_unit=new.service"], "output after its end marker"),
+            ([unit, good], ["VALIDATE-END " + "n" * 8], "did not complete"),
+        ):  # fmt: skip
+            with self.subTest(lines=lines, after=after):
+                mod, read = self.parse(lines, after)
+                with self.assertRaises(mod.StageFailed) as cm:
+                    read()
+                self.assertIn(why, cm.exception.summary)
+        # a blank trailing line (ssh's own newline) is not output
+        mod, read = self.parse([unit, good], [""])
+        self.assertEqual(read()["failed_units"], ["stale.service"])
+
+    def test_old_mark_after_the_end_marker_cannot_mask_a_change(self):
+        self.stale_baseline()
+        self.on_switch(
+            'printf "InvocationID=%s\\nStateChangeTimestampMonotonic=2000\\n" "$STUB_INVOCATION" > "$STUB_STATE/mark-stale.service"; '
+            'echo "failed_unit_mark=stale.service $STUB_INVOCATION 1000" > "$STUB_STATE/inject-after-end"'
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("output after its end marker", ev["message"])
+
+    def run_dir_text(self, ev):
+        run_dir = Path(ev["run_dir"])
+        return "".join(
+            f.read_text(errors="replace") for f in run_dir.rglob("*") if f.is_file()
+        )
+
+    def test_rejected_mark_payload_is_in_no_run_dir_file(self):
+        for inject in (
+            f"failed_unit_mark=stale.service {self.LEAK} 5\n",
+            f"failed_unit_mark={self.LEAK} {INVOCATION} 5\n",
+            f"failed_unit={self.LEAK}\n",
+        ):
+            with self.subTest(inject=inject):
+                self.log.write_text("")
+                self.stale_baseline()
+                (self.state / "inject-before-end").write_text(inject)
+                r = self.drive("--host", "hpp-1", "--switch")
+                self.assertEqual(r.returncode, 1, r.stderr)
+                _, ev = self.evidence(r)
+                self.assertEqual(ev["failed_stage"], "pre-state")
+                self.assertFalse(any("--action" in a for a in self.helper_calls()))
+                text = self.run_dir_text(ev)
+                self.assertNotIn(self.LEAK, text)
+                self.assertNotIn(self.LEAK, r.stderr)
+                self.assertIn("withheld", text)
+                # normal unit names and valid marks are still logged
+                self.assertIn(f"failed_unit_mark=stale.service {INVOCATION} 1000", text)
+
+    def test_valid_state_read_is_logged_unchanged(self):
+        self.stale_baseline()
+        r = self.drive("--host", "hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        log = Path(next(s["log"] for s in ev["stages"] if s["name"] == "pre-state"))
+        text = log.read_text()
+        self.assertIn("failed_unit=stale.service\n", text)
+        self.assertIn(f"failed_unit_mark=stale.service {INVOCATION} 1000\n", text)
+        self.assertNotIn("withheld", text)
 
 
 class HostReads(Harness):

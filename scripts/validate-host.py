@@ -86,8 +86,22 @@ SYSTEM_STATES = {
     "offline",
     "unknown",
 }
-# InvocationID and StateChangeTimestampMonotonic of a failed unit.
-FAILED_UNIT_MARK_RE = re.compile(r"[0-9a-f]{32} [1-9][0-9]*")
+# InvocationID (`-` when systemd assigned none) and
+# StateChangeTimestampMonotonic of a failed unit.
+FAILED_UNIT_MARK_RE = re.compile(r"(?:[0-9a-f]{32}|-) [1-9][0-9]*")
+UNIT_NAME_RE = re.compile(
+    r"[A-Za-z0-9:_.@\\-]+\.(?:service|socket|device|mount|automount|swap|target|path|timer|slice|scope)"
+)
+# Single-valued keys of a state read; each must appear at most once.
+STATE_KEYS = (
+    "hostname",
+    "current_system",
+    "booted_system",
+    "system_profile",
+    "system_state",
+    "upgrade_service",
+    "upgrade_timer_next",
+)
 # Known token prefixes, or a long run mixing upper case, lower case and digits
 # (store hashes and git revisions have no upper case, so they are kept).
 TOKEN_RE = re.compile(
@@ -312,9 +326,30 @@ def stop_group(proc):
             continue
 
 
-def run_capture(argv, timeout, stdin_text=None, log=None):
+def log_safe_state(out):
+    """Stdout of a state read as it may be logged: a failed_unit or
+    failed_unit_mark line that does not validate is replaced by a diagnostic,
+    so a rejected payload never reaches the stage log."""
+    lines = []
+    for line in out.decode(errors="replace").split("\n"):
+        key, sep, value = line.partition("=")
+        if sep and key == "failed_unit" and not UNIT_NAME_RE.fullmatch(value):
+            line = "failed_unit=<malformed unit name withheld>"
+        elif sep and key == "failed_unit_mark":
+            unit, _, mark = value.partition(" ")
+            if not (
+                UNIT_NAME_RE.fullmatch(unit) and FAILED_UNIT_MARK_RE.fullmatch(mark)
+            ):
+                shown = unit if UNIT_NAME_RE.fullmatch(unit) else "<unit withheld>"
+                line = f"failed_unit_mark={shown} <malformed mark withheld>"
+        lines.append(line)
+    return "\n".join(lines).encode()
+
+
+def run_capture(argv, timeout, stdin_text=None, log=None, log_filter=None):
     """Run a bounded, non-activating command. Returns (rc, stdout); rc is None
-    on timeout. stderr (and, when given, stdout) is appended to `log`."""
+    on timeout. stderr (and, when given, stdout, passed through `log_filter`)
+    is appended to `log`."""
     sink = open(log, "ab") if log else subprocess.DEVNULL
     try:
         if log:
@@ -346,7 +381,7 @@ def run_capture(argv, timeout, stdin_text=None, log=None):
             stop_group(proc)
             raise
         if log:
-            sink.write(out)
+            sink.write(log_filter(out) if log_filter else out)
             sink.write(f"[exit {proc.returncode}]\n".encode())
         return proc.returncode, out.decode(errors="replace")
     finally:
@@ -713,7 +748,7 @@ class Validation:
             *extra,
         ]
 
-    def remote(self, stage, command, timeout):
+    def remote(self, stage, command, timeout, log_filter=None):
         """One read-only ssh to the target; the script asserts the hostname
         before anything else. Returns stdout lines."""
         nonce = nonce_source.token_hex(16)
@@ -729,7 +764,9 @@ class Validation:
             self.host,
             nonce,
         ]
-        rc, out = run_capture(argv, timeout, stdin_text=script, log=self.log(stage))
+        rc, out = run_capture(
+            argv, timeout, stdin_text=script, log=self.log(stage), log_filter=log_filter
+        )
         lines = out.splitlines()
         if rc is None:
             raise StageFailed(f"read from {self.target} timed out after {timeout}s")
@@ -752,36 +789,52 @@ class Validation:
         return rc, lines, nonce
 
     def read_state(self, stage):
-        rc, lines, nonce = self.remote(stage, lambda _n: "state", READ_TIMEOUT)
-        if f"VALIDATE-END {nonce}" not in lines:
+        rc, lines, nonce = self.remote(
+            stage, lambda _n: "state", READ_TIMEOUT, log_filter=log_safe_state
+        )
+        # The snapshot is everything before its one end marker; a missing or
+        # repeated marker, or any output after it, makes it ambiguous.
+        end = [i for i, line in enumerate(lines) if line == f"VALIDATE-END {nonce}"]
+        if len(end) != 1:
             raise StageFailed(
                 f"state read from {self.target} did not complete (exit {rc})", rc
             )
+        if any(line.strip() for line in lines[end[0] + 1 :]):
+            raise StageFailed(
+                f"state read from {self.target} has output after its end marker; stopping"
+            )
         state = {"failed_units": [], "failed_unit_marks": {}}
-        for line in lines:
+        for line in lines[: end[0]]:
             key, sep, value = line.partition("=")
             if not sep:
                 continue
+            # Exactly one record per unit and one value per key; a unit name
+            # or mark that does not validate is never stored (no arbitrary
+            # text reaches the evidence). Anything else fails the read.
             if key == "failed_unit":
+                if not UNIT_NAME_RE.fullmatch(value) or value in state["failed_units"]:
+                    raise StageFailed(
+                        f"failed-unit list read from {self.host} is malformed or repeats a unit; stopping"
+                    )
                 state["failed_units"].append(value)
             elif key == "failed_unit_mark":
                 unit, _, mark = value.partition(" ")
-                # Only a well-formed mark is ever stored (no arbitrary text
-                # reaches the evidence); anything else fails the read.
-                if not FAILED_UNIT_MARK_RE.fullmatch(mark):
+                if not (
+                    UNIT_NAME_RE.fullmatch(unit) and FAILED_UNIT_MARK_RE.fullmatch(mark)
+                ):
                     raise StageFailed(
                         f"failed-unit mark read from {self.host} is malformed; stopping"
                     )
+                if unit in state["failed_unit_marks"]:
+                    raise StageFailed(
+                        f"failed-unit mark read from {self.host} repeats a unit; stopping"
+                    )
                 state["failed_unit_marks"][unit] = mark
-            elif key in (
-                "hostname",
-                "current_system",
-                "booted_system",
-                "system_profile",
-                "system_state",
-                "upgrade_service",
-                "upgrade_timer_next",
-            ):
+            elif key in STATE_KEYS:
+                if key in state:
+                    raise StageFailed(
+                        f"{key} read from {self.host} is repeated; stopping"
+                    )
                 state[key] = value
         # Every value is required and must parse: an empty or malformed read
         # can never stand in for a baseline (two empty values would compare
