@@ -243,24 +243,26 @@ PR bodies here are substantial — match the repo's existing ones (`gh pr list
   deferred checks. For each incomplete check, name the reason, the steps
   still to run, and the evidence that would complete validation.
 
-Pushing the branch and opening the PR need no confirmation. After the PR is
-open, **verify it landed** before tearing anything down — the local tracking ref
-is stale, so trust `gh api`, not `git branch -vv`:
+Pushing the branch and opening the PR need no confirmation. Before teardown,
+**verify publication** from GitHub. The local tracking ref can be stale:
 
 ```sh
 gh pr view <PR#> --json url,headRefName,state
 git -C "<worktree-path>" symbolic-ref --short HEAD
 git -C "<worktree-path>" rev-parse HEAD
 gh api repos/ianepreston/nixos/branches/<branch> --jq .commit.sha
+gh pr list --repo ianepreston/nixos --head <branch> --state merged --json headRefOid
 ```
 
 Require the symbolic-ref query to succeed and return exactly `<branch>`.
 A detached HEAD or another checked-out branch means publication is unverified,
 even if the SHAs match: preserve the worktree and report that state.
-Require both SHA queries to succeed and return exactly the same nonempty SHA.
-A missing branch, failed query or mismatch means publication is unverified:
-preserve the worktree and report that state. A matching remote HEAD proves
-only that the commits were pushed; it says nothing about uncommitted files.
+Require a successful local HEAD query with a nonempty SHA. Require either a
+successful remote branch query returning that SHA or a successful merged PR
+query with a matching `headRefOid`.
+If neither query supplies a match, preserve the worktree and report why.
+This includes a rebased PR whose head differs from local HEAD, even if their
+trees match.
 
 Before removal, check the worktree for tracked, untracked and ignored files:
 
