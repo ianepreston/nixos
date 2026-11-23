@@ -6,9 +6,11 @@ Git runs against disposable repositories whose "origin" is a local bare repo;
 network, real GitHub account or host is involved.
 """
 
+import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,19 @@ import unittest
 
 CLI = Path(__file__).with_name("finish_child.py")
 BRANCH = "docs/1-example"
+ORIGIN = "git@github.com:ianepreston/nixos.git"
+
+# Stands in for ssh so origin can be a real github.com URL: serves
+# git-upload-pack/git-receive-pack for <host>:<path> from $STUB_GIT_ROOT/<path>.
+SSH_STUB = r"""
+import os, shlex, sys
+host, command = sys.argv[-2], sys.argv[-1]
+if host != "git@github.com":
+    sys.exit("ssh stub: unexpected host " + host)
+service, path = shlex.split(command)
+os.execvp("git", ["git", service.removeprefix("git-"),
+                  os.path.join(os.environ["STUB_GIT_ROOT"], path)])
+"""
 
 # PRs live in $STUB_PRS; headRefOid is read live from the bare repo, as GitHub
 # would report it, unless a record pins one. Every call is logged with GH_HOST.
@@ -84,6 +99,8 @@ class FinishChildTests(unittest.TestCase):
         gh = bin_dir / "gh"
         gh.write_text(f"#!{sys.executable}\n{GH_STUB}")
         gh.chmod(0o755)
+        ssh = bin_dir / "ssh-stub"
+        ssh.write_text(SSH_STUB)
         self.log = self.root / "gh.log"
         self.prs = self.root / "prs.json"
         self.env = dict(
@@ -95,6 +112,9 @@ class FinishChildTests(unittest.TestCase):
             STUB_ACCOUNTS="work-account,ianepreston",
             STUB_ACTIVE="ianepreston",
             GH_HOST="enterprise.example",
+            GIT_SSH_COMMAND=f"{shlex.quote(sys.executable)} {shlex.quote(str(ssh))}",
+            GIT_SSH_VARIANT="simple",
+            STUB_GIT_ROOT=str(self.root),
         )
         self.git("init", "--quiet", "--bare", "--initial-branch=main", str(self.bare))
         self.git("init", "--quiet", "--initial-branch=main", str(self.wt))
@@ -103,7 +123,7 @@ class FinishChildTests(unittest.TestCase):
         self.write("skills/a.md", "a\n")
         self.write("other.nix", "{ }\n")
         self.commit("base")
-        self.wgit("remote", "add", "origin", str(self.bare))
+        self.wgit("remote", "add", "origin", ORIGIN)
         self.wgit("push", "--quiet", "origin", "main")
         self.base = self.head()
         self.wgit("checkout", "--quiet", "-b", BRANCH)
@@ -114,7 +134,7 @@ class FinishChildTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.run(
-            ["git", *args], check=True, capture_output=True, text=True
+            ["git", *args], check=True, capture_output=True, text=True, env=self.env
         ).stdout.strip()
 
     def wgit(self, *args):
@@ -353,7 +373,30 @@ class FinishChildTests(unittest.TestCase):
         self.write("skills/a.md", "two\n")
         self.commit("docs: two")
         self.write("skills/a.md", "three\n")
-        self.assertEqual(self.run_cli()["commits_since_base"], 3)
+        result = self.run_cli()
+        self.assertEqual(result["commits_since_base"], 3)
+        self.assertEqual(
+            [commit["subject"] for commit in result["commits"]],
+            ["docs: one", "docs: two", "docs: example change"],
+        )
+        self.assertEqual(result["commits"][-1]["sha"], result["head"])
+
+    def test_unmerged_index_refused(self):
+        self.write("skills/a.md", "stashed\n")
+        self.wgit("stash", "--quiet")
+        self.write("skills/a.md", "committed\n")
+        self.commit("docs: conflicting")
+        process = subprocess.run(
+            ["git", "-C", str(self.wt), "stash", "pop"],
+            capture_output=True,
+            text=True,
+            env=self.env,
+        )
+        self.assertNotEqual(process.returncode, 0)
+        self.assertTrue(self.wgit("ls-files", "--unmerged"))
+        self.assertIn("unmerged", self.run_cli(ok=False))
+        self.assertEqual(self.head("HEAD~1"), self.base)
+        self.assertIsNone(self.remote())
 
     def test_wrong_branch_and_base_refused(self):
         self.write("skills/a.md", "changed\n")
@@ -402,16 +445,54 @@ class FinishChildTests(unittest.TestCase):
 
     def test_push_url_mismatch_refused(self):
         self.write("skills/a.md", "changed\n")
-        other = self.root / "ianepreston" / "fork.git"
-        self.git("init", "--quiet", "--bare", str(other))
-        self.wgit("remote", "set-url", "--push", "origin", str(other))
+        fork = "git@github.com:ianepreston/fork.git"
+        self.wgit("remote", "set-url", "--push", "origin", fork)
         self.assertIn("differs from fetch URL", self.run_cli(ok=False))
+        self.assert_untouched()
+
+    def test_two_push_urls_refused(self):
+        self.write("skills/a.md", "changed\n")
+        self.wgit("remote", "set-url", "--add", "--push", "origin", ORIGIN)
+        self.wgit("remote", "set-url", "--add", "--push", "origin", ORIGIN)
+        self.assertIn("2 push URLs", self.run_cli(ok=False))
+        self.assert_untouched()
+
+    def test_other_host_or_inexact_path_refused(self):
+        self.write("skills/a.md", "changed\n")
+        for url in (
+            "git@gitlab.example:ianepreston/nixos.git",
+            "https://github.com.example/ianepreston/nixos.git",
+            "ssh://git@mirror.example/github.com/ianepreston/nixos.git",
+            "git@github.com:mirror/ianepreston/nixos.git",
+        ):
+            self.wgit("remote", "set-url", "origin", url)
+            self.assertIn("is not github.com/ianepreston/nixos", self.run_cli(ok=False))
         self.assert_untouched()
 
     def test_remote_not_naming_repo_refused(self):
         self.write("skills/a.md", "changed\n")
-        self.assertIn("does not name", self.run_cli("--repo", "someone/else", ok=False))
+        error = self.run_cli("--repo", "someone/else", ok=False)
+        self.assertIn("is not github.com/someone/else", error)
         self.assert_untouched()
+
+    def test_github_url_forms(self):
+        spec = importlib.util.spec_from_file_location("finish_child", CLI)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for url in (
+            "git@github.com:ianepreston/nixos.git",
+            "ssh://git@github.com/ianepreston/nixos.git",
+            "ssh://git@github.com:22/ianepreston/nixos",
+            "https://github.com/ianepreston/nixos.git",
+            "https://github.com/ianepreston/nixos",
+        ):
+            self.assertEqual(module.github_path(url), "ianepreston/nixos", url)
+        for url in (
+            "http://github.com/ianepreston/nixos.git",
+            "git@example.com:ianepreston/nixos.git",
+            "/srv/git/ianepreston/nixos.git",
+        ):
+            self.assertNotEqual(module.github_path(url), "ianepreston/nixos", url)
 
     def test_tags_are_not_pushed(self):
         self.write("skills/a.md", "changed\n")
@@ -524,35 +605,43 @@ class FinishChildTests(unittest.TestCase):
     def test_attribution_footers_refused_everywhere(self):
         footers = (
             "Co-authored-by: Bot <bot@example.invalid>",
-            "co-authored-by: Bot <bot@example.invalid>",
-            "Generated with an agent tool",
-            "\N{ROBOT FACE} Generated by a coding agent",
-            "This pull request and its description were written by a bot.",
+            "  co-authored-by: Bot <bot@example.invalid>",
+            "Generated with [Claude Code](https://example.invalid/claude-code)",
+            "\N{ROBOT FACE} Generated with Codex",
+            "Generated by Copilot",
+            "Authored by Claude Code",
+            "\N{ROBOT FACE} Cursor agent",
         )
         self.write("skills/a.md", "changed\n")
         for footer in footers:
             self.message.write_text(f"docs: x\n\n{footer}\n")
-            self.assertIn("--message-file", self.run_cli(ok=False))
-        self.message.write_text("docs: x\n\nSigned-off-by: Test <t@example.invalid>\n")
+            self.assertIn("--message-file", self.run_cli(ok=False), footer)
+        self.message.write_text("docs: x\n")
         for footer in footers:
             self.body.write_text(f"Closes #1.\n\n{footer}\n")
-            self.assertIn("--body-file", self.run_cli(ok=False))
+            self.assertIn("--body-file", self.run_cli(ok=False), footer)
         self.body.write_text("Closes #1.\n")
         for footer in footers:
             self.seed_pr(body=f"Closes #1.\n\n{footer}\n")
-            self.assertIn("existing PR", self.run_cli(ok=False))
+            self.assertIn("existing PR", self.run_cli(ok=False), footer)
         self.prs.unlink()
         self.assert_untouched()
-        self.commit("docs: x", footers[2])
+        self.commit("docs: x", footers[5])
         self.assertIn("commit ", self.run_cli(ok=False))
         self.assertIsNone(self.remote())
 
-    def test_signed_off_by_and_prose_allowed(self):
-        self.write("skills/a.md", "changed\n")
-        self.message.write_text(
-            "docs: x\n\nThe file is regenerated by nix fmt.\n\n"
+    def test_prose_and_signed_off_by_allowed(self):
+        prose = (
+            "Generated by nixos-generate-config during bootstrap.\n"
+            "The commit messages are written by the runner.\n"
+            "This pull request and its description were written by a bot.\n"
+            "The file is regenerated by nix fmt.\n"
+            "Claude Code and Codex children share this packet.\n\n"
             "Signed-off-by: Test <t@example.invalid>\n"
         )
+        self.write("skills/a.md", "changed\n")
+        self.message.write_text("docs: x\n\n" + prose)
+        self.body.write_text("Closes #1.\n\n" + prose)
         self.assertEqual(self.run_cli()["done"], ["commit", "push", "pr"])
 
     def test_missing_message_or_pr_fields(self):
