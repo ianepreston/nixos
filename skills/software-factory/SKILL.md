@@ -123,7 +123,16 @@ packet and then the returned session/task handle. The packet contains:
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
   deployment. On failure, stop and report `awaiting_manual` with the exact
-  operator action from the preflight.
+  operator action from the preflight. For a dev host, give the validator
+  `task --exit-code validate:<host> -- --observe <duration> --probe '<cmd>'...`
+  ([host access](../_shared/host-access.md)), adding `--switch` only when the
+  packet's recorded host/action grant covers activating that host (AGENTS.md
+  **Authorization**); without it the driver checks and probes but activates
+  nothing. It runs that preflight first, then check, the switch when given,
+  probes and observation with a log per stage, stops at the first failure,
+  and prints an evidence record path to attach to the validation claim (it
+  never writes factory state). `--exit-code` keeps its status (3 = switch
+  outcome unknown) instead of Task's 201.
 - Required output: head SHA and PR URL where applicable, changed behavior,
   exact checks/results, validation still needed, blockers and pending questions.
   Ask the worker to finish within the dispatched turn when practical and to
@@ -235,7 +244,8 @@ operator; no automatic retry, rollback, kill or recovery command.
    probes. Hold the claim through the required observation period. Unexpected
    host changes invalidate evidence; reconcile before continuing.
 6. Record source SHA, effective inputs, commands, outcomes, deployed closure
-   and generation, plus manual results. No secret contents belong in state or
+   and generation, plus manual results; `task validate:<host>`'s evidence
+   record carries all but the manual results. No secret contents belong in state or
    public evidence. Rebase or edit invalidates affected review/check/live
    evidence; rerun the affected stages against the final PR head.
 

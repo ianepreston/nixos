@@ -12,6 +12,7 @@ includes:
   secrets: ./taskfiles/secrets.yaml
   ssh: ./taskfiles/ssh.yaml
   thermal: ./taskfiles/thermal.yaml
+  validate: ./taskfiles/validate.yaml
   vm: ./taskfiles/vm.yaml
 
 tasks:

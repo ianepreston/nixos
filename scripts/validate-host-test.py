@@ -1,0 +1,1185 @@
+#!/usr/bin/env python3
+"""Offline tests for scripts/validate-host.py (#1063).
+
+The activation helper, nix, ssh and the target's hostname/systemctl/readlink
+are logging stubs on PATH. ssh "connects" by running its command locally, so
+the real scripts/_validate-host/remote.sh executes end to end; nothing ever
+reaches a real host and nothing is activated.
+
+usage: validate-host-test.py REPO_ROOT
+"""
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import hashlib
+import tempfile
+import time
+import unittest
+
+REPO = (
+    Path(sys.argv.pop(1)).resolve()
+    if len(sys.argv) > 1
+    else Path(__file__).resolve().parent.parent
+)
+# The Nix build sandbox has no /usr/bin/env: stubs use the running bash.
+BASH = os.path.realpath(shutil.which("bash") or "/bin/bash")
+SHEBANG = f"#!{BASH}\n"
+GIT_FLAGS = ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"]
+GIT_ENV = {
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+}
+
+HASH_OLD = "abcdfghijklmnpqrsvwxyz0123456789"
+HASH_NEW = "0123456789abcdfghijklmnpqrsvwxyz"
+OLD = f"/nix/store/{HASH_OLD}-nixos-system-hpp-1-26.05.20261101.aaaaaaa"
+NEW = f"/nix/store/{HASH_NEW}-nixos-system-hpp-1-26.05.20261115.b349185"
+OTHER = f"/nix/store/{HASH_OLD[::-1]}-nixos-system-hpp-1-26.05.20261110.ccccccc"
+SECRETS_REV = "1" * 40
+ENVS = {"hpp-1": "dev", "tests-server": "dev", "amos1": "prod", "terra": None}
+
+
+def probe_id(command):
+    return hashlib.sha256(command.encode()).hexdigest()[:12]
+
+
+def fingerprint(value):
+    return hashlib.sha256(value.encode()).hexdigest()[:12]
+
+
+LOGGER = r"""
+log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOPTS-}" >> "$STUB_LOG"; }
+"""
+
+STUBS = {
+    # Only `nix eval --json <flake>#nixosConfigurations.<h>._module.specialArgs.hostSpec.serverEnvironment`.
+    "nix": r"""
+log "$@"
+[ "$1 $2" = "eval --json" ] || exit 64
+attr=${3#*#nixosConfigurations.}
+h=${attr%%._module.specialArgs.hostSpec.serverEnvironment}
+[ "$h" != "$attr" ] || exit 64
+printf '%s' "$STUB_ENVS" | python3 -c '
+import json, sys
+envs = json.load(sys.stdin)
+h = sys.argv[1]
+if h not in envs:
+    print("error: flake does not provide attribute", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps(envs[h]))
+' "$h"
+""",
+    "ssh": r"""
+log "$@"
+# skip options to the destination, then run the remote command locally
+while [ $# -gt 0 ]; do
+  case $1 in -o?* | -T) shift ;; -*) exit 65 ;; *) break ;; esac
+done
+shift
+script=$(cat; echo x)
+script=${script%x}
+case $script in
+  *"probe <<'"*) [ -z "${STUB_SSH_DROP_PROBE:-}" ] || exit 255 ;;
+esac
+printf '%s' "$script" | "$@"
+rc=$?
+exit "${STUB_SSH_EXIT:-$rc}"
+""",
+    "hostname": 'echo "${STUB_HOSTNAME:-hpp-1}"',
+    "readlink": r"""
+[ "${STUB_READLINK_FAIL:-}" != "$1" ] || exit 1
+case $1 in
+  /run/current-system) cat "$STUB_STATE/current" ;;
+  /run/booted-system) echo "$STUB_OLD" ;;
+  /nix/var/nix/profiles/system) echo "${STUB_PROFILE:-system-$(cat "$STUB_STATE/generation")-link}" ;;
+  *) exit 1 ;;
+esac
+""",
+    "systemctl": r"""
+case "$*" in
+  is-system-running) state=$(cat "$STUB_STATE/system_state"); echo "$state"; [ "$state" = running ] ;;
+  "list-units --state=failed --no-legend --plain") [ -z "${STUB_LIST_UNITS_FAIL:-}" ] || exit 1; cat "$STUB_STATE/failed" ;;
+  "is-active nixos-upgrade.service") echo "${STUB_UPGRADE:-inactive}"; [ "${STUB_UPGRADE:-inactive}" = active ] ;;
+  "show nixos-upgrade.timer -p NextElapseUSecRealtime --value") echo "Mon 2026-11-23 04:40:00 UTC" ;;
+  *) exit 1 ;;
+esac
+""",
+}
+
+# Stands in for scripts/activate-nixos.sh. Every invocation is logged; a switch
+# changes the stub target's running system and generation.
+HELPER = r"""
+log "$@"
+if [ -n "${STUB_REJECT_OVERRIDE:-}" ]; then
+  # like activate-nixos.sh safe(): the whole NAME=VALUE is echoed verbatim
+  prev2="" prev1="" name="" value=""
+  for a in "$@"; do
+    if [ "$prev2" = --override-input ]; then name=$prev1 value=$a; fi
+    prev2=$prev1 prev1=$a
+  done
+  case $STUB_REJECT_OVERRIDE:" $* " in
+    dry-run:*" --dry-run "*)
+      echo "activate-nixos: unsafe or empty override: '$name=$value'" >&2; exit 1 ;;
+    preflight-path:*" --preflight "*)
+      path=${value#*://*/}; echo "preflight: cannot read /${path%%\?*} on the build machine" >&2; exit 1 ;;
+  esac
+fi
+case " $* " in
+  *" --dry-run "*)
+    [ "${STUB_DRYRUN_RC:-0}" = 0 ] || { echo "activate-nixos: eval failed" >&2; exit "$STUB_DRYRUN_RC"; }
+    echo "plan: host=hpp-1 action=switch closure=$STUB_NEW" ;;
+  *" --preflight "*)
+    [ "${STUB_PREFLIGHT_RC:-0}" = 0 ] || {
+      echo "preflight: no usable SSH master for ipreston@hpp-1. Open it from an operator terminal using the same destination and SSH options." >&2
+      exit "$STUB_PREFLIGHT_RC"; }
+    echo "preflight: passed for hpp-1" >&2 ;;
+  *" --action check "*)
+    echo "preflight: passed for hpp-1" >&2
+    [ "${STUB_CHECK_RC:-0}" = 0 ] || { echo "activate-nixos: refusing: closure is configured for host 'x'" >&2; exit "$STUB_CHECK_RC"; } ;;
+  *" --action switch "*)
+    echo "preflight: passed for hpp-1" >&2
+    sleep "${STUB_SWITCH_SLEEP:-0}"
+    [ "${STUB_SWITCH_RC:-0}" = 0 ] || { echo "activate-nixos: activation of hpp-1 on ipreston@hpp-1 failed (not retried)" >&2; exit "$STUB_SWITCH_RC"; }
+    echo "$STUB_NEW" > "$STUB_STATE/current"
+    echo $(($(cat "$STUB_STATE/generation") + 1)) > "$STUB_STATE/generation"
+    touch "$STUB_STATE/switch-finished" ;;
+  *) exit 64 ;;
+esac
+"""
+
+EVIDENCE_KEYS = {
+    "schema",
+    "host",
+    "target",
+    "server_environment",
+    "switch_requested",
+    "run_dir",
+    "started_at",
+    "finished_at",
+    "result",
+    "failed_stage",
+    "message",
+    "source",
+    "inputs",
+    "expected_closure",
+    "pre",
+    "post",
+    "generation_changed",
+    "probes",
+    "observe",
+    "stages",
+}
+STAGE_NAMES = [
+    "inputs",
+    "preflight",
+    "pre-state",
+    "check",
+    "switch",
+    "post",
+    "observe",
+    "evidence",
+]
+
+
+class Harness(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="validate-host-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = self.tmp / "repo"
+        (self.repo / "scripts" / "_validate-host").mkdir(parents=True)
+        (self.repo / "taskfiles").mkdir()
+        shutil.copy(REPO / "scripts" / "validate-host.py", self.repo / "scripts")
+        shutil.copy(
+            REPO / "scripts" / "_validate-host" / "remote.sh",
+            self.repo / "scripts" / "_validate-host",
+        )
+        # Task evaluates every included file's vars, including this one.
+        shutil.copy(REPO / "scripts" / "secrets-dir.sh", self.repo / "scripts")
+        shutil.copy(REPO / "Taskfile.yaml", self.repo)
+        for f in (REPO / "taskfiles").glob("*.yaml"):
+            shutil.copy(f, self.repo / "taskfiles")
+        (self.repo / "scripts" / "activate-nixos.sh").write_text(
+            SHEBANG + LOGGER + HELPER
+        )
+        lock = {
+            "root": "root",
+            "nodes": {
+                "root": {"inputs": {"nix-secrets": "nix-secrets"}},
+                "nix-secrets": {"locked": {"rev": SECRETS_REV}},
+            },
+            "version": 7,
+        }
+        (self.repo / "flake.lock").write_text(json.dumps(lock))
+        self.home = self.tmp / "home"
+        self.home.mkdir()
+        self.stubs = self.tmp / "stubs"
+        self.stubs.mkdir()
+        for name, body in STUBS.items():
+            p = self.stubs / name
+            p.write_text(SHEBANG + LOGGER + body)
+            p.chmod(0o755)
+        self.state = self.tmp / "target"
+        self.state.mkdir()
+        (self.state / "current").write_text(OLD + "\n")
+        (self.state / "generation").write_text("41\n")
+        (self.state / "system_state").write_text("running\n")
+        (self.state / "failed").write_text("")
+        self.log = self.tmp / "stub.log"
+        self.log.write_text("")
+        self.xdg_state = self.tmp / "state"
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env.update(GIT_ENV)
+        env.update(
+            PATH=f"{self.stubs}{os.pathsep}{env.get('PATH', '')}",
+            HOME=str(self.home),
+            XDG_STATE_HOME=str(self.xdg_state),
+            STUB_LOG=str(self.log),
+            STUB_STATE=str(self.state),
+            STUB_ENVS=json.dumps(ENVS),
+            STUB_OLD=OLD,
+            STUB_NEW=NEW,
+            STUB_OTHER=OTHER,
+        )
+        self.env = env
+        subprocess.run(["git", *GIT_FLAGS, "init", "-q"], cwd=self.repo, env=env, check=True)  # fmt: skip
+        subprocess.run(["git", *GIT_FLAGS, "add", "-A"], cwd=self.repo, env=env, check=True)  # fmt: skip
+        subprocess.run(["git", *GIT_FLAGS, "commit", "-qm", "fixture"], cwd=self.repo, env=env, check=True)  # fmt: skip
+
+    def drive(self, *argv, timeout=120, **env):
+        return subprocess.run(
+            [sys.executable, str(self.repo / "scripts" / "validate-host.py"), *argv],
+            cwd=self.repo,
+            env={**self.env, **{k: str(v) for k, v in env.items()}},
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+
+    def calls(self, tool=None):
+        out = []
+        for line in self.log.read_text().splitlines():
+            name, args, sshopts = line.split("\t")
+            if tool is None or name == tool:
+                out.append((name, args, sshopts))
+        return out
+
+    def helper_calls(self):
+        return [args for name, args, _ in self.calls("activate-nixos.sh")]
+
+    def evidence(self, r):
+        path = Path(r.stdout.strip().splitlines()[-1])
+        self.assertTrue(path.is_file(), r.stderr)
+        return path, json.loads(path.read_text())
+
+    def statuses(self, ev):
+        return {s["name"]: s["status"] for s in ev["stages"]}
+
+    def run_dirs(self):
+        base = self.xdg_state / "nixos-validate"
+        return list(base.rglob("evidence.json")) if base.exists() else []
+
+
+class Sequence(Harness):
+    def test_check_only_runs_stages_in_order(self):
+        r = self.drive("--host", "hpp-1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["result"], "passed")
+        self.assertEqual([s["name"] for s in ev["stages"]], STAGE_NAMES)
+        self.assertEqual(
+            self.statuses(ev),
+            {
+                "inputs": "passed",
+                "preflight": "passed",
+                "pre-state": "passed",
+                "check": "passed",
+                "switch": "skipped",
+                "post": "passed",
+                "observe": "skipped",
+                "evidence": "passed",
+            },
+        )
+        # admission eval, then the helper's dry-run and preflight, and only
+        # then any ssh; the check comes after the pre-change read.
+        order = [
+            (n, a.split()[-1] if n == "activate-nixos.sh" else "")
+            for n, a, _ in self.calls()
+        ]
+        self.assertEqual(order[0], ("nix", ""))
+        helper = [a for a in self.helper_calls()]
+        self.assertEqual(len(helper), 3)
+        self.assertTrue(helper[0].endswith("--dry-run"))
+        self.assertTrue(helper[1].endswith("--preflight"))
+        self.assertTrue(helper[2].endswith("--action check"))
+        names = [n for n, _, _ in self.calls()]
+        first_ssh = names.index("ssh")
+        self.assertGreater(first_ssh, names.index("activate-nixos.sh") + 1)
+        self.assertEqual(ev["post"]["current_system"], OLD)
+        self.assertFalse(ev["generation_changed"])
+
+    def test_switch_with_probes_and_observe_records_the_evidence(self):
+        r = self.drive(
+            "--host", "hpp-1", "--switch",
+            "--probe", "true", "--probe", 'test "$(echo a b)" = "a b"',
+            "--observe", "2s", "--interval", "1s",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        self.assertEqual(ev["result"], "passed")
+        self.assertEqual(set(self.statuses(ev).values()), {"passed"})
+        switches = [a for a in self.helper_calls() if a.endswith("--action switch")]
+        self.assertEqual(len(switches), 1)
+        self.assertEqual(ev["expected_closure"], NEW)
+        self.assertEqual(ev["pre"]["current_system"], OLD)
+        self.assertEqual(ev["pre"]["generation"], 41)
+        self.assertEqual(ev["post"]["current_system"], NEW)
+        self.assertEqual(ev["post"]["generation"], 42)
+        self.assertTrue(ev["generation_changed"])
+        self.assertEqual([p["exit_code"] for p in ev["probes"]], [0, 0])
+        self.assertGreaterEqual(ev["observe"]["iterations"], 2)
+        self.assertTrue(ev["observe"]["ok"])
+        # one log per stage that ran, all inside the run dir, outside the repo
+        run_dir = path.parent
+        self.assertEqual(Path(ev["run_dir"]), run_dir)
+        self.assertNotIn(self.repo.resolve(), run_dir.resolve().parents)
+        for s in ev["stages"]:
+            self.assertTrue(Path(s["log"]).is_file(), s)
+            self.assertEqual(Path(s["log"]).parent, run_dir)
+
+    def test_evidence_record_shape_and_no_probe_output(self):
+        r = self.drive("--host", "hpp-1", "--probe", "printf 's3cr3t-%s' probe-output")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        self.assertEqual(set(ev), EVIDENCE_KEYS)
+        self.assertEqual(ev["schema"], "nixos-validate-host/1")
+        self.assertEqual(ev["host"], "hpp-1")
+        self.assertEqual(ev["target"], "ipreston@hpp-1")
+        self.assertEqual(ev["server_environment"], "dev")
+        self.assertEqual(ev["inputs"]["nix_secrets_locked_rev"], SECRETS_REV)
+        self.assertFalse(ev["inputs"]["local_secrets"])
+        self.assertRegex(ev["source"]["sha"], r"^[0-9a-f]{40}$")
+        self.assertFalse(ev["source"]["dirty"])
+        for key in ("current_system", "booted_system", "generation", "system_state", "failed_units", "upgrade_service", "upgrade_timer_next"):  # fmt: skip
+            self.assertIn(key, ev["pre"])
+        self.assertEqual(ev["pre"]["upgrade_timer_next"], "Mon 2026-11-23 04:40:00 UTC")
+        for s in ev["stages"]:
+            self.assertLessEqual({"name", "status", "log"}, set(s))
+        text = path.read_text()
+        self.assertNotIn("s3cr3t-probe-output", text)
+        post_log = Path(next(s["log"] for s in ev["stages"] if s["name"] == "post"))
+        self.assertIn("s3cr3t-probe-output", post_log.read_text())
+        self.assertTrue(r.stdout.strip().endswith("evidence.json"))
+
+    def test_home_paths_in_overrides_are_redacted(self):
+        r = self.drive("--host", "hpp-1", "--override-input", "nix-secrets", f"path:{self.home}/src/nix-secrets")  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        value = f"path:{self.home}/src/nix-secrets"
+        self.assertEqual(ev["inputs"]["override_inputs"], [{"name": "nix-secrets", "value": "path:~/src/nix-secrets", "fingerprint": fingerprint(value)}])  # fmt: skip
+        for args in self.helper_calls():
+            self.assertIn(f"--override-input nix-secrets path:{self.home}/src/nix-secrets", args)  # fmt: skip
+
+
+class Failures(Harness):
+    def assert_stopped_at(self, r, stage, code=1):
+        self.assertEqual(r.returncode, code, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], stage)
+        st = self.statuses(ev)
+        after = STAGE_NAMES[STAGE_NAMES.index(stage) + 1 : -1]
+        for name in after:
+            self.assertEqual(st[name], "not-run", (name, st))
+        self.assertEqual(st["evidence"], "passed")
+        return ev
+
+    def test_failed_dry_run_stops_before_any_connection(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_DRYRUN_RC=1)
+        ev = self.assert_stopped_at(r, "inputs")
+        self.assertEqual(ev["message"], "activate-nixos: eval failed")
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(len(self.helper_calls()), 1)
+
+    def test_failed_preflight_reports_the_classified_message_and_stops(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_PREFLIGHT_RC=1)
+        ev = self.assert_stopped_at(r, "preflight")
+        self.assertTrue(ev["message"].startswith("preflight: no usable SSH master"))
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+
+    def test_wrong_host_stops_before_check(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_HOSTNAME="terra")
+        ev = self.assert_stopped_at(r, "pre-state")
+        self.assertIn("did not report hostname hpp-1", ev["message"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+
+    def test_running_auto_upgrade_blocks_validation(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_UPGRADE="active")
+        ev = self.assert_stopped_at(r, "pre-state")
+        self.assertIn("nixos-upgrade.service is active", ev["message"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+
+    def test_failed_check_prevents_the_switch(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_CHECK_RC=1)
+        ev = self.assert_stopped_at(r, "check")
+        self.assertIn("refusing", ev["message"])
+        self.assertFalse(any(a.endswith("--action switch") for a in self.helper_calls()))  # fmt: skip
+
+    def test_failed_switch_is_not_retried_or_rolled_back(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_SWITCH_RC=1)
+        ev = self.assert_stopped_at(r, "switch")
+        self.assertIn("not retried", ev["message"])
+        switches = [a for a in self.helper_calls() if "--action switch" in a]
+        self.assertEqual(len(switches), 1)
+        # nothing after the failed switch touched the host
+        names = [n for n, _, _ in self.calls()]
+        self.assertEqual(names[-1], "activate-nixos.sh")
+
+    def test_switch_past_its_deadline_is_left_running_and_unknown(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--switch-timeout", "1", STUB_SWITCH_SLEEP=3)  # fmt: skip
+        ev = self.assert_stopped_at(r, "switch", code=3)
+        self.assertEqual(ev["result"], "unknown")
+        self.assertIn("left running", ev["message"])
+        self.assertFalse((self.state / "switch-finished").exists())
+        for _ in range(100):  # the activation was not signalled: it finishes
+            if (self.state / "switch-finished").exists():
+                break
+            time.sleep(0.1)
+        self.assertTrue((self.state / "switch-finished").exists())
+
+    def test_running_system_changed_before_switch_is_refused(self):
+        # check build "takes long" and the host moves meanwhile
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                '*" --action check "*)',
+                '*" --action check "*)\n    echo "$STUB_OTHER" > "$STUB_STATE/current"',
+            )
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        ev = self.assert_stopped_at(r, "switch")
+        self.assertIn("changed since pre-state", ev["message"])
+        self.assertFalse(any(a.endswith("--action switch") for a in self.helper_calls()))  # fmt: skip
+
+    def test_failed_probe_fails_post(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "exit 3", "--observe", "5s")  # fmt: skip
+        ev = self.assert_stopped_at(r, "post")
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id("exit 3"), "exit_code": 3}]
+        )
+        self.assertEqual(ev["message"], f"probe #1 (id {probe_id('exit 3')}) exited 3")
+
+    def test_degraded_system_fails_post(self):
+        (self.state / "system_state").write_text("degraded\n")
+        (self.state / "failed").write_text("foo.service loaded failed failed Foo\n")
+        r = self.drive("--host", "hpp-1", "--switch")
+        ev = self.assert_stopped_at(r, "post")
+        self.assertEqual(ev["post"]["failed_units"], ["foo.service"])
+        self.assertIn("degraded", ev["message"])
+
+    def test_observation_catches_a_later_regression(self):
+        counter = self.state / "probe-count"
+        probe = f'n=$(cat {counter} 2>/dev/null || echo 0); echo $((n + 1)) > {counter}; [ "$n" -lt 1 ]'  # fmt: skip
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", probe, "--observe", "3s", "--interval", "1s")  # fmt: skip
+        ev = self.assert_stopped_at(r, "observe")
+        self.assertEqual(ev["observe"]["iterations"], 1)
+        self.assertFalse(ev["observe"]["ok"])
+        self.assertIn("observation check 1", ev["message"])
+
+
+class Admission(Harness):
+    def assert_refused_offline(self, r):
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
+        self.assertEqual(self.run_dirs(), [])
+        self.assertFalse((self.xdg_state / "nixos-validate").exists())
+
+    def test_non_dev_and_unknown_hosts_are_refused_before_any_ssh(self):
+        for host, why in (
+            ("amos1", 'serverEnvironment is "prod"'),
+            ("terra", "serverEnvironment is null"),
+            ("nosuch", "unknown host"),
+        ):
+            with self.subTest(host=host):
+                self.log.write_text("")
+                r = self.drive("--host", host, "--switch")
+                self.assert_refused_offline(r)
+                self.assertIn(why, r.stderr)
+
+    def test_invalid_host_names_are_refused_before_any_eval(self):
+        for host in ("HPP-1", "hpp-1;true", "-hpp", "../x", ""):
+            with self.subTest(host=host):
+                self.log.write_text("")
+                r = self.drive("--host", host)
+                self.assert_refused_offline(r)
+                self.assertEqual(self.calls("nix"), [])
+
+    def test_admission_eval_failure_fails_closed(self):
+        r = self.drive("--host", "hpp-1", STUB_ENVS="not json")
+        self.assert_refused_offline(r)
+
+    def test_no_option_skips_helper_assertions(self):
+        for extra in (
+            ["--skip-preflight"],
+            ["--dry-run"],
+            ["--action", "switch"],
+            ["--dest", "amos1"],
+            ["--target-ssh-opt=-oControlPath=none"],
+            ["--skip"],  # no abbreviations
+            ["--host", "tests-server"],  # a second host
+        ):
+            with self.subTest(extra=extra):
+                self.log.write_text("")
+                r = self.drive("--host", "hpp-1", "--switch", *extra)
+                self.assert_refused_offline(r)
+                self.assertEqual(self.calls(), [])
+
+    def test_environment_cannot_bypass_preflight_or_share_ssh_options(self):
+        r = self.drive(
+            "--host", "hpp-1", "--switch",
+            SKIP_PREFLIGHT="true", NIX_SSHOPTS="-oControlPath=/tmp/other-host",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        helper = self.helper_calls()
+        self.assertTrue(any(a.endswith("--preflight") for a in helper))
+        for args in helper:
+            self.assertNotIn("--skip-preflight", args)
+            self.assertTrue(args.startswith("--host hpp-1 --dest hpp-1"), args)
+        for name, args, sshopts in self.calls():
+            self.assertEqual(sshopts, "NIX_SSHOPTS=[]", (name, args))
+        for _, args, _ in self.calls("ssh"):
+            argv = args.split()
+            self.assertEqual(argv[-5:-2], ["bash", "-s", "--"])
+            self.assertEqual(argv[-6], "ipreston@hpp-1")
+            for opt in ("-oBatchMode=yes", "-oControlMaster=no", "-oRemoteCommand=none", "-T"):  # fmt: skip
+                self.assertIn(opt, argv)
+
+    def test_run_dir_inside_the_checkout_is_refused(self):
+        r = self.drive("--host", "hpp-1", "--run-dir", str(self.repo / "logs"))
+        self.assert_refused_offline(r)
+        self.assertFalse((self.repo / "logs").exists())
+
+    def test_bad_durations_are_usage_errors(self):
+        for extra in (["--observe", "3x"], ["--observe", "5h"], ["--interval", "0"]):
+            with self.subTest(extra=extra):
+                self.log.write_text("")
+                r = self.drive("--host", "hpp-1", *extra)
+                self.assert_refused_offline(r)
+
+
+class TaskWrapper(Harness):
+    def task(self, *argv, **env):
+        task = shutil.which("task")
+        if task is None:
+            self.skipTest("go-task not available")
+        return subprocess.run(
+            [task, "--silent", *argv],
+            cwd=self.repo,
+            env={**self.env, **{k: str(v) for k, v in env.items()}},
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+
+    def test_arguments_pass_through_one_quoted_word_each(self):
+        probe = """test "$(printf '%s' 'it'"'"'s; $HOME')" = "it's; \\$HOME" """
+        r = self.task("validate:hpp-1", "--", "--switch", "--probe", probe)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["result"], "passed")
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id(probe), "exit_code": 0}]
+        )
+        self.assertTrue(any(a.endswith("--action switch") for a in self.helper_calls()))  # fmt: skip
+
+    def test_default_is_check_only_and_the_environment_cannot_switch(self):
+        r = self.task("validate:hpp-1", SWITCH="true", CLI_ARGS="--switch")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(any("--action switch" in a for a in self.helper_calls()))
+
+    def test_task_refuses_a_prod_host_before_any_ssh(self):
+        r = self.task("validate:amos1", "--", "--switch")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('serverEnvironment is "prod"', r.stderr)
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
+
+    def test_exit_code_flag_keeps_the_driver_status(self):
+        # Documented in host-access.md: Task alone reports 201.
+        self.assertEqual(self.task("validate:amos1").returncode, 201)
+        self.assertEqual(self.task("--exit-code", "validate:amos1").returncode, 2)
+        r = self.task("-x", "validate:hpp-1", "--", "--switch", "--switch-timeout", "1", STUB_SWITCH_SLEEP=3)  # fmt: skip
+        self.assertEqual(r.returncode, 3, r.stderr)
+
+    def test_task_cannot_redirect_the_host(self):
+        r = self.task("validate:hpp-1", "--", "--host", "tests-server")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--host may be given only once", r.stderr)
+        self.assertEqual(self.calls(), [])
+
+
+class HostReads(Harness):
+    """#1: a failed or empty required read fails the stage; it is never
+    recorded as an empty or zero value."""
+
+    def assert_read_failed(self, r, stage, key=None):
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], stage)
+        if key:
+            self.assertIn(f"required read '{key}' failed", ev["message"])
+        self.assertFalse(any("--action" in a for a in self.helper_calls()))
+        return ev
+
+    def test_failing_list_units_is_not_zero_failed_units(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_LIST_UNITS_FAIL=1)
+        ev = self.assert_read_failed(r, "pre-state", "failed_units")
+        self.assertIsNone(ev["pre"])
+
+    def test_failing_readlinks_fail_the_read(self):
+        for path, key in (
+            ("/run/current-system", "current_system"),
+            ("/run/booted-system", "booted_system"),
+            ("/nix/var/nix/profiles/system", "system_profile"),
+        ):
+            with self.subTest(path=path):
+                self.log.write_text("")
+                r = self.drive("--host", "hpp-1", "--switch", STUB_READLINK_FAIL=path)
+                self.assert_read_failed(r, "pre-state", key)
+
+    def test_unparsable_generation_never_becomes_a_baseline(self):
+        r = self.drive("--host", "hpp-1", "--switch", STUB_PROFILE="system-link")
+        ev = self.assert_read_failed(r, "pre-state")
+        self.assertIn("generation", ev["message"])
+
+    def test_malformed_closure_never_becomes_a_baseline(self):
+        (self.state / "current").write_text("/nix/store/not-a-system\n")
+        r = self.drive("--host", "hpp-1", "--switch")
+        ev = self.assert_read_failed(r, "pre-state")
+        self.assertIn("current_system", ev["message"])
+
+    def test_failed_read_in_the_switch_guard_stops_before_switching(self):
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                '*" --action check "*)',
+                '*" --action check "*)\n    echo "system-link" > "$STUB_STATE/generation"',
+            )
+        )
+        r = self.drive("--host", "hpp-1", "--switch")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "switch")
+        self.assertFalse(
+            any(a.endswith("--action switch") for a in self.helper_calls())
+        )
+
+    def test_inactive_upgrade_service_and_missing_timer_are_expected_states(self):
+        r = self.drive("--host", "hpp-1", STUB_UPGRADE="inactive")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["pre"]["upgrade_service"], "inactive")
+
+
+class Transport(Harness):
+    """#2: ssh must succeed AND report the marker; the first transport or
+    probe failure ends the stage with no further connection."""
+
+    def probe_connections(self):
+        return [a for _, a, _ in self.calls("ssh")]
+
+    def test_ssh_failure_with_a_marker_still_fails(self):
+        r = self.drive("--host", "hpp-1", STUB_SSH_EXIT=255)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertIn("ssh to ipreston@hpp-1 failed (exit 255)", ev["message"])
+        self.assertEqual(len(self.calls("ssh")), 1)
+
+    def test_dropped_probe_connection_stops_probing(self):
+        r = self.drive(
+            "--host", "hpp-1", "--probe", "true", "--probe", "true", "--probe", "true",
+            STUB_SSH_DROP_PROBE=1,
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("ssh to ipreston@hpp-1 failed (exit 255)", ev["message"])
+        # pre-state + post state read + the one dropped probe; nothing after
+        self.assertEqual(len(self.calls("ssh")), 3)
+        self.assertEqual(self.calls()[-1][0], "ssh")
+
+    def test_failing_probe_stops_further_probes_and_connections(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "exit 4", "--probe", "true", "--observe", "5s")  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertEqual([p["exit_code"] for p in ev["probes"]], [4])
+        # pre-state, switch guard, post state, one probe
+        self.assertEqual(len(self.calls("ssh")), 4)
+
+    def test_probes_run_under_pipefail(self):
+        r = self.drive("--host", "hpp-1", "--probe", "false | cat")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["probes"][0]["exit_code"], 1)
+
+
+class Redaction(Harness):
+    """#3: no probe text and no credential-like material in the evidence."""
+
+    def test_probe_text_never_reaches_the_evidence(self):
+        token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"
+        probe = (
+            f"curl -fsS -H 'Authorization: Bearer {token}' https://x.invalid/ | exit 7"
+        )
+        r = self.drive("--host", "hpp-1", "--probe", probe)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        text = path.read_text()
+        self.assertNotIn(token, text)
+        self.assertNotIn("Authorization", text)
+        self.assertNotIn("curl", text)
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id(probe), "exit_code": 7}]
+        )
+        self.assertNotIn("curl", r.stderr)
+
+    def test_override_values_lose_userinfo_queries_and_tokens(self):
+        token = "Zx9" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk"
+        overrides = {
+            # not a recognised form: origin only, plus the safe ref
+            "a": ("git+https://alice:hunter2@example.invalid/r.git?ref=main&token=abc", {"value": "git+https://example.invalid", "ref": "main"}),
+            # recognised form, too short to be a revision: rev dropped
+            "b": ("github:o/r?rev=0123", {"value": "github:o/r"}),
+            "c": (f"path:/srv/{token}/x", {"value": "path:/srv/<redacted>/x"}),
+            "d": (f"path:{self.home}/src/nix-secrets", {"value": "path:~/src/nix-secrets"}),
+        }  # fmt: skip
+        argv = ["--host", "hpp-1"]
+        for name, (value, _) in overrides.items():
+            argv += ["--override-input", name, value]
+        r = self.drive(*argv)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [
+                {**want, "name": n, "fingerprint": fingerprint(value)}
+                for n, (value, want) in overrides.items()
+            ],
+        )
+        text = path.read_text()
+        for leak in (
+            "hunter2",
+            "alice",
+            "token=abc",
+            "rev=0123",
+            token,
+            str(self.home),
+        ):
+            self.assertNotIn(leak, text)
+
+    def test_failure_messages_are_scrubbed(self):
+        token = "Zx9" + "Qw8Er7Ty6Ui5Op4As3Df2Gh1Jk"
+        helper = self.repo / "scripts" / "activate-nixos.sh"
+        helper.write_text(
+            helper.read_text().replace(
+                'echo "activate-nixos: eval failed" >&2',
+                f'echo "activate-nixos: unsafe override https://u:p@h.invalid/x?k={token}" >&2',
+            )
+        )
+        r = self.drive("--host", "hpp-1", STUB_DRYRUN_RC=1)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        # mentions an override: never copied, even when it is not one we know
+        self.assertEqual(
+            ev["message"],
+            "helper rejected an override input; details in the local stage log",
+        )
+        self.assertNotIn(token, path.read_text())
+
+
+class RunDirectory(Harness):
+    """#4: never create the run directory inside any Git repository."""
+
+    def git_repo(self, name):
+        d = self.tmp / name
+        d.mkdir()
+        subprocess.run(
+            ["git", *GIT_FLAGS, "init", "-q"], cwd=d, env=self.env, check=True
+        )
+        return d
+
+    def assert_refused(self, r, created):
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("inside a Git repository", r.stderr)
+        self.assertFalse(created.exists())
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
+
+    def test_run_dir_inside_another_checkout_is_refused(self):
+        other = self.git_repo("primary")
+        target = other / "logs" / "deep" / "run"
+        r = self.drive("--host", "hpp-1", "--run-dir", str(target))
+        self.assert_refused(r, other / "logs")
+
+    def test_default_state_dir_inside_a_repository_is_refused(self):
+        dotfiles = self.git_repo("dotfiles")
+        r = self.drive("--host", "hpp-1", XDG_STATE_HOME=dotfiles / "state")
+        self.assert_refused(r, dotfiles / "state")
+
+    def test_git_environment_cannot_hide_a_repository(self):
+        other = self.git_repo("primary")
+        r = self.drive(
+            "--host", "hpp-1", "--run-dir", str(other / "logs"),
+            GIT_DIR=str(self.tmp / "nowhere.git"), GIT_CEILING_DIRECTORIES=str(self.tmp),
+        )  # fmt: skip
+        self.assert_refused(r, other / "logs")
+
+    def test_run_dir_inside_a_git_dir_is_refused(self):
+        other = self.git_repo("primary")
+        r = self.drive(
+            "--host", "hpp-1", "--run-dir", str(other / ".git" / "logs" / "x")
+        )
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertFalse((other / ".git" / "logs" / "x").exists())
+
+
+class LocalSecrets(Harness):
+    """#5: the effective --local-secrets input is in the record."""
+
+    def secrets_repo(self, path):
+        path.mkdir(parents=True)
+        subprocess.run(
+            ["git", *GIT_FLAGS, "init", "-q"], cwd=path, env=self.env, check=True
+        )
+        (path / "a").write_text("1")
+        subprocess.run(
+            ["git", *GIT_FLAGS, "add", "a"], cwd=path, env=self.env, check=True
+        )
+        subprocess.run(
+            ["git", *GIT_FLAGS, "commit", "-qm", "x"],
+            cwd=path,
+            env=self.env,
+            check=True,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=path,
+            env=self.env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        return head
+
+    def local(self, **env):
+        r = self.drive("--host", "hpp-1", "--local-secrets", **env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertTrue(all("--local-secrets" in a for a in self.helper_calls()))
+        return ev["inputs"]["local_secrets"]
+
+    def test_sibling_checkout_is_recorded_with_head_and_dirty_counts(self):
+        sibling = self.tmp / "nix-secrets"
+        head = self.secrets_repo(sibling)
+        clean = self.local()
+        self.assertEqual(
+            clean,
+            {
+                "path": str(sibling.resolve()),
+                "head": head,
+                "dirty": False,
+                "dirty_paths": 0,
+                "matches_lock": False,
+            },
+        )
+        (sibling / "a").write_text("changed")
+        (sibling / "b").write_text("new")
+        dirty = self.local()
+        self.assertEqual((dirty["dirty"], dirty["dirty_paths"]), (True, 2))
+        self.assertNotEqual(clean, dirty)
+        self.assertNotIn("changed", json.dumps(dirty))
+
+    def test_nix_secrets_path_wins_and_is_home_relative(self):
+        self.secrets_repo(self.tmp / "nix-secrets")
+        explicit = self.home / "src" / "secrets-b"
+        head = self.secrets_repo(explicit)
+        rec = self.local(NIX_SECRETS_PATH=explicit)
+        self.assertEqual(rec["path"], "~/src/secrets-b")
+        self.assertEqual(rec["head"], head)
+
+    def test_missing_checkout_fails_the_inputs_stage(self):
+        r = self.drive("--host", "hpp-1", "--local-secrets")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertIn("cannot find the nix-secrets checkout", ev["message"])
+        self.assertEqual(self.helper_calls(), [])
+
+
+class LaunchFailures(Harness):
+    """#6: after admission a command that cannot be launched is a failed
+    stage, and evidence.json is still written."""
+
+    def restricted_path(self, *tools):
+        d = self.tmp / "bin"
+        d.mkdir()
+        for tool in tools:
+            found = shutil.which(tool, path=self.env["PATH"].split(os.pathsep, 1)[1])
+            self.assertIsNotNone(found, tool)
+            (d / tool).symlink_to(found)
+        return f"{self.stubs}{os.pathsep}{d}"
+
+    def test_helper_that_cannot_be_launched(self):
+        path = self.restricted_path("git", "python3", "basename")  # no bash
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertEqual(ev["message"], "cannot launch bash: No such file or directory")
+        self.assertEqual(self.statuses(ev)["evidence"], "passed")
+
+    def test_ssh_that_cannot_be_launched(self):
+        (self.stubs / "ssh").unlink()
+        path = self.restricted_path("git", "python3", "basename", "bash")
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "pre-state")
+        self.assertEqual(ev["message"], "cannot launch ssh: No such file or directory")
+
+    def test_git_that_cannot_be_launched_refuses_before_any_connection(self):
+        # The run directory's Git membership cannot be checked: fail closed.
+        path = self.restricted_path("python3", "basename", "bash")
+        r = self.drive("--host", "hpp-1", PATH=path)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("cannot ask git", r.stderr)
+        self.assertEqual(self.calls("ssh"), [])
+        self.assertEqual(self.helper_calls(), [])
+
+
+class CycleTwo(Harness):
+    """Re-review fixes: URL paths, cross-filesystem discovery, and the post
+    snapshot surviving a probe disconnect."""
+
+    def overrides(self, *pairs):
+        argv = ["--host", "hpp-1"]
+        for name, value in pairs:
+            argv += ["--override-input", name, value]
+        r = self.drive(*argv)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        path, ev = self.evidence(r)
+        return path.read_text(), ev["inputs"]["override_inputs"]
+
+    def test_credential_bearing_url_paths_keep_only_the_origin(self):
+        token = "k3yAbcd" + "Efgh1234"  # 15 chars: below the generic token pattern
+        url = f"https://files.example.invalid:8443/s/{token}/download/input.tar.gz"
+        text, recs = self.overrides(("blob", url))
+        self.assertEqual(
+            recs,
+            [
+                {
+                    "name": "blob",
+                    "value": "https://files.example.invalid:8443",
+                    "fingerprint": fingerprint(url),
+                }
+            ],
+        )
+        self.assertNotIn(token, text)
+        self.assertNotIn("download", text)
+
+    def test_different_pins_stay_distinguishable(self):
+        rev_a, rev_b = "a" * 40, "b" * 40
+        text, recs = self.overrides(
+            ("x", f"https://h.invalid/t/secretpath.tar.gz?rev={rev_a}"),
+            ("y", f"https://h.invalid/t/secretpath.tar.gz?rev={rev_b}"),
+            ("z", "https://h.invalid/t/otherpath.tar.gz"),
+        )
+        self.assertEqual([r["value"] for r in recs], ["https://h.invalid"] * 3)
+        self.assertEqual([r.get("rev") for r in recs], [rev_a, rev_b, None])
+        self.assertEqual(len({r["fingerprint"] for r in recs}), 3)
+        self.assertNotIn("secretpath", text)
+
+    def test_recognised_refs_keep_their_location_and_revision(self):
+        rev = "0123456789abcdef0123456789abcdef01234567"
+        value = f"git+ssh://git@github.com/ianepreston/nix-secrets.git?ref=main&rev={rev}&shallow=1"
+        _, recs = self.overrides(("nix-secrets", value), ("gh", "github:o/r/feature-x"))
+        self.assertEqual(
+            recs,
+            [
+                {"name": "nix-secrets", "value": "git+ssh://<redacted>@github.com/ianepreston/nix-secrets.git", "fingerprint": fingerprint(value), "rev": rev, "ref": "main"},
+                {"name": "gh", "value": "github:o/r/feature-x", "fingerprint": fingerprint("github:o/r/feature-x")},
+            ],
+        )  # fmt: skip
+
+    def test_membership_check_discovers_across_filesystems(self):
+        real_git = shutil.which("git", path=self.env["PATH"].split(os.pathsep, 1)[1])
+        wrapper = self.stubs / "git"
+        wrapper.write_text(
+            SHEBANG
+            + 'case "$*" in *"rev-parse --git-dir"*) printf \'discovery=%s\\n\' "${GIT_DISCOVERY_ACROSS_FILESYSTEM-unset}" >> "$STUB_LOG.git" ;; esac\n'
+            + f'exec {real_git} "$@"\n'
+        )  # fmt: skip
+        wrapper.chmod(0o755)
+        r = self.drive("--host", "hpp-1", GIT_DISCOVERY_ACROSS_FILESYSTEM="0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(Path(f"{self.log}.git").read_text(), "discovery=1\n")
+
+    def test_probe_disconnect_keeps_the_verified_post_snapshot(self):
+        r = self.drive("--host", "hpp-1", "--switch", "--probe", "true", STUB_SSH_DROP_PROBE=1)  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        _, ev = self.evidence(r)
+        self.assertEqual(ev["failed_stage"], "post")
+        self.assertIn("ssh to ipreston@hpp-1 failed", ev["message"])
+        self.assertEqual(ev["post"]["current_system"], NEW)
+        self.assertEqual(ev["post"]["generation"], 42)
+        self.assertTrue(ev["generation_changed"])
+        self.assertEqual(
+            ev["probes"], [{"index": 1, "id": probe_id("true"), "exit_code": None}]
+        )
+
+
+class HelperDiagnostics(Harness):
+    """A helper diagnostic that echoes an override value never reaches the
+    evidence or the printed summaries: only the input name and fingerprint."""
+
+    TOKEN = "k3yAbcd" + "Efgh1234"  # split so ripsecrets ignores the fixture
+    URL = f"https://files.example.invalid/s/{TOKEN}/download/input.tar.gz?download=1"
+
+    def run_rejected(self, mode):
+        r = self.drive("--host", "hpp-1", "--override-input", "blob", self.URL, STUB_REJECT_OVERRIDE=mode)  # fmt: skip
+        self.assertEqual(r.returncode, 1, r.stderr)
+        path, ev = self.evidence(r)
+        text = path.read_text()
+        for leak in (self.TOKEN, "/s/", "input.tar.gz", "download=1"):
+            self.assertNotIn(leak, text)
+            self.assertNotIn(leak, r.stderr)
+            self.assertNotIn(leak, r.stdout)
+        marker = f"<input:blob {fingerprint(self.URL)}>"
+        return ev, marker
+
+    def test_rejected_override_in_dry_run_reports_name_and_fingerprint(self):
+        ev, marker = self.run_rejected("dry-run")
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertEqual(
+            ev["message"],
+            f"helper diagnostic concerns override input {marker}; details in the local stage log",
+        )
+        self.assertEqual(self.statuses(ev)["inputs"], "failed")
+        # the full diagnostic stays in the local log
+        log = Path(next(s["log"] for s in ev["stages"] if s["name"] == "inputs"))
+        self.assertIn(self.TOKEN, log.read_text())
+
+    def test_url_path_alone_in_a_later_stage_is_masked(self):
+        ev, marker = self.run_rejected("preflight-path")
+        self.assertEqual(ev["failed_stage"], "preflight")
+        self.assertIn(marker, ev["message"])
+
+    def test_masks_cover_raw_decoded_and_parsed_forms(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "vh", REPO / "scripts" / "validate-host.py"
+        )
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        encoded = self.URL.replace("/s/", "/s%2F", 1)
+        masks = dict(vh.input_masks([("blob", encoded)]))
+        marker = f"<input:blob {fingerprint(encoded)}>"
+        for form in (encoded, self.URL, self.URL.split("?")[0], "download=1"):
+            self.assertEqual(masks.get(form), marker, form)
+
+
+class MalformedInputs(Harness):
+    """Override values that urllib cannot (re)parse never crash a run: the
+    evidence is written, with the name and fingerprint, and leaks nothing."""
+
+    SECRET = "p%5B" + "ss"  # split so ripsecrets ignores the fixture
+    AUTH_URL = (
+        "https://build" + ":" + SECRET + "@" + "artifacts.example.invalid/source.tar.gz"
+    )
+    BROKEN_URL = "https://[unbalanced" + "Qw8x/src.tar.gz?k=v"
+
+    def drive_with(self, value, **env):
+        r = self.drive("--host", "hpp-1", "--override-input", "src", value, **env)
+        path = Path(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else None
+        self.assertIsNotNone(path, r.stderr)
+        self.assertTrue(path.is_file(), r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        return r, path.read_text(), json.loads(path.read_text())
+
+    def assert_no_leak(self, r, text, *leaks):
+        for leak in leaks:
+            self.assertNotIn(leak, text)
+            self.assertNotIn(leak, r.stdout)
+            self.assertNotIn(leak, r.stderr)
+
+    def test_encoded_bracket_in_password_passes_and_leaks_nothing(self):
+        r, text, ev = self.drive_with(self.AUTH_URL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [{"name": "src", "value": "https://artifacts.example.invalid", "fingerprint": fingerprint(self.AUTH_URL)}],
+        )  # fmt: skip
+        self.assert_no_leak(r, text, self.SECRET, "p[ss", "build:")
+
+    def test_encoded_bracket_in_password_rejected_by_the_helper(self):
+        r, text, ev = self.drive_with(self.AUTH_URL, STUB_REJECT_OVERRIDE="dry-run")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertEqual(ev["failed_stage"], "inputs")
+        self.assertIn(f"<input:src {fingerprint(self.AUTH_URL)}>", ev["message"])
+        self.assert_no_leak(r, text, self.SECRET, "p[ss", "build:")
+
+    def test_unbalanced_bracket_does_not_crash(self):
+        r, text, ev = self.drive_with(self.BROKEN_URL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(
+            ev["inputs"]["override_inputs"],
+            [{"name": "src", "value": "https://<unparsable>", "fingerprint": fingerprint(self.BROKEN_URL)}],
+        )  # fmt: skip
+        self.assert_no_leak(r, text, "unbalanced", "src.tar.gz")
+
+    def test_unbalanced_bracket_rejected_by_the_helper(self):
+        r, text, ev = self.drive_with(self.BROKEN_URL, STUB_REJECT_OVERRIDE="dry-run")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn(f"<input:src {fingerprint(self.BROKEN_URL)}>", ev["message"])
+        self.assert_no_leak(r, text, "unbalanced", "src.tar.gz")
+
+    def test_mask_building_never_raises(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        for value in (
+            self.AUTH_URL,
+            self.BROKEN_URL,
+            "http://[::1",
+            "x://]",
+            "%%%",
+            "",
+        ):
+            with self.subTest(value=value):
+                masks = dict(vh.input_masks([("v", value)]))
+                if len(value) >= 4:
+                    self.assertEqual(masks[value], f"<input:v {fingerprint(value)}>")
+                vh.describe_input("v", value)
+        masks = dict(vh.input_masks([("src", self.AUTH_URL)]))
+        for form in (self.SECRET, "p[ss", "artifacts.example.invalid"):
+            self.assertIn(form, masks)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
