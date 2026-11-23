@@ -78,8 +78,63 @@ LOGGER = r"""
 log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOPTS-}" >> "$STUB_LOG"; }
 """
 
+# A faithful model of how Nix starts ssh for ssh:// and ssh-ng:// stores
+# (src/libstore/ssh.cc, SSHMaster, upstream Nix 2.24-2.34 at the default
+# max-connections=1, so no Nix-owned master): argv is
+#   ssh <authority> -x <NIX_SSHOPTS words> -oPermitLocalCommand=yes \
+#     '-oLocalCommand=echo started' -- <remote command>
+# The effective settings are resolved by the REAL OpenSSH client with `ssh -G`
+# (parses options, connects to nothing) against a hostile fixture ssh_config,
+# so OpenSSH's own first-value-wins precedence decides the outcome. Nix skips
+# its `started` handshake only when `ssh -O check` with the same options finds
+# a master (modelled as STUB_MASTER_RC=0 with an effective ControlPath; ssh -G
+# omits controlpath when it is none); otherwise the connection is fresh and Nix fails unless ssh would
+# run exactly `echo started`. NIX_SSHOPTS is split on whitespace: Nix
+# shell-splits it, which is the same for the helper's allowlisted options.
+NIX_SSH_MODEL = r"""
+nix_ssh() {
+  [ -n "${STUB_REAL_SSH:-}" ] || return 0
+  local uri=$1 authority cfg
+  local -a opts=()
+  authority=${uri#*://}
+  read -ra opts <<<"${NIX_SSHOPTS-}"
+  cfg=$("$STUB_REAL_SSH" -F "$STUB_SSH_FIXTURE_CONFIG" -G "$authority" -x \
+    ${opts[@]+"${opts[@]}"} -oPermitLocalCommand=yes '-oLocalCommand=echo started' \
+    -- nix-daemon --stdio </dev/null 2>&1) || {
+    printf 'error: ssh rejected the store options: %s\n' "$cfg" >&2
+    exit 1
+  }
+  printf 'uri %s\n%s\n--\n' "$uri" "$cfg" >> "$STUB_LOG.nix-ssh"
+  if [ "${STUB_MASTER_RC:-0}" = 0 ] && grep -q '^controlpath ' <<<"$cfg"; then
+    return 0
+  fi
+  if grep -qx 'permitlocalcommand yes' <<<"$cfg" && grep -qx 'localcommand echo started' <<<"$cfg"; then
+    return 0
+  fi
+  printf "error: failed to start SSH connection to '%s'\n" "${authority#*@}" >&2
+  exit 1
+}
+"""
+
+# Contradicts every probe and store option, so a test passes only if the
+# helper's command-line options (and Nix's) win over ssh_config.
+SSH_FIXTURE_CONFIG = """\
+Host *
+  PermitLocalCommand no
+  LocalCommand /fixture/hostile-local-command
+  BatchMode no
+  StrictHostKeyChecking accept-new
+  UpdateHostKeys yes
+  AddKeysToAgent yes
+  ForkAfterAuthentication yes
+  ControlMaster auto
+  ControlPath /fixture/cm-%C
+"""
+REAL_SSH = shutil.which("ssh")
+
 STUBS = {
-    "nix": r"""
+    "nix": NIX_SSH_MODEL
+    + r"""
 log "$@"
 case $1 in
   build | eval)
@@ -88,7 +143,13 @@ case $1 in
       *networking.hostName*) echo "$STUB_CFG_HOSTNAME" ;;
       *) echo "$STUB_CLOSURE" ;;
     esac ;;
-  copy) exit "${STUB_COPY_RC:-0}" ;;
+  copy)
+    prev=""
+    for a in "$@"; do
+      case $prev:$a in --to:ssh://* | --to:ssh-ng://* | --from:ssh://* | --from:ssh-ng://*) nix_ssh "$a" ;; esac
+      prev=$a
+    done
+    exit "${STUB_COPY_RC:-0}" ;;
   config) printf '%s\n' "${STUB_BUILDERS:-}" ;;
   store)
     if [ "$4" = "${STUB_STORE_URI:-ssh://ipreston@hpp-1}" ]; then
@@ -96,8 +157,9 @@ case $1 in
         printf '%s\n' "$STUB_STORE_ERROR" >&2
         exit "${STUB_STORE_RC:-1}"
       fi
-      exit "${STUB_STORE_RC:-0}"
-    fi ;;
+      [ "${STUB_STORE_RC:-0}" = 0 ] || exit "$STUB_STORE_RC"
+    fi
+    nix_ssh "$4" ;;
 esac
 """,
     "nix-store": 'log "$@"; echo "$STUB_CLOSURE"',
@@ -254,6 +316,11 @@ class Harness(unittest.TestCase):
             p.chmod(0o755)
         self.log = self.tmp / "log"
         self.log.write_text("")
+        self.assertIsNotNone(
+            REAL_SSH, "these tests need a real OpenSSH client (ssh -G) on PATH"
+        )
+        ssh_config = self.tmp / "ssh_config"
+        ssh_config.write_text(SSH_FIXTURE_CONFIG)
         self.host = "hpp-1"
         self.closure = self.make_closure(self.host)
         self.env = {
@@ -269,6 +336,8 @@ class Harness(unittest.TestCase):
             "STUB_IDENTITY_AGENT": "/stub/effective-agent.sock",
             "STUB_AGENT": "ok",
             "STUB_BUILDERS": "",
+            "STUB_REAL_SSH": REAL_SSH,
+            "STUB_SSH_FIXTURE_CONFIG": str(ssh_config),
         }
 
     def make_closure(self, host, name=None, etc_host=None, store=None):
@@ -317,6 +386,19 @@ class Harness(unittest.TestCase):
             if not row[1].startswith("-oBatchMode=yes ")
         ]
 
+    def nix_ssh_sessions(self):
+        """(uri, effective ssh -G settings) for each modelled Nix ssh start."""
+        path = Path(f"{self.log}.nix-ssh")
+        sessions = []
+        if not path.exists():
+            return sessions
+        for block in path.read_text().split("\n--\n"):
+            rows = [ln.split(" ", 1) for ln in block.splitlines() if ln]
+            if rows:
+                assert rows[0][0] == "uri", rows[0]
+                sessions.append((rows[0][1], {r[0]: r[-1] for r in rows[1:]}))
+        return sessions
+
     def copies(self):
         return [x for x in self.lines("nix") if x[1].startswith("copy")]
 
@@ -325,10 +407,11 @@ class Harness(unittest.TestCase):
 
 
 class TransportPreflight(Harness):
-    def probe(self, *args, **env):
+    def probe(self, *args, helper=None, **env):
         return self.run_helper(
-            "--host", "hpp-1", "--dest", "hpp-1", "--preflight", *args, **env
-        )
+            "--host", "hpp-1", "--dest", "hpp-1", "--preflight", *args,
+            helper=helper, **env,
+        )  # fmt: skip
 
     def assert_probe_failed(self, result, reason):
         self.assertNotEqual(result.returncode, 0)
@@ -551,6 +634,148 @@ class TransportPreflight(Harness):
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("preflight: passed for hpp-1", r.stderr)
+
+    # Nix's fresh-connection `started` handshake (#1041): see NIX_SSH_MODEL.
+    HANDSHAKE = {
+        "permitlocalcommand": "yes",
+        "localcommand": "echo started",
+        "batchmode": "yes",
+        "stricthostkeychecking": "true",
+        "connecttimeout": "8",
+        "updatehostkeys": "false",
+        "addkeystoagent": "false",
+        "clearallforwardings": "yes",
+        "forkafterauthentication": "no",
+    }
+
+    def assert_store_handshake(self, settings):
+        for key, value in self.HANDSHAKE.items():
+            self.assertEqual(settings.get(key), value, key)
+        self.assertNotIn("hostile", settings.get("localcommand", ""))
+
+    def regressed_helper(self):
+        """The helper with the pre-#1041 store probe options (the plain ssh
+        probes' -oPermitLocalCommand=no), to show the fixture catches it."""
+        text = self.helper.read_text()
+        old = '"${store_probe_opts[@]}" -T)'
+        self.assertEqual(text.count(old), 1)
+        regressed = self.helper.with_name("activate-nixos-regressed.sh")
+        regressed.write_text(text.replace(old, '"${probe_opts[@]}" -T)'))
+        return regressed
+
+    def test_fresh_store_connection_completes_nix_handshake(self):
+        # bootstrap continues without a master, so Nix's ssh starts fresh
+        r = self.probe("--remote-flake", "src/nixos", STUB_MASTER_RC=255)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no usable SSH master", r.stderr)
+        ((uri, settings),) = self.nix_ssh_sessions()
+        self.assertEqual(uri, "ssh://ipreston@hpp-1")
+        self.assert_store_handshake(settings)
+        self.assertEqual(settings["controlmaster"], "false")
+        store = [x for x in self.lines("nix") if x[1].startswith("store ")][0]
+        self.assertNotIn("PermitLocalCommand", store[2])
+        self.assertNotIn("LocalCommand", store[2])
+        # plain ssh probes still forbid any local command
+        plain = [row for row in self.lines("ssh") if "-oBatchMode=yes" in row[1]]
+        self.assertTrue(plain)
+        self.assertTrue(all("-oPermitLocalCommand=no" in row[1] for row in plain))
+
+    def test_split_host_fresh_store_connections_complete_handshake(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            "--target-ssh-opt=-oIdentityAgent=~/target-agent",
+            "--build-ssh-opt=-oIdentityAgent=~/builder-agent",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sessions = self.nix_ssh_sessions()
+        self.assertEqual(
+            [uri for uri, _ in sessions],
+            ["ssh-ng://ipreston@hpp-1", "ssh-ng://builder@build1"],
+        )
+        for (_, settings), agent in zip(sessions, ("target-agent", "builder-agent")):
+            self.assert_store_handshake(settings)
+            self.assertNotIn("controlpath", settings)  # ssh -G omits none
+            self.assertTrue(settings["identityagent"].endswith(agent))
+
+    def test_warm_single_host_store_probe_reuses_the_master(self):
+        r = self.probe()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ((uri, settings),) = self.nix_ssh_sessions()
+        self.assertEqual(uri, "ssh://ipreston@hpp-1")
+        self.assertEqual(settings["controlmaster"], "false")
+        self.assertTrue(settings["controlpath"].startswith("/fixture/cm-"))
+        # the same options would also complete a fresh connection
+        self.assert_store_handshake(settings)
+
+    def test_real_copy_legs_complete_the_handshake_too(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1"
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        copies = self.nix_ssh_sessions()[2:]
+        self.assertEqual(
+            [uri for uri, _ in copies],
+            ["ssh-ng://builder@build1"] * 2 + ["ssh-ng://ipreston@hpp-1"],
+        )
+        for _, settings in copies:
+            self.assertEqual(settings["permitlocalcommand"], "yes")
+            self.assertEqual(settings["localcommand"], "echo started")
+            self.assertNotIn("controlpath", settings)
+
+    def test_fixture_catches_a_store_probe_that_disables_local_commands(self):
+        regressed = self.regressed_helper()
+        for args, env in (
+            (("--remote-flake", "src/nixos"), {"STUB_MASTER_RC": 255}),
+            (("--build-host", "builder@build1"), {}),
+        ):
+            with self.subTest(args=args):
+                self.log.write_text("")
+                Path(f"{self.log}.nix-ssh").unlink(missing_ok=True)
+                r = self.probe(*args, helper=regressed, **env)
+                self.assert_probe_failed(
+                    r, "Nix's SSH session did not complete its start handshake"
+                )
+                ((_, settings),) = self.nix_ssh_sessions()
+                self.assertEqual(settings["permitlocalcommand"], "no")
+        # a warm master hides the regression, which is why stubs missed it
+        self.log.write_text("")
+        r = self.probe(helper=regressed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_handshake_failure_after_auth_markers_keeps_the_auth_message(self):
+        for message, reason in (
+            ("sign_and_send_pubkey: signing failed: agent refused operation\n"
+             "error: failed to start SSH connection to 'hpp-1'", "SSH signing failed"),
+            ("Permission denied (publickey).\n"
+             "error: failed to start SSH connection to 'hpp-1'", "SSH authentication denied"),
+            ("error: failed to start SSH master connection to 'hpp-1'",
+             "Nix's SSH session did not complete its start handshake"),
+        ):  # fmt: skip
+            with self.subTest(reason=reason):
+                self.log.write_text("")
+                self.assert_probe_failed(
+                    self.probe(STUB_STORE_ERROR=message),
+                    f"store transport ssh://ipreston@hpp-1: {reason}",
+                )
+
+    def test_agent_diagnostics_stay_distinct(self):
+        messages = {
+            "hang": "SSH agent unresponsive",
+            "empty": "SSH agent has no identities (a locked agent also lists none)",
+            "refused": "SSH agent refused operation",
+        }
+        for state, reason in messages.items():
+            with self.subTest(state=state):
+                self.log.write_text("")
+                r = self.probe(STUB_AGENT=state)
+                self.assert_probe_failed(r, reason)
+                for other, text in messages.items():
+                    if other != state:
+                        self.assertNotIn(text, r.stderr)
+                self.assertNotIn("SSH signing failed", r.stderr)
+                self.assertEqual(
+                    [x for x in self.lines("nix") if x[1].startswith("store ")], []
+                )
 
     def test_agent_refusal_is_classified(self):
         self.assert_probe_failed(
@@ -968,9 +1193,10 @@ class RemoteActivation(Harness):
         self.assertEqual(rows, ["nix-env", "ACTIVATED"], "generation recorded first")
 
     # Single-host copies must reuse the user's pre-opened ssh master (hardware
-    # key auth cannot be answered by an agent). ssh-ng:// always starts Nix's
-    # own master, so single-host mode copies over the legacy ssh:// store, with
-    # only ControlMaster=no (never become a master) ahead of caller options, and
+    # key auth cannot be answered by an agent). They use the legacy ssh://
+    # store, the transport observed to work in #1039 (whether ssh-ng:// would
+    # reuse it depends on the Nix version and max-connections), with only
+    # ControlMaster=no (never become a master) ahead of caller options, and
     # never ControlPath=none, which would defeat reuse of the existing socket.
     COPY_FORCED = ["-oControlMaster=no"]
 

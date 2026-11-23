@@ -219,6 +219,29 @@ With `--local-secrets`, the preflight compares the checkout's HEAD with the
 locked revision and reports uncommitted changes. A builder failure stops
 the run before the build.
 
+What each probe proves:
+
+- **Agent.** `ssh-add -l` against the effective agent, with a deadline. The
+  preflight reports three cases separately. A hang means the agent is
+  unresponsive (look for a pending touch or PIN prompt). An empty identity
+  list means no keys are loaded. A locked OpenSSH agent (`ssh-add -x`)
+  normally reports an empty list too, so unlock it before loading keys again.
+  A signing or authentication failure in a later leg (`agent refused
+  operation`, `Permission denied`) is reported per leg.
+- **Store transport.** `nix store info` through Nix's own ssh, with BatchMode,
+  strict host keys and a deadline. The plain probes' `PermitLocalCommand=no`
+  is left out of this leg. Nix puts `NIX_SSHOPTS` first and appends its own
+  `PermitLocalCommand=yes` and `LocalCommand=echo started`, and OpenSSH keeps
+  the first value, so that option would break the handshake on a fresh
+  connection after a successful authentication. A warm master hides this,
+  because multiplexed sessions never run `LocalCommand`.
+- **Builders.** A bounded `ssh … <builder> true` from the caller's context
+  (your ssh config, agent and `known_hosts`), not the Nix daemon's, which
+  makes the real distributed-build connection. A warm master for the builder
+  satisfies the probe and can mask a host-key or authentication failure.
+  A pass shows the builder is reachable from here. It does not prove the
+  daemon can build there.
+
 `task deploy:hpp-1` is the same thing (`LOCAL_SECRETS=true task deploy:hpp-1`
 adds `--local-secrets`); `ACTION=check|test|boot` selects the action. Task passes host and action as explicit `shellQuote`d arguments, never
 `env:` (an inherited `ACTIVATE_HOST` would override it), and the helper
@@ -231,15 +254,23 @@ then pushed to the target, as two single-host commands). With a build host,
 every connection to either host (including the `nix copy` transports) is forced
 to `-oControlMaster=no -oControlPath=none -oProxyJump=none -oProxyCommand=none`,
 ahead of any option you pass, regardless of the effective SSH configuration.
-In split-host mode every leg authenticates afresh (ssh-ng opens
-a Nix-owned master per copy), so a hardware key needs a touch per leg.
-Single-host mode instead reuses your pre-opened master: the closure is copied
-over the legacy `ssh://` store (one plain `ssh` per command, picking up the
-effective `ControlPath`) with only `-oControlMaster=no` added, never
-`ControlPath=none`. `ssh-ng://` is not used there because it always starts its
-own ssh master on a private socket, so it can never use the pre-opened one and
-would demand a fresh authentication (a failed touch shows as `failed to start
-SSH master connection`). A jump host is a separate ssh client that never sees those
+In split-host mode every leg authenticates afresh (nothing is shared,
+whether or not Nix starts a private master for a copy), so a hardware key
+needs a touch per leg. Single-host mode instead reuses your pre-opened master:
+the closure is copied over the legacy `ssh://` store (one plain `ssh` per
+command, picking up the effective `ControlPath`) with only
+`-oControlMaster=no` added, never `ControlPath=none`. That is the path observed
+to work with no touch in #1039, so `ssh-ng://` is not used there. Whether
+`ssh-ng://` reuses a pre-opened master depends on the Nix version and store
+options. Upstream Nix 2.24-2.34 starts its own master on a private `-S`
+socket, which bypasses yours, only when the store's `max-connections` is
+above 1. At the default of 1, each store connection is a plain `ssh` that
+honours `NIX_SSHOPTS` and the configured `ControlPath`. Check the Nix source
+for the version in use before relying on either behaviour. When `ssh -O check`
+with the same options finds no master, Nix opens a fresh connection and waits
+for its fixed `-oLocalCommand=echo started` handshake. A failed touch or that
+handshake shows as `failed to start SSH connection` (or `... SSH master
+connection` when Nix owns a master). A jump host is a separate ssh client that never sees those
 options, so with `--build-host` an explicit `-J`/`-oProxyJump` is rejected and
 configuration-supplied jumps and proxies are disabled. Single-host mode
 accepts `-J`/`-oProxyJump`. Every target ssh also passes `-T`, so a

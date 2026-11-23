@@ -50,12 +50,18 @@
 # Single-host mode REUSES the ssh master you pre-opened (hardware-key ssh auth
 # cannot be answered by an agent): the closure is copied over the legacy
 # ssh:// store, which runs one plain `ssh` per command, so each of those picks
-# up the ControlPath socket from ~/.ssh/config. ssh-ng:// is NOT used there: it
-# always starts Nix's own ssh master on a private socket, so it can never use
-# the pre-opened one and would demand a fresh authentication. The copy leg is
-# given -oControlMaster=no (use an existing master, never become one) and never
-# ControlPath=none, which would defeat the reuse. The direct ssh activation
-# connection reuses the same master.
+# up the ControlPath socket from ~/.ssh/config. That is the transport observed
+# to work with no touch (#1039); ssh-ng:// is NOT used there. Whether ssh-ng://
+# can reuse the master depends on the Nix version and store options: upstream
+# Nix 2.24-2.34 starts its own master on a private `-S` socket (which bypasses
+# a pre-opened one) only when the store's max-connections is above 1; at the
+# default of 1 each store connection is a plain ssh, like ssh://. Either way,
+# when `ssh -O check` with the same options finds no master, Nix opens a fresh
+# connection and waits for its fixed `-oLocalCommand=echo started` handshake
+# (see the preflight's store probe). The copy leg is given -oControlMaster=no
+# (use an existing master, never become one) and never ControlPath=none, which
+# would defeat the reuse. The direct ssh activation connection reuses the same
+# master.
 # With --build-host, every ssh connection to EITHER host (build, pull, push,
 # activate; including the transports nix copy spawns) is forced to
 # -oControlMaster=no -oControlPath=none, placed before any user option so it
@@ -63,12 +69,12 @@
 # ~/.ssh/config, `Match` blocks included). Nothing is multiplexed, so no socket
 # can carry a command meant for one host to the other; isolation does not
 # depend on parsing or comparing socket paths. The price: every leg in split
-# mode authenticates afresh (ssh-ng:// opens one Nix master per copy), so a
-# hardware key needs a touch per leg. A jump host would be a separate
-# ssh client that never sees those forced options (and could reuse a shared
-# master), so split-host mode also rejects -J/-oProxyJump and forces
-# -oProxyJump=none -oProxyCommand=none, overriding any jump or proxy from
-# ~/.ssh/config. Single-host mode keeps -J/-oProxyJump allowed.
+# mode authenticates afresh (no shared socket, whether or not Nix starts its
+# own private master for a copy), so a hardware key needs a touch per leg. A
+# jump host would be a separate ssh client that never sees those forced
+# options (and could reuse a shared master), so split-host mode also rejects
+# -J/-oProxyJump and forces -oProxyJump=none -oProxyCommand=none, overriding
+# any jump or proxy from ~/.ssh/config. Single-host mode keeps -J/-oProxyJump allowed.
 #
 # Every ssh to the target passes -T, so `RequestTTY force` in client config
 # cannot allocate a tty (merging stderr into stdout, adding CRs); -t, -tt and
@@ -328,10 +334,10 @@ target_nix_sshopts() {
   printf '%s' "$s"
 }
 
-# ssh:// reuses the caller's pre-opened master (one plain ssh per command);
-# ssh-ng:// always opens its own master, so it is only used where multiplexing
-# is forbidden anyway (split-host mode: one authentication per copy, not per
-# store command).
+# ssh:// reuses the caller's pre-opened master (one plain ssh per command; the
+# path observed to work in #1039). ssh-ng:// is only used where multiplexing is
+# forbidden anyway (split-host mode); whether it would reuse a master depends
+# on the Nix version and max-connections (see the header).
 target_store_scheme() {
   if [ -n "$build_host" ]; then printf 'ssh-ng'; else printf 'ssh'; fi
 }
@@ -419,9 +425,21 @@ require_preflight_tools() {
 
 # Place these before caller options (OpenSSH uses the first value it sees).
 # A probe cannot accept/update host keys, add identities, or set up forwards.
-probe_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
+probe_common_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
   -oUpdateHostKeys=no -oAddKeysToAgent=no -oClearAllForwardings=yes
-  -oPermitLocalCommand=no -oForkAfterAuthentication=no)
+  -oForkAfterAuthentication=no)
+# Plain ssh probes run no local command at all.
+probe_opts=("${probe_common_opts[@]}" -oPermitLocalCommand=no)
+# Store probes go through Nix's own ssh, which puts NIX_SSHOPTS FIRST and then
+# appends -oPermitLocalCommand=yes -oLocalCommand='echo started'. On a fresh
+# (not multiplexed) connection Nix fails unless it reads `started` back, so a
+# PermitLocalCommand=no here would win and break the handshake after a
+# successful authentication; a warm master hides that, since its multiplexed
+# sessions never run LocalCommand. Leave both unset: Nix's command-line values
+# then beat any ssh_config PermitLocalCommand/LocalCommand, so the only local
+# command is Nix's fixed `echo started` (the option allowlist keeps callers
+# from setting either). Everything else matches the plain probes.
+store_probe_opts=("${probe_common_opts[@]}")
 
 ssh_probe_failure() {
   local leg=$1 status=$2 output=$3
@@ -437,6 +455,9 @@ ssh_probe_failure() {
       ;;
     *"Permission denied"*)
       preflight_fail "$leg: SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal."
+      ;;
+    *"failed to start SSH connection"* | *"failed to start SSH master connection"*)
+      preflight_fail "$leg: Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal."
       ;;
     *"Could not resolve hostname"* | *"Connection refused"* | *"No route to host"* | *"Operation timed out"* | *"Connection timed out"*)
       preflight_fail "$leg: unreachable over SSH. Check the host, network and SSH port."
@@ -486,7 +507,8 @@ probe_agent() {
     status=$?
     case $status:$output in
       124:* | 137:*) preflight_fail "$endpoint: SSH agent unresponsive. Check for a pending touch or PIN prompt in the operator terminal." ;;
-      *"The agent has no identities"*) preflight_fail "$endpoint: SSH agent has no identities. Load the SSH keys into the effective agent." ;;
+      # A locked OpenSSH agent (ssh-add -x) normally lists no identities too.
+      *"The agent has no identities"*) preflight_fail "$endpoint: SSH agent has no identities (a locked agent also lists none). Unlock the effective agent or load the SSH keys into it." ;;
       *"agent refused operation"*) preflight_fail "$endpoint: SSH agent refused operation. Unlock the effective agent and retry." ;;
       *) preflight_fail "$endpoint: cannot query the effective SSH agent. Check that its socket is reachable." ;;
     esac
@@ -499,11 +521,17 @@ probe_agent() {
 
 probe_store() {
   local uri=$1 opts=$2 output
-  output=$(NIX_SSHOPTS="$(sshopts_string "${probe_opts[@]}" -T) $opts" \
+  output=$(NIX_SSHOPTS="$(sshopts_string "${store_probe_opts[@]}" -T) $opts" \
     bounded 12s nix store info --store "$uri" </dev/null 2>&1) ||
     ssh_probe_failure "store transport $uri" "$?" "$output"
 }
 
+# A bounded `ssh ... <builder> true` from the caller's context (this user's
+# ssh config, agent and known_hosts), not the Nix daemon's, which is what
+# really connects for a distributed build. -oControlMaster=no still uses a
+# warm master on the effective ControlPath, and that masks host-key and
+# authentication failures. A pass shows this caller can reach (and, with no
+# warm master, authenticate to) the builder; it does not prove the daemon can.
 probe_builders() {
   local builders machine endpoint identity output port
   local -a opts

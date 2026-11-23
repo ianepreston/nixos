@@ -1,5 +1,7 @@
 # Mocked identity/failure tests for scripts/activate-nixos.sh (#1018). Every
 # external command is a logging stub, so no host is contacted or activated.
+# openssh is only used as `ssh -G` (resolve options, connect to nothing) by the
+# Nix store ssh model (#1041).
 _: {
   perSystem =
     { pkgs, ... }:
@@ -15,6 +17,7 @@ _: {
               gnugrep
               go-task
               jq
+              openssh
               python3
             ];
           }
