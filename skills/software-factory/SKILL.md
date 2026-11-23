@@ -36,15 +36,9 @@ decide. This section applies once per fresh batch; for a resume use
    ask before touching it. A fresh batch never releases or adopts claims on
    its own, and takeover of a supervisor that still holds claims needs the
    user's decision on them first.
-2. To take over a previous supervisor, derive its owner from `show`
-   (`supervisor.owner`) and its runtime handle from the `session` and
-   `session_owner` fields in `plan` metadata (record your session ID and owner
-   there at `init`, and update both after every `takeover`), then read that
-   session's status from the runtime (in Omnigent `sys_session_get_info`: no
-   running turn and no pending prompt) rather than asking. If the handle is
-   missing, `session_owner` differs from `supervisor.owner`, or the status
-   cannot be resolved, takeover is blocked: ask the user. Run `takeover` only
-   once it has stopped.
+2. To take over a previous supervisor, follow the takeover check in
+   **Start or resume**, step 4, deriving the owner and runtime status rather
+   than asking.
 3. Gather context yourself: `origin/main`, open PRs with head SHAs, whether
    the PRs recorded in `show` are merged, tasks waiting on a human force-push
    (a local branch rebased after its PR head was published), open issues
@@ -58,15 +52,14 @@ decide. This section applies once per fresh batch; for a resume use
 5. Select the batch by **Triage** and propose it; begin unless the user asked
    to approve it first.
 6. Before the first long build or live run of the batch (and again on resume),
-   run the host preflight and report its results, problems first, before
-   starting that work: `task ssh:preflight HOST=<host>`, the host's next
+   give the **host preflight report**, problems first, before starting that
+   work: the result of `task ssh:preflight HOST=<host>`, the host's next
    `nixos-upgrade` timer fire, and its running state and failed units, so a
    baseline fault or imminent auto-upgrade is known before it spoils a run.
    The `validate:<host>` driver repeats the transport probe itself but goes
    on to check and any authorized switch, so it does not replace this report.
-   Repeat the report at the point of use, immediately before each live
-   validation (see **Review and validate**). A batch with no live stage skips
-   the host items.
+   Each live validation gets a current report (**Review and validate**,
+   step 3). A batch with no live stage skips the host items.
 
 ## Start or resume
 
@@ -92,12 +85,20 @@ decide. This section applies once per fresh batch; for a resume use
    separate clone against the same validation host.
    Save the selected order, priority rationale and user-granted scope in
    supervisor `plan` metadata before dispatch; do not infer priority from
-   issue-number sorting when resuming.
+   issue-number sorting when resuming. Record your runtime session ID as
+   `session` and your owner ID as `session_owner` in `plan` too.
 4. On resume, read state before dispatch. Reconcile recorded children with
    runtime status/history, branches and PR heads with GitHub, and reservations
    with actual work. Treat `idle` or a successful tool return as insufficient
    evidence that a task passed. A new supervisor may take ownership only after
    confirming the old supervisor has stopped; takeover preserves claims.
+   Derive the old supervisor's owner from `show` (`supervisor.owner`) and its
+   runtime handle from `plan` `session`, valid only if `session_owner` equals
+   that owner; read the session's status from the runtime (in Omnigent
+   `sys_session_get_info`: no running turn, no pending prompt). A missing or
+   mismatched handle or an unresolved status blocks takeover: ask the user.
+   After `takeover`, update `session` and `session_owner`. Give the host
+   preflight report (**Fresh batch**, step 6) before any live stage you resume.
    A missing or uncertain child remains counted until its termination is
    confirmed. Do not clear an interrupted validation claim by age.
 5. Discover the actual delegation tools. In Omnigent, read
@@ -312,8 +313,8 @@ is verified again afterwards.
    expensive commands with the `build` claim, including commands run by children.
    Missing live access defers that stage; it need not stop independent edits
    or local checks. A deferred/failed check is never a pass.
-3. Before live validation, report the host's current next `nixos-upgrade`
-   timer fire and running state (not an earlier report), claim `validation` and record its issue, target,
+3. Before live validation, give a current host preflight report (**Fresh
+   batch**, step 6; not an earlier one), claim `validation` and record its issue, target,
    source SHA, effective input overrides, expected closure, pre-change
    generation, user authority and behavioral probes. Check for other sessions,
    CI resource contention and auto-upgrade activity; the local claim cannot

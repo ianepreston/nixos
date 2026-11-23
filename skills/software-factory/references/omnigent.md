@@ -52,8 +52,9 @@ technical deployment gate. Do not claim sandboxing or permission enforcement.
 - Call `sys_advise_models` before every dispatch. For a **new** session pass
   its recommended model as `args.model` (IDs carry the `system.ai.` prefix);
   a model recorded unavailable in `plan` metadata is excluded from advice
-  and fallbacks alike. Precedence: a verified override, else the advice, else
-  the last model known to work for that worker, else a fallback not recorded
+  and fallbacks alike. Precedence: a verified override; when retrying after a
+  model failure, the last model known to work for that worker; else the
+  advice; else the last model known to work; else a fallback not recorded
   unavailable (`system.ai.gpt-6-2-sol` for `codex`,
   `system.ai.claude-opus-5-5` for `claude_code`), else the worker default.
 - A continuation (same title, or `session_id`) runs on the session's
