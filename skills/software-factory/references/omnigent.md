@@ -47,6 +47,22 @@ a direct coder instead. Generic Polly workers may use approval bypass and
 have access to the caller's credentials; a prompt prohibition is not a
 technical deployment gate. Do not claim sandboxing or permission enforcement.
 
+## Dispatch arguments
+
+- Call `sys_advise_models` before every dispatch. For a **new** session pass
+  its recommended model as `args.model` (IDs carry the `system.ai.` prefix);
+  a model recorded unavailable in `plan` metadata is excluded from advice
+  and fallbacks alike. Precedence: a verified override; when retrying after a
+  model failure, the last model known to work for that worker; else the
+  advice; else the last model known to work; else a fallback not recorded
+  unavailable (`system.ai.gpt-6-2-sol` for `codex`,
+  `system.ai.claude-opus-5-5` for `claude_code`), else the worker default.
+- A continuation (same title, or `session_id`) runs on the session's
+  **original** model and ignores `args.model`; start a new title to change
+  model or vendor, and keep the same session when a denied-action follow-up or
+  a pending report needs the same child.
+- Set `purpose` on every `sys_session_send`, including continuations.
+
 ## Collect, interrupt and resume
 
 Omnigent child completion may wake the parent with an inbox notice; collect
@@ -129,7 +145,7 @@ repeated dispatch to the same unavailable harness.
 **After a denied commit, push or PR.** The child's final report names the
 denied command and leaves its edits in the worktree. To have it finish or fix
 something, continue the same child with `sys_session_send(session_id=…,
-args=…)` (the `purpose` argument is still required, e.g. `implement`),
+args=…)` (with `purpose`, e.g. `implement`),
 under its worker claim: reuse the claim if the child still holds one (a
 claim cannot be taken twice, and a second token would use a second slot), and
 reserve a new token only if the earlier claim was released. Do not ask it to

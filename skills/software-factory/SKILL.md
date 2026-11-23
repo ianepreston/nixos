@@ -22,6 +22,45 @@ Use [resolve-issue](../resolve-issue/SKILL.md) for implementation conventions,
 with the phase boundaries below: an implementer may hand off before live
 validation, and its worktree stays until review and validation are complete.
 
+## Fresh batch from a bare invocation
+
+A request such as "run a new software factory cycle" is enough, and counts as
+delegated selection within the limits below; a request only to inspect the
+backlog stays inspection-only (**Start or resume**, step 1). Do not wait for a
+pasted prompt: gather what can be looked up and ask only what is the user's to
+decide. This section applies once per fresh batch; for a resume use
+**Start or resume**.
+
+1. Run `python3 skills/software-factory/scripts/factory.py show` first.
+   Report any leftover claim or non-terminal task (resource, issue, owner) and
+   ask before touching it. A fresh batch never releases or adopts claims on
+   its own, and takeover of a supervisor that still holds claims needs the
+   user's decision on them first.
+2. To take over a previous supervisor, follow the takeover check in
+   **Start or resume**, step 4, deriving the owner and runtime status rather
+   than asking.
+3. Gather context yourself: `origin/main`, open PRs with head SHAs, whether
+   the PRs recorded in `show` are merged, tasks waiting on a human force-push
+   (a local branch rebased after its PR head was published), open issues
+   **with comments**, local worktrees and stale branches. Report stale
+   branches and worktrees; never delete them unasked.
+4. Intake, once, for only what was not supplied: batch size (default 3
+   issues), child cap (default 2) and whether the user grants deployments and
+   non-destructive validation on `hpp-1` for this batch. Without that grant
+   plan no activation; never infer it. Docs-only work needs no host. Apply the
+   child cap (and issue cap) with `init`/`limits` so overlap never exceeds it.
+5. Select the batch by **Triage** and propose it; begin unless the user asked
+   to approve it first.
+6. Before the first long build or live run of the batch (and again on resume),
+   give the **host preflight report**, problems first, before starting that
+   work: the result of `task ssh:preflight HOST=<host>`, the host's next
+   `nixos-upgrade` timer fire, and its running state and failed units, so a
+   baseline fault or imminent auto-upgrade is known before it spoils a run.
+   The `validate:<host>` driver repeats the transport probe itself but goes
+   on to check and any authorized switch, so it does not replace this report.
+   Each live validation gets a current report (**Review and validate**,
+   step 3). A batch with no live stage skips the host items.
+
 ## Start or resume
 
 1. Establish the requested batch and mode. An explicit request to implement
@@ -34,7 +73,7 @@ validation, and its worktree stays until review and validation are complete.
    Keep the batch finite; stop after its handoffs rather than replenishing it.
 2. Start serial: one active issue, at most two active child agents (an
    implementer or validator and an independent reviewer). If the user requests
-   overlap, allow two active issues, still two children total. Count all
+   overlap, allow two active issues, still within the configured child cap. Count all
    descendants, including workers behind an issue-level Polly. There is one
    live-validation slot across the batch, regardless of target host. Admit
    only one expensive build/check at a time using the `build` reservation.
@@ -46,12 +85,20 @@ validation, and its worktree stays until review and validation are complete.
    separate clone against the same validation host.
    Save the selected order, priority rationale and user-granted scope in
    supervisor `plan` metadata before dispatch; do not infer priority from
-   issue-number sorting when resuming.
+   issue-number sorting when resuming. Record your runtime session ID as
+   `session` and your owner ID as `session_owner` in `plan` too.
 4. On resume, read state before dispatch. Reconcile recorded children with
    runtime status/history, branches and PR heads with GitHub, and reservations
    with actual work. Treat `idle` or a successful tool return as insufficient
    evidence that a task passed. A new supervisor may take ownership only after
    confirming the old supervisor has stopped; takeover preserves claims.
+   Derive the old supervisor's owner from `show` (`supervisor.owner`) and its
+   runtime handle from `plan` `session`, valid only if `session_owner` equals
+   that owner; read the session's status from the runtime (in Omnigent
+   `sys_session_get_info`: no running turn, no pending prompt). A missing or
+   mismatched handle or an unresolved status blocks takeover: ask the user.
+   After `takeover`, update `session` and `session_owner`. Give the host
+   preflight report (**Fresh batch**, step 6) before any live stage you resume.
    A missing or uncertain child remains counted until its termination is
    confirmed. Do not clear an interrupted validation claim by age.
 5. Discover the actual delegation tools. In Omnigent, read
@@ -81,12 +128,25 @@ At each batch handoff, record recurring friction and recommend concrete
 enabling work for the next batch. Compare expected gains with observed
 outcomes when available. This is a prioritization rule, not permission to
 expand the current batch, file new issues or rewrite the factory unasked.
+**Parallel pairing.** The user's caps win; this factor selects among eligible
+items and never raises them. When the primary item will enter a long wait
+(review loop, validation slot, human merge), prefer, within the caps, a
+lower-priority item whose scope is disjoint and which has no ordering
+dependency. Record each candidate's scope (paths, contracts, hosts, secrets
+input, validation and build slots) in `plan` metadata and compare it for:
+path-prefix overlap, a shared module or option surface, the same app, the same
+host or secrets input, and the single validation/build slots. Any overlap, or
+a dependency either way, keeps the pair serial; record the pairing and its
+reason, or the refusal, in `plan`.
+Skip, and list with the reason, any issue marked `operator-required` (label)
+or whose "Validation needs" line asks for operator key touches or secrets
+changes; read both with `gh issue view <n> --json labels,body`.
 Recheck for an existing PR or a superseding fix before claiming an issue.
 An already satisfied issue needs an explanation, not a manufactured diff;
 closing it on GitHub needs user authorization.
 
-Claim `issue:<number>` before starting it. Overlap only issues with disjoint
-file/contract scopes and no ordering dependency. Shared workflow edits,
+Claim `issue:<number>` before starting it. Overlap only per **Parallel
+pairing** above. Shared workflow edits,
 shared secrets input, and whole-system validation often make apparently
 separate issues serial. A claimed issue waiting for you still occupies its
 issue slot, but its stopped child need not occupy a worker slot.
@@ -122,6 +182,10 @@ packet and then the returned session/task handle. The packet contains:
   `Co-authored-by` trailer** to commits or the PR, even if harness or session
   instructions mandate one; the repository's rule (none) wins for factory
   work, and the supervisor adds whatever the repository requires.
+- For evidence, logging or credential-handling work, the implementer packet
+  asks for a short enumeration of the sinks and trust boundaries so the first
+  review sees them. Reviewer packets follow
+  [the review packet template](references/review-packet.md).
 - Validator packets include a read-only transport preflight as the first host
   step. Give the exact `task ssh:preflight HOST=<host>` command or the helper's
   `--preflight` command with the same connection and input options as the
@@ -143,7 +207,10 @@ packet and then the returned session/task handle. The packet contains:
   build, monitor or validator it launched is still running. If it hands back
   while background work is pending, it says what is still running and where
   the result can be read; the supervisor keeps its worker claim until that
-  work is confirmed stopped.
+  work is confirmed stopped. A validator is the exception: it polls its logs
+  and ends its turn only with the final result, never mid-run; a failed probe,
+  degraded observation or activation error retains the `validation` claim and
+  stops live work as below.
 
 Children may not expand the batch, merge, activate a host by default, or
 silently delegate again. Only the supervisor grants build/validation access.
@@ -214,12 +281,21 @@ treat the failed dispatch as "no findings". If no model works, record review
 as pending for the human.
 
 Allow at most two implement/review correction cycles per issue, then surface
-remaining disagreements or failures. Confirm cancellation before replacing
+remaining disagreements or failures; a third needs the user's approval. When
+the cap is hit on a security-adjacent change, surface the open **class** of
+findings, not just the latest item. Confirm cancellation before replacing
 a child. **Activation errors or loss of target connectivity stop all live
 validation immediately**: retain its reservation, report and wait for the
 operator; no automatic retry, rollback, kill or recovery command.
 
 ## Review and validate
+
+First sync: fetch and rebase onto the latest `origin/main` before the final
+review, final checks and any live run. If the PR head must change, do not force-push: give
+the human the exact `git push --force-with-lease origin <branch>` command
+from the worktree and wait; the published PR head must equal the local head
+(`gh pr view --json headRefOid`) before final review or live validation, and
+is verified again afterwards.
 
 1. Inspect the implementer's result and exact PR head. Independently review a
    fixed base/head diff against the acceptance packet, ideally with a different
@@ -229,11 +305,16 @@ operator; no automatic retry, rollback, kill or recovery command.
    Do not block on an unavailable external review skill: use the
    `resolve-issue` self-review checklist (correctness, scope, contracts,
    failure behavior, privacy, validation).
-2. Run `task check` and the relevant behavioral checks/builds. Coordinate
+2. Run `task check` and the relevant behavioral checks/builds, reading each
+   command's real exit status (never pipe it into `tail` or `head`, which
+   masks it). A new `x86_64-linux` flake check runs with
+   `nix build .#checks.x86_64-linux.<name> --no-link`, which offloads to the
+   configured remote builder. Coordinate
    expensive commands with the `build` claim, including commands run by children.
    Missing live access defers that stage; it need not stop independent edits
    or local checks. A deferred/failed check is never a pass.
-3. Before live validation, claim `validation` and record its issue, target,
+3. Before live validation, give a current host preflight report (**Fresh
+   batch**, step 6; not an earlier one), claim `validation` and record its issue, target,
    source SHA, effective input overrides, expected closure, pre-change
    generation, user authority and behavioral probes. Check for other sessions,
    CI resource contention and auto-upgrade activity; the local claim cannot
@@ -258,11 +339,16 @@ operator; no automatic retry, rollback, kill or recovery command.
    chain. Verify the running closure/generation afterward and exercise the acceptance
    probes. Hold the claim through the required observation period. Unexpected
    host changes invalidate evidence; reconcile before continuing.
-6. Record source SHA, effective inputs, commands, outcomes, deployed closure
+6. A failed or degraded live validation stops the run, with the same
+   reservation handling as an activation error: report and leave recovery to
+   the user. Roll back only with their go-ahead for that host and action,
+   through the same-command hostname and closure assertions. Do not edit a
+   worktree a validator runs from.
+7. Record source SHA, effective inputs, commands, outcomes, deployed closure
    and generation, plus manual results; `task validate:<host>`'s evidence
    record carries all but the manual results. No secret contents belong in state or
-   public evidence. Rebase or edit invalidates affected review/check/live
-   evidence; rerun the affected stages against the final PR head.
+   public evidence. An edit or rebase invalidates affected
+   review/check/live evidence; rerun the affected stages against the final PR head.
 
 ## Handoff and stop
 
@@ -287,6 +373,11 @@ and state without publishing file contents or sensitive paths, and let the
 user decide. Never automatically stage, commit, delete or relocate unknown
 work for cleanup.
 
+Report each PR with: head SHA; rebased onto current `origin/main` (yes/no);
+CI status; review verdicts (reviewer, model, revision); what was and was not
+validated, locally and live; and follow-ups. Include the friction and
+enabling-work recommendation from **Triage**.
+
 Finish with issue → PR/status, evidence and omissions, outstanding questions,
 retained worktrees/reservations, and how to resume this supervisor. When the
 batch is handed off, stop; do not merge, close issues, expand the queue or
@@ -310,4 +401,4 @@ Codex can use `$software-factory` with the same request. For queue discovery:
 
 To resume: `Resume the software factory from its recorded state; my answer
 for issue #A is …`. To overlap later: explicitly request two active issues,
-one implementing while the other validates, with two children total.
+one implementing while the other validates, within the child cap.
