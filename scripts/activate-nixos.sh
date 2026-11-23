@@ -456,17 +456,69 @@ ssh_probe_failure() {
     *"Permission denied"*)
       preflight_fail "$leg: SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal."
       ;;
-    *"failed to start SSH connection"* | *"failed to start SSH master connection"*)
-      preflight_fail "$leg: Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal."
-      ;;
     *"Could not resolve hostname"* | *"Connection refused"* | *"No route to host"* | *"Operation timed out"* | *"Connection timed out"*)
       preflight_fail "$leg: unreachable over SSH. Check the host, network and SSH port."
       ;;
   esac
   case $status in
     124 | 137) preflight_fail "$leg: probe timed out. Check connectivity and any pending SSH touch/PIN prompt." ;;
-    *) preflight_fail "$leg: probe failed (exit $status). Verify the SSH connection from an operator terminal." ;;
   esac
+  # Nix prints this whenever it did not read `started`, including when ssh
+  # exited before authenticating, so every more specific cause above wins.
+  case $output in
+    *"failed to start SSH connection"* | *"failed to start SSH master connection"*)
+      preflight_fail "$leg: Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal."
+      ;;
+  esac
+  preflight_fail "$leg: probe failed (exit $status). Verify the SSH connection from an operator terminal."
+}
+
+# The remote build-environment probe prints `preflight-error: <message>`, but
+# that line arrives over ssh merged with arbitrary remote output. Re-emit only
+# a message this script itself produces (fixed text, plus a builder
+# destination or revision that passes the same validation), else a fixed
+# fallback; never echo the remote text otherwise.
+decode_remote_preflight_error() {
+  local endpoint=$1 message=$2 builder tail
+  local revision='[0-9a-f]{40}'
+  local destination='([a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?([a-zA-Z0-9_][a-zA-Z0-9._:%-]*|::[a-zA-Z0-9._:%-]*)'
+  local tool_re="^required tool '(nix|jq|git|awk|cat|ssh)' is missing\\. Install it on the machine running this probe\\.\$"
+  local stale_re="^stale local nix-secrets \\((clean|has uncommitted changes)\\): HEAD $revision differs from locked $revision\\. Check out the locked revision or omit --local-secrets\\.\$"
+  local exit_re='^probe failed \(exit [0-9]{1,3}\)\. Verify the SSH connection from an operator terminal\.$'
+  case $message in
+    "required tool 'timeout' is missing. Install GNU coreutils." | \
+      "cannot read Nix builders on the build machine. Check its Nix configuration." | \
+      "cannot read the Nix builders file. Check its permissions." | \
+      "invalid SSH builder destination. Check the Nix builders configuration." | \
+      "cannot read the locked nix-secrets revision. Check flake.lock." | \
+      "the local nix-secrets override is missing its Git checkout. Sync the checkout or use the locked input." | \
+      "cannot read the local nix-secrets HEAD. Check the checkout or use the locked input." | \
+      "cannot inspect the local nix-secrets worktree. Check the checkout or use the locked input.")
+      preflight_fail "on $endpoint: $message"
+      ;;
+  esac
+  if [[ $message =~ $tool_re || $message =~ $stale_re ]]; then
+    preflight_fail "on $endpoint: $message"
+  fi
+  if [[ $message =~ ^builder\ ($destination):\ (.*)$ ]]; then
+    builder=${BASH_REMATCH[1]}
+    tail=${BASH_REMATCH[${#BASH_REMATCH[@]} - 1]}
+    case $tail in
+      "Host key verification failed. Verify the host key out of band and update the SSH trust entry." | \
+        "SSH signing failed (agent refused operation or needs touch/PIN). Unlock the key and verify authentication from an operator terminal." | \
+        "Nix store protocol mismatch. Check the remote Nix store command and unexpected shell startup output." | \
+        "SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal." | \
+        "unreachable over SSH. Check the host, network and SSH port." | \
+        "probe timed out. Check connectivity and any pending SSH touch/PIN prompt." | \
+        "Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal.")
+        preflight_fail "on $endpoint: builder $builder: $tail"
+        ;;
+    esac
+    if [[ $tail =~ $exit_re ]]; then
+      preflight_fail "on $endpoint: builder $builder: $tail"
+    fi
+  fi
+  preflight_fail "on $endpoint: the remote preflight failed with an unrecognized error. Run the same preflight from an operator terminal."
 }
 
 probe_agent() {
@@ -615,7 +667,7 @@ REMOTE
     # Ignore progress messages when extracting a failure from the remote
     # script. A successful secrets comparison may already have logged one.
     while IFS= read -r line; do
-      case $line in preflight-error:\ *) preflight_fail "on $endpoint: ${line#preflight-error: }" ;; esac
+      case $line in preflight-error:\ *) decode_remote_preflight_error "$endpoint" "${line#preflight-error: }" ;; esac
     done <<<"$output"
     ssh_probe_failure "build environment on $endpoint" "$status" "$output"
   }

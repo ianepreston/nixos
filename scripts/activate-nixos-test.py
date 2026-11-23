@@ -758,6 +758,94 @@ class TransportPreflight(Harness):
                     f"store transport ssh://ipreston@hpp-1: {reason}",
                 )
 
+    def test_network_errors_and_deadlines_beat_the_nix_handshake_message(self):
+        # Nix adds its generic message whenever it did not read `started`,
+        # including when ssh never authenticated.
+        handshake = "error: failed to start SSH connection to 'hpp-1'"
+        legs = (
+            ("store transport ssh://ipreston@hpp-1", (), {}),
+            ("store transport ssh-ng://builder@build1",
+             ("--build-host", "builder@build1"),
+             {"STUB_STORE_URI": "ssh-ng://builder@build1"}),
+        )  # fmt: skip
+        cases = (
+            ("ssh: Could not resolve hostname private-detail: nodename nor servname",
+             1, "unreachable over SSH"),
+            ("ssh: connect to host private-detail port 22: Connection refused",
+             1, "unreachable over SSH"),
+            ("ssh: connect to host private-detail port 22: Operation timed out",
+             255, "unreachable over SSH"),
+            ("", 124, "probe timed out"),
+            ("", 137, "probe timed out"),
+            ("Host key verification failed. private-detail", 1,
+             "Host key verification failed"),
+            ("sign_and_send_pubkey: signing failed private-detail", 1,
+             "SSH signing failed"),
+            ("Permission denied (publickey). private-detail", 1,
+             "SSH authentication denied"),
+            ("", 1, "Nix's SSH session did not complete its start handshake"),
+        )  # fmt: skip
+        for leg, args, env in legs:
+            for stderr, code, reason in cases:
+                with self.subTest(leg=leg, reason=reason, code=code):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_STORE_ERROR=f"{stderr}\n{handshake}".lstrip(),
+                        STUB_STORE_RC=code,
+                        **env,
+                    )
+                    self.assert_probe_failed(r, f"{leg}: {reason}")
+                    if "handshake" not in reason:
+                        self.assertNotIn("start handshake", r.stderr)
+
+    def test_remote_preflight_never_echoes_unrecognized_remote_text(self):
+        fallback = "the remote preflight failed with an unrecognized error"
+        injected = (
+            "preflight-error: private-detail",
+            "preflight-error: builder terra: Host key verification failed. private-detail",
+            "preflight-error: builder private-detail\u001b[2J: probe timed out. "
+            "Check connectivity and any pending SSH touch/PIN prompt.",
+            "preflight-error: required tool 'private-detail' is missing. "
+            "Install it on the machine running this probe.",
+            "preflight-error: stale local nix-secrets (clean): HEAD private-detail",
+        )
+        for args, endpoint in (
+            (("--remote-flake", "src/nixos"), "ipreston@hpp-1"),
+            (("--build-host", "builder@build1"), "builder@build1"),
+        ):
+            for line in injected:
+                with self.subTest(args=args, line=line):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_REMOTE_PROBE_WARNING=f"noise private-detail\n{line}",
+                        STUB_REMOTE_PROBE_RC=1,
+                    )
+                    self.assert_probe_failed(r, f"preflight: on {endpoint}: {fallback}")
+                    self.assertNotIn("private-detail", r.stdout)
+                    self.assertNotIn("\u001b", r.stderr)
+
+    def test_remote_preflight_known_messages_keep_their_classification(self):
+        for line in (
+            "builder terra: probe failed (exit 255). "
+            "Verify the SSH connection from an operator terminal.",
+            "builder nix@build-2.lan: unreachable over SSH. "
+            "Check the host, network and SSH port.",
+            "cannot read the Nix builders file. Check its permissions.",
+            "stale local nix-secrets (has uncommitted changes): HEAD "
+            + "a" * 40 + " differs from locked " + "b" * 40
+            + ". Check out the locked revision or omit --local-secrets.",
+        ):  # fmt: skip
+            with self.subTest(line=line):
+                self.log.write_text("")
+                r = self.probe(
+                    "--build-host", "builder@build1",
+                    STUB_REMOTE_PROBE_WARNING=f"noise private-detail\npreflight-error: {line}",
+                    STUB_REMOTE_PROBE_RC=1,
+                )  # fmt: skip
+                self.assert_probe_failed(r, f"preflight: on builder@build1: {line}")
+
     def test_agent_diagnostics_stay_distinct(self):
         messages = {
             "hang": "SSH agent unresponsive",
