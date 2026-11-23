@@ -2,29 +2,35 @@
 """Live-validation driver for a dev host (#1063).
 
     validate-host.py --host H [--switch] [--probe CMD]... [--observe DUR]
-                     [--interval DUR] [--local-secrets]
+                     [--interval DUR] [--require-clean] [--local-secrets]
                      [--override-input NAME VALUE]... [--run-dir DIR]
 
 Runs one validation sequence and writes a log per stage plus one JSON evidence
 record (no secret contents) into a run directory outside the git checkout:
 
-  admit      refuse unless hostSpecs say `serverEnvironment = "dev"` for H
-             (fails closed: unknown host, null, prod or an eval error all
-             refuse); nothing is written and nothing connects before this
+  admit      refuse unless H's hostSpec sets `validationTarget = true` AND
+             `serverEnvironment = "dev"` (fails closed: an unknown host, a
+             missing or false marker, null/prod or an eval error all refuse);
+             nothing is written and nothing connects before this
   inputs     source SHA and dirty count, the locked nix-secrets rev, the
              effective input overrides, and the expected closure from the
              helper's own `--dry-run` evaluation (no connection)
   preflight  scripts/activate-nixos.sh --preflight; on failure the helper's
              classified message is the result
   pre-state  read-only: running closure, generation, booted closure, system
-             state, failed units, next nixos-upgrade timer; refuses to go on
-             while nixos-upgrade.service is running
+             state, failed units (each with a state-change mark: the baseline),
+             next nixos-upgrade timer; refuses to go on while
+             nixos-upgrade.service is running, and with --require-clean while
+             any unit has failed or the system is not `running`
   check      the helper's --action check (build + identity, activates nothing)
   switch     only with --switch: the helper's --action switch, which repeats
              its preflight and identity assertions; any error stops the run
   post       running closure/generation (with --switch it must be the expected
-             closure), `systemctl is-system-running` = running, no failed
-             units, every --probe exits 0 (probes run on the target)
+             closure), no failed unit that is new or changed state versus the
+             baseline (a failure that predates the run is tolerated and
+             reported; the system may then be `degraded`, otherwise it must be
+             `running`), every --probe exits 0 (probes run on the target).
+             --require-clean instead requires `running` and no failed unit
   observe    only with --observe: repeat the post checks every --interval;
              the running closure must not change
   evidence   always written, also after a failure: evidence.json
@@ -80,6 +86,22 @@ SYSTEM_STATES = {
     "offline",
     "unknown",
 }
+# InvocationID (`-` when systemd assigned none) and
+# StateChangeTimestampMonotonic of a failed unit.
+FAILED_UNIT_MARK_RE = re.compile(r"(?:[0-9a-f]{32}|-) [1-9][0-9]*")
+UNIT_NAME_RE = re.compile(
+    r"[A-Za-z0-9:_.@\\-]+\.(?:service|socket|device|mount|automount|swap|target|path|timer|slice|scope)"
+)
+# Single-valued keys of a state read; each must appear at most once.
+STATE_KEYS = (
+    "hostname",
+    "current_system",
+    "booted_system",
+    "system_profile",
+    "system_state",
+    "upgrade_service",
+    "upgrade_timer_next",
+)
 # Known token prefixes, or a long run mixing upper case, lower case and digits
 # (store hashes and git revisions have no upper case, so they are kept).
 TOKEN_RE = re.compile(
@@ -245,6 +267,11 @@ def parse_args(argv):
         metavar="DUR",
         help="deadline for the switch; on expiry it is left running (default 2h)",
     )
+    p.add_argument(
+        "--require-clean",
+        action="store_true",
+        help="fail on any failed unit or a non-running system, even one that predates this run",
+    )
     p.add_argument("--local-secrets", action="store_true")
     p.add_argument(
         "--override-input",
@@ -299,9 +326,30 @@ def stop_group(proc):
             continue
 
 
-def run_capture(argv, timeout, stdin_text=None, log=None):
+def log_safe_state(out):
+    """Stdout of a state read as it may be logged: a failed_unit or
+    failed_unit_mark line that does not validate is replaced by a diagnostic,
+    so a rejected payload never reaches the stage log."""
+    lines = []
+    for line in out.decode(errors="replace").split("\n"):
+        key, sep, value = line.partition("=")
+        if sep and key == "failed_unit" and not UNIT_NAME_RE.fullmatch(value):
+            line = "failed_unit=<malformed unit name withheld>"
+        elif sep and key == "failed_unit_mark":
+            unit, _, mark = value.partition(" ")
+            if not (
+                UNIT_NAME_RE.fullmatch(unit) and FAILED_UNIT_MARK_RE.fullmatch(mark)
+            ):
+                shown = unit if UNIT_NAME_RE.fullmatch(unit) else "<unit withheld>"
+                line = f"failed_unit_mark={shown} <malformed mark withheld>"
+        lines.append(line)
+    return "\n".join(lines).encode()
+
+
+def run_capture(argv, timeout, stdin_text=None, log=None, log_filter=None):
     """Run a bounded, non-activating command. Returns (rc, stdout); rc is None
-    on timeout. stderr (and, when given, stdout) is appended to `log`."""
+    on timeout. stderr (and, when given, stdout, passed through `log_filter`)
+    is appended to `log`."""
     sink = open(log, "ab") if log else subprocess.DEVNULL
     try:
         if log:
@@ -333,7 +381,7 @@ def run_capture(argv, timeout, stdin_text=None, log=None):
             stop_group(proc)
             raise
         if log:
-            sink.write(out)
+            sink.write(log_filter(out) if log_filter else out)
             sink.write(f"[exit {proc.returncode}]\n".encode())
         return proc.returncode, out.decode(errors="replace")
     finally:
@@ -474,13 +522,61 @@ def describe_input(name, value):
     return rec
 
 
+def units_text(units, limit=10):
+    shown = ", ".join(units[:limit])
+    return shown + (f", ... (+{len(units) - limit})" if len(units) > limit else "")
+
+
+def compare_failed_units(baseline, state):
+    """Failed units in `state` against the pre-state `baseline`:
+
+      new        failing now, not failing in the baseline
+      changed    failing in both, but its mark (InvocationID + last state
+                 change) differs or is unreadable: it failed again since
+      tolerated  failing in both with the same, well-formed mark
+      cleared    failing in the baseline, not now
+
+    Fails closed: a unit without a well-formed mark in either snapshot is
+    never tolerated."""
+    base_marks = baseline.get("failed_unit_marks", {})
+    marks = state.get("failed_unit_marks", {})
+    new, changed, tolerated = [], [], []
+    for unit in state["failed_units"]:
+        if unit not in baseline["failed_units"]:
+            new.append(unit)
+        elif (
+            FAILED_UNIT_MARK_RE.fullmatch(base_marks.get(unit, ""))
+            and marks.get(unit) == base_marks[unit]
+        ):
+            tolerated.append(unit)
+        else:
+            changed.append(unit)
+    current = set(state["failed_units"])
+    return {
+        "baseline": list(baseline["failed_units"]),
+        "new": new,
+        "changed": changed,
+        "tolerated": tolerated,
+        "cleared": [u for u in baseline["failed_units"] if u not in current],
+    }
+
+
+# Reads only the two admission fields; a hostSpec without the marker yields
+# null, which refuses like false.
+ADMIT_APPLY = "s: { serverEnvironment = s.serverEnvironment or null; validationTarget = s.validationTarget or null; }"
+
+
 def admit(host):
-    """Fail closed unless the flake's hostSpec says this is a dev server."""
+    """Fail closed unless the flake's hostSpec marks this host as a validation
+    target (`validationTarget = true`) and it is a dev server. Returns the
+    admitted fields."""
     if not HOST_RE.fullmatch(host):
         raise Refused(f"invalid host name {host!r}")
-    attr = f"{REPO}#nixosConfigurations.{host}._module.specialArgs.hostSpec.serverEnvironment"
+    attr = f"{REPO}#nixosConfigurations.{host}._module.specialArgs.hostSpec"
     try:
-        rc, out = run_capture(["nix", "eval", "--json", attr], ADMIT_TIMEOUT)
+        rc, out = run_capture(
+            ["nix", "eval", "--json", attr, "--apply", ADMIT_APPLY], ADMIT_TIMEOUT
+        )
     except StageFailed as e:
         raise Refused(f"refusing {host}: {e.summary}") from None
     if rc != 0:
@@ -488,14 +584,21 @@ def admit(host):
             f"refusing {host}: no nixosConfigurations.{host} hostSpec could be evaluated (unknown host?)"
         )
     try:
-        env = json.loads(out)
+        spec = json.loads(out)
     except ValueError:
-        raise Refused(f"refusing {host}: unreadable serverEnvironment") from None
+        spec = None
+    if not isinstance(spec, dict):
+        raise Refused(f"refusing {host}: unreadable hostSpec admission fields")
+    marker, env = spec.get("validationTarget"), spec.get("serverEnvironment")
+    if marker is not True:
+        raise Refused(
+            f"refusing {host}: hostSpec validationTarget is {json.dumps(marker)}; only hosts marked `validationTarget = true` may be validated"
+        )
     if env != "dev":
         raise Refused(
             f'refusing {host}: serverEnvironment is {json.dumps(env)}, only "dev" hosts may be validated'
         )
-    return env
+    return {"server_environment": env, "validation_target": True}
 
 
 def default_run_dir(host):
@@ -564,7 +667,7 @@ def make_run_dir(path):
 
 
 class Validation:
-    def __init__(self, args, env, run_dir):
+    def __init__(self, args, admitted, run_dir):
         self.a = args
         self.host = args.host
         self.target = f"{USER}@{args.host}"
@@ -578,11 +681,13 @@ class Validation:
             name: {"name": name, "status": "not-run", "log": None} for name in STAGES
         }
         self.evidence = {
-            "schema": "nixos-validate-host/1",
+            "schema": "nixos-validate-host/2",
             "host": self.host,
             "target": self.target,
-            "server_environment": env,
+            "server_environment": admitted["server_environment"],
+            "validation_target": admitted["validation_target"],
             "switch_requested": args.switch,
+            "require_clean": args.require_clean,
             "run_dir": str(run_dir),
             "started_at": now(),
             "finished_at": None,
@@ -595,6 +700,7 @@ class Validation:
             "pre": None,
             "post": None,
             "generation_changed": None,
+            "failed_units": None,
             "probes": [],
             "observe": None,
             "stages": [],
@@ -642,7 +748,7 @@ class Validation:
             *extra,
         ]
 
-    def remote(self, stage, command, timeout):
+    def remote(self, stage, command, timeout, log_filter=None):
         """One read-only ssh to the target; the script asserts the hostname
         before anything else. Returns stdout lines."""
         nonce = nonce_source.token_hex(16)
@@ -658,7 +764,9 @@ class Validation:
             self.host,
             nonce,
         ]
-        rc, out = run_capture(argv, timeout, stdin_text=script, log=self.log(stage))
+        rc, out = run_capture(
+            argv, timeout, stdin_text=script, log=self.log(stage), log_filter=log_filter
+        )
         lines = out.splitlines()
         if rc is None:
             raise StageFailed(f"read from {self.target} timed out after {timeout}s")
@@ -681,27 +789,52 @@ class Validation:
         return rc, lines, nonce
 
     def read_state(self, stage):
-        rc, lines, nonce = self.remote(stage, lambda _n: "state", READ_TIMEOUT)
-        if f"VALIDATE-END {nonce}" not in lines:
+        rc, lines, nonce = self.remote(
+            stage, lambda _n: "state", READ_TIMEOUT, log_filter=log_safe_state
+        )
+        # The snapshot is everything before its one end marker; a missing or
+        # repeated marker, or any output after it, makes it ambiguous.
+        end = [i for i, line in enumerate(lines) if line == f"VALIDATE-END {nonce}"]
+        if len(end) != 1:
             raise StageFailed(
                 f"state read from {self.target} did not complete (exit {rc})", rc
             )
-        state = {"failed_units": []}
-        for line in lines:
+        if any(line.strip() for line in lines[end[0] + 1 :]):
+            raise StageFailed(
+                f"state read from {self.target} has output after its end marker; stopping"
+            )
+        state = {"failed_units": [], "failed_unit_marks": {}}
+        for line in lines[: end[0]]:
             key, sep, value = line.partition("=")
             if not sep:
                 continue
+            # Exactly one record per unit and one value per key; a unit name
+            # or mark that does not validate is never stored (no arbitrary
+            # text reaches the evidence). Anything else fails the read.
             if key == "failed_unit":
+                if not UNIT_NAME_RE.fullmatch(value) or value in state["failed_units"]:
+                    raise StageFailed(
+                        f"failed-unit list read from {self.host} is malformed or repeats a unit; stopping"
+                    )
                 state["failed_units"].append(value)
-            elif key in (
-                "hostname",
-                "current_system",
-                "booted_system",
-                "system_profile",
-                "system_state",
-                "upgrade_service",
-                "upgrade_timer_next",
-            ):
+            elif key == "failed_unit_mark":
+                unit, _, mark = value.partition(" ")
+                if not (
+                    UNIT_NAME_RE.fullmatch(unit) and FAILED_UNIT_MARK_RE.fullmatch(mark)
+                ):
+                    raise StageFailed(
+                        f"failed-unit mark read from {self.host} is malformed; stopping"
+                    )
+                if unit in state["failed_unit_marks"]:
+                    raise StageFailed(
+                        f"failed-unit mark read from {self.host} repeats a unit; stopping"
+                    )
+                state["failed_unit_marks"][unit] = mark
+            elif key in STATE_KEYS:
+                if key in state:
+                    raise StageFailed(
+                        f"{key} read from {self.host} is repeated; stopping"
+                    )
                 state[key] = value
         # Every value is required and must parse: an empty or malformed read
         # can never stand in for a baseline (two empty values would compare
@@ -725,9 +858,54 @@ class Validation:
             raise StageFailed(
                 f"nixos-upgrade read from {self.host} is incomplete; stopping"
             )
+        # Every failed unit needs exactly one mark, and no mark may name a
+        # unit that is not listed: an incomplete set is never a baseline.
+        if set(state["failed_unit_marks"]) != set(state["failed_units"]):
+            raise StageFailed(
+                f"failed-unit marks read from {self.host} are incomplete; stopping"
+            )
         state["failed_unit_count"] = len(state["failed_units"])
         state["read_at"] = now()
         return state
+
+    def unit_problems(self, stage, state):
+        """Failed units and system state against the pre-state baseline. The
+        comparison is stored in the evidence; returns the problems."""
+        report = compare_failed_units(self.evidence["pre"], state)
+        report["stage"] = stage
+        self.evidence["failed_units"] = report
+        problems = []
+        system_state = state["system_state"]
+        if self.a.require_clean:
+            if system_state != "running":
+                problems.append(f"system state is {system_state!r}, not 'running' (--require-clean)")  # fmt: skip
+            if state["failed_unit_count"]:
+                problems.append(
+                    f"{state['failed_unit_count']} failed unit(s) (--require-clean): {units_text(state['failed_units'])}"
+                )
+            return problems
+        if report["new"]:
+            problems.append(
+                f"{len(report['new'])} new failed unit(s) since pre-state: {units_text(report['new'])}"
+            )
+        if report["changed"]:
+            problems.append(
+                f"{len(report['changed'])} pre-existing failed unit(s) changed state since pre-state: {units_text(report['changed'])}"
+            )
+        # `degraded` means at least one failed unit, so the unit comparison
+        # above decides it; degraded with no failed unit listed is a problem.
+        if system_state == "degraded" and state["failed_unit_count"]:
+            if not problems and stage != "observe":
+                self.warn_tolerated(stage, report["tolerated"])
+        elif system_state != "running":
+            problems.append(f"system state is {system_state!r}, not 'running'")
+        return problems
+
+    def warn_tolerated(self, stage, units):
+        say(
+            f"WARNING: {stage}: {len(units)} failed unit(s) predate this run and are tolerated "
+            f"(--require-clean fails on them): {units_text(units)}"
+        )
 
     def run_probe(self, stage, index, probe):
         """The probe's exit status. Any transport failure (ssh error, a
@@ -759,12 +937,7 @@ class Validation:
         first failing probe ends the probing (no further connections)."""
         state = self.read_state(stage)
         problems = list(on_state(state)) if on_state else []
-        if state["system_state"] != "running":
-            problems.append(f"system state is {state['system_state']!r}, not 'running'")
-        if state["failed_unit_count"]:
-            problems.append(
-                f"{state['failed_unit_count']} failed unit(s): {', '.join(state['failed_units'][:10])}"
-            )
+        problems += self.unit_problems(stage, state)
         for index, probe in enumerate(self.a.probe, 1):
             record = {"index": index, "id": probe_id(probe), "exit_code": None}
             probes.append(record)
@@ -929,7 +1102,33 @@ class Validation:
             raise StageFailed(
                 f"nixos-upgrade.service is {state['upgrade_service']} on {self.host}; host state is changing, not validating"
             )
-        return f"generation {state['generation']}, {state.get('system_state')}, {state['failed_unit_count']} failed"
+        summary = f"generation {state['generation']}, {state.get('system_state')}, {state['failed_unit_count']} failed"
+        if self.a.require_clean:
+            problems = []
+            if state["system_state"] != "running":
+                problems.append(f"system state is {state['system_state']!r}, not 'running'")  # fmt: skip
+            if state["failed_unit_count"]:
+                problems.append(
+                    f"{state['failed_unit_count']} failed unit(s) before the change: {units_text(state['failed_units'])}"
+                )
+            if problems:
+                self.evidence["failed_units"] = {
+                    "baseline": list(state["failed_units"]),
+                    "new": [],
+                    "changed": [],
+                    "tolerated": [],
+                    "cleared": [],
+                    "stage": "pre-state",
+                }
+                raise StageFailed(
+                    "--require-clean: "
+                    + "; ".join(problems)
+                    + "; not checking or switching"
+                )
+        elif state["failed_unit_count"]:
+            self.warn_tolerated("pre-state", state["failed_units"])
+            summary += f" (baseline, tolerated unless new or changed: {units_text(state['failed_units'])})"
+        return summary
 
     def stage_check(self):
         log = self.log("check")
@@ -987,8 +1186,14 @@ class Validation:
         state, problems = self.health("post", probes, self.record_post)
         if problems:
             raise StageFailed("; ".join(problems))
+        tolerated = self.evidence["failed_units"]["tolerated"]
+        health = (
+            f"{state['system_state']} with {len(tolerated)} pre-existing failed unit(s) tolerated ({units_text(tolerated)})"
+            if tolerated
+            else state["system_state"]
+        )
         return (
-            f"generation {state['generation']}, running, {len(probes)} probe(s) passed"
+            f"generation {state['generation']}, {health}, {len(probes)} probe(s) passed"
         )
 
     def record_post(self, state):
@@ -1053,6 +1258,8 @@ class Validation:
                 record["last"] = {
                     "system_state": state.get("system_state"),
                     "failed_unit_count": state["failed_unit_count"],
+                    "new_failed_units": self.evidence["failed_units"]["new"],
+                    "changed_failed_units": self.evidence["failed_units"]["changed"],
                 }
                 raise StageFailed(
                     f"observation check {record['iterations']}: " + "; ".join(problems)
@@ -1142,6 +1349,14 @@ class Validation:
             f"result: {ev['result']}"
             + (f" at stage {failed}: {ev['message']}" if failed else "")
         )
+        units = ev["failed_units"] or {}
+        if units.get("tolerated"):
+            say(
+                f"WARNING: {len(units['tolerated'])} failed unit(s) predate this run and were tolerated: "
+                f"{units_text(units['tolerated'])} (fix them, or use --require-clean to fail on them)"
+            )
+        elif (ev["pre"] or {}).get("failed_units") and not units:
+            say(f"WARNING: failed unit(s) before this run: {units_text(ev['pre']['failed_units'])}")  # fmt: skip
         say(f"evidence: {path}")
         print(path)
         return code
@@ -1150,13 +1365,13 @@ class Validation:
 def main(argv):
     args = parse_args(argv)
     try:
-        env = admit(args.host)
+        admitted = admit(args.host)
         run_dir = make_run_dir(args.run_dir or default_run_dir(args.host))
     except Refused as e:
         say(str(e))
         return EXIT_REFUSED
     say(f"run directory: {run_dir}")
-    return Validation(args, env, run_dir).run()
+    return Validation(args, admitted, run_dir).run()
 
 
 if __name__ == "__main__":

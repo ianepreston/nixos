@@ -29,7 +29,7 @@ read_failed() {
 
 # Key=value lines only; values are store paths, unit names and states.
 state() {
-  local value failed unit link
+  local value failed unit link invocation since prop seen_invocation seen_since
   printf 'hostname=%s\n' "$actual"
   for link in current_system:/run/current-system booted_system:/run/booted-system \
     system_profile:/nix/var/nix/profiles/system; do
@@ -41,8 +41,36 @@ state() {
   [ -n "$value" ] || read_failed system_state
   printf 'system_state=%s\n' "$value"
   failed=$(systemctl list-units --state=failed --no-legend --plain 2>/dev/null) || read_failed failed_units
+  # Each failed unit also gets a mark (InvocationID and the monotonic time of
+  # its last state change), so the driver can tell a unit that has been
+  # failing since before the change from one that failed again since.
   while read -r unit _; do
-    [ -z "$unit" ] || printf 'failed_unit=%s\n' "$unit"
+    [ -n "$unit" ] || continue
+    printf 'failed_unit=%s\n' "$unit"
+    value=$(systemctl show -p InvocationID -p StateChangeTimestampMonotonic -- "$unit" 2>/dev/null) ||
+      read_failed failed_unit_mark
+    # Exactly one line per property and nothing else; a repeated, missing
+    # or unexpected line is a failed read, never a baseline.
+    invocation="" since="" seen_invocation=0 seen_since=0
+    while IFS= read -r prop; do
+      case $prop in
+        InvocationID=*) invocation=${prop#*=} seen_invocation=$((seen_invocation + 1)) ;;
+        StateChangeTimestampMonotonic=*) since=${prop#*=} seen_since=$((seen_since + 1)) ;;
+        *) read_failed failed_unit_mark ;;
+      esac
+    done <<<"$value"
+    [ "$seen_invocation" = 1 ] && [ "$seen_since" = 1 ] || read_failed failed_unit_mark
+    # The timestamp must be a positive integer. The InvocationID must be 32
+    # hex digits, or explicitly empty: a unit (e.g. a scope) can fail before
+    # systemd assigns one; it is then marked `-` and the timestamp alone
+    # tells a later failure apart. Any other value is a failed read.
+    [[ $since =~ ^[1-9][0-9]*$ ]] || read_failed failed_unit_mark
+    if [ -z "$invocation" ]; then
+      invocation=-
+    elif ! [[ $invocation =~ ^[0-9a-f]{32}$ ]]; then
+      read_failed failed_unit_mark
+    fi
+    printf 'failed_unit_mark=%s %s %s\n' "$unit" "$invocation" "$since"
   done <<<"$failed"
   # Exits non-zero for inactive (the expected state); empty output is a failure.
   value=$(systemctl is-active nixos-upgrade.service 2>/dev/null)

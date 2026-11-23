@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://taskfile.dev/schema.json
-# Live validation of a dev host in one command (#1063).
+# Live validation of a dev host in one command (#1063, #1071).
 #
 #   task validate:hpp-1                                   # preflight + check + probes
 #   task validate:hpp-1 -- --switch --observe 3m \
@@ -8,9 +8,10 @@
 # Everything after `--` goes to scripts/validate-host.py verbatim, one
 # shellQuote'd argument each (Task's CLI_ARGS_LIST); nothing is read from Task
 # variables or the environment, so an inherited variable can never turn a check
-# into a switch. The driver refuses any host whose hostSpec is not
-# `serverEnvironment = "dev"` before it connects to anything, and rejects a
-# second --host. It prints the evidence record's path; logs live under
+# into a switch. The driver refuses any host whose hostSpec does not set
+# `validationTarget = true` with `serverEnvironment = "dev"` before it connects
+# to anything, and rejects a second --host. Failed units that predate the run
+# are tolerated and reported; `-- --require-clean` fails on them. It prints the evidence record's path; logs live under
 # $XDG_STATE_HOME/nixos-validate (outside git). See scripts/validate-host.py.
 # Task turns a failing command into exit 201; `task --exit-code validate:<host>`
 # (or -x) keeps the driver's own status (1 failed, 2 refused, 3 switch unknown).

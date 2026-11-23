@@ -57,6 +57,11 @@
               default = null;
               description = "Server environment: \"dev\" => server-dev (1029), \"prod\" => server-prod (1030). null on non-server hosts.";
             };
+            validationTarget = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Whether `task validate:<host>` (scripts/validate-host.py) may preflight, check and switch this host. Only a dev server that is a real ssh target sets this; the driver also requires serverEnvironment = \"dev\" and refuses every other host before connecting.";
+            };
             # Derived NFS-pinned server identity. These consolidate the
             # username/uid/group/gid that used to be reconstructed inline at
             # ~34 call sites as raw "server-${serverEnvironment}" interpolations
