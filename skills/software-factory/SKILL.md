@@ -181,18 +181,26 @@ correction cycle. Continue the same child if it still has work to do
 its own authority, which is no wider than the child's task. The child may
 have been denied at any step, so run
 [`scripts/finish_child.py`](scripts/finish_child.py) with the packet's
-worktree, branch, base SHA and permitted paths (`--allow`, repeatable), plus
+worktree, branch, base SHA and permitted paths (`--allow`, repeatable; `*`
+stays within one path segment, `dir/` covers a subtree), plus
 `--message-file`, `--title` and `--body-file`. It reconciles before acting
-and performs only the outstanding steps (commit, fast-forward push, PR as the
-verified `ianepreston` `gh` account), so a rerun is safe. It refuses
-unexpected paths, a protected branch, a diverged remote, a closed PR or any
-`Co-authored-by` trailer: the repository requires none, and that beats a
-harness's managed attribution line (this overrides `resolve-issue`'s
-footer sentence for factory work). It prints the head SHA, PR URL and which
-steps it did or skipped (record those in `pr.note`), after verifying a clean
-tree and remote head equal to local head. Use the script, not a hand-run
-sequence. This adds no authority: it never merges, force-pushes or pushes a
-protected branch. If it refuses or its action is denied, stop and report it.
+and performs only the outstanding steps (commit, fast-forward push, PR on
+github.com as the verified `ianepreston` `gh` account), so a rerun is safe.
+Before any of them it refuses a path outside `--allow` in any commit since
+base or the index/worktree, an in-progress merge/rebase/cherry-pick, a merge
+commit, a protected or default branch, a push URL differing from the fetch
+URL, a diverged remote, a closed or mismatched existing PR, or an
+attribution footer (`Co-authored-by`, "Generated with/by", robot emoji, "…
+written by …") in a commit, the message, the new body or an existing PR's
+body. The repository requires none, and that beats a harness's managed
+attribution line (this overrides `resolve-issue`'s footer sentence for
+factory work). It prints the head SHA, commit count since base, PR URL and
+which steps it did or skipped (record those in `pr.note`), after verifying a
+clean tree and that the remote branch and PR heads equal the local head. It
+never edits a commit or PR to remove a footer; fix those by hand. Use the
+script, not a hand-run sequence. This adds no authority: it never merges,
+force-pushes or pushes a protected branch. If it refuses or its action is
+denied, stop and report it.
 
 **Reviewer model failure.** A reviewer dispatch that fails with a budget
 (`403 BUDGET_EXCEEDED`) or permission error on its model is a task failure:

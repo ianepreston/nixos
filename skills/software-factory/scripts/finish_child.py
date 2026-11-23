@@ -4,12 +4,23 @@
 Reconciles first and performs only the outstanding steps, so a rerun is safe:
 commit (only when the worktree has changes), push the task branch
 (fast-forward only), open the PR (only when the branch has none). It then
-verifies a clean tree and that the remote head equals the local head.
+verifies a clean tree and that the remote branch and PR heads equal the local
+head, and prints a JSON summary of what it did and skipped.
 
-Refuses: a branch/base mismatch, a protected or default branch, a path
-outside --allow, any Co-authored-by trailer, a diverged remote branch, a
-closed/merged PR for the branch, or an active gh account other than
---account. Prints a JSON summary of what it did and skipped.
+Trust boundaries: CLI arguments come from the supervisor (trusted). The
+worktree contents, the child's commits and their messages are child-authored
+and checked; git/gh output is trusted as reported. Every refusal check runs
+before the first mutation.
+
+Sinks (the only mutations):
+  1. `git add` / `git commit` in the worktree: only paths matching --allow;
+     no attribution footer in the message.
+  2. `git push`: the checked branch to a non-default remote branch,
+     fast-forward only, no tags, push URL == fetch URL naming --repo.
+  3. `gh pr create` on github.com as the fixed ACCOUNT: base --pr-base, body
+     without an attribution footer.
+Read-only probes: git status/log/diff/ls-remote, `gh auth status`,
+`gh pr list`, `gh pr view`, `gh api .../branches/<branch>`.
 """
 
 import argparse
@@ -20,29 +31,49 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 
+ACCOUNT = "ianepreston"
+HOST = "github.com"
 PROTECTED = {"main", "master"}
-TRAILER = re.compile(r"^\s*co-authored-by\s*:", re.IGNORECASE | re.MULTILINE)
+IN_PROGRESS = (
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+    "rebase-merge",
+    "rebase-apply",
+)
+# Managed attribution footers seen from agent harnesses. Signed-off-by is not
+# one: the repository neither requires nor forbids it.
+ATTRIBUTION = re.compile(
+    r"^\s*co-authored-by\s*:"
+    r"|^[\W_]*generated (?:with|by)\b"
+    r"|\N{ROBOT FACE}"
+    r"|\b(?:pull request|PR|commit)\b.*\bwritten by\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+PR_FIELDS = (
+    "number,url,state,headRefName,baseRefName,isCrossRepository,author,headRefOid,body"
+)
+PR_HEAD_ATTEMPTS = 5
 
 
 class Refusal(Exception):
     pass
 
 
-def run(*argv, cwd=None, check=True):
-    env = dict(os.environ, GIT_LITERAL_PATHSPECS="1", GH_PROMPT_DISABLED="1")
+def run(*argv, check=True):
+    env = dict(
+        os.environ, GIT_LITERAL_PATHSPECS="1", GH_PROMPT_DISABLED="1", GH_HOST=HOST
+    )
     process = subprocess.run(
-        argv,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
+        argv, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True
     )
     if check and process.returncode:
         detail = (process.stderr or process.stdout).strip()
-        raise Refusal(f"`{' '.join(argv[:3])} …` failed: {detail}")
+        raise Refusal(f"`{' '.join(argv[:4])} …` failed: {detail}")
     return process
 
 
@@ -51,23 +82,40 @@ def git(worktree, *argv, check=True):
 
 
 def paths_z(output):
-    return {path for path in output.split("\0") if path}
+    return {path.strip("\n") for path in output.split("\0") if path.strip("\n")}
 
 
 def allowed(path, patterns):
-    return any(
-        path.startswith(pattern)
-        if pattern.endswith("/")
-        else fnmatchcase(path, pattern)
-        for pattern in patterns
-    )
+    """`dir/` matches a subtree; otherwise fnmatch per segment (`*` stays in one)."""
+    parts = path.split("/")
+    for pattern in patterns:
+        if pattern.endswith("/"):
+            if path.startswith(pattern):
+                return True
+            continue
+        segments = pattern.split("/")
+        if len(segments) == len(parts) and all(
+            fnmatchcase(part, segment) for part, segment in zip(parts, segments)
+        ):
+            return True
+    return False
 
 
-def active_account(hostname):
-    status = run("gh", "auth", "status", "--hostname", hostname, check=False)
+def attribution(text, what):
+    found = ATTRIBUTION.search(text or "")
+    if found:
+        line = text[text.rfind("\n", 0, found.start()) + 1 :].split("\n", 1)[0]
+        raise Refusal(
+            f"{what} carries an attribution footer ({line.strip()!r}); "
+            "the repository wants none"
+        )
+
+
+def active_account():
+    status = run("gh", "auth", "status", "--hostname", HOST, check=False)
     account = None
     for line in (status.stdout + status.stderr).splitlines():
-        found = re.search(r"Logged in to \S+ account (\S+)", line)
+        found = re.search(rf"Logged in to {re.escape(HOST)} account (\S+)", line)
         if found:
             account = found.group(1)
         elif account and re.search(r"Active account:\s*true", line):
@@ -75,19 +123,36 @@ def active_account(hostname):
     return None
 
 
+def check_remote(worktree, remote, repo, branch):
+    fetch = git(worktree, "remote", "get-url", remote).stdout.strip()
+    push = git(worktree, "remote", "get-url", "--push", remote).stdout.strip()
+    if fetch != push:
+        raise Refusal(f"{remote} push URL {push} differs from fetch URL {fetch}")
+    stem = re.sub(r"(\.git)?/*$", "", push)
+    if not re.search(rf"[/:]{re.escape(repo)}$", stem):
+        raise Refusal(f"{remote} URL {push} does not name {repo}")
+    default = git(worktree, "ls-remote", "--symref", remote, "HEAD", check=False)
+    match = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", default.stdout, re.MULTILINE)
+    if default.returncode or not match:
+        raise Refusal(f"cannot determine {remote}'s default branch; refusing")
+    if branch in PROTECTED or match.group(1) == branch:
+        raise Refusal(f"refusing protected/default branch {branch}")
+
+
 def check_worktree(args):
     worktree = Path(args.worktree).resolve()
     top = git(worktree, "rev-parse", "--show-toplevel").stdout.strip()
     if Path(top).resolve() != worktree:
         raise Refusal(f"{worktree} is not a worktree root ({top})")
+    for marker in IN_PROGRESS:
+        path = git(worktree, "rev-parse", "--git-path", marker).stdout.strip()
+        if (worktree / path).exists():
+            raise Refusal(f"a merge/rebase/cherry-pick is in progress ({marker})")
     branch = git(worktree, "symbolic-ref", "--short", "HEAD", check=False)
     if branch.returncode or branch.stdout.strip() != args.branch:
         found = branch.stdout.strip() or "detached HEAD"
         raise Refusal(f"checked-out branch is {found}, expected {args.branch}")
-    default = git(worktree, "ls-remote", "--symref", args.remote, "HEAD", check=False)
-    match = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", default.stdout, re.MULTILINE)
-    if args.branch in PROTECTED or (match and match.group(1) == args.branch):
-        raise Refusal(f"refusing protected/default branch {args.branch}")
+    check_remote(worktree, args.remote, args.repo, args.branch)
     base = git(
         worktree, "rev-parse", "--verify", f"{args.base}^{{commit}}", check=False
     )
@@ -96,36 +161,46 @@ def check_worktree(args):
     base = base.stdout.strip()
     if not base.startswith(args.base.lower()):
         raise Refusal(f"base {args.base} resolved to {base}; pass a SHA")
-    if git(
-        worktree, "merge-base", "--is-ancestor", base, "HEAD", check=False
-    ).returncode:
+    merge_base = git(worktree, "merge-base", "HEAD", base, check=False).stdout.strip()
+    if merge_base != base:
         raise Refusal(f"HEAD does not descend from base {base}")
+    merges = git(worktree, "rev-list", "--merges", f"{base}..HEAD").stdout.split()
+    if merges:
+        raise Refusal(f"merge commits since base: {', '.join(merges)}")
     return worktree, base
 
 
 def changed_paths(worktree, base):
+    """Every path a commit since base touched, plus the pending (dirty) set."""
+    quiet = ("-c", "core.quotePath=false")
     committed = paths_z(
-        git(worktree, "diff", "--no-renames", "--name-only", "-z", base, "HEAD").stdout
+        git(
+            worktree,
+            *quiet,
+            "log",
+            "--no-renames",
+            "--name-only",
+            "--format=",
+            "-z",
+            f"{base}..HEAD",
+        ).stdout
     )
-    dirty = paths_z(
-        git(worktree, "diff", "--no-renames", "--name-only", "-z", "HEAD").stdout
-    ) | paths_z(
-        git(worktree, "ls-files", "--others", "--exclude-standard", "-z").stdout
-    )
+    dirty = set()
+    for argv in (
+        ("diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD"),
+        ("diff", "--no-renames", "--name-only", "-z"),
+        ("diff", "--no-renames", "--name-only", "-z", "HEAD"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        dirty |= paths_z(git(worktree, *quiet, *argv).stdout)
     return committed, dirty
 
 
-def check_trailers(worktree, base, message):
+def check_messages(worktree, base):
     bodies = git(worktree, "log", "--format=%H%n%B%x00", f"{base}..HEAD").stdout
     for entry in filter(str.strip, bodies.split("\0")):
         sha, _, body = entry.strip().partition("\n")
-        if TRAILER.search(body):
-            raise Refusal(
-                f"commit {sha} carries a Co-authored-by trailer; the repo wants "
-                "none. Fix it by hand (unpushed) before rerunning."
-            )
-    if message is not None and TRAILER.search(message):
-        raise Refusal("commit message contains a Co-authored-by trailer")
+        attribution(body, f"commit {sha} (fix it by hand before rerunning)")
 
 
 def remote_head(worktree, remote, branch):
@@ -133,27 +208,79 @@ def remote_head(worktree, remote, branch):
     return listed.stdout.split()[0] if listed.stdout.strip() else None
 
 
+def gh_repo(args):
+    return ("--repo", f"{HOST}/{args.repo}")
+
+
+def existing_pr(args):
+    listed = run(
+        "gh",
+        "pr",
+        "list",
+        *gh_repo(args),
+        "--head",
+        args.branch,
+        "--state",
+        "all",
+        "--json",
+        PR_FIELDS,
+    )
+    prs = json.loads(listed.stdout or "[]")
+    if not prs:
+        return None
+    if len(prs) > 1 or prs[0]["state"] != "OPEN":
+        found = ", ".join(f"{pr['url']} ({pr['state'].lower()})" for pr in prs)
+        raise Refusal(f"branch already has PRs needing a human decision: {found}")
+    pr = prs[0]
+    problems = [
+        f"{label} is {found!r}, expected {expected!r}"
+        for label, found, expected in (
+            ("head branch", pr["headRefName"], args.branch),
+            ("base branch", pr["baseRefName"], args.pr_base),
+            ("author", (pr.get("author") or {}).get("login"), ACCOUNT),
+            ("cross-repository", pr["isCrossRepository"], False),
+        )
+        if found != expected
+    ]
+    if problems:
+        raise Refusal(f"existing PR {pr['url']}: " + "; ".join(problems))
+    attribution(pr.get("body"), f"existing PR {pr['url']} body (edit it by hand)")
+    return pr
+
+
+def verify_pr_head(args, url, head):
+    found = None
+    for attempt in range(PR_HEAD_ATTEMPTS):
+        view = run("gh", "pr", "view", url, *gh_repo(args), "--json", "headRefOid")
+        found = json.loads(view.stdout)["headRefOid"]
+        if found == head:
+            return
+        if attempt + 1 < PR_HEAD_ATTEMPTS:
+            time.sleep(2)
+    raise Refusal(f"PR {url} head {found} != local head {head}")
+
+
 def finish(args):
     done, skipped = [], []
     worktree, base = check_worktree(args)
-    account = active_account(args.hostname)
-    if account != args.account:
+    account = active_account()
+    if account != ACCOUNT:
         raise Refusal(
-            f"active gh account is {account or 'unknown'}, expected {args.account}; "
-            f"run `gh auth switch --hostname {args.hostname} --user {args.account}`"
+            f"active gh account on {HOST} is {account or 'unknown'}, expected "
+            f"{ACCOUNT}; run `gh auth switch --hostname {HOST} --user {ACCOUNT}`"
         )
     committed, dirty = changed_paths(worktree, base)
     outside = sorted(p for p in committed | dirty if not allowed(p, args.allow))
     if outside:
         raise Refusal("paths outside --allow: " + ", ".join(outside))
 
+    check_messages(worktree, base)
     message = Path(args.message_file).read_text() if args.message_file else None
-    check_trailers(worktree, base, message)
+    attribution(message, "--message-file")
     if dirty and message is None:
         raise Refusal("worktree has changes; --message-file is required")
 
-    # Everything that can refuse is checked before the first mutation; a new
-    # commit only adds descendants, so an ancestor of HEAD stays one.
+    # A new commit only adds descendants, so an ancestor of HEAD stays one.
     remote = remote_head(worktree, args.remote, args.branch)
     if remote and (
         git(worktree, "cat-file", "-e", f"{remote}^{{commit}}", check=False).returncode
@@ -162,43 +289,19 @@ def finish(args):
         ).returncode
     ):
         raise Refusal(f"remote {args.branch} at {remote} is not an ancestor of HEAD")
-    prs = json.loads(
-        run(
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            args.repo,
-            "--head",
-            args.branch,
-            "--state",
-            "all",
-            "--json",
-            "number,url,state",
-        ).stdout
-        or "[]"
-    )
-    open_prs = [pr for pr in prs if pr["state"] == "OPEN"]
-    if not open_prs:
-        if prs:
-            raise Refusal(
-                f"branch already has a {prs[0]['state'].lower()} PR: {prs[0]['url']}"
-            )
+    pr = existing_pr(args)
+    if pr is None:
         if not (args.title and args.body_file):
             raise Refusal("no PR yet; --title and --body-file are required")
-        if TRAILER.search(Path(args.body_file).read_text()):
-            raise Refusal("PR body contains a Co-authored-by line")
+        attribution(Path(args.body_file).read_text(), "--body-file")
 
     if dirty:
         git(worktree, "add", "--all", "--", *sorted(dirty))
-        git(
-            worktree,
-            "commit",
-            "--quiet",
-            "--file",
-            str(Path(args.message_file).resolve()),
-        )
-        check_trailers(worktree, base, None)
+    staged = git(worktree, "diff", "--cached", "--quiet", check=False).returncode
+    if dirty and staged:
+        message_path = str(Path(args.message_file).resolve())
+        git(worktree, "commit", "--quiet", "--file", message_path)
+        check_messages(worktree, base)
         done.append("commit")
     else:
         skipped.append("commit")
@@ -210,20 +313,25 @@ def finish(args):
         skipped.append("push")
     else:
         git(
-            worktree, "push", "--quiet", args.remote, f"{head}:refs/heads/{args.branch}"
+            worktree,
+            "-c",
+            "push.followTags=false",
+            "push",
+            "--quiet",
+            args.remote,
+            f"HEAD:refs/heads/{args.branch}",
         )
         done.append("push")
 
-    if open_prs:
-        url = open_prs[0]["url"]
+    if pr:
+        url = pr["url"]
         skipped.append("pr")
     else:
         created = run(
             "gh",
             "pr",
             "create",
-            "--repo",
-            args.repo,
+            *gh_repo(args),
             "--base",
             args.pr_base,
             "--head",
@@ -240,12 +348,22 @@ def finish(args):
     if status.strip():
         raise Refusal("worktree is not clean after commit:\n" + status)
     published = run(
-        "gh", "api", f"repos/{args.repo}/branches/{args.branch}", "--jq", ".commit.sha"
+        "gh",
+        "api",
+        "--hostname",
+        HOST,
+        f"repos/{args.repo}/branches/{args.branch}",
+        "--jq",
+        ".commit.sha",
     ).stdout.strip()
     if published != head or remote_head(worktree, args.remote, args.branch) != head:
         raise Refusal(f"remote head {published or 'missing'} != local head {head}")
+    verify_pr_head(args, url, head)
+    count = git(worktree, "rev-list", "--count", f"{base}..HEAD").stdout.strip()
     return {
         "head": head,
+        "base": base,
+        "commits_since_base": int(count),
         "pr": url,
         "account": account,
         "done": done,
@@ -262,16 +380,14 @@ def main():
         "--allow",
         action="append",
         required=True,
-        help="permitted path glob, or directory prefix ending in /; repeatable",
+        help="path glob (`*` does not cross `/`) or subtree prefix ending in /",
     )
-    parser.add_argument("--message-file", help="commit message; no trailer")
+    parser.add_argument("--message-file", help="commit message; no footer")
     parser.add_argument("--title")
-    parser.add_argument("--body-file")
+    parser.add_argument("--body-file", help="PR body; no footer")
     parser.add_argument("--remote", default="origin")
-    parser.add_argument("--repo", default="ianepreston/nixos")
+    parser.add_argument("--repo", default="ianepreston/nixos", help="OWNER/NAME")
     parser.add_argument("--pr-base", default="main")
-    parser.add_argument("--account", default="ianepreston")
-    parser.add_argument("--hostname", default="github.com")
     args = parser.parse_args()
     try:
         print(json.dumps(finish(args), indent=2))

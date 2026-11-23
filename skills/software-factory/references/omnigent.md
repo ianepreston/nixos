@@ -136,7 +136,7 @@ reserve a new token only if the earlier claim was released. Do not ask it to
 retry the denied action, and do not ask it to add an attribution footer.
 If the remaining step is only commit/push/PR, the supervisor runs
 `skills/software-factory/scripts/finish_child.py` from its own shell, as the
-factory skill describes (no `Co-authored-by` trailer, whatever the child's
+factory skill describes (no attribution footer, whatever the child's
 harness mandates). A supervisor without a shell reports the outstanding
 steps and the exact script command for the human instead.
 
