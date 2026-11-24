@@ -30,6 +30,25 @@ changing its description; never duplicate the body. `scripts/skill-adapters.py`
 set is missing, orphaned, stale or mis-targeted.
 Local runner state (settings, caches, worktrees) stays untracked.
 
+## Workflow index
+
+Use the canonical workflow for the matching task. When native skill invocation
+is unavailable, read the relevant `SKILL.md` directly.
+
+- **add-app** — when explicitly asked to add, deploy or set up a new
+  self-hosted server app: `skills/add-app/SKILL.md`.
+- **create-issue** — when asked to file or write up an issue, log a bug or
+  capture an investigation: `skills/create-issue/SKILL.md`.
+- **llm-eval** — when asked to evaluate, test or benchmark a local-LLM candidate
+  against the incumbent for one alias on one host: `skills/llm-eval/SKILL.md`.
+- **model-radar** — when asked to review local-LLM leaderboard leads and publish
+  human-approved candidate evaluation issues: `skills/model-radar/SKILL.md`.
+- **resolve-issue** — when explicitly asked to resolve, fix, implement or work
+  a GitHub issue by number: `skills/resolve-issue/SKILL.md`.
+- **software-factory** — when asked to supervise a bounded GitHub issue queue
+  or manage several issues through agent delegation:
+  `skills/software-factory/SKILL.md`.
+
 ## PII never goes in git or GitHub
 
 This repo, its issues, PRs, and history are public. Personal data — third
@@ -52,9 +71,10 @@ history, and a committed value needs a history rewrite.
 
 ## Taskfile.yaml is the entry point
 
-Read `Taskfile.yaml` and `taskfiles/*.yaml` before running ad-hoc
-`nixos-rebuild` / `nix build`; a task usually already wires the right flags.
-`task --list` when in doubt.
+Read the root `Taskfile.yaml` before running ad-hoc `nixos-rebuild` or
+`nix build`; it identifies the included taskfiles. Read only the
+`taskfiles/*.yaml` relevant to the task, since a Taskfile task usually already
+wires the right flags. Use `task --list` when in doubt.
 
 - `task deploy:<host>` — build locally, push, `switch` on a remote host. The
   fast path for testing uncommitted changes; `system.autoUpgrade` only follows
