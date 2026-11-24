@@ -302,14 +302,21 @@ is new or changed state since the baseline, `is-system-running` = running or,
 with only tolerated pre-existing failures, degraded; each `--probe` command
 exits 0 on the target) and an optional `--observe <duration>` window. The
 window runs on a clock that counts runner sleep (`CLOCK_BOOTTIME` on Linux,
-`CLOCK_MONOTONIC_RAW` on macOS); a check that starts more than its scheduled
-wait (at most one interval, at least 2s) late, or spends that long suspended,
-fails the stage (a sleeping laptop). Wall time is only a cross-check: a clock
-step is recorded as `wall_skew_s`, except on the `time.monotonic` fallback
-(`suspend_aware: false`), where it is the only suspend signal. The `observe`
-record (evidence schema `nixos-validate-host/3`) carries `started_at`/
-`finished_at`, the true `elapsed_s`, `max_gap_s`, `max_late_s` and
-`slow_checks`. A unit
+`CLOCK_MONOTONIC_RAW` on macOS). A check that starts more than its scheduled
+wait late (that wait is at most one interval and at least 2s), or that spends
+that long suspended, fails the stage (a sleeping laptop). `breach` records
+the offending value. Tolerated delays that add up to a long gap raise a
+`cadence_warning`; they do not fail the stage. Wall time is only a
+cross-check: a clock step is recorded as `wall_skew_s`/`wall_step`, and
+`finished_at` is the wall clock read at the end (clamped to `started_at`).
+The `observe` record (evidence schema `nixos-validate-host/3`) also carries
+`elapsed_s`, `max_gap_s`, `max_late_s` and `slow_checks`. Known limits: a
+suspend in the instants between one check closing and the next deadline read
+is not flagged and can shorten the window. A wait can overrun a resume by up
+to one 1s slice. On the `time.monotonic` fallback (`suspend_aware: false`),
+wall time is the only suspend signal, so a backward wall step can hide a
+suspend, and a suspend inside a check is missed where `time.monotonic` counts
+sleep. A unit
 already failing before the run is tolerated but reported as a warning and in
 the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
 or a non-running system instead (already at pre-state, before check or
