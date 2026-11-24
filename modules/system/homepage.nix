@@ -112,6 +112,15 @@ _: {
       };
 
       config = {
+        # DynamicUser, so its StateDirectory is the private path. Not
+        # preserved; see myAppStateAudit in modules/system/app-state.nix.
+        myAppStateAudit.exemptions.homepage-dashboard = {
+          unit = "homepage-dashboard.service";
+          directories = [ "/var/lib/private/homepage-dashboard" ];
+          disposition = "pending";
+          reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+        };
+
         services.homepage-dashboard = {
           enable = true;
           listenPort = homepagePort;

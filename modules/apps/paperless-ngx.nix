@@ -408,6 +408,16 @@
         group = "paperless";
       };
 
+      # Not preserved; see myAppStateAudit in modules/system/app-state.nix.
+      # profiles/server.nix calls the celery broker ephemeral, but nobody
+      # has decided that losing queued tasks on reboot is fine.
+      myAppStateAudit.exemptions.paperless-redis = {
+        unit = "redis-paperless.service";
+        directories = [ "/var/lib/redis-paperless" ];
+        disposition = "pending";
+        reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+      };
+
       services = {
         # The vector store is a live, unquiesced SQLite file that restic would
         # otherwise snapshot mid-write. Nothing in it is authored — every vector

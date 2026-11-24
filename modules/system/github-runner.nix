@@ -93,6 +93,15 @@ _: {
         restartUnits = [ "github-runner-${runnerName}.service" ];
       };
 
+      # The runner's registration and work tree. Not preserved; see
+      # myAppStateAudit in modules/system/app-state.nix.
+      myAppStateAudit.exemptions.github-runner = {
+        unit = "github-runner-${runnerName}.service";
+        directories = [ "/var/lib/github-runner/${runnerName}" ];
+        disposition = "pending";
+        reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+      };
+
       services.github-runners.${runnerName} = {
         enable = true;
         url = "https://github.com/ianepreston/nixos";

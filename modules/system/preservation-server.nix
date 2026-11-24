@@ -19,167 +19,193 @@
 # surface and aren't in scope here. Imported by modules/profiles/server.nix.
 { inputs, ... }:
 {
-  flake.modules.nixos.preservation-server = _: {
-    imports = [ inputs.preservation.nixosModules.default ];
+  flake.modules.nixos.preservation-server =
+    { config, lib, ... }:
+    {
+      imports = [ inputs.preservation.nixosModules.default ];
 
-    # Preservation requires systemd-in-initrd to schedule its bind
-    # mounts before sysinit.target.
-    boot.initrd.systemd.enable = true;
+      # Host networking state this module owns the persistence policy for,
+      # alongside /var/lib/systemd and /var/lib/tailscale below. Neither is
+      # preserved today; see myAppStateAudit in modules/system/app-state.nix.
+      # NetworkManager keeps its DHCP leases and the secret_key behind
+      # stable-privacy IPv6 addresses there; dhcpcd keeps its DUID and leases.
+      myAppStateAudit.exemptions = lib.mkMerge [
+        (lib.mkIf config.networking.networkmanager.enable {
+          networkmanager = {
+            unit = "NetworkManager.service";
+            directories = [ "/var/lib/NetworkManager" ];
+            disposition = "pending";
+            reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it here or re-declare it `disposable` with the reason.";
+          };
+        })
+        (lib.mkIf (config.systemd.services ? dhcpcd) {
+          dhcpcd = {
+            unit = "dhcpcd.service";
+            directories = [ "/var/lib/dhcpcd" ];
+            disposition = "pending";
+            reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it here or re-declare it `disposable` with the reason.";
+          };
+        })
+      ];
 
-    services.openssh.hostKeys = [
-      {
-        path = "/etc/ssh/ssh_host_ed25519_key";
-        type = "ed25519";
-      }
-    ];
+      # Preservation requires systemd-in-initrd to schedule its bind
+      # mounts before sysinit.target.
+      boot.initrd.systemd.enable = true;
 
-    # The bind-mounted /etc/machine-id from /persist is already a
-    # durable file, so the commit-transient-to-disk service has
-    # nothing to do and fails noisily ("/etc/machine-id is not on a
-    # temporary file system"). Suppress it.
-    systemd.suppressedSystemUnits = [ "systemd-machine-id-commit.service" ];
+      services.openssh.hostKeys = [
+        {
+          path = "/etc/ssh/ssh_host_ed25519_key";
+          type = "ed25519";
+        }
+      ];
 
-    preservation = {
-      enable = true;
-      preserveAt."/persist" = {
-        directories = [
-          # ----- System / identity -----
-          # nixos uid/gid allocation db; without this, dynamic users
-          # reshuffle on every boot.
-          #
-          # inInitrd = true: with boot.initrd.systemd.enable, users are
-          # created by initrd-nixos-activation, before any stage-2 mount.
-          # Mounted in stage 2, the map arrives after allocation has
-          # already run from scratch against an empty /var/lib/nixos,
-          # so every auto-allocated uid is reassigned alphabetically
-          # and a user added by a live switch moves on the next reboot
-          # (#846: lubelogger's state ended up owned by wpa_supplicant).
-          {
-            directory = "/var/lib/nixos";
-            inInitrd = true;
-          }
-          # systemd persistent state (boot counts, random seed, etc.).
-          "/var/lib/systemd"
-          # tailscale node identity; lose it and the host re-registers
-          # as a fresh device under a new name.
-          "/var/lib/tailscale"
+      # The bind-mounted /etc/machine-id from /persist is already a
+      # durable file, so the commit-transient-to-disk service has
+      # nothing to do and fails noisily ("/etc/machine-id is not on a
+      # temporary file system"). Suppress it.
+      systemd.suppressedSystemUnits = [ "systemd-machine-id-commit.service" ];
 
-          # ----- TLS / cert state -----
-          # Caddy ACME account key + issued certs. Losing this means
-          # cert re-issue on next boot — possible LE rate-limit hit.
-          "/var/lib/caddy"
+      preservation = {
+        enable = true;
+        preserveAt."/persist" = {
+          directories = [
+            # ----- System / identity -----
+            # nixos uid/gid allocation db; without this, dynamic users
+            # reshuffle on every boot.
+            #
+            # inInitrd = true: with boot.initrd.systemd.enable, users are
+            # created by initrd-nixos-activation, before any stage-2 mount.
+            # Mounted in stage 2, the map arrives after allocation has
+            # already run from scratch against an empty /var/lib/nixos,
+            # so every auto-allocated uid is reassigned alphabetically
+            # and a user added by a live switch moves on the next reboot
+            # (#846: lubelogger's state ended up owned by wpa_supplicant).
+            {
+              directory = "/var/lib/nixos";
+              inInitrd = true;
+            }
+            # systemd persistent state (boot counts, random seed, etc.).
+            "/var/lib/systemd"
+            # tailscale node identity; lose it and the host re-registers
+            # as a fresh device under a new name.
+            "/var/lib/tailscale"
 
-          # ----- Databases (data dirs; dumps are recovery) -----
-          "/var/lib/postgresql"
-          # mariadb writes ib_buffer_pool.incomplete and deletes tc.log
-          # directly in this dir during shutdown — unlike postgres which
-          # writes to a versioned subdirectory. Preservation's default
-          # root:root 0755 (bind-mount source's perms on /persist/...)
-          # propagates here and matches 00-nixos.conf's mode but not its
-          # owner, so a `systemd-tmpfiles --create` mid-deploy reverts
-          # /var/lib/mysql from mysql:mysql to root:root. Mariadb then
-          # gets EACCES on the next shutdown's buffer-pool dump and
-          # tc.log unlink → tc.log header left half-written → next
-          # boot's crash recovery fails with "Bad magic header in tc
-          # log" and an 11-minute systemd-retry cascade. Pinning owner
-          # and mode to match 00-nixos.conf keeps mysql writable through
-          # tmpfiles-resetup. Closes #195.
-          {
-            directory = "/var/lib/mysql";
-            user = "mysql";
-            group = "mysql";
-            mode = "0755";
-          }
+            # ----- TLS / cert state -----
+            # Caddy ACME account key + issued certs. Losing this means
+            # cert re-issue on next boot — possible LE rate-limit hit.
+            "/var/lib/caddy"
 
-          # ----- Dump staging -----
-          # The morning's postgres/mariadb dumps land here and restic
-          # picks them up overnight; restic also runs from here so the
-          # repo metadata cache needs to survive (though restic's
-          # repo itself is on NFS).
-          "/var/backup"
+            # ----- Databases (data dirs; dumps are recovery) -----
+            "/var/lib/postgresql"
+            # mariadb writes ib_buffer_pool.incomplete and deletes tc.log
+            # directly in this dir during shutdown — unlike postgres which
+            # writes to a versioned subdirectory. Preservation's default
+            # root:root 0755 (bind-mount source's perms on /persist/...)
+            # propagates here and matches 00-nixos.conf's mode but not its
+            # owner, so a `systemd-tmpfiles --create` mid-deploy reverts
+            # /var/lib/mysql from mysql:mysql to root:root. Mariadb then
+            # gets EACCES on the next shutdown's buffer-pool dump and
+            # tc.log unlink → tc.log header left half-written → next
+            # boot's crash recovery fails with "Bad magic header in tc
+            # log" and an 11-minute systemd-retry cascade. Pinning owner
+            # and mode to match 00-nixos.conf keeps mysql writable through
+            # tmpfiles-resetup. Closes #195.
+            {
+              directory = "/var/lib/mysql";
+              user = "mysql";
+              group = "mysql";
+              mode = "0755";
+            }
 
-          # ----- Container app state -----
-          # Every podman-managed app's volumes live under here.
-          "/var/lib/containers"
+            # ----- Dump staging -----
+            # The morning's postgres/mariadb dumps land here and restic
+            # picks them up overnight; restic also runs from here so the
+            # repo metadata cache needs to survive (though restic's
+            # repo itself is on NFS).
+            "/var/backup"
 
-          # ----- Logs -----
-          # Persist journald across reboots. /var/log is on the wiped
-          # rootfs, so without this every boot drops prior journals and
-          # `journalctl --list-boots` only sees the current boot.
-          # journald's default storage=auto writes here when the dir
-          # exists, so persisting it is sufficient — no extra config
-          # needed. Closes #195 (diagnostic gap for the mariadb tc.log
-          # corruption investigation).
-          "/var/log/journal"
+            # ----- Container app state -----
+            # Every podman-managed app's volumes live under here.
+            "/var/lib/containers"
 
-          # ----- Observability -----
-          # VictoriaMetrics TSDB (15d), VictoriaLogs storage (30d), and
-          # alertmanager's silences + notification log. The
-          # victoriametrics/victorialogs module header comments treat
-          # these as ephemeral *for host-failure DR*, but routine
-          # reboots shouldn't wipe them — persist them so the configured
-          # retention windows actually mean what they say, and so an
-          # active silence isn't cancelled by the nightly upgrade
-          # reboot (alertmanager re-reads silences.log/nflog from the
-          # storage path at start-up; without this a silence set to
-          # cover a maintenance window evaporates mid-window and the
-          # alert it was muting re-fires).
-          #
-          # Until #578 the metrics/logs entries still named the
-          # Prometheus/Loki dirs that #126 retired, so the live stores
-          # were on the rolled-back @root subvolume and every reboot
-          # reset history to zero (which also re-armed every long-`for:`
-          # alert). Alertmanager was never listed at all.
-          #
-          # All three units are DynamicUser + StateDirectory, so the real
-          # storage is the /var/lib/private path. Each is declared as
-          # `myAppState.<unit>` with `dynamicUser = true` and
-          # `backup = false` in its own module (victoriametrics.nix,
-          # victorialogs.nix, alertmanager.nix), so preservation renders
-          # systemd's on-disk owner instead of root. Until #949 these were
-          # bare strings here, rendering root:root; each tmpfiles re-setup
-          # on a switch then left alertmanager unable to write its
-          # nflog/silences snapshots and victoriametrics unable to remove
-          # its unclean-shutdown marker.
-        ];
+            # ----- Logs -----
+            # Persist journald across reboots. /var/log is on the wiped
+            # rootfs, so without this every boot drops prior journals and
+            # `journalctl --list-boots` only sees the current boot.
+            # journald's default storage=auto writes here when the dir
+            # exists, so persisting it is sufficient — no extra config
+            # needed. Closes #195 (diagnostic gap for the mariadb tc.log
+            # corruption investigation).
+            "/var/log/journal"
 
-        files = [
-          # SSH host identity. Without these, every reboot trips
-          # known_hosts warnings on every client and breaks restic's
-          # NFS access if the NAS pins the host key. ed25519 only —
-          # NixOS's openssh module would otherwise also generate an
-          # RSA key, but preservation would bind-mount it from an
-          # unseeded /persist file and sshd would refuse to load it.
-          # See services.openssh.hostKeys override above.
-          #
-          # mode = 0600 for the private key: preservation's tmpfiles
-          # default is 0644 and sshd refuses to load a key that's
-          # group/world-readable.
-          #
-          # inInitrd = true on both: sops derives its age key from the
-          # ed25519 host key, and the `setupSecretsForUsers` activation
-          # snippet runs in the initrd (because boot.initrd.systemd.enable
-          # is on). Without the bind-mount firing in initrd, sops sees
-          # no usable key, fails to decrypt `passwords/<user>`, and the
-          # account boots with shadow set to `!` — console login and
-          # `passwd` then reject every input.
-          {
-            file = "/etc/ssh/ssh_host_ed25519_key";
-            mode = "0600";
-            inInitrd = true;
-          }
-          {
-            file = "/etc/ssh/ssh_host_ed25519_key.pub";
-            inInitrd = true;
-          }
-          # journald uses this to namespace journals + as systemd's
-          # stable machine identity.
-          {
-            file = "/etc/machine-id";
-            inInitrd = true;
-          }
-        ];
+            # ----- Observability -----
+            # VictoriaMetrics TSDB (15d), VictoriaLogs storage (30d), and
+            # alertmanager's silences + notification log. The
+            # victoriametrics/victorialogs module header comments treat
+            # these as ephemeral *for host-failure DR*, but routine
+            # reboots shouldn't wipe them — persist them so the configured
+            # retention windows actually mean what they say, and so an
+            # active silence isn't cancelled by the nightly upgrade
+            # reboot (alertmanager re-reads silences.log/nflog from the
+            # storage path at start-up; without this a silence set to
+            # cover a maintenance window evaporates mid-window and the
+            # alert it was muting re-fires).
+            #
+            # Until #578 the metrics/logs entries still named the
+            # Prometheus/Loki dirs that #126 retired, so the live stores
+            # were on the rolled-back @root subvolume and every reboot
+            # reset history to zero (which also re-armed every long-`for:`
+            # alert). Alertmanager was never listed at all.
+            #
+            # All three units are DynamicUser + StateDirectory, so the real
+            # storage is the /var/lib/private path. Each is declared as
+            # `myAppState.<unit>` with `dynamicUser = true` and
+            # `backup = false` in its own module (victoriametrics.nix,
+            # victorialogs.nix, alertmanager.nix), so preservation renders
+            # systemd's on-disk owner instead of root. Until #949 these were
+            # bare strings here, rendering root:root; each tmpfiles re-setup
+            # on a switch then left alertmanager unable to write its
+            # nflog/silences snapshots and victoriametrics unable to remove
+            # its unclean-shutdown marker.
+          ];
+
+          files = [
+            # SSH host identity. Without these, every reboot trips
+            # known_hosts warnings on every client and breaks restic's
+            # NFS access if the NAS pins the host key. ed25519 only —
+            # NixOS's openssh module would otherwise also generate an
+            # RSA key, but preservation would bind-mount it from an
+            # unseeded /persist file and sshd would refuse to load it.
+            # See services.openssh.hostKeys override above.
+            #
+            # mode = 0600 for the private key: preservation's tmpfiles
+            # default is 0644 and sshd refuses to load a key that's
+            # group/world-readable.
+            #
+            # inInitrd = true on both: sops derives its age key from the
+            # ed25519 host key, and the `setupSecretsForUsers` activation
+            # snippet runs in the initrd (because boot.initrd.systemd.enable
+            # is on). Without the bind-mount firing in initrd, sops sees
+            # no usable key, fails to decrypt `passwords/<user>`, and the
+            # account boots with shadow set to `!` — console login and
+            # `passwd` then reject every input.
+            {
+              file = "/etc/ssh/ssh_host_ed25519_key";
+              mode = "0600";
+              inInitrd = true;
+            }
+            {
+              file = "/etc/ssh/ssh_host_ed25519_key.pub";
+              inInitrd = true;
+            }
+            # journald uses this to namespace journals + as systemd's
+            # stable machine identity.
+            {
+              file = "/etc/machine-id";
+              inInitrd = true;
+            }
+          ];
+        };
       };
     };
-  };
 }

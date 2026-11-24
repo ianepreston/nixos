@@ -6,6 +6,63 @@
 restic path (unless `backup = false`), and the `expectedPreservedDirs` guard in
 `modules/profiles/server-apps.nix`. There is no profile edit to make.
 
+## Two state checks, and what each catches
+
+Both run only where preservation is enabled (the server hosts).
+
+- **`expectedPreservedDirs`** (`modules/profiles/server-apps.nix`) is derived
+  from `myAppState`, so it catches a *declared* directory that was later
+  dropped from `preservation.preserveAt` (a `mkForce`, a filter). It cannot see
+  state nobody declared.
+- **`myAppStateAudit`** (`modules/system/app-state.nix`, path rules in
+  `modules/system/_app-state/state-directory-audit.nix`) is the independent
+  check (#1024). It reads every enabled unit's systemd `StateDirectory=` and
+  fails eval naming `<unit>: <dir>` for any directory no preserved directory
+  covers. Directories are normalized to `/var/lib/<dir>`, or
+  `/var/lib/private/<dir>` when the unit sets `DynamicUser` (the
+  `/var/lib/<dir>` symlink is not storage); each entry of a multi-directory
+  `StateDirectory=` is checked on its own; `:<symlink>` suffixes are dropped. A
+  preserved directory covers itself and its descendants on a path-component
+  boundary: `/var/lib/foo` covers `/var/lib/foo/bar`, not `/var/lib/foobar`.
+
+The audit only sees `StateDirectory=` declared through `systemd.services`. It
+does not see state an app writes elsewhere, `CacheDirectory=`, bind mounts, or
+directories set only in an upstream unit file shipped via `systemd.packages`;
+those still depend on the owner declaring `myAppState`.
+
+### Fixing an audit failure
+
+Preserve it: declare `myAppState.<app>` in the owning module (with
+`dynamicUser = true` and the private path for a DynamicUser unit). That also
+backs it up unless `backup = false`.
+
+Or, if the owner decides the state may be lost, declare an exemption **beside
+the service**, never in a central list:
+
+```nix
+myAppStateAudit.exemptions.<owner> = {
+  unit = "<unit>.service";
+  directories = [ "/var/lib/<dir>" ]; # exactly as the audit names it
+  disposition = "disposable";
+  reason = "Why losing this on every reboot is fine.";
+};
+```
+
+`disposition = "pending"` records a known uncovered directory whose owner has
+not decided yet. It passes eval but prints a warning on every build, so it is
+never silent. Eval also fails on an exemption with an empty `reason`, or one
+that no longer names an uncovered directory of that unit (renamed, removed or
+since preserved), so exemptions cannot outlive what they excuse.
+
+Current exemptions (`rg -n 'myAppStateAudit.exemptions' modules`) are all
+`pending` from the #1024 audit: the redis instances (`authentik.nix`,
+`paperless-ngx.nix`, `manyfold.nix`), `homepage.nix`, `vector.nix`,
+`llm-metrics.nix`, `github-runner.nix`, and NetworkManager and dhcpcd in
+`preservation-server.nix`.
+
+`nix build .#checks.x86_64-linux.state-directory-audit --no-link` runs the
+synthetic compositions (`modules/flake/checks-state-directory-audit.nix`).
+
 ## Recovery metadata: declare it beside the app
 
 `taskfiles/recovery.yaml` holds the generic restore templates; app modules

@@ -136,11 +136,19 @@
       # Both sides of this assertion derive from `config.myAppState`, so
       # it cannot fire on a forgotten entry the way it did while the
       # profile still carried hand-written paths — an app that declares
-      # nothing is invisible to it. What it still catches is the other
+      # nothing is invisible to it. What it catches is the other
       # direction: anything that drops a declared dir back out of
       # `preservation.preserveAt` (a host-level `mkForce` on the list, a
       # future filter in app-state.nix) turns a silent wipe-on-reboot
       # into an eval failure.
+      #
+      # The forgotten-declaration direction is covered, for native
+      # services, by `myAppStateAudit` in modules/system/app-state.nix
+      # (#1024): it compares each unit's systemd `StateDirectory=` with
+      # the preserved directories, an independent source, and fails eval
+      # on uncovered state unless the owner declared an exemption. Neither
+      # check sees state an app writes outside `StateDirectory=`. See
+      # docs/agents/app-state.md.
       expectedPreservedDirs = map (a: a.stateDir) (lib.attrValues config.myAppState);
 
       preservedDirs = map (d: d.directory) (config.preservation.preserveAt."/persist".directories or [ ]);
