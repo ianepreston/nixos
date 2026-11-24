@@ -379,11 +379,12 @@ class Sequence(Harness):
         obs = ev["observe"]
         self.assertGreaterEqual(obs["iterations"], 2)
         self.assertTrue(obs["ok"])
-        self.assertIn(obs["clock"], ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "monotonic"))  # fmt: skip
-        self.assertIs(obs["suspend_aware"], obs["clock"] != "monotonic")
+        self.assertIn(obs["clock"], ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "wall"))  # fmt: skip
         self.assertLessEqual(obs["max_gap_s"], 2)
         self.assertLess(obs["max_late_s"], 1)
-        self.assertEqual(obs["slow_checks"], 0)
+        self.assertEqual(obs["tolerance_s"], 2)
+        for flag in ("slow_check", "cadence_warning", "wall_step"):
+            self.assertIs(obs[flag], False, flag)
         self.assertLessEqual(obs["started_at"], obs["finished_at"])
         observe_stage = next(s for s in ev["stages"] if s["name"] == "observe")
         self.assertEqual(
@@ -1628,9 +1629,9 @@ class MalformedInputs(Harness):
 
 
 class ObserveClock(unittest.TestCase):
-    """stage_observe on fake clocks (#1090): SPAN_CLOCK and WALL_CLOCK count a
-    runner suspend, AWAKE_CLOCK does not, and SLEEP pauses during one (it
-    returns after its full awake time). No process, ssh or host involved."""
+    """stage_observe on fake clocks (#1090). CLOCK (the decision clock) and
+    WALL_CLOCK both count a runner suspend; SLEEP pauses during one and
+    then finishes its slice. No process, ssh or host involved."""
 
     def setUp(self):
         import importlib.util
@@ -1638,58 +1639,44 @@ class ObserveClock(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
         self.vh = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.vh)
-        self.vh.say = lambda msg: self.said.append(msg)
-        self.said = []
-        self.span = self.awake = 0.0
+        self.clock = 0.0
         self.wall = 1_800_000_000.0
         self.check_s = 0.5
         self.sleeps = []
-        self.starts = []  # SPAN_CLOCK at each check start
+        self.starts = []  # CLOCK at each check start
         self.suspend_in_sleep = {}  # nth sleep -> seconds suspended
         self.suspend_in_check = {}  # nth check -> seconds suspended
+        self.delay_after_check = {}  # nth check -> awake delay before the next read
         self.wall_step_in_check = {}  # nth check -> wall clock step
-        self.suspend_on_awake_read = {}  # nth AWAKE_CLOCK read -> seconds
         self.raise_in_check = {}  # nth check -> exception
-        self.awake_reads = 0
-        self.vh.SPAN_CLOCK = lambda: self.span
-        self.vh.AWAKE_CLOCK = self.read_awake
+        self.vh.CLOCK = lambda: self.clock
         self.vh.WALL_CLOCK = lambda: self.wall
         self.vh.SLEEP = self.sleep
 
-    def fallback(self):
-        """No suspend-aware clock: SPAN_CLOCK is time.monotonic, which (on
-        Linux/macOS) stops during a suspend like AWAKE_CLOCK."""
-        self.vh.SPAN_CLOCK_NAME = "monotonic"
-        self.vh.SPAN_CLOCK = lambda: self.awake
-
-    def advance(self, seconds, suspended=0.0):
-        self.span += seconds + suspended
-        self.wall += seconds + suspended
-        self.awake += seconds
-
-    def read_awake(self):
-        self.awake_reads += 1
-        self.advance(0, self.suspend_on_awake_read.get(self.awake_reads, 0.0))
-        return self.awake
+    def advance(self, seconds):
+        self.clock += seconds
+        self.wall += seconds
 
     def sleep(self, seconds):
         self.assertGreater(seconds, 0)
         self.assertLessEqual(seconds, self.vh.SLEEP_SLICE)
         self.sleeps.append(seconds)
-        self.advance(seconds, self.suspend_in_sleep.get(len(self.sleeps), 0.0))
+        self.advance(seconds + self.suspend_in_sleep.get(len(self.sleeps), 0.0))
 
     def health(self, stage, probes):
-        self.starts.append(self.span)
+        self.starts.append(self.clock)
         n = len(self.starts)
-        self.advance(self.check_s, self.suspend_in_check.get(n, 0.0))
+        self.advance(self.check_s + self.suspend_in_check.get(n, 0.0))
         self.wall += self.wall_step_in_check.get(n, 0.0)
         if n in self.raise_in_check:
             raise self.raise_in_check[n]
+        # an awake scheduling delay after the check, before its end read
+        self.advance(self.delay_after_check.get(n, 0.0))
         probes.append({"index": 1, "id": "0" * 12, "exit_code": 0})
         state = {"current_system": OLD, "system_state": "running", "failed_unit_count": 0}  # fmt: skip
         return state, []
 
-    def observe(self, observe=180, interval=30):
+    def namespace(self, observe, interval):
         import types
 
         v = types.SimpleNamespace(
@@ -1701,12 +1688,17 @@ class ObserveClock(unittest.TestCase):
             health=self.health,
         )
         v.observe_failed = lambda *args: self.vh.Validation.observe_failed(v, *args)
+        v.observe_check_end = lambda *args: self.vh.Validation.observe_check_end(v, *args)  # fmt: skip
+        return v
+
+    def observe(self, observe=180, interval=30):
+        v = self.namespace(observe, interval)
         try:
             return self.vh.Validation.stage_observe(v), v.evidence["observe"]
         except self.vh.StageFailed as e:
             return e, v.evidence["observe"]
 
-    def span_of(self, rec):
+    def wall_span(self, rec):
         import datetime
 
         parse = datetime.datetime.fromisoformat
@@ -1721,12 +1713,8 @@ class ObserveClock(unittest.TestCase):
         self.assertFalse(rec["ok"])
         for fragment in fragments:
             self.assertIn(fragment, result.summary)
-        # every exit path leaves timing; with a suspend-aware clock and no
-        # wall step the wall span and elapsed_s agree
-        self.assertIsNotNone(rec["finished_at"])
-        self.assertGreaterEqual(self.span_of(rec), 0)
-        if rec["suspend_aware"] and not rec["wall_step"]:
-            self.assertLessEqual(abs(self.span_of(rec) - rec["elapsed_s"]), 1)
+        # ISO seconds are truncated, elapsed_s is rounded
+        self.assertLessEqual(abs(self.wall_span(rec) - rec["elapsed_s"]), 1)
 
     def test_awake_window_samples_every_interval(self):
         summary, rec = self.observe()
@@ -1734,157 +1722,86 @@ class ObserveClock(unittest.TestCase):
         self.assertEqual(rec["iterations"], 6)
         self.assertEqual(rec["max_gap_s"], 30)
         self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["max_check_s"], 0.5)
         self.assertEqual(rec["elapsed_s"], 180)
-        self.assertEqual(rec["slow_checks"], 0)
-        self.assertEqual(rec["wall_skew_s"], 0)
-        self.assertIs(rec["suspend_aware"], True)
-        self.assertIsNone(rec["breach"])
-        self.assertIsNone(rec["cadence_warning"])
-        self.assertIsNone(rec["wall_step"])
-        self.assertEqual(self.span_of(rec), 180)
+        self.assertEqual(rec["tolerance_s"], 30)
+        self.assertEqual(rec["clock"], self.vh.CLOCK_NAME)
+        self.assertEqual(self.wall_span(rec), 180)
+        for flag in ("slow_check", "cadence_warning", "wall_step"):
+            self.assertIs(rec[flag], False, flag)
         self.assertEqual(summary, "6 check(s) over 180s passed (interval 30s, largest gap 30s)")  # fmt: skip
-        self.assertEqual(self.said, [])
 
-    def test_suspend_during_a_wait_fails_before_the_late_check_runs(self):
+    def test_suspend_during_a_wait_fails_and_records_the_wall_span(self):
         # The #1090 run: asleep ~55s into a 180s window, for ~17 minutes.
         self.suspend_in_sleep = {55: 1000.0}
         err, rec = self.observe()
         self.assert_failed(err, rec, "observation check 2:", "unsampled")
         self.assertEqual(len(self.starts), 1)  # check 2 never ran
         self.assertEqual(rec["iterations"], 1)
-        self.assertGreaterEqual(rec["max_late_s"], 990)  # minus the wait left
-        self.assertEqual(rec["late_tolerance_s"], 29.5)  # the wait after check 1
-        self.assertEqual(rec["breach"]["kind"], "late")
-        self.assertEqual(rec["breach"]["check"], 2)
-        self.assertGreater(rec["breach"]["value_s"], rec["breach"]["tolerance_s"])
-        self.assertGreaterEqual(rec["elapsed_s"], 1000)  # not the 60s awake
-        self.assertGreaterEqual(self.span_of(rec), 1000)
+        self.assertGreater(rec["max_late_s"], 30)
+        self.assertGreaterEqual(rec["elapsed_s"], 1000)
+        self.assertGreaterEqual(self.wall_span(rec), 1000)
+        self.assertIsNone(rec["max_gap_s"])  # the unrun check is not a gap
         self.assertNotIn("last", rec)
 
-    def test_suspend_during_a_check_fails(self):
-        for nth in (2, 6):  # mid-window, and the last check
-            with self.subTest(check=nth):
-                self.setUp()
-                self.suspend_in_check = {nth: 300.0}
-                err, rec = self.observe()
-                self.assert_failed(err, rec, f"observation check {nth}:", "suspended")
-                self.assertEqual(rec["iterations"], nth)
-                self.assertGreaterEqual(rec["max_late_s"], 300)
+    def test_suspend_between_checks_fails(self):
+        # resumed after check 3's end read, before check 4's deadline read
+        self.suspend_in_sleep = {91: 120.0}  # first slice of the wait after check 3
+        err, rec = self.observe()
+        self.assert_failed(err, rec, "observation check 4:")
+        self.assertEqual(rec["iterations"], 3)
+        self.assertEqual(rec["max_gap_s"], 30)
 
-    def test_short_window_with_a_long_interval_still_detects_a_suspend(self):
-        # --observe 3s --interval 300s: the tolerance is the 3s wait, not 300s.
-        for where in ("wait", "check"):
-            with self.subTest(where=where):
-                self.setUp()
-                if where == "wait":
-                    self.suspend_in_sleep = {1: 120.0}
-                else:
-                    self.suspend_in_check = {1: 120.0}
-                err, rec = self.observe(observe=3, interval=300)
-                self.assert_failed(err, rec, "unsampled")
-                self.assertGreaterEqual(rec["max_late_s"], 117)  # minus the wait left
-                self.assertEqual(rec["late_tolerance_s"], 3)
+    def test_short_window_with_a_long_interval_still_catches_a_suspend(self):
+        self.suspend_in_sleep = {1: 120.0}
+        err, rec = self.observe(observe=3, interval=300)
+        self.assert_failed(err, rec, "unsampled")
+        self.assertEqual(rec["tolerance_s"], 3)
 
-    def test_no_unmeasured_gap_between_lateness_and_check_start(self):
-        # A suspend right after the deadline is read, before the check's
-        # awake clock is: it is counted against that check.
-        self.suspend_on_awake_read = {1: 120.0}
-        err, rec = self.observe(observe=3, interval=3)
-        self.assert_failed(err, rec, "suspended")
-        self.assertGreaterEqual(rec["max_late_s"], 120)
-
-    def test_a_wall_clock_step_is_recorded_and_never_changes_the_verdict(self):
-        for step in (120.0, -120.0):
-            with self.subTest(step=step):
-                self.setUp()
-                self.check_s = 45.0  # awake, slower than the interval
-                self.wall_step_in_check = {1: step}
-                summary, rec = self.observe(observe=60, interval=30)
-                self.assert_passed(summary, rec)
-                # check 1 at 30s runs to 75s, past the 60s window
-                self.assertEqual(rec["elapsed_s"], 75)
-                # finished_at is the wall clock as read, clamped at started_at
-                self.assertEqual(self.span_of(rec), 195 if step > 0 else 0)
-                self.assertEqual(rec["wall_step"], "forward" if step > 0 else "backward")  # fmt: skip
-                self.assertEqual(rec["wall_skew_s"], round(step))
-                self.assertEqual(rec["max_late_s"], 0)
-                self.assertEqual(len(self.said), 1)
-                self.assertIn("wall clock moved", self.said[0])
-
-    def test_fallback_uses_wall_time_and_says_so(self):
-        self.fallback()
-        summary, rec = self.observe()
-        self.assert_passed(summary, rec)
-        self.assertEqual(rec["clock"], "monotonic")
-        self.assertIs(rec["suspend_aware"], False)
-        self.assertTrue(summary.endswith(", suspend detection by wall clock only)"))
-        for kind in ("wait", "check"):
-            with self.subTest(kind=kind):
-                self.setUp()
-                self.fallback()
-                if kind == "wait":
-                    self.suspend_in_sleep = {40: 600.0}
-                else:
-                    self.suspend_in_check = {6: 600.0}
-                err, rec = self.observe()
-                self.assert_failed(err, rec, "unsampled")
-                self.assertGreaterEqual(rec["max_late_s"], 600)
-                self.assertGreaterEqual(rec["wall_skew_s"], 600)
-
-    def test_a_slow_awake_check_is_flagged_not_failed(self):
-        for check_s, slow in ((45.0, 4), (180.0, 1)):
+    def test_a_slow_awake_check_does_not_fail(self):
+        for check_s in (45.0, 180.0):
             with self.subTest(check_s=check_s):
                 self.setUp()
                 self.check_s = check_s
                 summary, rec = self.observe()
                 self.assert_passed(summary, rec)
                 self.assertEqual(rec["max_late_s"], 0)
-                self.assertEqual(rec["max_check_s"], round(check_s))
-                self.assertEqual(rec["slow_checks"], slow)
-                self.assertIn(f"slower than the interval, longest {round(check_s)}s", summary)  # fmt: skip
+                self.assertEqual(rec["max_check_s"], check_s)
+                self.assertIs(rec["slow_check"], True)
+                self.assertIn(f"slow check {check_s}s", summary)
 
-    def test_a_suspended_sleep_overruns_by_at_most_one_slice(self):
-        # time.sleep pauses during the suspend and then finishes its slice.
-        self.suspend_in_sleep = {1: 2.0}
-        summary, rec = self.observe(observe=3, interval=3)
+    def test_a_suspend_inside_one_check_is_only_a_long_check(self):
+        # documented limit: not a failure, only recorded
+        self.suspend_in_check = {2: 300.0}
+        summary, rec = self.observe()
         self.assert_passed(summary, rec)
-        self.assertLessEqual(self.starts[0], 3 + self.vh.SLEEP_SLICE)
-        self.assertLessEqual(max(self.sleeps), self.vh.SLEEP_SLICE)
-        # a resume after the deadline: the check starts within one slice
-        self.setUp()
-        self.suspend_in_sleep = {3: 10.0}
-        err, rec = self.observe(observe=3, interval=3)
-        self.assert_failed(err, rec, "unsampled")
-        self.assertLessEqual(rec["max_late_s"], 10 + self.vh.SLEEP_SLICE)
+        self.assertGreaterEqual(rec["max_check_s"], 300)
+        self.assertIs(rec["slow_check"], True)
 
-    def test_a_check_that_raises_still_records_its_timing(self):
-        self.suspend_in_check = {6: 300.0}
-        self.raise_in_check = {6: self.vh.StageFailed("ssh dropped")}
-        err, rec = self.observe()
-        self.assertIsInstance(err, self.vh.StageFailed)
-        self.assertGreaterEqual(rec["elapsed_s"], 450)
-        self.assertEqual(self.span_of(rec), rec["elapsed_s"])
-        self.assertGreaterEqual(rec["max_late_s"], 300)
+    def test_an_awake_3s_scheduling_delay_does_not_fail(self):
+        self.delay_after_check = {1: 3.0, 2: 3.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["iterations"], 6)
 
-    def test_an_interrupted_wait_records_elapsed_and_lateness(self):
-        import types
+    def test_a_failing_value_is_never_printed_equal_to_the_tolerance(self):
+        self.vh.MIN_LATE_TOLERANCE = 2.1231
+        self.suspend_in_sleep = {1: 2.1232}
+        err, rec = self.observe(observe=1, interval=1)
+        self.assert_failed(err, rec, "2.124s after it was due (tolerance 2.123s)")
+        self.assertEqual(rec["max_late_s"], 2.124)
+        self.assertEqual(rec["tolerance_s"], 2.1231)
+        self.assertGreater(rec["max_late_s"], rec["tolerance_s"])
 
-        def interrupted(seconds):
-            self.advance(seconds, 500.0)
-            raise KeyboardInterrupt
-
-        self.vh.SLEEP = interrupted
-        v = types.SimpleNamespace(
-            a=types.SimpleNamespace(observe=180, interval=30),
-            evidence={"post": {"current_system": OLD}},
-            health=self.health,
-        )
-        with self.assertRaises(KeyboardInterrupt):
-            self.vh.Validation.stage_observe(v)
-        rec = v.evidence["observe"]
-        self.assertGreaterEqual(rec["elapsed_s"], 500)
-        self.assertGreaterEqual(rec["max_late_s"], 470)
-        self.assertEqual(self.span_of(rec), rec["elapsed_s"])
+    def test_tolerated_delays_raise_a_cadence_warning(self):
+        # check 2 starts 27.5s late (within 30s): a 57.5s gap at a 30s interval
+        self.suspend_in_sleep = {58: 29.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["max_gap_s"], 57.5)
+        self.assertIs(rec["cadence_warning"], True)
+        self.assertIn("WARNING uneven cadence", summary)
 
     def test_one_check_has_no_gap(self):
         summary, rec = self.observe(observe=3, interval=30)
@@ -1893,114 +1810,108 @@ class ObserveClock(unittest.TestCase):
         self.assertIsNone(rec["max_gap_s"])
         self.assertNotIn("largest gap", summary)
 
-    def test_lateness_is_recorded_unrounded(self):
-        self.suspend_in_check = {1: 2.4}
-        err, rec = self.observe(observe=3, interval=1)
-        self.assert_failed(err, rec, "2.400s suspended (tolerance 2.000s)")
-        self.assertEqual(rec["max_late_s"], 2.4)
-        self.assertEqual(rec["late_tolerance_s"], 2)
-        self.assertEqual(rec["breach"], {"check": 1, "kind": "suspended", "value_s": 2.4, "tolerance_s": 2})  # fmt: skip
-
-    def test_a_breach_just_over_the_tolerance_never_reads_as_equal(self):
-        self.suspend_in_check = {1: 2.0001}
-        err, rec = self.observe(observe=3, interval=1)
-        self.assert_failed(err, rec, "2.001s suspended (tolerance 2.000s)")
-        self.assertEqual(rec["breach"]["value_s"], 2.001)
-
-    def test_the_breach_is_the_offending_value_not_an_earlier_tolerated_one(self):
-        # check 2 starts 22.5s late (tolerated, wait 29.5s); check 3 is left
-        # a 7s wait and starts 10s late: that is the breach.
-        self.suspend_in_sleep = {57: 25.0, 59: 15.0}
+    def test_a_check_that_raises_leaves_truthful_timing(self):
+        self.suspend_in_check = {6: 300.0}
+        self.raise_in_check = {6: self.vh.StageFailed("ssh dropped")}
         err, rec = self.observe()
-        self.assert_failed(err, rec, "observation check 3:")
-        self.assertEqual(rec["breach"]["check"], 3)
-        self.assertEqual(rec["breach"]["kind"], "late")
-        self.assertGreater(rec["breach"]["value_s"], rec["breach"]["tolerance_s"])
-        self.assertEqual(rec["breach"]["value_s"], 10)
-        self.assertEqual(rec["breach"]["tolerance_s"], 7)
-        self.assertEqual(rec["max_late_s"], 22.5)  # earlier, tolerated
+        self.assertIsInstance(err, self.vh.StageFailed)
+        # check 6 starts at 180s and raises after 300.5s
+        self.assertEqual(rec["elapsed_s"], 480)
+        self.assertEqual(self.wall_span(rec), 480)
+        self.assertGreaterEqual(rec["max_check_s"], 300)
+        self.assertEqual(rec["iterations"], 5)
+        self.assertEqual(rec["max_gap_s"], 30)  # check 6 never completed
 
-    def test_tolerance_is_relative_to_the_next_due_time(self):
-        # A 29s check leaves a 1s wait: a 5s suspend in it fails (it would
-        # pass against a full-interval tolerance).
-        self.check_s = 29.0
-        self.suspend_in_sleep = {31: 5.0}
-        err, rec = self.observe()
-        self.assert_failed(err, rec, "observation check 2:", "after it was due")
-        self.assertEqual(rec["breach"]["tolerance_s"], 2)
+    def test_an_interrupted_wait_leaves_truthful_timing(self):
+        def interrupted(seconds):
+            self.advance(seconds + 500.0)
+            raise KeyboardInterrupt
 
-    def test_tolerated_delays_that_add_up_raise_a_cadence_warning(self):
-        # check 2 starts 27.5s late (tolerated): a 57.5s gap at a 30s interval
-        self.suspend_in_sleep = {58: 29.0}
+        self.vh.SLEEP = interrupted
+        v = self.namespace(180, 30)
+        with self.assertRaises(KeyboardInterrupt):
+            self.vh.Validation.stage_observe(v)
+        rec = v.evidence["observe"]
+        self.assertEqual(rec["elapsed_s"], 501)
+        self.assertEqual(self.wall_span(rec), 501)
+
+    def test_finished_at_never_precedes_started_at(self):
+        self.wall_step_in_check = {1: -3600.0}
         summary, rec = self.observe()
         self.assert_passed(summary, rec)
-        self.assertIsNone(rec["breach"])
-        self.assertGreaterEqual(rec["max_gap_s"], 57)
-        self.assertEqual(rec["cadence_warning"]["check"], 2)
-        self.assertEqual(rec["cadence_warning"]["expected_s"], 30)
-        self.assertIn("WARNING cadence gap", summary)
-
-    def parse(self, *argv):
-        with open(os.devnull, "w") as null:
-            stderr, sys.stderr = sys.stderr, null
-            try:
-                return self.vh.parse_args(["--host", "hpp-1", *argv])
-            finally:
-                sys.stderr = stderr
+        self.assertEqual(rec["finished_at"], rec["started_at"])
+        self.assertIs(rec["wall_step"], True)
+        self.assertEqual(rec["elapsed_s"], 180)  # the decision clock
 
     def test_only_the_observe_interval_is_capped(self):
+        def parse(*argv):
+            with open(os.devnull, "w") as null:
+                stderr, sys.stderr = sys.stderr, null
+                try:
+                    return self.vh.parse_args(["--host", "hpp-1", *argv])
+                finally:
+                    sys.stderr = stderr
+
         for argv in (["--interval", "99999999999999999999h"], ["--interval", "5h"]):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
-                self.parse("--observe", "3s", *argv)
-        # the timeout options parse exactly as before #1090
+                parse("--observe", "3s", *argv)
         for option in ("--probe-timeout", "--build-timeout", "--switch-timeout"):
             with self.subTest(option=option):
                 dest = option[2:].replace("-", "_")
-                self.assertEqual(getattr(self.parse(option, "169h"), dest), 169 * 3600)
-                self.assertEqual(getattr(self.parse(option, "99999999999999999999h"), dest), 99999999999999999999 * 3600)  # fmt: skip
-        a = self.parse("--observe", "3s", "--interval", "4h")
+                self.assertEqual(getattr(parse(option, "169h"), dest), 169 * 3600)
+                self.assertEqual(getattr(parse(option, "99999999999999999999h"), dest), 99999999999999999999 * 3600)  # fmt: skip
+        a = parse("--observe", "3s", "--interval", "4h")
         summary, rec = self.observe(observe=a.observe, interval=a.interval)
         self.assert_passed(summary, rec)
 
-    def test_span_clock_choice_and_fallback(self):
+    def test_decision_clock_choice_and_fallback(self):
         import types
 
-        def clocks(**names):
+        def clocks(error=None, **names):
             def gettime(clock):
-                if clock == "broken":
-                    raise OSError(22, "Invalid argument")
+                if error:
+                    raise error
                 return 123.0
 
-            return types.SimpleNamespace(monotonic=time.monotonic, clock_gettime=gettime, **names)  # fmt: skip
+            return types.SimpleNamespace(time=time.time, clock_gettime=gettime, **names)  # fmt: skip
 
         cases = [
             ("linux", clocks(CLOCK_BOOTTIME=7), "CLOCK_BOOTTIME"),
-            ("linux", clocks(CLOCK_MONOTONIC_RAW=4), "monotonic"),  # stops on Linux
-            ("linux", clocks(CLOCK_BOOTTIME="broken"), "monotonic"),
+            ("linux", clocks(CLOCK_MONOTONIC_RAW=4), "wall"),  # stops on Linux
+            (
+                "linux",
+                clocks(OSError(22, "Invalid argument"), CLOCK_BOOTTIME=7),
+                "wall",
+            ),  # fmt: skip
             ("darwin", clocks(CLOCK_MONOTONIC_RAW=4), "CLOCK_MONOTONIC_RAW"),
-            ("darwin", clocks(), "monotonic"),
-            ("darwin", clocks(CLOCK_MONOTONIC_RAW="broken"), "monotonic"),
-            ("freebsd14", clocks(CLOCK_BOOTTIME=7), "monotonic"),
+            ("darwin", clocks(), "wall"),  # AttributeError
+            (
+                "darwin",
+                clocks(ValueError("bad clock"), CLOCK_MONOTONIC_RAW=4),
+                "wall",
+            ),  # fmt: skip
+            ("freebsd14", clocks(CLOCK_BOOTTIME=7), "wall"),
         ]
         for platform, module, expected in cases:
             with self.subTest(platform=platform, expected=expected):
-                name, read = self.vh.span_clock(platform, module)
+                name, read = self.vh.decision_clock(platform, module)
                 self.assertEqual(name, expected)
-                if expected == "monotonic":
-                    self.assertIs(read, time.monotonic)
+                if expected == "wall":
+                    self.assertIs(read, time.time)
                 else:
                     self.assertEqual(read(), 123.0)
-        # and the real one on this platform
-        name, read = self.vh.span_clock()
-        platform = "linux" if sys.platform.startswith("linux") else sys.platform
-        preferred = {"linux": "CLOCK_BOOTTIME", "darwin": "CLOCK_MONOTONIC_RAW"}
-        # the fallback is right where the preferred clock is unavailable
-        self.assertIn(name, {preferred.get(platform, "monotonic"), "monotonic"})
-        if name == "monotonic" and hasattr(time, preferred.get(platform, "")):
-            with self.assertRaises(OSError):
-                time.clock_gettime(getattr(time, preferred[platform]))
+        # the real one: the preferred clock, or the fallback where it is unavailable
+        name, read = self.vh.decision_clock()
+        self.assertIn(name, {"CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "wall"})
         first = read()
         self.assertGreaterEqual(read(), first)
+
+    def test_wall_fallback_is_named_in_the_summary(self):
+        self.vh.CLOCK_NAME = "wall"
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["clock"], "wall")
+        self.assertTrue(summary.endswith(", wall clock)"))
 
     def test_a_read_failure_marker_never_copies_remote_text(self):
         import types

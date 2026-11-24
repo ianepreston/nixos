@@ -32,21 +32,17 @@ record (no secret contents) into a run directory outside the git checkout:
              `running`), every --probe exits 0 (probes run on the target).
              --require-clean instead requires `running` and no failed unit
   observe    only with --observe: repeat the post checks every --interval;
-             the running closure must not change. The window runs on a clock
-             that counts runner suspend (CLOCK_BOOTTIME on Linux,
-             CLOCK_MONOTONIC_RAW on macOS); a check that starts, or spends
-             suspended, more than its scheduled wait (at most one interval,
-             at least 2s) fails the stage (a sleeping laptop), with the
-             offending value in `breach`. Wall time is a cross-check only.
-             The record holds started_at/finished_at, the elapsed span, the
-             largest gap and lateness, slow checks and a cadence warning.
-             Known limits: a suspend in the instants between one check
-             closing and the next deadline read is not flagged and can
-             shorten the window; a wait can overrun a resume by one 1s
-             slice; on the time.monotonic fallback (`suspend_aware: false`)
-             only wall time shows a suspend, so a backward wall step can
-             hide one, and a suspend inside a check is missed where
-             time.monotonic counts suspend (see stage_observe)
+             the running closure must not change. One decision clock that
+             counts runner suspend (CLOCK_BOOTTIME on Linux,
+             CLOCK_MONOTONIC_RAW on macOS; else the wall clock) is read at
+             each check's start and end. A check that starts more than
+             max(interval, 2s) after it was due (the interval capped by the
+             window) fails the stage before it runs (a sleeping laptop). The record holds started_at/
+             finished_at, elapsed, the largest gap, lateness and check
+             duration, and slow-check/cadence/wall-step flags. Known limits:
+             a suspend entirely inside one check shows only as a long check;
+             the wall-clock fallback can be misled by a wall-clock step; a
+             wait can end up to 1s after a resume (see stage_observe)
   evidence   always written, also after a failure: evidence.json
 
 Every host command goes through the helper or through one read-only ssh that
@@ -188,32 +184,30 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def span_clock(platform=sys.platform, clocks=time):
-    """(name, read) of a monotonic clock that keeps counting while the runner
-    is suspended (#1090): CLOCK_BOOTTIME on Linux, CLOCK_MONOTONIC_RAW on
-    macOS (where time.monotonic() is mach_absolute_time and stops during
-    sleep; Linux's CLOCK_MONOTONIC_RAW stops too, so it is not used there).
-    If neither is available or readable: ("monotonic", time.monotonic), the
-    fallback stage_observe records as `suspend_aware: false`."""
-    if platform.startswith("linux"):
-        name = "CLOCK_BOOTTIME"
-    elif platform == "darwin":
-        name = "CLOCK_MONOTONIC_RAW"
-    else:
-        return "monotonic", clocks.monotonic
-    clock = getattr(clocks, name, None)
+def decision_clock(platform=sys.platform, clocks=time):
+    """(name, read) of the one clock the observe stage decides on (#1090):
+    a clock that keeps counting while the runner is suspended, so a sleep
+    shows up as lost time. CLOCK_BOOTTIME on Linux, CLOCK_MONOTONIC_RAW on
+    macOS. time.monotonic() is not used: it is CLOCK_MONOTONIC on Linux and
+    mach_absolute_time on macOS, and both stop during sleep. If the
+    preferred clock is missing or cannot be read (any error), the fallback
+    is ("wall", time.time). The wall clock also counts sleep, but an NTP or
+    manual step moves it as well, so on the fallback a step can fail a run
+    or hide a late check."""
+    name = {"linux": "CLOCK_BOOTTIME", "darwin": "CLOCK_MONOTONIC_RAW"}.get(
+        "linux" if platform.startswith("linux") else platform
+    )
     try:
-        if clock is None:
-            raise OSError
+        clock = getattr(clocks, name)
         clocks.clock_gettime(clock)
-    except (OSError, ValueError):
-        return "monotonic", clocks.monotonic
+    except Exception:  # noqa: BLE001 - missing, unsupported or unreadable
+        return "wall", clocks.time
     return name, lambda: clocks.clock_gettime(clock)
 
 
 def ceil3(seconds):
-    """Rounded up to the millisecond: a value over a tolerance never reads
-    as equal to it."""
+    """Rounded up to the millisecond (and the tolerance down, see
+    stage_observe), so a failing value is never printed equal to it."""
     return math.ceil(seconds * 1000) / 1000
 
 
@@ -223,18 +217,15 @@ def wall_iso(seconds):
     )
 
 
-# The observe stage's clocks, module-level so the tests can replace them:
-# SPAN_CLOCK counts suspend, AWAKE_CLOCK (time.monotonic) does not on Linux
-# or macOS, WALL_CLOCK (time.time) is a cross-check only.
-SPAN_CLOCK_NAME, SPAN_CLOCK = span_clock()
-AWAKE_CLOCK = time.monotonic
+# The observe stage's clocks, module-level so the tests can replace them.
+# CLOCK decides; WALL_CLOCK is only sampled for started_at/finished_at.
+CLOCK_NAME, CLOCK = decision_clock()
 WALL_CLOCK = time.time
 SLEEP = time.sleep
-# A wait is cut into slices this long and the deadline re-read after each:
-# time.sleep() itself may not count a suspend, so after a resume it can run
-# on for at most one slice.
+# A wait sleeps in slices this long and re-reads CLOCK after each, so a
+# resume ends the wait on time even if time.sleep() itself paused.
 SLEEP_SLICE = 1.0
-# Smallest tolerance for a late or suspended observation check.
+# Smallest lateness tolerance for an observation check.
 MIN_LATE_TOLERANCE = 2
 
 
@@ -1326,202 +1317,125 @@ class Validation:
     def stage_observe(self):
         """Repeat the post checks every interval until the window ends (#1090).
 
-        The window, the waits and every recorded span run on SPAN_CLOCK, which
-        counts runner suspend. Check n is due `min(n * interval, window)`
-        after the window starts, or as soon as check n-1 ends if that ran
-        past that time. Its tolerance is the wait it was scheduled for, from
-        the end of check n-1 (or the window start) to that due time: at most
-        one interval, at least MIN_LATE_TOLERANCE. So a check left no wait by
-        a slow predecessor gets only the minimum. The stage fails closed,
-        before running the check, when a check starts more than that after it
-        was due, and after the check when it spent more than that suspended
-        (its SPAN_CLOCK span beyond its AWAKE_CLOCK time); `breach` then
-        holds the offending value. An awake but slow check (`slow_checks`,
-        `max_check_s`) and a gap between check starts more than half an
-        interval beyond the expected cadence (`cadence_warning`, e.g. two tolerated
-        delays in a row) are recorded, never a failure. Timing fields are
-        updated on every exit path.
+        One decision clock (CLOCK, see decision_clock), read once at the
+        start and once at the end of every check. Check n is due
+        `min(n * interval, window)` after the window starts, but never before
+        check n-1 ended, so a slow check pushes the schedule. A check that
+        starts more than the tolerance after it was due fails the stage
+        before it runs: the host went unsampled (a sleeping runner). The
+        tolerance is max(min(interval, window), MIN_LATE_TOLERANCE). A slow
+        check never fails here; it sets `slow_check` and `max_check_s`. A gap
+        between check starts more than half an interval beyond the expected
+        cadence sets `cadence_warning`. Timing fields are written on every
+        exit path. started_at/finished_at are wall-clock samples taken at
+        the first and last boundary reads; finished_at is clamped to
+        started_at (and `wall_step` set) if the wall clock stepped back.
 
-        Wall time is a cross-check only: a step is recorded (`wall_skew_s`,
-        `wall_step`) and warned about, and never changes the verdict or the
-        span; `finished_at` is the wall clock read at the end, clamped to
-        `started_at` (and `wall_step` set) if the clock stepped back past it.
-        The exception is the fallback (`suspend_aware: false`, SPAN_CLOCK is
-        time.monotonic), where wall time is the only suspend signal.
-
-        Known limits (not detected, by design of the measurement):
-        - A suspend in the few instructions between closing one check and
-          the next deadline read lies outside every timed segment. With a
-          suspend-aware clock it still counts toward the window, so it can
-          shorten the observed window without being flagged.
-        - time.sleep() may itself pause during a suspend; after resume a wait
-          runs on for at most one SLEEP_SLICE before the deadline is re-read.
-        - On the fallback, a backward wall step can hide a suspend, and a
-          suspend inside a check is missed if that platform's time.monotonic
-          counts suspend (both clocks then advance together)."""
+        Known limits: a suspend entirely inside one check is not detected; it
+        shows up only as a long check (`max_check_s`, `slow_check`). The
+        wall-clock fallback can be misled by a wall-clock step (a forward
+        step can fail a run, a backward one can hide a late check). A wait
+        can end up to one SLEEP_SLICE after a resume."""
         a = self.a
-        aware = SPAN_CLOCK_NAME != "monotonic"
+        # an unchanged tolerance per run; capped by the window so a short
+        # window with a long interval still catches a late check
+        tolerance = max(min(a.interval, a.observe), MIN_LATE_TOLERANCE)
         record = {
             "requested_s": a.observe,
             "interval_s": a.interval,
-            "clock": SPAN_CLOCK_NAME,
-            "suspend_aware": aware,
+            "clock": CLOCK_NAME,
+            "tolerance_s": tolerance,
             "started_at": None,
             "finished_at": None,
             "iterations": 0,
             "elapsed_s": 0,
             "max_gap_s": None,
             "max_check_s": 0,
-            "slow_checks": 0,
-            "max_late_s": 0.0,
-            "late_tolerance_s": None,
-            "breach": None,
-            "cadence_warning": None,
-            "wall_skew_s": 0,
-            "wall_step": None,
+            "max_late_s": 0,
+            "slow_check": False,
+            "cadence_warning": False,
+            "wall_step": False,
             "ok": False,
         }
         self.evidence["observe"] = record
         baseline = self.evidence["post"].get("current_system")
-        t0 = SPAN_CLOCK()
-        w0 = WALL_CLOCK()
+        t0, w0 = CLOCK(), WALL_CLOCK()
         record["started_at"] = wall_iso(w0)
-
-        def read():
-            span, wall = SPAN_CLOCK(), WALL_CLOCK()
-            # wall time gained on SPAN_CLOCK since the window started
-            return span, (wall - w0) - (span - t0)
-
-        def unseen(skew, before):
-            """Suspend only wall time can show (the fallback)."""
-            return 0.0 if aware else max(0.0, skew - before)
-
-        def note_late(value, tolerance):
-            if value > record["max_late_s"]:
-                record["max_late_s"] = ceil3(value)
-                record["late_tolerance_s"] = ceil3(tolerance)
-
-        def breach(n, kind, value, tolerance):
-            record["breach"] = {
-                "check": n,
-                "kind": kind,  # late | suspended
-                "value_s": ceil3(value),
-                "tolerance_s": ceil3(tolerance),
-            }
-
-        def check_done(check):
-            """Close the timing of a check (also one that raised); returns
-            (seconds suspended, span, awake seconds)."""
-            t, awake, tolerance, before = check
-            awake_s = AWAKE_CLOCK() - awake  # read before the span clock, so a
-            t_end, skew = read()  # suspend between the two reads counts
-            span = t_end - t
-            stalled = span - awake_s + unseen(skew, before)
-            record["max_check_s"] = max(record["max_check_s"], round(span))
-            if awake_s > a.interval:
-                record["slow_checks"] += 1
-            note_late(stalled, tolerance)
-            return stalled, span, awake_s
-
-        wait = check = None
-        n = 0
-        prev_start, prev_awake, ready = None, 0.0, t0  # ready: when check n may start
+        last = (t0, w0)  # the latest boundary read: (decision clock, wall)
+        prev_start = prev_check = None
+        prev_end = t0
+        phase = None  # "wait" or ("check", start) while one is in progress
         try:
             while True:
                 n = record["iterations"] + 1
-                due = max(t0 + min(a.interval * n, a.observe), ready)
-                tolerance = max(MIN_LATE_TOLERANCE, min(a.interval, due - ready))
-                wait = (due, tolerance, read()[1])
-                while True:
-                    t, skew = read()
-                    if t >= due:
-                        break
+                due = max(t0 + min(a.interval * n, a.observe), prev_end)
+                phase = "wait"
+                while (t := CLOCK()) < due:
                     SLEEP(min(due - t, SLEEP_SLICE))
-                # That one reading is both the lateness measure and the check
-                # start: nothing between them goes unmeasured.
-                late = t - due + unseen(skew, wait[2])
-                note_late(late, tolerance)
-                wait = None
-                if prev_start is not None:
-                    gap = t - prev_start
-                    record["max_gap_s"] = max(record["max_gap_s"] or 0, ceil3(gap))
-                    expected = max(a.interval, prev_awake)
-                    worst = record["cadence_warning"] or {"gap_s": 0}
-                    if gap > expected + a.interval / 2 and gap > worst["gap_s"]:
-                        record["cadence_warning"] = {
-                            "check": n,
-                            "gap_s": ceil3(gap),
-                            "expected_s": ceil3(expected),
-                        }
+                last = (t, WALL_CLOCK())
+                late = t - due
+                record["max_late_s"] = max(record["max_late_s"], ceil3(late))
                 if late > tolerance:
-                    breach(n, "late", late, tolerance)
+                    phase = None
+                    shown = math.floor(tolerance * 1000) / 1000
                     self.observe_failed(
                         record,
                         n,
                         None,
                         [
-                            f"check would start {ceil3(late):.3f}s after it was due "
-                            f"(tolerance {ceil3(tolerance):.3f}s); the host went unsampled, was the runner suspended?"
+                            f"check would start {ceil3(late):.3f}s after it was due (tolerance {shown:.3f}s); "
+                            "the host went unsampled, was the runner suspended?"
                         ],
                     )
-                check = (t, AWAKE_CLOCK(), tolerance, skew)
+                phase = ("check", t)
                 record["last_probes"] = []
                 state, problems = self.health("observe", record["last_probes"])
-                stalled, span, prev_awake = check_done(check)
-                check = None
+                end = self.observe_check_end(record, t)
+                last, phase = end, None
+                if prev_start is not None:  # gaps only between checks that ran
+                    gap = t - prev_start
+                    record["max_gap_s"] = max(record["max_gap_s"] or 0, ceil3(gap))
+                    if gap > max(a.interval, prev_check) + a.interval / 2:
+                        record["cadence_warning"] = True
+                prev_start, prev_check, prev_end = t, end[0] - t, end[0]
                 record["iterations"] = n
-                prev_start, ready = t, t + span
                 if state.get("current_system") != baseline:
                     problems.insert(0, "the running system changed during observation")  # fmt: skip
-                if stalled > tolerance:
-                    breach(n, "suspended", stalled, tolerance)
-                    problems.append(
-                        f"check spent {ceil3(stalled):.3f}s suspended (tolerance {ceil3(tolerance):.3f}s); "
-                        "the host went unsampled, was the runner suspended?"
-                    )
                 if problems:
                     self.observe_failed(record, n, state, problems)
-                if read()[0] - t0 >= a.observe:
+                if end[0] - t0 >= a.observe:
                     break
         finally:
-            if check:
-                stalled, _, _ = check_done(check)
-                if stalled > check[2] and record["breach"] is None:
-                    breach(n, "suspended", stalled, check[2])
-            elif wait:
-                due, tolerance, before = wait
-                t, skew = read()
-                late = t - due + unseen(skew, before)
-                note_late(late, tolerance)
-                if late > tolerance and record["breach"] is None:
-                    breach(n, "late", late, tolerance)
-            t, skew = read()
-            wall = WALL_CLOCK()
-            record["elapsed_s"] = round(max(0.0, t - t0))
-            record["wall_skew_s"] = round(skew)
-            if abs(skew) > MIN_LATE_TOLERANCE:
-                record["wall_step"] = "forward" if skew > 0 else "backward"
-            if wall < w0:  # stepped back past the start: never an inverted pair
-                wall, record["wall_step"] = w0, "backward"
+            if isinstance(phase, tuple):  # a check raised
+                last = self.observe_check_end(record, phase[1])
+            elif phase == "wait":  # interrupted while waiting
+                last = (CLOCK(), WALL_CLOCK())
+            record["elapsed_s"] = round(max(0.0, last[0] - t0))
+            wall = last[1]
+            if wall < w0:
+                wall, record["wall_step"] = w0, True
             record["finished_at"] = wall_iso(wall)
-            if aware and record["wall_step"]:
-                say(
-                    f"WARNING: observe: the wall clock moved {record['wall_skew_s']}s against "
-                    f"{SPAN_CLOCK_NAME} during the window; spans are from {SPAN_CLOCK_NAME}"
-                )
         record["ok"] = True
         summary = f"{record['iterations']} check(s) over {record['elapsed_s']}s passed (interval {a.interval}s"
         if record["max_gap_s"] is not None:
             summary += f", largest gap {round(record['max_gap_s'])}s"
-        if record["slow_checks"]:
-            summary += f", {record['slow_checks']} check(s) slower than the interval, longest {record['max_check_s']}s"
+        if record["slow_check"]:
+            summary += f", slow check {record['max_check_s']}s"
         if record["cadence_warning"]:
-            summary += (
-                f", WARNING cadence gap {round(record['cadence_warning']['gap_s'])}s"
-            )
-        if not aware:
-            summary += ", suspend detection by wall clock only"
+            summary += ", WARNING uneven cadence"
+        if CLOCK_NAME == "wall":
+            summary += ", wall clock"
         return summary + ")"
+
+    def observe_check_end(self, record, start):
+        """The end boundary of a check that started at `start`: one read of
+        each clock; records its duration."""
+        end = (CLOCK(), WALL_CLOCK())
+        took = end[0] - start
+        record["max_check_s"] = max(record["max_check_s"], ceil3(took))
+        if took > self.a.interval:
+            record["slow_check"] = True
+        return end
 
     def observe_failed(self, record, n, state, problems):
         if state is not None:

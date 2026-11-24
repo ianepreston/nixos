@@ -301,22 +301,23 @@ the switch, post-switch checks (expected closure running, no failed unit that
 is new or changed state since the baseline, `is-system-running` = running or,
 with only tolerated pre-existing failures, degraded; each `--probe` command
 exits 0 on the target) and an optional `--observe <duration>` window. The
-window runs on a clock that counts runner sleep (`CLOCK_BOOTTIME` on Linux,
-`CLOCK_MONOTONIC_RAW` on macOS). A check that starts more than its scheduled
-wait late (that wait is at most one interval and at least 2s), or that spends
-that long suspended, fails the stage (a sleeping laptop). `breach` records
-the offending value. Tolerated delays that add up to a long gap raise a
-`cadence_warning`; they do not fail the stage. Wall time is only a
-cross-check: a clock step is recorded as `wall_skew_s`/`wall_step`, and
-`finished_at` is the wall clock read at the end (clamped to `started_at`).
-The `observe` record (evidence schema `nixos-validate-host/3`) also carries
-`elapsed_s`, `max_gap_s`, `max_late_s` and `slow_checks`. Known limits: a
-suspend in the instants between one check closing and the next deadline read
-is not flagged and can shorten the window. A wait can overrun a resume by up
-to one 1s slice. On the `time.monotonic` fallback (`suspend_aware: false`),
-wall time is the only suspend signal, so a backward wall step can hide a
-suspend, and a suspend inside a check is missed where `time.monotonic` counts
-sleep. A unit
+stage decides on one clock that keeps counting while the runner sleeps:
+`CLOCK_BOOTTIME` on Linux, `CLOCK_MONOTONIC_RAW` on macOS. `time.monotonic`
+is not used because it stops during sleep. If that clock is unavailable, the
+wall clock (`time.time`) is used instead and recorded as `clock: wall`. The
+wall clock also counts sleep, but a clock step (NTP or manual) moves it too,
+so on that fallback a forward step can fail a run and a backward step can
+hide a late check. The clock is read once at each check's start and end. A
+check that starts more than `max(interval, 2s)` (interval capped by the
+window) after it was due fails the stage before it runs: the host went
+unsampled, for example because a laptop slept. A slow check only pushes the
+schedule. A suspend entirely inside one check is not detected; it shows up
+only as a long check (`max_check_s`, `slow_check`). A wait can end up to 1s
+after a resume. The `observe` record (evidence schema
+`nixos-validate-host/3`) carries wall-clock `started_at`/`finished_at`
+(never inverted; `wall_step` is set if the wall clock stepped back),
+`elapsed_s`, `max_gap_s`, `max_late_s`, `tolerance_s`, `max_check_s` and the
+`slow_check`/`cadence_warning` flags. A unit
 already failing before the run is tolerated but reported as a warning and in
 the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
 or a non-running system instead (already at pre-state, before check or
