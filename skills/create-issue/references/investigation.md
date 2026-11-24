@@ -27,15 +27,18 @@ reconstructing causality needs the gaps between lines, not just the lines.
 Usually the analytical core. Establish which symptom precedes which, then state
 what that rules in or out. Order is evidence about sequence, not about role:
 
-> 1. **The relay drop comes first.** `PlayFab network error ... code '63'` at
->    16:50:41 precedes any DNS failure. So DNS did not trigger the drop.
-> 2. **DNS then fails during recovery.** That ordering alone does not show DNS
->    prolonged it. (#662, as first written, called DNS a secondary amplifier.)
+> 1. **The relay drop is recorded first.** `PlayFab network error ... code '63'`
+>    at 16:50:41 precedes the recorded DNS failures.
+> 2. **DNS failures are recorded after it.** That order alone shows only
+>    sequence in the logs. (#662, as first written, inferred a "secondary
+>    amplifier" from it.)
 
-Getting this wrong is the expensive failure mode. #662's first framing was
-corrected in its closing comment: with the WAN absent, both the relay drop and
-the DNS failures were consequences of the same WAN outage, and "DNS prolonged
-recovery" had the causality backwards.
+Getting this wrong is the expensive failure mode. #662's closing comment
+corrected it, and not from ordering: the router had been taken down for planned
+maintenance, and tailscaled lost upstream in the same seconds while the NIC
+link never flapped. With the WAN absent, both the relay drop and the DNS
+failures (DNS is the router) were consequences of one outage, and "DNS
+prolonged recovery" had the causality backwards.
 
 Before labelling any event a trigger, amplifier or consequence:
 

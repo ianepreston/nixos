@@ -61,11 +61,11 @@ What this skill adds on top of those recipes is the standard they have to meet:
 - **Trim excerpts to the lines that carry the argument**, and annotate them.
 
 Where several symptoms co-occur, **establish the ordering** and say what it
-rules out, but do not read causal roles off timestamps alone. #662 showed the
-relay error at 16:50:41 preceding every DNS failure, which ruled DNS out as the
-trigger; its first reading, that DNS then amplified the outage, was later
-corrected — with the WAN absent, both symptoms were consequences of the WAN
-outage. Before labelling an event a trigger, amplifier or consequence, find
+rules out, but do not read causal roles off timestamps alone. #662 recorded the
+relay error at 16:50:41 before the DNS failures, and read that as DNS
+amplifying the outage. The order only showed the recorded DNS failures came
+later; the planned router maintenance and tailscaled losing upstream in the
+same seconds showed both symptoms were consequences of the WAN outage. Before labelling an event a trigger, amplifier or consequence, find
 separate evidence for that role, explicitly consider a shared cause, and mark
 each claim as observation, hypothesis or confirmed mechanism. State what
 observation would confirm or refute it. Getting this backwards sends the

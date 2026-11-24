@@ -31,7 +31,9 @@ consequence of a shared cause. Before calling an event a trigger, amplifier or
 consequence, cite separate evidence for that role, consider a shared upstream
 cause, and label each claim an observation, a hypothesis, or a confirmed
 mechanism. For each causal claim, say what observation would confirm or refute
-it. -->
+it. Example (#662): the relay drop preceded the recorded DNS failures, but
+order did not show a role; planned router maintenance and tailscaled losing
+upstream in the same seconds showed both were consequences of the WAN outage. -->
 
 ## Ruled out
 
