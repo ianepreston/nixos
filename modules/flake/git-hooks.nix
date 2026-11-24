@@ -90,6 +90,17 @@
           excludes = shellExcludes;
         };
 
+        # Discovery adapters (.claude/skills, .agents/skills) must mirror the
+        # canonical skills/ catalog (#1033). Offline, read-only, whole-tree
+        # (no per-file arguments), so it re-runs when any of those paths change.
+        skill-adapters = {
+          enable = true;
+          name = "skill-adapters";
+          entry = "${pkgs.python3}/bin/python3 scripts/skill-adapters.py";
+          files = "^(skills|\\.claude/skills|\\.agents/skills)/";
+          pass_filenames = false;
+        };
+
         # Whitespace hygiene
         trim-trailing-whitespace.enable = true;
         end-of-file-fixer.enable = true;
