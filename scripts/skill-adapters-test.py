@@ -4,18 +4,21 @@
     skill-adapters-test.py [REPO_ROOT]
 
 Every case builds a throwaway tree under a temp dir; the real tree is only
-read by `test_current_tree_passes`. No network, credentials or hosts.
+read by `CurrentTreeTest`. No network, credentials or hosts.
 """
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
-SPEC = importlib.util.spec_from_file_location("adapters", HERE / "skill-adapters.py")
+SCRIPT = HERE / "skill-adapters.py"
+SPEC = importlib.util.spec_from_file_location("adapters", SCRIPT)
 assert SPEC and SPEC.loader
 adapters = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(adapters)
@@ -31,46 +34,65 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        self.root = Path(tmp.name) / "repo"
+        self.outside = Path(tmp.name) / "outside"
         (self.root / "skills/_shared").mkdir(parents=True)
         (self.root / "skills/_shared/ref.md").write_text("shared\n")
+        (self.root / "skills/README.md").write_text("not a workflow\n")
+        (self.root / ".claude/skills").mkdir(parents=True)
+        (self.root / ".agents/skills").mkdir(parents=True)
         self.add_skill("alpha")
         self.add_skill("beta")
 
-    def add_skill(self, name, claude=True, agents=True):
+    def add_skill(self, name, claude=True, agents=True, fm=None):
+        fm = front(name) if fm is None else fm
         d = self.root / "skills" / name
         d.mkdir(parents=True)
-        (d / "SKILL.md").write_text(front(name) + "\n# Body\n")
+        (d / "SKILL.md").write_bytes(fm.encode() + b"\n# Body\n")
         if claude:
-            c = self.root / ".claude/skills" / name
-            c.mkdir(parents=True)
-            (c / "SKILL.md").write_text(
-                front(name) + f"\n@../../../skills/{name}/SKILL.md\n"
-            )
+            self.write_wrapper(name, fm)
         if agents:
-            a = self.root / ".agents/skills"
-            a.mkdir(parents=True, exist_ok=True)
-            os.symlink(f"../../skills/{name}", a / name)
+            os.symlink(f"../../skills/{name}", self.root / ".agents/skills" / name)
+
+    def write_wrapper(self, name, fm, tail=None):
+        c = self.root / ".claude/skills" / name
+        c.mkdir(parents=True, exist_ok=True)
+        tail = f"\n@../../../skills/{name}/SKILL.md\n" if tail is None else tail
+        (c / "SKILL.md").write_bytes(fm.encode() + tail.encode())
+
+    def wrapper(self, name="alpha"):
+        return self.root / ".claude/skills" / name / "SKILL.md"
+
+    def codex(self, name="alpha"):
+        return self.root / ".agents/skills" / name
 
     def problems(self):
         return adapters.check(self.root)
+
+    def assertClean(self):
+        self.assertEqual([], self.problems())
 
     def assertOne(self, *needles):
         got = self.problems()
         self.assertEqual(1, len(got), got)
         for n in needles:
             self.assertIn(n, got[0])
+        return got[0]
 
 
-class AdapterTest(Fixture):
-    def test_consistent_tree_passes_and_shared_is_ignored(self):
-        self.assertEqual([], self.problems())
+class CatalogTest(Fixture):
+    def test_consistent_tree_passes_and_shared_and_files_are_ignored(self):
+        self.assertClean()
 
     def test_missing_claude_adapter(self):
         self.add_skill("gamma", claude=False)
         self.assertOne(
             "gamma", "missing Claude adapter", ".claude/skills/gamma/SKILL.md"
         )
+
+    def test_missing_claude_skill_md_in_existing_dir(self):
+        self.wrapper().unlink()
+        self.assertOne("alpha", "missing Claude adapter")
 
     def test_missing_codex_adapter(self):
         self.add_skill("gamma", agents=False)
@@ -80,329 +102,289 @@ class AdapterTest(Fixture):
         self.add_skill("gamma", claude=False, agents=False)
         got = self.problems()
         self.assertEqual(2, len(got), got)
-        self.assertTrue(all(p.startswith("gamma:") for p in got))
+        self.assertTrue(all(p.startswith("gamma: missing") for p in got), got)
 
-    def test_wrong_symlink_target(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        os.symlink("../../skills/beta", link)
-        self.assertOne("alpha", "points to `../../skills/beta`", "ln -sfn")
-
-    def test_absolute_symlink_target_rejected(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        os.symlink(self.root / "skills/alpha", link)
-        self.assertOne("alpha", "expected `../../skills/alpha`")
-
-    def test_removing_canonical_skill_orphans_both_adapters(self):
-        link = self.root / ".agents/skills/alpha"
-        (self.root / "skills/alpha/SKILL.md").rename(self.root / "skills/alpha/X.md")
-        self.assertTrue(link.is_symlink())
-        # alpha is no longer a workflow, so its adapters are orphans
+    def test_orphaned_adapters(self):
+        self.write_wrapper("old", front("old"))
+        os.symlink("../../skills/old", self.codex("old"))
         got = self.problems()
         self.assertEqual(2, len(got), got)
-        self.assertTrue(all("orphaned adapter" in p for p in got))
+        self.assertTrue(all("orphaned adapter" in p for p in got), got)
 
-    def test_symlink_replaced_by_real_directory(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        link.mkdir()
-        self.assertOne("alpha", "must be a directory symlink")
+    def test_missing_adapter_root(self):
+        os.unlink(self.codex("alpha"))
+        os.unlink(self.codex("beta"))
+        os.rmdir(self.root / ".agents/skills")
+        self.assertOne(".agents/skills: missing")
 
+
+class ClaudeWrapperTest(Fixture):
     def test_stale_description(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            front("alpha", "Old text.") + "\n@../../../skills/alpha/SKILL.md\n"
+        self.write_wrapper("alpha", front("alpha", "Old text."))
+        self.assertOne("alpha", "stale", "content differs")
+
+    def test_copied_body_is_rejected(self):
+        self.write_wrapper(
+            "alpha", front("alpha"), "\n@../../../skills/alpha/SKILL.md\n# Body\n"
         )
-        self.assertOne("alpha", "frontmatter is stale", "byte for byte")
+        self.assertOne("exactly one line", "never copy the body")
 
-    def test_stale_name(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            front("alpha-old") + "\n@../../../skills/alpha/SKILL.md\n"
-        )
-        self.assertOne("alpha", "frontmatter is stale")
+    def test_wrong_import_path(self):
+        self.write_wrapper("alpha", front("alpha"), "\n@../../skills/alpha/SKILL.md\n")
+        self.assertOne("@../../../skills/alpha/SKILL.md")
 
-    def test_canonical_description_change_makes_adapter_stale(self):
-        (self.root / "skills/alpha/SKILL.md").write_text(
-            front("alpha", "New text.") + "\n# Body\n"
-        )
-        self.assertOne("alpha", "frontmatter is stale")
+    def test_no_frontmatter(self):
+        self.wrapper().write_text("@../../../skills/alpha/SKILL.md\n")
+        self.assertOne("alpha", "no closed `---` frontmatter")
 
-    def test_missing_frontmatter_in_adapter(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            "@../../../skills/alpha/SKILL.md\n"
-        )
-        self.assertOne("alpha", "no `---` frontmatter block")
+    def test_crlf_copy_of_lf_canonical_is_stale(self):
+        self.write_wrapper("alpha", front("alpha").replace("\n", "\r\n"))
+        self.assertOne("line endings differ")
 
-    def test_wrong_forwarding_path(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            front("alpha") + "\n@../../skills/alpha/SKILL.md\n"
-        )
-        self.assertOne(
-            "alpha", "exactly one import line", "@../../../skills/alpha/SKILL.md"
-        )
+    def test_trailing_space_inside_block_is_stale(self):
+        self.write_wrapper("alpha", front("alpha", "Does a thing. "))
+        self.assertOne("trailing whitespace differs")
 
-    def test_forwarding_to_another_skill(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            front("alpha") + "\n@../../../skills/beta/SKILL.md\n"
-        )
-        self.assertOne("alpha", "exactly one import line")
-
-    def test_missing_import(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(front("alpha"))
-        self.assertOne("alpha", "found (nothing)")
-
-    def test_copied_body_rejected(self):
-        (self.root / ".claude/skills/alpha/SKILL.md").write_text(
-            front("alpha") + "\n@../../../skills/alpha/SKILL.md\n\n# Body\n"
-        )
-        self.assertOne("alpha", "never copy the body")
-
-    def test_orphaned_claude_adapter(self):
-        d = self.root / ".claude/skills/ghost"
-        d.mkdir()
-        (d / "SKILL.md").write_text(front("ghost"))
-        self.assertOne("ghost", "orphaned adapter", ".claude/skills/ghost")
-
-    def test_orphaned_codex_adapter(self):
-        os.symlink("../../skills/ghost", self.root / ".agents/skills/ghost")
-        self.assertOne("ghost", "orphaned adapter", ".agents/skills/ghost")
-
-    def test_shared_directory_needs_no_adapter_but_cannot_have_one(self):
-        os.symlink("../../skills/_shared", self.root / ".agents/skills/_shared")
-        self.assertOne("_shared", "orphaned adapter")
-
-    def test_main_exit_codes(self):
-        self.assertEqual(0, adapters.main(["x", str(self.root)]))
-        (self.root / ".agents/skills/alpha").unlink()
-        self.assertEqual(1, adapters.main(["x", str(self.root)]))
-        self.assertEqual(2, adapters.main(["x", "a", "b"]))
-
-
-class MalformedMetadataTest(Fixture):
-    def both(self, name, text):
-        for rel in (f"skills/{name}/SKILL.md", f".claude/skills/{name}/SKILL.md"):
-            (self.root / rel).write_bytes(text)
-
-    def wrapper(self, name, data):
-        (self.root / f".claude/skills/{name}/SKILL.md").write_bytes(data)
-
-    def test_matching_empty_frontmatter_fails(self):
-        self.both("alpha", b"---\n---\n\n@../../../skills/alpha/SKILL.md\n")
-        got = self.problems()
-        self.assertTrue(any("no `name` field" in p for p in got), got)
-
-    def test_missing_description_fails(self):
-        self.both(
-            "alpha", b"---\nname: alpha\n---\n\n@../../../skills/alpha/SKILL.md\n"
-        )
-        self.assertTrue(any("no `description` field" in p for p in self.problems()))
-
-    def test_empty_value_fails(self):
-        self.both("alpha", b"---\nname: alpha\ndescription:\n---\n")
-        self.assertTrue(any("`description` is empty" in p for p in self.problems()))
-
-    def test_unclosed_quote_in_matching_files_fails(self):
-        text = b'---\nname: alpha\ndescription: "never closed\n---\n'
-        self.both("alpha", text)
-        got = self.problems()
-        self.assertTrue(any("unclosed quote" in p for p in got), got)
-
-    def test_closed_quotes_pass(self):
-        fm = '---\nname: alpha\ndescription: "it\'s \\"ok\\""\n---\n'
-        self.both("alpha", (fm + "\n@../../../skills/alpha/SKILL.md\n").encode())
-        self.assertEqual([], self.problems())
-
-    def test_block_scalar_with_content_passes(self):
-        fm = "---\nname: alpha\ndescription: >\n  folded text\n---\n"
-        self.both("alpha", (fm + "\n@../../../skills/alpha/SKILL.md\n").encode())
-        self.assertEqual([], self.problems())
-
-    def test_non_utf8_canonical_is_reported_and_scan_continues(self):
-        (self.root / "skills/alpha/SKILL.md").write_bytes(
-            b"---\nname: alpha\ndescription: bad \xff byte\n---\n"
-        )
-        (self.root / ".agents/skills/beta").unlink()
-        got = self.problems()
-        self.assertTrue(any("alpha" in p and "not valid UTF-8" in p for p in got), got)
-        self.assertTrue(
-            any("beta" in p and "missing Codex adapter" in p for p in got), got
-        )
-
-    def test_non_utf8_wrapper_is_reported_and_scan_continues(self):
-        self.wrapper("alpha", b"---\nname: alpha\ndescription: bad \xff\n---\n\n@x\n")
-        (self.root / ".agents/skills/beta").unlink()
-        got = self.problems()
-        self.assertTrue(
-            any(".claude/skills/alpha" in p and "UTF-8" in p for p in got), got
-        )
-        self.assertTrue(any("beta" in p for p in got), got)
-
-    def test_crlf_wrapper_against_lf_canonical_fails(self):
-        self.wrapper(
+    def test_delimiter_and_import_trailing_space_and_cr_are_tolerated(self):
+        fm = front("alpha")
+        self.write_wrapper(
             "alpha",
-            b"---\r\nname: alpha\r\ndescription: Does a thing.\r\n---\r\n"
-            b"\r\n@../../../skills/alpha/SKILL.md\r\n",
+            fm.replace("---\n", "--- \r\n", 1)[:-4] + "---  \r\n",
+            "\r\n@../../../skills/alpha/SKILL.md \t\r\n\r\n",
         )
-        self.assertOne("alpha", "line endings differ")
+        self.assertClean()
 
-    def test_trailing_space_on_wrapper_delimiters_is_a_byte_difference(self):
-        self.wrapper(
-            "alpha",
-            b"---  \nname: alpha\ndescription: Does a thing.\n---  \n"
-            b"\n@../../../skills/alpha/SKILL.md\n",
-        )
-        self.assertOne("alpha", "trailing whitespace differs")
+    def test_crlf_canonical_with_crlf_copy_passes(self):
+        self.add_skill("gamma", fm=front("gamma").replace("\n", "\r\n"))
+        self.assertClean()
 
-    def test_identical_delimiters_with_trailing_spaces_are_recognised(self):
-        fm = b"---  \nname: alpha\ndescription: Does a thing.\n---\t\n"
-        self.both("alpha", fm + b"\n@../../../skills/alpha/SKILL.md\n")
-        self.assertEqual([], self.problems())
+    def test_indented_delimiter_is_content(self):
+        # Previously an indented `---` ended the block early.
+        fm = "---\nname: gamma\ndescription: |\n  one\n  ---\n  two\n---\n"
+        self.add_skill("gamma", fm=fm)
+        self.assertClean()
+        self.write_wrapper("gamma", fm.replace("two", "TWO"))
+        self.assertOne("gamma", "stale")
 
-    def test_trailing_whitespace_after_import_is_tolerated(self):
-        self.wrapper(
-            "alpha",
-            front("alpha").encode() + b"\n@../../../skills/alpha/SKILL.md  \t\n",
-        )
-        self.assertEqual([], self.problems())
+    def test_wrapper_dir_symlink(self):
+        d = self.root / ".claude/skills/alpha"
+        self.wrapper().unlink()
+        d.rmdir()
+        os.symlink("../../skills/alpha", d)
+        self.assertOne("alpha", ".claude/skills/alpha is a symlink")
 
-    def test_leading_whitespace_before_import_is_rejected(self):
-        self.wrapper(
-            "alpha", front("alpha").encode() + b"\n @../../../skills/alpha/SKILL.md\n"
-        )
-        self.assertOne("alpha", "exactly one import line")
+    def test_wrapper_file_symlink(self):
+        self.wrapper().unlink()
+        os.symlink("../../../skills/alpha/SKILL.md", self.wrapper())
+        self.assertOne("alpha", "SKILL.md is a symlink, not a regular file")
 
 
-class SymlinkSafetyTest(Fixture):
-    def outside(self, text):
-        d = Path(tempfile.mkdtemp())
-        self.addCleanup(lambda: __import__("shutil").rmtree(d, ignore_errors=True))
-        f = d / "SKILL.md"
-        f.write_text(text)
-        return f
+class CanonicalMetadataTest(Fixture):
+    VALID = {
+        "multiline double-quoted": 'description: "Does a\n  thing: really."\n',
+        "multiline single-quoted": "description: 'It''s\n  multiline'\n",
+        "quoted with comment": 'description: "Does a thing."  # note\n',
+        "quoted key": '"description": x\ndescription: y\n',
+        "block scalar with --- and #": "description: >-\n  a\n  ---\n  # b\n",
+    }
 
-    def test_external_canonical_skill_md_is_rejected(self):
-        f = self.outside(front("alpha") + "\n# Body\n")
+    def test_valid_yaml_shapes_pass_when_copied(self):
+        # Each was rejected by the previous hand-written YAML validation.
+        for i, (label, desc) in enumerate(self.VALID.items()):
+            with self.subTest(label):
+                name = f"v{i}"
+                self.add_skill(name, fm=f"---\nname: {name}\n{desc}---\n")
+                self.assertClean()
+
+    def test_quoted_name_matches_directory(self):
+        self.add_skill("gamma", fm="---\nname: 'gamma'\ndescription: x\n---\n")
+        self.assertClean()
+
+    def test_empty_frontmatter(self):
+        self.add_skill("gamma", fm="---\n---\n")
+        self.assertOne("gamma", "empty frontmatter")
+
+    def test_unclosed_frontmatter(self):
+        self.add_skill("gamma", fm="---\nname: gamma\ndescription: x\n")
+        got = self.problems()
+        self.assertIn("gamma: skills/gamma/SKILL.md has no closed", got[0])
+
+    def test_missing_fields(self):
+        for i, (body, key) in enumerate(
+            (
+                ("description: x\n", "name:"),
+                ("name: {n}\n", "description:"),
+                ("name: {n}\n  description: x\n", "description:"),
+            )
+        ):
+            with self.subTest(key=key, body=body):
+                n = f"m{i}"
+                self.add_skill(n, fm="---\n" + body.format(n=n) + "---\n")
+                self.assertOne(
+                    f"{n}: skills/{n}/SKILL.md frontmatter has no top-level `{key}`"
+                )
+                # Repair it so the next case is checked on its own.
+                (self.root / "skills" / n / "SKILL.md").write_text(front(n))
+                self.write_wrapper(n, front(n))
+
+    def test_name_mismatch(self):
+        self.add_skill("gamma", fm=front("delta"))
+        self.assertOne("gamma", "'delta' does not match the directory name")
+
+    def test_canonical_skill_md_symlink(self):
         p = self.root / "skills/alpha/SKILL.md"
-        p.unlink()
-        os.symlink(f, p)
-        got = self.problems()
-        self.assertTrue(
-            any("skills/alpha/SKILL.md is a symlink" in x for x in got), got
-        )
+        p.rename(self.root / "skills/alpha/real.md")
+        os.symlink("real.md", p)
+        # One problem: its adapters are not also reported as orphans.
+        self.assertOne("alpha", "skills/alpha/SKILL.md is a symlink")
 
-    def test_external_claude_wrapper_is_rejected(self):
-        f = self.outside(front("alpha") + "\n@../../../skills/alpha/SKILL.md\n")
-        p = self.root / ".claude/skills/alpha/SKILL.md"
-        p.unlink()
-        os.symlink(f, p)
-        self.assertOne("alpha", ".claude/skills/alpha/SKILL.md is a symlink")
-
-    def test_symlinked_claude_wrapper_directory_is_rejected(self):
-        # alpha's wrapper directory is beta's: the import resolves to beta.
-        import shutil
-
-        shutil.rmtree(self.root / ".claude/skills/alpha")
-        os.symlink("beta", self.root / ".claude/skills/alpha")
-        got = self.problems()
-        self.assertTrue(
-            any(x.startswith("alpha:") and "is a symlink" in x for x in got), got
-        )
-
-    def test_symlinked_codex_directory_to_other_workflow_is_rejected(self):
-        # .agents/skills is itself a symlink onto a copy that points elsewhere.
-        import shutil
-
-        shutil.rmtree(self.root / ".agents/skills")
-        (self.root / ".agents").mkdir(exist_ok=True)
-        os.symlink("../.claude/skills", self.root / ".agents/skills")
-        got = self.problems()
-        self.assertTrue(
-            any("is a symlink; it must be a real directory" in x for x in got), got
-        )
-
-    def test_codex_link_to_other_workflow_is_rejected(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        os.symlink("../../skills/beta", link)
-        self.assertOne("alpha", "points to `../../skills/beta`")
-
-    def test_self_loop_under_skills_is_not_zero_workflows(self):
-        os.symlink("loop", self.root / "skills/loop")
-        got = self.problems()
-        self.assertTrue(any("skills/loop is a symlink" in x for x in got), got)
-
-    def test_self_loop_codex_adapter_fails(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        os.symlink("alpha", link)
-        self.assertOne("alpha", "points to `alpha`")
-
-    def test_symlinked_canonical_directory_is_rejected(self):
-        import shutil
-
-        shutil.rmtree(self.root / "skills/alpha")
-        os.symlink("beta", self.root / "skills/alpha")
-        got = self.problems()
-        self.assertTrue(any("skills/alpha is a symlink" in x for x in got), got)
-
-    def test_symlink_problem_gives_main_exit_1(self):
-        os.symlink("loop", self.root / "skills/loop")
-        self.assertEqual(1, adapters.main(["x", str(self.root)]))
+    def test_canonical_dir_symlink(self):
+        os.symlink("alpha", self.root / "skills/gamma")
+        self.assertOne("gamma", "skills/gamma is a symlink")
 
 
-class BrokenLinkOfLiveWorkflowTest(Fixture):
-    def test_dangling_codex_link_for_existing_workflow(self):
-        link = self.root / ".agents/skills/alpha"
-        link.unlink()
-        os.symlink("../../skills/does-not-exist", link)
-        self.assertOne("alpha", "points to `../../skills/does-not-exist`", "ln -sfn")
-        self.assertTrue((self.root / "skills/alpha/SKILL.md").is_file())
+class CodexAdapterTest(Fixture):
+    def test_wrong_targets(self):
+        for target in (
+            "../../skills/beta",
+            "../../skills/alpha/",
+            str(self.root / "skills/alpha"),
+            "../skills/alpha",
+        ):
+            with self.subTest(target=target):
+                self.codex().unlink()
+                os.symlink(target, self.codex())
+                self.assertOne("alpha", "expected `../../skills/alpha`")
 
-    def test_correct_target_but_canonical_skill_md_gone_is_not_a_live_workflow(self):
-        (self.root / "skills/alpha/SKILL.md").unlink()
-        got = self.problems()
-        self.assertTrue(all("orphaned adapter" in x for x in got), got)
+    def test_real_directory_instead_of_symlink(self):
+        self.codex().unlink()
+        self.codex().mkdir()
+        self.assertOne("alpha", "is a directory, not a symlink")
 
-
-class OddNameTest(Fixture):
-    NAME = "two words [draft]"
-
-    def test_odd_name_passes_when_consistent(self):
-        self.add_skill(self.NAME)
-        self.assertEqual([], self.problems())
-
-    def test_repair_command_is_shell_quoted(self):
-        import shlex
-
-        self.add_skill(self.NAME, agents=False)
-        (msg,) = self.problems()
+    def test_printed_fix_repairs_the_tree(self):
+        self.codex().unlink()
+        os.symlink("../../skills/beta", self.codex())
+        msg = self.assertOne("alpha")
         cmd = msg.split("run `", 1)[1].rsplit("`", 1)[0]
-        self.assertEqual(
-            [
-                "ln",
-                "-sfn",
-                f"../../skills/{self.NAME}",
-                f".agents/skills/{self.NAME}",
-            ],
-            shlex.split(cmd),
+        subprocess.run(cmd, shell=True, cwd=self.root, check=True)
+        self.assertClean()
+
+
+class PathSafetyTest(Fixture):
+    def make_outside(self):
+        (self.outside / "external").mkdir(parents=True)
+        (self.outside / "external/SKILL.md").write_text(front("external"))
+        return self.outside
+
+    def test_symlinked_skills_root_is_not_enumerated(self):
+        out = self.make_outside()
+        (self.root / "skills").rename(out / "skills")
+        os.symlink(out / "skills", self.root / "skills")
+        self.assertOne("skills: is a symlink")
+
+    def test_looping_roots(self):
+        for rel in ("skills", ".claude/skills", ".agents/skills", ".claude", ".agents"):
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                moved = self.root / f"moved-{rel.replace('/', '-')}"
+                path.rename(moved)
+                os.symlink(Path(rel).name, path)  # self-loop
+                try:
+                    self.assertOne(f"{rel}: is a symlink")
+                finally:
+                    path.unlink()
+                    moved.rename(path)
+
+    def test_adapter_root_linked_to_external_dir(self):
+        out = self.make_outside()
+        for rel in (".claude", ".agents/skills"):
+            with self.subTest(rel=rel):
+                path = self.root / rel
+                moved = self.root / "moved"
+                path.rename(moved)
+                os.symlink(out, path)
+                try:
+                    msg = self.assertOne(f"{rel}: is a symlink")
+                    self.assertNotIn("external", msg)
+                finally:
+                    path.unlink()
+                    moved.rename(path)
+
+    def test_other_adapter_set_still_checked_when_one_root_is_bad(self):
+        (self.root / ".claude").rename(self.root / "moved")
+        os.symlink("moved", self.root / ".claude")
+        self.codex().unlink()
+        got = self.problems()
+        self.assertEqual(2, len(got), got)
+
+    def test_unsupported_names_are_reported(self):
+        for bad in ("two words", "-flag"):
+            with self.subTest(bad=bad):
+                (self.root / "skills" / bad).mkdir()
+                try:
+                    self.assertOne(repr(bad), "unsupported name")
+                finally:
+                    (self.root / "skills" / bad).rmdir()
+
+    def test_surrogate_escaped_name_on_disk(self):
+        # Previously aborted the scan with UnicodeEncodeError.
+        bad = os.fsdecode(b"bad\xff")
+        made = []
+        for parent in ("skills", ".claude/skills", ".agents/skills"):
+            try:
+                (self.root / parent / bad).mkdir()
+            except OSError as e:
+                self.skipTest(f"filesystem rejects non-UTF-8 names ({e})")
+            made.append(parent)
+            (self.root / parent / bad / "SKILL.md").write_text(front("x"))
+        got = self.problems()
+        self.assertEqual(3, len(got), got)
+        self.assertTrue(all("unsupported name" in p for p in got), got)
+        self.assertTrue(all("'bad\\ufffd'" in p for p in got), got)
+
+    def test_surrogate_escaped_name_from_listing(self):
+        # Same as above for filesystems (APFS) that refuse such names.
+        bad = os.fsdecode(b"bad\xff")
+        real = os.listdir
+        with mock.patch.object(adapters.os, "listdir", lambda p: real(p) + [bad]):
+            got = self.problems()
+        self.assertEqual(3, len(got), got)
+        self.assertTrue(all("unsupported name" in p for p in got), got)
+
+    def test_unexpected_os_error_is_reported_not_raised(self):
+        real = open
+
+        def fake(path, *a, **k):
+            if "alpha" in os.fspath(path):
+                raise PermissionError(13, "Permission denied", path)
+            return real(path, *a, **k)
+
+        with mock.patch.object(adapters, "open", fake, create=True):
+            self.assertOne("alpha: could not be checked (PermissionError")
+
+
+class MainTest(Fixture):
+    def run_script(self):
+        return subprocess.run(
+            [sys.executable, SCRIPT, self.root], capture_output=True, text=True
         )
 
-    def test_repair_command_for_wrong_target_is_quoted(self):
-        import shlex
-
-        self.add_skill(self.NAME)
-        link = self.root / ".agents/skills" / self.NAME
-        link.unlink()
-        os.symlink("../../skills/alpha", link)
-        (msg,) = self.problems()
-        cmd = msg.split("run `", 1)[1].rsplit("`", 1)[0]
-        self.assertEqual(f".agents/skills/{self.NAME}", shlex.split(cmd)[-1])
+    def test_exit_status(self):
+        r = self.run_script()
+        self.assertEqual((0, ""), (r.returncode, r.stderr), r)
+        self.assertIn("2 skills, adapters consistent", r.stdout)
+        self.codex().unlink()
+        r = self.run_script()
+        self.assertEqual(1, r.returncode, r)
+        self.assertIn("skill-adapters: alpha: missing Codex adapter", r.stderr)
 
 
 class CurrentTreeTest(unittest.TestCase):
     def test_current_tree_passes(self):
-        self.assertEqual([], adapters.check(REPO))
-        self.assertGreater(len(adapters.canonical_skills(REPO)), 0)
+        problems = []
+        workflows = adapters.check_tree(os.fspath(REPO), problems)
+        self.assertEqual([], problems)
+        self.assertGreater(len(workflows), 0)
 
 
 if __name__ == "__main__":
