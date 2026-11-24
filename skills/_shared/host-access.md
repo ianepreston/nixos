@@ -300,7 +300,11 @@ baseline, next `nixos-upgrade` run), `--action check`, then with `-- --switch`
 the switch, post-switch checks (expected closure running, no failed unit that
 is new or changed state since the baseline, `is-system-running` = running or,
 with only tolerated pre-existing failures, degraded; each `--probe` command
-exits 0 on the target) and an optional `--observe <duration>` window. A unit
+exits 0 on the target) and an optional `--observe <duration>` window. The
+window runs on a clock that counts runner sleep, cross-checked against wall
+time; a check that starts or runs more than one interval late (a sleeping
+laptop) fails the stage, and the `observe` record carries wall-clock
+`started_at`/`finished_at`, the true `elapsed_s` and `max_gap_s`. A unit
 already failing before the run is tolerated but reported as a warning and in
 the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
 or a non-running system instead (already at pre-state, before check or

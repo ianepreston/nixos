@@ -376,8 +376,19 @@ class Sequence(Harness):
         self.assertEqual(ev["post"]["generation"], 42)
         self.assertTrue(ev["generation_changed"])
         self.assertEqual([p["exit_code"] for p in ev["probes"]], [0, 0])
-        self.assertGreaterEqual(ev["observe"]["iterations"], 2)
-        self.assertTrue(ev["observe"]["ok"])
+        obs = ev["observe"]
+        self.assertGreaterEqual(obs["iterations"], 2)
+        self.assertTrue(obs["ok"])
+        self.assertIn(obs["clock"], ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "monotonic"))  # fmt: skip
+        self.assertLessEqual(obs["max_gap_s"], 2)
+        self.assertEqual(obs["max_late_s"], 0)
+        self.assertEqual(obs["late_tolerance_s"], 2)
+        self.assertLessEqual(obs["started_at"], obs["finished_at"])
+        observe_stage = next(s for s in ev["stages"] if s["name"] == "observe")
+        self.assertEqual(
+            observe_stage["summary"],
+            f"{obs['iterations']} check(s) over {obs['elapsed_s']}s passed (largest gap {obs['max_gap_s']}s, interval 1s)",
+        )
         # one log per stage that ran, all inside the run dir, outside the repo
         run_dir = path.parent
         self.assertEqual(Path(ev["run_dir"]), run_dir)
@@ -391,7 +402,7 @@ class Sequence(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         path, ev = self.evidence(r)
         self.assertEqual(set(ev), EVIDENCE_KEYS)
-        self.assertEqual(ev["schema"], "nixos-validate-host/2")
+        self.assertEqual(ev["schema"], "nixos-validate-host/3")
         self.assertEqual(ev["host"], "hpp-1")
         self.assertEqual(ev["target"], "ipreston@hpp-1")
         self.assertEqual(ev["server_environment"], "dev")
@@ -1613,6 +1624,141 @@ class MalformedInputs(Harness):
         masks = dict(vh.input_masks([("src", self.AUTH_URL)]))
         for form in (self.SECRET, "p[ss", "artifacts.example.invalid"):
             self.assertIn(form, masks)
+
+
+class ObserveClock(unittest.TestCase):
+    """stage_observe on fake clocks (#1090): SPAN_CLOCK and WALL_CLOCK count a
+    runner suspend, AWAKE_CLOCK does not; no process, ssh or host involved."""
+
+    CHECK_S = 0.5
+
+    def setUp(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        self.vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.vh)
+        self.span = self.awake = 0.0
+        self.wall = 1_800_000_000.0
+        self.sleeps = 0
+        self.suspend_at_sleep = None  # (nth sleep call, seconds suspended)
+        self.suspend_in_check = None  # (nth check, seconds suspended)
+        self.checks = 0
+        self.vh.SPAN_CLOCK = lambda: self.span
+        self.vh.AWAKE_CLOCK = lambda: self.awake
+        self.vh.WALL_CLOCK = lambda: self.wall
+        self.vh.SLEEP = self.sleep
+
+    def advance(self, seconds, suspended=0.0):
+        self.span += seconds + suspended
+        self.wall += seconds + suspended
+        self.awake += seconds
+
+    def sleep(self, seconds):
+        self.assertGreater(seconds, 0)
+        self.assertLessEqual(seconds, self.vh.SLEEP_SLICE)
+        self.sleeps += 1
+        suspended = 0.0
+        if self.suspend_at_sleep and self.suspend_at_sleep[0] == self.sleeps:
+            suspended = self.suspend_at_sleep[1]
+        self.advance(seconds, suspended)
+
+    def health(self, stage, probes):
+        self.checks += 1
+        suspended = 0.0
+        if self.suspend_in_check and self.suspend_in_check[0] == self.checks:
+            suspended = self.suspend_in_check[1]
+        self.advance(self.CHECK_S, suspended)
+        probes.append({"index": 1, "id": "0" * 12, "exit_code": 0})
+        state = {"current_system": OLD, "system_state": "running", "failed_unit_count": 0}  # fmt: skip
+        return state, []
+
+    def observe(self, observe=180, interval=30):
+        import types
+
+        v = types.SimpleNamespace(
+            a=types.SimpleNamespace(observe=observe, interval=interval),
+            evidence={
+                "post": {"current_system": OLD},
+                "failed_units": {"new": [], "changed": []},
+            },
+            health=self.health,
+        )
+        v.observe_failed = lambda *args: self.vh.Validation.observe_failed(v, *args)
+        try:
+            return self.vh.Validation.stage_observe(v), v.evidence["observe"]
+        except self.vh.StageFailed as e:
+            return e, v.evidence["observe"]
+
+    def test_awake_window_samples_every_interval(self):
+        summary, rec = self.observe()
+        self.assertIsInstance(summary, str)
+        self.assertTrue(rec["ok"])
+        self.assertEqual(rec["iterations"], 6)
+        self.assertEqual(rec["max_gap_s"], 30)
+        self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["elapsed_s"], 180)
+        self.assertEqual(summary, "6 check(s) over 180s passed (largest gap 30s, interval 30s)")  # fmt: skip
+        self.assertIsNotNone(rec["started_at"])
+        self.assertIsNotNone(rec["finished_at"])
+
+    def test_suspend_during_a_wait_fails_and_records_the_wall_clock_span(self):
+        # The #1090 run: asleep ~55s into a 180s window, for ~17 minutes.
+        self.suspend_at_sleep = (12, 1000.0)
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["iterations"], 2)
+        self.assertGreaterEqual(rec["max_gap_s"], 1000)
+        self.assertGreaterEqual(rec["max_late_s"], 1000)
+        self.assertGreaterEqual(rec["elapsed_s"], 1000)  # not the 60s awake
+        self.assertIn("observation check 2:", err.summary)
+        self.assertIn("unsampled", err.summary)
+        self.assertEqual(rec["last"]["system_state"], "running")
+        self.assertIsNotNone(rec["finished_at"])
+
+    def test_suspend_during_a_check_fails(self):
+        for nth in (2, 6):  # mid-window, and the last check
+            with self.subTest(check=nth):
+                self.setUp()
+                self.suspend_in_check = (nth, 300.0)
+                err, rec = self.observe()
+                self.assertIsInstance(err, self.vh.StageFailed)
+                self.assertEqual(rec["iterations"], nth)
+                self.assertGreaterEqual(rec["max_late_s"], 300)
+                self.assertIn("ran only 0s", err.summary)
+
+    def test_a_span_clock_that_stops_is_caught_by_wall_time(self):
+        # Fallback platform: SPAN_CLOCK is time.monotonic and stops too.
+        self.vh.SPAN_CLOCK = lambda: self.awake
+        self.suspend_at_sleep = (3, 600.0)
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertGreaterEqual(rec["max_gap_s"], 600)
+
+    def test_a_slow_check_is_not_a_gap(self):
+        self.CHECK_S = 45.0  # longer than the interval, but awake
+        summary, rec = self.observe()
+        self.assertIsInstance(summary, str, getattr(summary, "summary", ""))
+        self.assertTrue(rec["ok"])
+        self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["max_gap_s"], 45)
+
+    def test_the_wait_is_sliced_so_a_suspended_sleep_cannot_overrun(self):
+        self.observe(observe=60, interval=60)
+        self.assertGreaterEqual(self.sleeps, 12)
+
+    def test_span_clock_counts_suspend_on_this_platform(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vh2", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(vh)
+        expected = {"linux": "CLOCK_BOOTTIME", "darwin": "CLOCK_MONOTONIC_RAW"}
+        platform = "linux" if sys.platform.startswith("linux") else sys.platform
+        self.assertEqual(vh.SPAN_CLOCK_NAME, expected.get(platform, "monotonic"))
+        a = vh.SPAN_CLOCK()
+        self.assertGreaterEqual(vh.SPAN_CLOCK(), a)
 
 
 if __name__ == "__main__":
