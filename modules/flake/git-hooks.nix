@@ -91,13 +91,16 @@
         };
 
         # Discovery adapters (.claude/skills, .agents/skills) must mirror the
-        # canonical skills/ catalog (#1033). Offline, read-only, whole-tree
-        # (no per-file arguments), so it re-runs when any of those paths change.
+        # canonical skills/ catalog (#1033). Offline, read-only and whole-tree,
+        # so it must not depend on which files changed: `always_run` keeps it
+        # running when a commit only retargets a symlink or deletes a wrapper,
+        # link or workflow (deletions and symlink-only changes match no `file`
+        # type filter), and `pass_filenames = false` hands it no file list.
         skill-adapters = {
           enable = true;
           name = "skill-adapters";
           entry = "${pkgs.python3}/bin/python3 scripts/skill-adapters.py";
-          files = "^(skills|\\.claude/skills|\\.agents/skills)/";
+          always_run = true;
           pass_filenames = false;
         };
 
