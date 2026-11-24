@@ -459,29 +459,70 @@ probe_opts=("${probe_common_opts[@]}" -oPermitLocalCommand=no)
 store_probe_opts=("${probe_common_opts[@]}")
 
 # Classify a failed ssh/Nix-store probe from its exit status and output.
-# Precedence, first match wins (each pair is tested in both orders):
+# Precedence, first match wins (each pair is tested in both orders). Patterns
+# are the OpenSSH client's (10.x) and Nix's own wording:
 #   1. hostkey      "Host key verification failed"
 #   2. signing      "agent refused operation" / "signing failed" /
 #                   "PIN required" / "user presence"
-#   3. denied       "Permission denied" (explicit authentication denial)
+#   3. denied       an explicit SSH authentication denial, as a WHOLE line in
+#                   the client's format: "[user@host: ]Permission denied
+#                   (<methods>)." / "Permission denied, please try again." /
+#                   "Received disconnect from <addr> port <n>:<code>: Too many
+#                   authentication failures". A bare "Permission denied" (a
+#                   remote exec error, or text quoted inside Nix's protocol
+#                   error) is not an SSH denial and does not match.
 #   4. protocol     "protocol mismatch" (Nix store protocol)
-#   5. unreachable  "Could not resolve hostname" / "Connection refused" /
-#                   "No route to host" / "Operation timed out" /
-#                   "Connection timed out"
-#   6. timeout      exit status 124 or 137 (our deadline fired)
-#   7. handshake    Nix's "failed to start SSH (master) connection", which it
+#   5. unreachable  TCP connect or name resolution failed: "Could not resolve
+#                   host[name]" (covers "Name or service not known",
+#                   "Temporary failure in name resolution", "nodename nor
+#                   servname ..."), and the strerror of "ssh: connect to host
+#                   <h> port <p>: ...": "Connection refused", "Connection
+#                   timed out", "Operation timed out", "No route to host",
+#                   "Network is unreachable", "Host is down"
+#   6. dropped      TCP connected, then the server closed it before
+#                   authentication: "kex_exchange_identification",
+#                   "ssh_exchange_identification", "banner exchange",
+#                   "Connection closed by <addr>", "Connection reset by"
+#                   (sshd down mid-start, MaxStartups, a firewall or proxy)
+#   7. timeout      exit status 124 or 137 (our deadline fired)
+#   8. handshake    Nix's "failed to start SSH (master) connection", which it
 #                   prints whenever it did not read `started`, including when
-#                   ssh exited before authenticating, so 1-6 win over it
-#   8. failed       anything else
-# The remote build-environment leg inserts two classes (see
-# probe_remote_build_environment): a recognised remote code beats 1, and an
-# unrecognised `preflight-error:` marker sits between 6 and 7.
+#                   ssh exited before authenticating, so 1-7 win over it
+#   9. failed       anything else
+# The remote build-environment leg extends this into one total order with
+# the remote codes (see remote_failure_rank).
+output_has_line() { # output_has_line ERE OUTPUT: any whole line matches
+  local line
+  while IFS= read -r line; do
+    line=${line%$'\r'}
+    [[ $line =~ $1 ]] && return 0
+  done <<<"$2"
+  return 1
+}
+
 ssh_failure_class() { # ssh_failure_class STATUS OUTPUT
+  local denied_methods='^([^[:space:]@]+@[^[:space:]]+: )?Permission denied \([a-z0-9@.,-]+\)\.[[:space:]]*$'
+  local denied_retry='^Permission denied, please try again\.[[:space:]]*$'
+  local denied_limit='^Received disconnect from .+: Too many authentication failures[[:space:]]*$'
   case $2 in *"Host key verification failed"*) echo hostkey && return ;; esac
   case $2 in *"agent refused operation"* | *"signing failed"* | *"PIN required"* | *"user presence"*) echo signing && return ;; esac
-  case $2 in *"Permission denied"*) echo denied && return ;; esac
+  if output_has_line "$denied_methods" "$2" || output_has_line "$denied_retry" "$2" ||
+    output_has_line "$denied_limit" "$2"; then
+    echo denied && return
+  fi
   case $2 in *"protocol mismatch"*) echo protocol && return ;; esac
-  case $2 in *"Could not resolve hostname"* | *"Connection refused"* | *"No route to host"* | *"Operation timed out"* | *"Connection timed out"*) echo unreachable && return ;; esac
+  case $2 in
+    *"Could not resolve host"* | *"Connection refused"* | *"Connection timed out"* | \
+      *"Operation timed out"* | *"No route to host"* | *"Network is unreachable"* | *"Host is down"*)
+      echo unreachable && return
+      ;;
+  esac
+  case $2 in
+    *"kex_exchange_identification"* | *"ssh_exchange_identification"* | *"banner exchange"* | \
+      *"Connection closed by "* | *"Connection reset by "*)
+      echo dropped && return
+      ;;
+  esac
   case $1 in 124 | 137) echo timeout && return ;; esac
   case $2 in *"failed to start SSH connection"* | *"failed to start SSH master connection"*) echo handshake && return ;; esac
   echo failed
@@ -494,6 +535,7 @@ ssh_failure_message() { # fixed text per class; no status, host or output
     denied) echo "SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal." ;;
     protocol) echo "Nix store protocol mismatch. Check the remote Nix store command and unexpected shell startup output." ;;
     unreachable) echo "unreachable over SSH. Check the host, network and SSH port." ;;
+    dropped) echo "the SSH server closed the connection before authentication. Check sshd on the host and any firewall or connection limit." ;;
     timeout) echo "probe timed out. Check connectivity and any pending SSH touch/PIN prompt." ;;
     handshake) echo "Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal." ;;
     failed) echo "probe failed. Verify the SSH connection from an operator terminal." ;;
@@ -522,7 +564,7 @@ remote_preflight_message() { # remote_preflight_message CODE SECRETS_CHECKED
     builders-unreadable) echo "cannot read Nix builders on the build machine. Check its Nix configuration." ;;
     builders-file-unreadable) echo "cannot read the Nix builders file. Check its permissions." ;;
     builder-destination-invalid) echo "invalid SSH builder destination. Check the Nix builders configuration." ;;
-    builder-hostkey | builder-signing | builder-denied | builder-protocol | builder-unreachable | builder-timeout | builder-handshake | builder-failed)
+    builder-hostkey | builder-signing | builder-denied | builder-protocol | builder-unreachable | builder-dropped | builder-timeout | builder-handshake | builder-failed)
       echo "a Nix builder configured there: $(ssh_failure_message "${1#builder-}")"
       ;;
     tool-jq | tool-git | secrets-*)
@@ -540,6 +582,59 @@ remote_preflight_message() { # remote_preflight_message CODE SECRETS_CHECKED
       esac
       ;;
     *) return 1 ;;
+  esac
+}
+
+# One total order for the remote build-environment leg, over the class of
+# our own ssh to that machine (ssh_failure_class), the remote codes and our
+# deadline; the lowest rank wins, whatever the line order:
+#   10-60   ssh hostkey, signing, denied, protocol, unreachable, dropped
+#   100-    specific remote codes, in the order the remote script can emit
+#           them (each run stops at its first): tool-timeout, tool-nix,
+#           tool-jq, tool-git, secrets-* (the comparison runs only after
+#           its tools, and only for a bootstrap with --local-secrets),
+#           builders-unreadable, tool-cat, builders-file-unreadable,
+#           builder-destination-invalid, tool-ssh, then builder-hostkey,
+#           -signing, -denied, -protocol, -unreachable, -dropped, -timeout
+#   300     ssh timeout (exit 124/137)
+#   310-320 generic remote codes: builder-handshake, builder-failed
+#   400     an unrecognised or internal `preflight-error:` marker
+#   500-600 ssh handshake, failed
+remote_failure_rank() { # remote_failure_rank CLASS|code:CODE SECRETS_CHECKED
+  local order i=0 item
+  case $1 in
+    hostkey) echo 10 ;;
+    signing) echo 20 ;;
+    denied) echo 30 ;;
+    protocol) echo 40 ;;
+    unreachable) echo 50 ;;
+    dropped) echo 60 ;;
+    timeout) echo 300 ;;
+    code:builder-handshake) echo 310 ;;
+    code:builder-failed) echo 320 ;;
+    handshake) echo 500 ;;
+    failed) echo 600 ;;
+    code:*)
+      remote_preflight_message "${1#code:}" "$2" >/dev/null || {
+        echo 400
+        return
+      }
+      order="tool-timeout tool-nix tool-jq tool-git secrets-lock-unreadable
+        secrets-checkout-missing secrets-head-unreadable secrets-worktree-unreadable
+        secrets-stale-clean secrets-stale-dirty builders-unreadable tool-cat
+        builders-file-unreadable builder-destination-invalid tool-ssh
+        builder-hostkey builder-signing builder-denied builder-protocol
+        builder-unreachable builder-dropped builder-timeout"
+      for item in $order; do
+        [ "$item" != "${1#code:}" ] || {
+          echo $((100 + i))
+          return
+        }
+        i=$((i + 1))
+      done
+      echo 400
+      ;;
+    *) echo 400 ;;
   esac
 }
 
@@ -672,7 +767,7 @@ probe_secrets() {
 }
 
 probe_remote_build_environment() {
-  local endpoint=$1 directory=$2 secrets=$3 output line status message class unrecognized=false
+  local endpoint=$1 directory=$2 secrets=$3 output line status code class rank best=999 reason
   shift 3
   # Discover and reach distributed builders from the machine running the build.
   # For bootstrap, compare the synced checkout with that machine's flake.lock.
@@ -681,7 +776,8 @@ probe_remote_build_environment() {
   output=$(
     {
       declare -f bounded preflight_fail preflight_fail_code require_preflight_tools \
-        ssh_failure_class ssh_failure_message ssh_probe_failure probe_builders probe_secrets
+        output_has_line ssh_failure_class ssh_failure_message ssh_probe_failure \
+        probe_builders probe_secrets
       declare -p probe_opts
       cat <<'REMOTE'
 set -euo pipefail
@@ -693,27 +789,23 @@ REMOTE
     } | bounded 45s ssh "${probe_opts[@]}" "$@" -T "$endpoint" "bash -s -- $directory $secrets" 2>&1
   ) || {
     status=$?
-    # 0. a recognised code on any line wins (a successful secrets comparison
-    # may already have logged an ok line; it is ignored here).
-    while IFS= read -r line; do
-      case $line in
-        "preflight-error: "*)
-          if message=$(remote_preflight_message "${line#preflight-error: }" "$secrets"); then
-            preflight_fail "on $endpoint: $message"
-          fi
-          unrecognized=true
-          ;;
-      esac
-    done <<<"$output"
-    # 1-6 of ssh_failure_class, then an unrecognised marker, then 7-8.
+    # The lowest remote_failure_rank wins (ok lines are ignored here).
     class=$(ssh_failure_class "$status" "$output")
-    case $class in
-      handshake | failed) ;;
-      *) ssh_probe_failure "build environment on $endpoint" "$status" "$output" ;;
-    esac
-    [ "$unrecognized" = false ] ||
-      preflight_fail "on $endpoint: the remote preflight failed with an unrecognized error. Run the same preflight from an operator terminal."
-    ssh_probe_failure "build environment on $endpoint" "$status" "$output"
+    best=$(remote_failure_rank "$class" "$secrets")
+    reason="build environment on $endpoint: $(ssh_failure_message "$class")"
+    while IFS= read -r line; do
+      case $line in "preflight-error: "*) ;; *) continue ;; esac
+      code=${line#preflight-error: }
+      rank=$(remote_failure_rank "code:$code" "$secrets")
+      [ "$rank" -lt "$best" ] || continue
+      best=$rank
+      if [ "$rank" -eq 400 ]; then
+        reason="on $endpoint: the remote preflight failed with an unrecognized error. Run the same preflight from an operator terminal."
+      else
+        reason="on $endpoint: $(remote_preflight_message "$code" "$secrets")"
+      fi
+    done <<<"$output"
+    preflight_fail "$reason"
   }
   [ "$secrets" = true ] || return 0
   while IFS= read -r line; do
