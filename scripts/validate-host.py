@@ -32,7 +32,24 @@ record (no secret contents) into a run directory outside the git checkout:
              `running`), every --probe exits 0 (probes run on the target).
              --require-clean instead requires `running` and no failed unit
   observe    only with --observe: repeat the post checks every --interval;
-             the running closure must not change
+             the running closure must not change. One decision clock that
+             counts runner suspend (CLOCK_BOOTTIME on Linux,
+             CLOCK_MONOTONIC_RAW on macOS; else the wall clock) is read at
+             each check's start and end. A check that starts more than
+             max(interval, 2s) after it was due (the interval capped by the
+             window) fails the stage before it runs (a sleeping laptop).
+             The record holds started_at/finished_at, elapsed, the largest
+             gap, lateness and check duration, and slow-check, cadence,
+             failed-check and wall-step flags. A clock read
+             that fails mid-stage switches to the wall clock. Trade-offs:
+             the guarantee is that no check starts more than the tolerance
+             after its due time, not that every suspend is detected (a
+             suspend during a wait is absorbed by the time left before the
+             due time); an awake delay over the tolerance reads like a
+             suspend and fails closed. Known limits: a suspend entirely
+             inside one check shows only as a long check; the wall-clock
+             fallback can be misled by a wall-clock step; a wait can end up
+             to 1s after a resume (see stage_observe)
   evidence   always written, also after a failure: evidence.json
 
 Every host command goes through the helper or through one read-only ssh that
@@ -55,6 +72,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -91,6 +109,17 @@ SYSTEM_STATES = {
 FAILED_UNIT_MARK_RE = re.compile(r"(?:[0-9a-f]{32}|-) [1-9][0-9]*")
 UNIT_NAME_RE = re.compile(
     r"[A-Za-z0-9:_.@\\-]+\.(?:service|socket|device|mount|automount|swap|target|path|timer|slice|scope)"
+)
+# Keys remote.sh can name in `VALIDATE-READ-FAILED <key>`.
+READ_KEYS = (
+    "current_system",
+    "booted_system",
+    "system_profile",
+    "system_state",
+    "failed_units",
+    "failed_unit_mark",
+    "upgrade_service",
+    "upgrade_timer_next",
 )
 # Single-valued keys of a state read; each must appear at most once.
 STATE_KEYS = (
@@ -160,6 +189,51 @@ STAGES = [
 
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def decision_clock(platform=sys.platform, clocks=time):
+    """(name, read) of the one clock the observe stage decides on (#1090):
+    a clock that keeps counting while the runner is suspended, so a sleep
+    shows up as lost time. CLOCK_BOOTTIME on Linux, CLOCK_MONOTONIC_RAW on
+    macOS. time.monotonic() is not used: it is CLOCK_MONOTONIC on Linux and
+    mach_absolute_time on macOS, and both stop during sleep. If the
+    preferred clock is missing or cannot be read (any error), the fallback
+    is ("wall", time.time). The wall clock also counts sleep, but an NTP or
+    manual step moves it as well, so on the fallback a step can fail a run
+    or hide a late check."""
+    name = {"linux": "CLOCK_BOOTTIME", "darwin": "CLOCK_MONOTONIC_RAW"}.get(
+        "linux" if platform.startswith("linux") else platform
+    )
+    try:
+        clock = getattr(clocks, name)
+        clocks.clock_gettime(clock)
+    except Exception:  # noqa: BLE001 - missing, unsupported or unreadable
+        return "wall", clocks.time
+    return name, lambda: clocks.clock_gettime(clock)
+
+
+def ceil3(seconds):
+    """Rounded up to the millisecond (and the tolerance down, see
+    stage_observe), so a failing value is never printed equal to it."""
+    return math.ceil(seconds * 1000) / 1000
+
+
+def wall_iso(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat(
+        timespec="seconds"
+    )
+
+
+# The observe stage's clocks, module-level so the tests can replace them.
+# CLOCK decides; WALL_CLOCK is only sampled for started_at/finished_at.
+CLOCK_NAME, CLOCK = decision_clock()
+WALL_CLOCK = time.time
+SLEEP = time.sleep
+# A wait sleeps in slices this long and re-reads CLOCK after each, so a
+# resume ends the wait on time even if time.sleep() itself paused.
+SLEEP_SLICE = 1.0
+# Smallest lateness tolerance for an observation check.
+MIN_LATE_TOLERANCE = 2
 
 
 def say(msg):
@@ -289,6 +363,10 @@ def parse_args(argv):
     a.switch_timeout = 7200 if a.switch_timeout is None else a.switch_timeout
     if a.observe > MAX_OBSERVE:
         p.error(f"--observe is capped at {MAX_OBSERVE}s")
+    # Checked as ints, so an absurd value is refused before stage_observe's
+    # float arithmetic could overflow. Only the observe options are capped.
+    if a.interval > MAX_OBSERVE:
+        p.error(f"--interval is capped at {MAX_OBSERVE}s")
     if (
         a.interval < 1
         or a.probe_timeout < 1
@@ -681,7 +759,7 @@ class Validation:
             name: {"name": name, "status": "not-run", "log": None} for name in STAGES
         }
         self.evidence = {
-            "schema": "nixos-validate-host/2",
+            "schema": "nixos-validate-host/3",
             "host": self.host,
             "target": self.target,
             "server_environment": admitted["server_environment"],
@@ -748,7 +826,7 @@ class Validation:
             *extra,
         ]
 
-    def remote(self, stage, command, timeout, log_filter=None):
+    def remote(self, stage, command, timeout, log_filter=None, reads=False):
         """One read-only ssh to the target; the script asserts the hostname
         before anything else. Returns stdout lines."""
         nonce = nonce_source.token_hex(16)
@@ -775,11 +853,23 @@ class Validation:
                 f"{self.target} did not report hostname {self.host}; stopping (inspect the ssh route)",
                 rc,
             )
-        failed = [x.split()[1] for x in lines if x.startswith("VALIDATE-READ-FAILED ")]
-        if failed:
-            raise StageFailed(
-                f"required read '{failed[0]}' failed on {self.host}; stopping", rc
-            )
+        # Only a state read can report a failed read. The key is matched
+        # against a fixed list and never copied: the persisted text comes
+        # from this file, not from remote output (a probe can print anything).
+        if reads:
+            failed = [
+                line.split()[1:2]
+                for line in lines
+                if line.split()[:1] == ["VALIDATE-READ-FAILED"]  # fmt: skip
+            ]
+            if failed:
+                key = next((k for k in READ_KEYS if [k] == failed[0]), None)
+                raise StageFailed(
+                    f"required read '{key}' failed on {self.host}; stopping"
+                    if key
+                    else f"a required read failed on {self.host} (unrecognised key); stopping",
+                    rc,
+                )
         # A marker alone is not enough: ssh itself must succeed too.
         if rc != 0:
             raise StageFailed(
@@ -790,7 +880,11 @@ class Validation:
 
     def read_state(self, stage):
         rc, lines, nonce = self.remote(
-            stage, lambda _n: "state", READ_TIMEOUT, log_filter=log_safe_state
+            stage,
+            lambda _n: "state",
+            READ_TIMEOUT,
+            log_filter=log_safe_state,
+            reads=True,
         )
         # The snapshot is everything before its one end marker; a missing or
         # repeated marker, or any output after it, makes it ambiguous.
@@ -1228,46 +1322,178 @@ class Validation:
         return problems
 
     def stage_observe(self):
+        """Repeat the post checks every interval until the window ends (#1090).
+
+        One decision clock (CLOCK, see decision_clock), read once at the
+        start and once at the end of every check. Check n is due
+        `min(n * interval, window)` after the window starts, but never before
+        check n-1 ended, so a slow check pushes the schedule. A check that
+        starts more than the tolerance after it was due fails the stage
+        before it runs: the host went unsampled (a sleeping runner). The
+        tolerance is max(min(interval, window), MIN_LATE_TOLERANCE). A slow
+        check never fails here; it sets `slow_check` and `max_check_s`. A
+        check counts (`iterations`, `max_gap_s`, `cadence_warning`) from its
+        start; one that raises before finishing is `failed_check`. A gap
+        between check starts more than half an interval beyond the expected
+        cadence sets `cadence_warning`.
+
+        If a CLOCK read fails after the window started, the rest of the
+        stage runs on the wall clock, offset to carry on from the last
+        boundary (`clock: wall`, `clock_fallback: true`). Timing fields are
+        written on every exit path and the final bookkeeping never raises.
+        started_at/finished_at are wall-clock samples taken at the first and
+        last boundary reads. `wall_step` is set only when that last sample is
+        earlier than the first one; finished_at is then clamped to
+        started_at. A backward step that ends later than the start is not
+        flagged.
+
+        Trade-offs of a single clock (by design):
+        - The guarantee is that a check never starts more than the tolerance
+          after its due time, not that every suspend is detected: a suspend
+          during a wait is absorbed by the time still left before the due
+          time, so one slightly longer than the tolerance can pass.
+        - An awake scheduling delay and a suspend read the same on one
+          clock, so a delay of more than the tolerance (2s minimum) during a
+          wait fails closed. That is the intended direction for a validation
+          tool.
+
+        Known limits: a suspend entirely inside one check is not detected; it
+        shows up only as a long check (`max_check_s`, `slow_check`). The
+        wall-clock fallback can be misled by a wall-clock step (a forward
+        step can fail a run, a backward one can hide a late check). A wait
+        can end up to one SLEEP_SLICE after a resume."""
         a = self.a
+        # an unchanged tolerance per run; capped by the window so a short
+        # window with a long interval still catches a late check
+        tolerance = max(min(a.interval, a.observe), MIN_LATE_TOLERANCE)
         record = {
             "requested_s": a.observe,
             "interval_s": a.interval,
+            "clock": CLOCK_NAME,
+            "clock_fallback": False,
+            "tolerance_s": tolerance,
+            "started_at": None,
+            "finished_at": None,
             "iterations": 0,
             "elapsed_s": 0,
+            "max_gap_s": None,
+            "max_check_s": 0,
+            "max_late_s": 0,
+            "slow_check": False,
+            "cadence_warning": False,
+            "failed_check": None,
+            "wall_step": False,
             "ok": False,
         }
         self.evidence["observe"] = record
         baseline = self.evidence["post"].get("current_system")
-        start = time.monotonic()
-        end = start + a.observe
-        while True:
-            time.sleep(
-                max(
-                    0.0,
-                    min(start + a.interval * (record["iterations"] + 1), end)
-                    - time.monotonic(),
-                )
-            )
-            record["last_probes"] = []
-            state, problems = self.health("observe", record["last_probes"])
-            record["iterations"] += 1
-            record["elapsed_s"] = round(time.monotonic() - start)
-            if state.get("current_system") != baseline:
-                problems.insert(0, "the running system changed during observation")
-            if problems:
-                record["last"] = {
-                    "system_state": state.get("system_state"),
-                    "failed_unit_count": state["failed_unit_count"],
-                    "new_failed_units": self.evidence["failed_units"]["new"],
-                    "changed_failed_units": self.evidence["failed_units"]["changed"],
-                }
-                raise StageFailed(
-                    f"observation check {record['iterations']}: " + "; ".join(problems)
-                )
-            if time.monotonic() >= end:
-                break
+        # After a failed CLOCK read the stage continues on the wall clock,
+        # offset so it carries on from the last boundary pair.
+        fallback = {"offset": None}
+
+        def read():
+            if fallback["offset"] is None:
+                try:
+                    return CLOCK()
+                except Exception:  # noqa: BLE001 - any failure: fall back
+                    fallback["offset"] = last[0] - last[1]
+                    record.update(clock="wall", clock_fallback=True)
+            return WALL_CLOCK() + fallback["offset"]
+
+        w0 = WALL_CLOCK()
+        last = (w0, w0)  # so a failing first read falls back with no offset
+        t0 = read()
+        last = (t0, w0)  # the latest boundary: (decision clock, wall)
+        record["started_at"] = wall_iso(w0)
+
+        def check_end(start):
+            end = (read(), WALL_CLOCK())
+            took = end[0] - start
+            record["max_check_s"] = max(record["max_check_s"], ceil3(took))
+            if took > a.interval:
+                record["slow_check"] = True
+            return end
+
+        prev_start = prev_check = None
+        prev_end = t0
+        phase = None  # "wait" or ("check", start) while one is in progress
+        try:
+            while True:
+                n = record["iterations"] + 1
+                due = max(t0 + min(a.interval * n, a.observe), prev_end)
+                phase = "wait"
+                while (t := read()) < due:
+                    SLEEP(min(due - t, SLEEP_SLICE))
+                last = (t, WALL_CLOCK())
+                late = t - due
+                record["max_late_s"] = max(record["max_late_s"], ceil3(late))
+                if late > tolerance:
+                    phase = None
+                    shown = math.floor(tolerance * 1000) / 1000
+                    self.observe_failed(
+                        record,
+                        n,
+                        None,
+                        [
+                            f"check would start {ceil3(late):.3f}s after it was due (tolerance {shown:.3f}s); "
+                            "the host went unsampled, was the runner suspended?"
+                        ],
+                    )
+                # The check counts from its start, also if it then raises.
+                phase = ("check", t)
+                record["iterations"] = n
+                if prev_start is not None:
+                    gap = t - prev_start
+                    record["max_gap_s"] = max(record["max_gap_s"] or 0, ceil3(gap))
+                    if gap > max(a.interval, prev_check) + a.interval / 2:
+                        record["cadence_warning"] = True
+                record["last_probes"] = []
+                state, problems = self.health("observe", record["last_probes"])
+                end = check_end(t)
+                last, phase = end, None
+                prev_start, prev_check, prev_end = t, end[0] - t, end[0]
+                if state.get("current_system") != baseline:
+                    problems.insert(0, "the running system changed during observation")  # fmt: skip
+                if problems:
+                    self.observe_failed(record, n, state, problems)
+                if end[0] - t0 >= a.observe:
+                    break
+        finally:
+            # Never raises: the evidence is written whatever happened above.
+            try:
+                if isinstance(phase, tuple):  # the check raised
+                    record["failed_check"] = record["iterations"]
+                    last = check_end(phase[1])
+                elif phase == "wait":  # interrupted while waiting
+                    last = (read(), WALL_CLOCK())
+            except Exception:  # noqa: BLE001 - keep the last good boundary
+                pass
+            record["elapsed_s"] = round(max(0.0, last[0] - t0))
+            wall = last[1]
+            if wall < w0:
+                wall, record["wall_step"] = w0, True
+            record["finished_at"] = wall_iso(wall)
         record["ok"] = True
-        return f"{record['iterations']} check(s) over {record['elapsed_s']}s passed"
+        summary = f"{record['iterations']} check(s) over {record['elapsed_s']}s passed (interval {a.interval}s"
+        if record["max_gap_s"] is not None:
+            summary += f", largest gap {round(record['max_gap_s'])}s"
+        if record["slow_check"]:
+            summary += f", slow check {record['max_check_s']}s"
+        if record["cadence_warning"]:
+            summary += ", WARNING uneven cadence"
+        if record["clock"] == "wall":
+            summary += ", wall clock"
+        return summary + ")"
+
+    def observe_failed(self, record, n, state, problems):
+        if state is not None:
+            record["last"] = {
+                "system_state": state.get("system_state"),
+                "failed_unit_count": state["failed_unit_count"],
+                "new_failed_units": self.evidence["failed_units"]["new"],
+                "changed_failed_units": self.evidence["failed_units"]["changed"],
+            }
+        raise StageFailed(f"observation check {n}: " + "; ".join(problems))
 
     # --- driver ---------------------------------------------------------------
     def run(self):

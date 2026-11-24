@@ -376,8 +376,21 @@ class Sequence(Harness):
         self.assertEqual(ev["post"]["generation"], 42)
         self.assertTrue(ev["generation_changed"])
         self.assertEqual([p["exit_code"] for p in ev["probes"]], [0, 0])
-        self.assertGreaterEqual(ev["observe"]["iterations"], 2)
-        self.assertTrue(ev["observe"]["ok"])
+        obs = ev["observe"]
+        self.assertGreaterEqual(obs["iterations"], 2)
+        self.assertTrue(obs["ok"])
+        self.assertIn(obs["clock"], ("CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "wall"))  # fmt: skip
+        self.assertLessEqual(obs["max_gap_s"], 2)
+        self.assertLess(obs["max_late_s"], 1)
+        self.assertEqual(obs["tolerance_s"], 2)
+        for flag in ("slow_check", "cadence_warning", "wall_step"):
+            self.assertIs(obs[flag], False, flag)
+        self.assertLessEqual(obs["started_at"], obs["finished_at"])
+        observe_stage = next(s for s in ev["stages"] if s["name"] == "observe")
+        self.assertEqual(
+            observe_stage["summary"],
+            f"{obs['iterations']} check(s) over {obs['elapsed_s']}s passed (interval 1s, largest gap {round(obs['max_gap_s'])}s)",
+        )
         # one log per stage that ran, all inside the run dir, outside the repo
         run_dir = path.parent
         self.assertEqual(Path(ev["run_dir"]), run_dir)
@@ -391,7 +404,7 @@ class Sequence(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         path, ev = self.evidence(r)
         self.assertEqual(set(ev), EVIDENCE_KEYS)
-        self.assertEqual(ev["schema"], "nixos-validate-host/2")
+        self.assertEqual(ev["schema"], "nixos-validate-host/3")
         self.assertEqual(ev["host"], "hpp-1")
         self.assertEqual(ev["target"], "ipreston@hpp-1")
         self.assertEqual(ev["server_environment"], "dev")
@@ -1613,6 +1626,410 @@ class MalformedInputs(Harness):
         masks = dict(vh.input_masks([("src", self.AUTH_URL)]))
         for form in (self.SECRET, "p[ss", "artifacts.example.invalid"):
             self.assertIn(form, masks)
+
+
+class ObserveClock(unittest.TestCase):
+    """stage_observe on fake clocks (#1090). CLOCK (the decision clock) and
+    WALL_CLOCK both count a runner suspend; SLEEP pauses during one and
+    then finishes its slice. No process, ssh or host involved."""
+
+    def setUp(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vh", REPO / "scripts" / "validate-host.py")  # fmt: skip
+        self.vh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.vh)
+        self.clock = 0.0
+        self.wall = 1_800_000_000.0
+        self.check_s = 0.5
+        self.sleeps = []
+        self.starts = []  # CLOCK at each check start
+        self.suspend_in_sleep = {}  # nth sleep -> seconds suspended
+        self.suspend_in_check = {}  # nth check -> seconds suspended
+        self.delay_after_check = {}  # nth check -> awake delay before the next read
+        self.wall_step_in_check = {}  # nth check -> wall clock step
+        self.raise_in_check = {}  # nth check -> exception
+        self.break_clock_on_raise = False
+        self.clock_fails = None  # predicate on the fake time: CLOCK raises
+        self.clock_broken = False  # once broken, every later read raises
+        self.clock_reads_after_break = 0
+        self.vh.CLOCK = self.read_clock
+        self.vh.WALL_CLOCK = lambda: self.wall
+        self.vh.SLEEP = self.sleep
+
+    def read_clock(self):
+        if self.clock_broken or (self.clock_fails and self.clock_fails(self.clock)):
+            self.clock_reads_after_break += self.clock_broken
+            self.clock_broken = True
+            raise OSError(22, "Invalid argument")
+        return self.clock
+
+    def advance(self, seconds):
+        self.clock += seconds
+        self.wall += seconds
+
+    def sleep(self, seconds):
+        self.assertGreater(seconds, 0)
+        self.assertLessEqual(seconds, self.vh.SLEEP_SLICE)
+        self.sleeps.append(seconds)
+        self.advance(seconds + self.suspend_in_sleep.get(len(self.sleeps), 0.0))
+
+    def health(self, stage, probes):
+        self.starts.append(self.clock)
+        n = len(self.starts)
+        self.advance(self.check_s + self.suspend_in_check.get(n, 0.0))
+        self.wall += self.wall_step_in_check.get(n, 0.0)
+        if n in self.raise_in_check:
+            if self.break_clock_on_raise:
+                self.clock_broken = True
+            raise self.raise_in_check[n]
+        # an awake scheduling delay after the check, before its end read
+        self.advance(self.delay_after_check.get(n, 0.0))
+        probes.append({"index": 1, "id": "0" * 12, "exit_code": 0})
+        state = {"current_system": OLD, "system_state": "running", "failed_unit_count": 0}  # fmt: skip
+        return state, []
+
+    def namespace(self, observe, interval):
+        import types
+
+        v = types.SimpleNamespace(
+            a=types.SimpleNamespace(observe=observe, interval=interval),
+            evidence={
+                "post": {"current_system": OLD},
+                "failed_units": {"new": [], "changed": []},
+            },
+            health=self.health,
+        )
+        v.observe_failed = lambda *args: self.vh.Validation.observe_failed(v, *args)
+        return v
+
+    def observe(self, observe=180, interval=30):
+        v = self.namespace(observe, interval)
+        try:
+            return self.vh.Validation.stage_observe(v), v.evidence["observe"]
+        except self.vh.StageFailed as e:
+            return e, v.evidence["observe"]
+
+    def wall_span(self, rec):
+        import datetime
+
+        parse = datetime.datetime.fromisoformat
+        return (parse(rec["finished_at"]) - parse(rec["started_at"])).total_seconds()
+
+    def assert_passed(self, result, rec):
+        self.assertIsInstance(result, str, getattr(result, "summary", ""))
+        self.assertTrue(rec["ok"])
+
+    def assert_failed(self, result, rec, *fragments):
+        self.assertIsInstance(result, self.vh.StageFailed, result)
+        self.assertFalse(rec["ok"])
+        for fragment in fragments:
+            self.assertIn(fragment, result.summary)
+        # ISO seconds are truncated, elapsed_s is rounded
+        self.assertLessEqual(abs(self.wall_span(rec) - rec["elapsed_s"]), 1)
+
+    def test_awake_window_samples_every_interval(self):
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["iterations"], 6)
+        self.assertEqual(rec["max_gap_s"], 30)
+        self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["max_check_s"], 0.5)
+        self.assertEqual(rec["elapsed_s"], 180)
+        self.assertEqual(rec["tolerance_s"], 30)
+        self.assertEqual(rec["clock"], self.vh.CLOCK_NAME)
+        self.assertEqual(self.wall_span(rec), 180)
+        for flag in ("slow_check", "cadence_warning", "wall_step", "clock_fallback"):
+            self.assertIs(rec[flag], False, flag)
+        self.assertIsNone(rec["failed_check"])
+        self.assertEqual(summary, "6 check(s) over 180s passed (interval 30s, largest gap 30s)")  # fmt: skip
+
+    def test_suspend_during_a_wait_fails_and_records_the_wall_span(self):
+        # The #1090 run: asleep ~55s into a 180s window, for ~17 minutes.
+        self.suspend_in_sleep = {55: 1000.0}
+        err, rec = self.observe()
+        self.assert_failed(err, rec, "observation check 2:", "unsampled")
+        self.assertEqual(len(self.starts), 1)  # check 2 never ran
+        self.assertEqual(rec["iterations"], 1)
+        self.assertGreater(rec["max_late_s"], 30)
+        self.assertGreaterEqual(rec["elapsed_s"], 1000)
+        self.assertGreaterEqual(self.wall_span(rec), 1000)
+        self.assertIsNone(rec["max_gap_s"])  # the unrun check is not a gap
+        self.assertNotIn("last", rec)
+
+    def test_suspend_between_checks_fails(self):
+        # resumed after check 3's end read, before check 4's deadline read
+        self.suspend_in_sleep = {91: 120.0}  # first slice of the wait after check 3
+        err, rec = self.observe()
+        self.assert_failed(err, rec, "observation check 4:")
+        self.assertEqual(rec["iterations"], 3)
+        self.assertEqual(rec["max_gap_s"], 30)
+
+    def test_short_window_with_a_long_interval_still_catches_a_suspend(self):
+        self.suspend_in_sleep = {1: 120.0}
+        err, rec = self.observe(observe=3, interval=300)
+        self.assert_failed(err, rec, "unsampled")
+        self.assertEqual(rec["tolerance_s"], 3)
+
+    def test_a_slow_awake_check_does_not_fail(self):
+        for check_s in (45.0, 180.0):
+            with self.subTest(check_s=check_s):
+                self.setUp()
+                self.check_s = check_s
+                summary, rec = self.observe()
+                self.assert_passed(summary, rec)
+                self.assertEqual(rec["max_late_s"], 0)
+                self.assertEqual(rec["max_check_s"], check_s)
+                self.assertIs(rec["slow_check"], True)
+                self.assertIn(f"slow check {check_s}s", summary)
+
+    def test_a_suspend_inside_one_check_is_only_a_long_check(self):
+        # documented limit: not a failure, only recorded
+        self.suspend_in_check = {2: 300.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertGreaterEqual(rec["max_check_s"], 300)
+        self.assertIs(rec["slow_check"], True)
+
+    def test_an_awake_3s_scheduling_delay_does_not_fail(self):
+        self.delay_after_check = {1: 3.0, 2: 3.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["max_late_s"], 0)
+        self.assertEqual(rec["iterations"], 6)
+
+    def test_a_failing_value_is_never_printed_equal_to_the_tolerance(self):
+        self.vh.MIN_LATE_TOLERANCE = 2.1231
+        self.suspend_in_sleep = {1: 2.1232}
+        err, rec = self.observe(observe=1, interval=1)
+        self.assert_failed(err, rec, "2.124s after it was due (tolerance 2.123s)")
+        self.assertEqual(rec["max_late_s"], 2.124)
+        self.assertEqual(rec["tolerance_s"], 2.1231)
+        self.assertGreater(rec["max_late_s"], rec["tolerance_s"])
+
+    def test_tolerated_delays_raise_a_cadence_warning(self):
+        # check 2 starts 27.5s late (within 30s): a 57.5s gap at a 30s interval
+        self.suspend_in_sleep = {58: 29.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["max_gap_s"], 57.5)
+        self.assertIs(rec["cadence_warning"], True)
+        self.assertIn("WARNING uneven cadence", summary)
+
+    def test_one_check_has_no_gap(self):
+        summary, rec = self.observe(observe=3, interval=30)
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["iterations"], 1)
+        self.assertIsNone(rec["max_gap_s"])
+        self.assertNotIn("largest gap", summary)
+
+    def test_a_check_that_raises_leaves_truthful_timing(self):
+        self.suspend_in_check = {6: 300.0}
+        self.raise_in_check = {6: self.vh.StageFailed("ssh dropped")}
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        # check 6 starts at 180s and raises after 300.5s
+        self.assertEqual(rec["elapsed_s"], 480)
+        self.assertEqual(self.wall_span(rec), 480)
+        self.assertGreaterEqual(rec["max_check_s"], 300)
+        self.assertEqual(rec["iterations"], 6)  # check 6 started
+        self.assertEqual(rec["failed_check"], 6)
+        self.assertEqual(rec["max_gap_s"], 30)
+
+    def test_a_check_that_raises_counts_from_its_start(self):
+        # starts at 30s and 80s (20s late, tolerated); check 2 then raises
+        self.suspend_in_sleep = {59: 20.5}  # the slice from 58.5s
+        self.raise_in_check = {2: self.vh.StageFailed("required read failed")}
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertEqual(self.starts, [30.0, 80.0])
+        self.assertEqual(rec["iterations"], 2)
+        self.assertEqual(rec["failed_check"], 2)
+        self.assertEqual(rec["max_gap_s"], 50)
+        self.assertIs(rec["cadence_warning"], True)
+
+    def test_a_failing_clock_read_falls_back_to_the_wall_clock(self):
+        cases = {
+            "first wait": lambda t: t >= 10,
+            "mid-window wait": lambda t: t >= 45,
+            "check start": lambda t: t >= 60,  # the read that ends wait 2
+            "check end": lambda t: 30 < t < 31,  # check 1's end read
+        }
+        for where, fails in cases.items():
+            with self.subTest(where=where):
+                self.setUp()
+                self.clock_fails = fails
+                summary, rec = self.observe()
+                self.assert_passed(summary, rec)
+                self.assertTrue(self.clock_broken)
+                self.assertEqual(self.clock_reads_after_break, 0)  # never re-read
+                self.assertEqual(rec["clock"], "wall")
+                self.assertIs(rec["clock_fallback"], True)
+                # the wall clock carries on from the last boundary
+                self.assertEqual(rec["iterations"], 6)
+                self.assertEqual(rec["elapsed_s"], 180)
+                self.assertEqual(rec["max_gap_s"], 30)
+                self.assertEqual(rec["max_late_s"], 0)
+                self.assertEqual(self.wall_span(rec), 180)
+                self.assertTrue(summary.endswith(", wall clock)"))
+
+    def test_a_clock_failing_in_the_finalizer_still_leaves_timing(self):
+        self.suspend_in_check = {2: 10.0}
+        self.raise_in_check = {2: self.vh.StageFailed("ssh dropped")}
+        self.break_clock_on_raise = True
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertEqual(err.summary, "ssh dropped")  # not the clock error
+        self.assertEqual(rec["clock"], "wall")
+        self.assertIs(rec["clock_fallback"], True)
+        self.assertEqual(rec["failed_check"], 2)
+        self.assertEqual(rec["elapsed_s"], 70)  # check 2: 60s + 10.5s
+        self.assertEqual(self.wall_span(rec), 70)
+        self.assertEqual(self.clock_reads_after_break, 1)  # the one failing read
+
+    def test_the_initial_clock_read_failing_runs_on_the_wall_clock(self):
+        self.clock_broken = True
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["clock"], "wall")
+        self.assertEqual(rec["elapsed_s"], 180)
+
+    def test_an_interrupted_wait_leaves_truthful_timing(self):
+        def interrupted(seconds):
+            self.advance(seconds + 500.0)
+            raise KeyboardInterrupt
+
+        self.vh.SLEEP = interrupted
+        v = self.namespace(180, 30)
+        with self.assertRaises(KeyboardInterrupt):
+            self.vh.Validation.stage_observe(v)
+        rec = v.evidence["observe"]
+        self.assertEqual(rec["elapsed_s"], 501)
+        self.assertEqual(self.wall_span(rec), 501)
+
+    def test_finished_at_never_precedes_started_at(self):
+        self.wall_step_in_check = {1: -3600.0}
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["finished_at"], rec["started_at"])
+        self.assertIs(rec["wall_step"], True)
+        self.assertEqual(rec["elapsed_s"], 180)  # the decision clock
+
+    def test_only_the_observe_interval_is_capped(self):
+        def parse(*argv):
+            with open(os.devnull, "w") as null:
+                stderr, sys.stderr = sys.stderr, null
+                try:
+                    return self.vh.parse_args(["--host", "hpp-1", *argv])
+                finally:
+                    sys.stderr = stderr
+
+        for argv in (["--interval", "99999999999999999999h"], ["--interval", "5h"]):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                parse("--observe", "3s", *argv)
+        for option in ("--probe-timeout", "--build-timeout", "--switch-timeout"):
+            with self.subTest(option=option):
+                dest = option[2:].replace("-", "_")
+                self.assertEqual(getattr(parse(option, "169h"), dest), 169 * 3600)
+                self.assertEqual(getattr(parse(option, "99999999999999999999h"), dest), 99999999999999999999 * 3600)  # fmt: skip
+        a = parse("--observe", "3s", "--interval", "4h")
+        summary, rec = self.observe(observe=a.observe, interval=a.interval)
+        self.assert_passed(summary, rec)
+
+    def test_decision_clock_choice_and_fallback(self):
+        import types
+
+        def clocks(error=None, **names):
+            def gettime(clock):
+                if error:
+                    raise error
+                return 123.0
+
+            return types.SimpleNamespace(time=time.time, clock_gettime=gettime, **names)  # fmt: skip
+
+        cases = [
+            ("linux", clocks(CLOCK_BOOTTIME=7), "CLOCK_BOOTTIME"),
+            ("linux", clocks(CLOCK_MONOTONIC_RAW=4), "wall"),  # stops on Linux
+            (
+                "linux",
+                clocks(OSError(22, "Invalid argument"), CLOCK_BOOTTIME=7),
+                "wall",
+            ),  # fmt: skip
+            ("darwin", clocks(CLOCK_MONOTONIC_RAW=4), "CLOCK_MONOTONIC_RAW"),
+            ("darwin", clocks(), "wall"),  # AttributeError
+            (
+                "darwin",
+                clocks(ValueError("bad clock"), CLOCK_MONOTONIC_RAW=4),
+                "wall",
+            ),  # fmt: skip
+            ("freebsd14", clocks(CLOCK_BOOTTIME=7), "wall"),
+        ]
+        for platform, module, expected in cases:
+            with self.subTest(platform=platform, expected=expected):
+                name, read = self.vh.decision_clock(platform, module)
+                self.assertEqual(name, expected)
+                if expected == "wall":
+                    self.assertIs(read, time.time)
+                else:
+                    self.assertEqual(read(), 123.0)
+        # the real one: the preferred clock, or the fallback where it is unavailable
+        name, read = self.vh.decision_clock()
+        self.assertIn(name, {"CLOCK_BOOTTIME", "CLOCK_MONOTONIC_RAW", "wall"})
+        first = read()
+        self.assertGreaterEqual(read(), first)
+
+    def test_wall_fallback_is_named_in_the_summary(self):
+        self.vh.CLOCK_NAME = "wall"
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["clock"], "wall")
+        self.assertTrue(summary.endswith(", wall clock)"))
+
+    def test_a_read_failure_marker_never_copies_remote_text(self):
+        import types
+
+        leak = "s3cr3t-remote-text"
+        for reads, output in (
+            (True, f"VALIDATE-READ-FAILED {leak}\n"),
+            (True, "VALIDATE-READ-FAILED\n"),
+            (False, f"VALIDATE-READ-FAILED {leak}\nVALIDATE-PROBE-RC n 0\n"),
+        ):
+            with self.subTest(reads=reads, output=output):
+                self.vh.run_capture = lambda *_a, **_k: (98 if reads else 0, output)
+                v = types.SimpleNamespace(host="hpp-1", target="ipreston@hpp-1", log=lambda _s: None)  # fmt: skip
+                try:
+                    self.vh.Validation.remote(v, "observe", lambda _n: "probe", 5, reads=reads)  # fmt: skip
+                except self.vh.StageFailed as e:
+                    self.assertTrue(reads)
+                    self.assertNotIn(leak, e.summary)
+                    self.assertIn("unrecognised key", e.summary)
+                else:
+                    self.assertFalse(reads)
+        self.vh.run_capture = lambda *_a, **_k: (98, "VALIDATE-READ-FAILED system_state\n")  # fmt: skip
+        v = types.SimpleNamespace(host="hpp-1", target="ipreston@hpp-1", log=lambda _s: None)  # fmt: skip
+        with self.assertRaises(self.vh.StageFailed) as cm:
+            self.vh.Validation.remote(v, "pre-state", lambda _n: "state", 5, reads=True)  # fmt: skip
+        self.assertEqual(cm.exception.summary, "required read 'system_state' failed on hpp-1; stopping")  # fmt: skip
+
+
+class HostileProbeOutput(Harness):
+    """A probe's stdout imitating remote.sh's read-failure marker is neither
+    obeyed nor copied into the evidence (#1090 review)."""
+
+    LEAK = "s3cr3t-probe-stdout"
+
+    def test_marker_in_probe_stdout_is_not_a_read_failure(self):
+        for rc, result in ((0, "passed"), (3, "failed")):
+            with self.subTest(rc=rc):
+                probe = f"echo 'VALIDATE-READ-FAILED {self.LEAK}'; exit {rc}"
+                r = self.drive("--host", "hpp-1", "--probe", probe, "--observe", "2s", "--interval", "1s")  # fmt: skip
+                path, ev = self.evidence(r)
+                self.assertEqual(ev["result"], result, r.stderr)
+                text = path.read_text()
+                self.assertNotIn(self.LEAK, text)
+                self.assertNotIn(self.LEAK, r.stderr)
+                if rc:
+                    self.assertIn("exited 3", ev["message"])
 
 
 if __name__ == "__main__":

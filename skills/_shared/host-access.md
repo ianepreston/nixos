@@ -300,7 +300,41 @@ baseline, next `nixos-upgrade` run), `--action check`, then with `-- --switch`
 the switch, post-switch checks (expected closure running, no failed unit that
 is new or changed state since the baseline, `is-system-running` = running or,
 with only tolerated pre-existing failures, degraded; each `--probe` command
-exits 0 on the target) and an optional `--observe <duration>` window. A unit
+exits 0 on the target) and an optional `--observe <duration>` window. The
+stage decides on one clock that keeps counting while the runner sleeps:
+`CLOCK_BOOTTIME` on Linux, `CLOCK_MONOTONIC_RAW` on macOS. `time.monotonic`
+is not used because it stops during sleep. If that clock is unavailable, or
+a read of it fails mid-stage, the wall clock (`time.time`) is used for the
+rest of the stage and recorded as `clock: wall` (`clock_fallback: true` when
+the switch happened mid-stage). The wall clock also counts sleep, but a clock
+step (NTP or manual) moves it too, so on that fallback a forward step can
+fail a run and a backward step can hide a late check. The clock is read once
+at each check's start and end. A check that starts more than
+`max(interval, 2s)` (interval capped by the window) after it was due fails
+the stage before it runs: the host went unsampled, for example because a
+laptop slept. A slow check only pushes the schedule.
+
+Two trade-offs come with using a single clock. First, the guarantee is that
+no check starts more than the tolerance after its due time, not that every
+suspend is detected: a suspend during a wait is absorbed by the time still
+left before the due time, so one slightly longer than the tolerance can pass.
+Second, an awake scheduling delay reads the same as a suspend, so a delay of
+more than the tolerance (2s minimum) during a wait fails closed, which is the
+intended direction. A suspend entirely inside one check is not detected; it
+shows up only as a long check (`max_check_s`, `slow_check`). A wait can end
+up to 1s after a resume.
+
+The `observe` record (evidence schema `nixos-validate-host/3`) carries
+wall-clock `started_at`/`finished_at`, sampled at the first and last clock
+reads. `wall_step` is set only when the last sample is earlier than the first;
+`finished_at` is then clamped to `started_at`. A backward step that still ends
+after the start is not flagged. The record also carries `elapsed_s`,
+`max_gap_s`, `max_late_s`, `tolerance_s`, `max_check_s`, the
+`slow_check`/`cadence_warning` flags, and `failed_check`. A check counts in
+`iterations`, `max_gap_s` and `cadence_warning` from its start; `failed_check`
+names one that raised before it finished.
+
+A unit
 already failing before the run is tolerated but reported as a warning and in
 the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
 or a non-running system instead (already at pre-state, before check or
