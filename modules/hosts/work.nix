@@ -24,12 +24,6 @@ in
       {
         system.primaryUser = hostSpec.username;
 
-        # GUI apps inherit this after the session-environment agent runs.
-        # Login items have no ordering guarantee: launch Omnigent.app after
-        # `launchctl getenv DATABRICKS_CONFIG_PROFILE` reports DEFAULT, or
-        # quit and reopen it if it started earlier at login.
-        launchd.user.envVariables.DATABRICKS_CONFIG_PROFILE = "DEFAULT";
-
         # One model on demand; 48 GB is shared with desktop applications.
         # Keep the initial disk and context budget conservative (#884).
         myLlamaCpp = {
@@ -43,15 +37,6 @@ in
             ctxSize = 32768;
           };
         };
-
-        # Corporate DNS can't see the homelab, but behemoth (pfSense)
-        # answers LAN queries directly for the whole ipreston.net zone
-        # (including the *.amos wildcard and DHCP-registered hosts). A scoped
-        # resolver sends only that suffix there; everything else stays on the
-        # corporate resolver.
-        environment.etc."resolver/${inputs.nix-secrets.domain}".text = ''
-          nameserver 192.168.10.1
-        '';
 
         home-manager.sharedModules = [
           inputs.self.modules.homeManager.coding-sandbox
