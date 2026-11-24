@@ -71,8 +71,15 @@ One checkbox per edit, naming the file. Include this repo's structural
 obligations for the shape you're building, since they are easy to forget and
 `task check` will not catch them:
 
-- a new app under `modules/apps/` needs a `recovery:<app>` task **and** an
-  append to `recovery:all`, plus an `expectedPreservedDirs` entry
+- a new app under `modules/apps/` declares `myAppState.<app>` (preservation,
+  backup) and `myRecovery.apps.<app>` (restore metadata) in its own module.
+  Name both as Work items and list the generated consumers to validate
+  (preservation entry, restic path, the generated `expectedPreservedDirs`
+  guard, recovery manifest entry). Don't list a
+  per-app Task registry entry, a `recovery:all` edit or a hand-maintained
+  `expectedPreservedDirs`: those are derived. Schemas and the `kind` table live
+  in [docs/agents/app-state.md](../../../docs/agents/app-state.md); link it,
+  don't copy it
 - a `version`/`tag`/`rev` edit needs `task hashes`
 - `restartUnits` goes on the sops template, not the secret
 - comments whose rationale your change invalidates — #644 listed the header
@@ -85,9 +92,14 @@ Verified and listed, so implementation doesn't re-derive it:
 > - **Secrets.** `sops/hpp-1.yaml` already carries `valheim/{server_password,
 >   discord_webhook,player_webhook}` — no `task secrets:*` run needed.
 > - **Preservation/backups.** `preservation-server.nix` preserves
->   `/var/lib/containers` wholesale and restic paths derive from
->   `myContainerApp.<app>.stateDirs`, so no `expectedPreservedDirs` edit.
+>   `/var/lib/containers` wholesale, so no new preservation entry. (#644)
 > - **Recovery.** `recovery:valheim` already takes `HOST`. (#644)
+
+Historical: #644 predates `myAppState` / `myRecovery.apps`. Its wording
+(`stateDirs`, per-app `recovery:<app>` tasks) is not a current requirement.
+Today, check that the app's `myAppState` and `myRecovery.apps.<app>`
+declarations exist and that their generated consumers are correct; see
+[docs/agents/app-state.md](../../../docs/agents/app-state.md).
 
 Say what you checked. "Nothing else needed" is not the same claim.
 

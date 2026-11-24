@@ -41,8 +41,11 @@ a different question from how the behaviour is wired. -->
 ## Work
 
 <!-- Checklist, one line per edit, naming the file. Include the obligations
-this repo attaches to the shape you're building: a recovery:<app> task and
-expectedPreservedDirs for a new app, a task hashes run after a pin edit,
+this repo attaches to the shape you're building: app-owned myAppState and
+myRecovery.apps.<app> declarations for a new app (the preservation, backup and
+recovery consumers are generated from them; see
+[docs/agents/app-state.md](../../docs/agents/app-state.md)), a
+task hashes run after a pin edit,
 restartUnits placement, comments that need rewriting because their rationale
 changed. -->
 
@@ -51,7 +54,7 @@ changed. -->
 ## No change needed
 
 <!-- Verified-and-listed, so it isn't re-derived during implementation. Secrets,
-preservation/backups, recovery tasks, alert rules — whichever you checked. Say
+preservation/backups (myAppState), recovery (myRecovery.apps), alert rules — whichever you checked. Say
 what you checked, not just "nothing else". -->
 
 ## What must not change
@@ -65,7 +68,11 @@ closure diff against origin/main beats a smoke test. -->
 <!-- Checklist. Mark the load-bearing unknown — the assumption the whole plan
 rests on, to be tested first — and name any step needing a human or physical
 access. For anything querying metrics, state the retention and scrape interval
-and confirm your window fits inside them. -->
+and confirm your window fits inside them. For a new app, include checks that
+the generated consumers of its myAppState and myRecovery.apps declarations are
+correct (preservation entry, restic path, expectedPreservedDirs guard, recovery
+manifest entry), per
+[docs/agents/app-state.md](../../docs/agents/app-state.md). -->
 
 - [ ]
 
