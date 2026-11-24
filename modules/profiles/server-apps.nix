@@ -146,9 +146,11 @@
       # services, by `myAppStateAudit` in modules/system/app-state.nix
       # (#1024): it compares each unit's systemd `StateDirectory=` with
       # the preserved directories, an independent source, and fails eval
-      # on uncovered state unless the owner declared an exemption. Neither
-      # check sees state an app writes outside `StateDirectory=`. See
-      # docs/agents/app-state.md.
+      # on uncovered state unless the owner declared an exemption. This
+      # guard still checks every `myAppState` directory, wherever it lives;
+      # the audit adds only undeclared `StateDirectory=` paths, so state an
+      # app writes elsewhere without declaring it is still invisible to
+      # both. See docs/agents/app-state.md.
       expectedPreservedDirs = map (a: a.stateDir) (lib.attrValues config.myAppState);
 
       preservedDirs = map (d: d.directory) (config.preservation.preserveAt."/persist".directories or [ ]);

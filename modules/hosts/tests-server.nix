@@ -37,6 +37,16 @@
           networkmanager.enable = true;
         };
 
+        # NetworkManager keeps its DHCP leases and the secret_key behind
+        # stable-privacy IPv6 addresses in /var/lib/NetworkManager, which is
+        # not preserved; see myAppStateAudit in modules/system/app-state.nix.
+        myAppStateAudit.exemptions.networkmanager = {
+          unit = "NetworkManager.service";
+          directories = [ "/var/lib/NetworkManager" ];
+          disposition = "pending";
+          reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+        };
+
         # Off the tailnet: the drill VM has no reason to join, and
         # tailnet.yaml deliberately does not list it (#506).
         services.tailscale.enable = false;

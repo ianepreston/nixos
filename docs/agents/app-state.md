@@ -17,13 +17,20 @@ Both run only where preservation is enabled (the server hosts).
 - **`myAppStateAudit`** (`modules/system/app-state.nix`, path rules in
   `modules/system/_app-state/state-directory-audit.nix`) is the independent
   check (#1024). It reads every enabled unit's systemd `StateDirectory=` and
-  fails eval naming `<unit>: <dir>` for any directory no preserved directory
-  covers. Directories are normalized to `/var/lib/<dir>`, or
-  `/var/lib/private/<dir>` when the unit sets `DynamicUser` (the
-  `/var/lib/<dir>` symlink is not storage); each entry of a multi-directory
-  `StateDirectory=` is checked on its own; `:<symlink>` suffixes are dropped. A
-  preserved directory covers itself and its descendants on a path-component
-  boundary: `/var/lib/foo` covers `/var/lib/foo/bar`, not `/var/lib/foobar`.
+  fails eval naming `<unit>: <dir>` for any directory nothing preserved covers.
+  - Parsing follows systemd: entries split on any whitespace and accumulate
+    across assignments (a list renders one assignment per element), an empty
+    assignment clears earlier ones, and `:<symlink>` suffixes are dropped.
+    Quoted, absolute and `..` entries, and unparsable `DynamicUser=` values,
+    fail eval rather than being guessed at.
+  - Directories become `/var/lib/<dir>`, or `/var/lib/private/<dir>` when
+    `DynamicUser` is true (any systemd spelling, case-insensitive, last
+    assignment wins); the `/var/lib/<dir>` symlink is not storage.
+  - Coverage counts what preservation actually preserves: every
+    `preserveAt.*.directories` and `preserveAt.*.users.*.directories` entry
+    except `how = "_intermediate"` ones, which only create a parent. An entry
+    covers itself and its descendants on a path-component boundary:
+    `/var/lib/foo` covers `/var/lib/foo/bar`, not `/var/lib/foobar`.
 
 The audit only sees `StateDirectory=` declared through `systemd.services`. It
 does not see state an app writes elsewhere, `CacheDirectory=`, bind mounts, or
@@ -50,15 +57,17 @@ myAppStateAudit.exemptions.<owner> = {
 
 `disposition = "pending"` records a known uncovered directory whose owner has
 not decided yet. It passes eval but prints a warning on every build, so it is
-never silent. Eval also fails on an exemption with an empty `reason`, or one
+never silent. Eval also fails on an exemption with an empty `reason`, on one
 that no longer names an uncovered directory of that unit (renamed, removed or
-since preserved), so exemptions cannot outlive what they excuse.
+since preserved), and when two owners claim the same unit and directory, so
+exemptions cannot outlive or duplicate what they excuse.
 
 Current exemptions (`rg -n 'myAppStateAudit.exemptions' modules`) are all
 `pending` from the #1024 audit: the redis instances (`authentik.nix`,
 `paperless-ngx.nix`, `manyfold.nix`), `homepage.nix`, `vector.nix`,
-`llm-metrics.nix`, `github-runner.nix`, and NetworkManager and dhcpcd in
-`preservation-server.nix`.
+`llm-metrics.nix`, `github-runner.nix`, NetworkManager in each server host
+file that enables it (`modules/hosts/{amos1,hpp-1,tests-server}.nix`), and
+dhcpcd in `homeassistant.nix`, whose IoT-VLAN lease is what enables it.
 
 `nix build .#checks.x86_64-linux.state-directory-audit --no-link` runs the
 synthetic compositions (`modules/flake/checks-state-directory-audit.nix`).

@@ -37,15 +37,29 @@ _: {
       apps = lib.attrValues config.myAppState;
 
       stateDirectoryAudit = import ./_app-state/state-directory-audit.nix { inherit lib; };
-      exemptions = lib.attrValues config.myAppStateAudit.exemptions;
       audit = stateDirectoryAudit.audit {
         inherit (config.systemd) services;
-        inherit exemptions;
-        preservedDirs = lib.concatMap (root: map (d: d.directory) (root.directories or [ ])) (
-          lib.attrValues config.preservation.preserveAt
-        );
+        inherit (config.myAppStateAudit) exemptions;
+        # What preservation actually preserves, gathered the way its own
+        # getAllDirectories does (top-level plus per-user directories).
+        # `_intermediate` entries only create a parent on both volumes and
+        # preserve nothing, so they cover nothing.
+        preservedDirs = lib.concatMap (
+          root:
+          map (d: d.directory) (
+            lib.filter (d: d.how != "_intermediate") (
+              (root.directories or [ ]) ++ lib.concatMap (u: u.directories) (lib.attrValues (root.users or { }))
+            )
+          )
+        ) (lib.attrValues config.preservation.preserveAt);
       };
-      showPairs = ds: lib.concatMapStringsSep "\n" (d: "  ${d.unit}: ${d.directory}") ds;
+      # Every audit failure is one `  <unit>: ...` line, so a message names
+      # each offending unit and directory or value exactly.
+      lines = f: ds: lib.concatMapStringsSep "\n" (d: "  ${f d}") ds;
+      blankReasons = lib.attrNames (
+        lib.filterAttrs (_: e: lib.trim e.reason == "") config.myAppStateAudit.exemptions
+      );
+      owned = owners: lib.concatMapStringsSep ", " (o: "exemptions.${o}") owners;
     in
     {
       options.myAppState = lib.mkOption {
@@ -253,45 +267,67 @@ _: {
         {
           # StateDirectory coverage audit (#1024). Validation only: nothing
           # here adds a preservation entry or a restic path.
-          assertions = lib.optionals config.preservation.enable (
-            [
-              {
-                assertion = audit.uncovered == [ ];
-                message = ''
-                  myAppStateAudit: these systemd StateDirectory paths are not
-                  under any preserved directory, so impermanence wipes them on
-                  every reboot:
+          assertions = lib.optionals config.preservation.enable [
+            {
+              assertion = audit.uncovered == [ ];
+              message = ''
+                myAppStateAudit: these systemd StateDirectory paths are not
+                under any preserved directory, so impermanence wipes them on
+                every reboot:
 
-                  ${showPairs audit.uncovered}
+                ${lines (d: "${d.unit}: ${d.directory}") audit.uncovered}
 
-                  Declare `myAppState.<app>` in the owning module to preserve
-                  (and by default back up) the state, or, beside the service,
-                  a `myAppStateAudit.exemptions.<owner>` entry with a reason.
-                  See docs/agents/app-state.md.
-                '';
-              }
-              {
-                assertion = audit.stale == [ ];
-                message = ''
-                  myAppStateAudit: these exemptions name a unit/directory that
-                  is not an uncovered StateDirectory on this host (renamed,
-                  removed, already preserved, or not normalized); drop or fix
-                  them:
+                Declare `myAppState.<app>` in the owning module to preserve
+                (and by default back up) the state, or, beside the service,
+                a `myAppStateAudit.exemptions.<owner>` entry with a reason.
+                See docs/agents/app-state.md.
+              '';
+            }
+            {
+              assertion = audit.invalid == [ ];
+              message = ''
+                myAppStateAudit: these unit settings cannot be audited, so
+                their state cannot be shown to be preserved; write them in
+                the plain form systemd documents:
 
-                  ${showPairs audit.stale}
-                '';
-              }
-            ]
-            ++ lib.mapAttrsToList (name: e: {
-              assertion = lib.trim e.reason != "";
-              message = "myAppStateAudit.exemptions.${name}: `reason` must say why the state may be lost or what decision is pending.";
-            }) config.myAppStateAudit.exemptions
-          );
+                ${lines (d: "${d.unit}: ${d.option} value `${d.value}` (${d.why})") audit.invalid}
+              '';
+            }
+            {
+              assertion = audit.stale == [ ];
+              message = ''
+                myAppStateAudit: these exemptions name a unit/directory that
+                is not an uncovered StateDirectory on this host (renamed,
+                removed, already preserved, or not normalized); drop or fix
+                them:
+
+                ${lines (d: "${d.unit}: ${d.directory} (${owned [ d.owner ]})") audit.stale}
+              '';
+            }
+            {
+              assertion = audit.conflicts == [ ];
+              message = ''
+                myAppStateAudit: more than one exemption claims the same
+                unit and directory; keep one, beside the service's owner:
+
+                ${lines (d: "${d.unit}: ${d.directory} (${owned d.owners})") audit.conflicts}
+              '';
+            }
+            {
+              assertion = blankReasons == [ ];
+              message = ''
+                myAppStateAudit: these exemptions have an empty `reason`;
+                say why the state may be lost or what decision is pending:
+
+                ${lines (o: owned [ o ]) blankReasons}
+              '';
+            }
+          ];
 
           warnings = lib.optionals config.preservation.enable (
             map (
               d:
-              "myAppStateAudit: ${d.unit} state ${d.directory} is not preserved and awaits an owner decision: ${d.exemption.reason}"
+              "myAppStateAudit: ${d.unit} state ${d.directory} is not preserved and awaits an owner decision (${owned [ d.owner ]}): ${d.exemption.reason}"
             ) (lib.filter (d: d.exemption.disposition == "pending") audit.exempted)
           );
         }
