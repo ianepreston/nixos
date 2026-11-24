@@ -9,6 +9,7 @@ read by `CurrentTreeTest`. No network, credentials or hosts.
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -363,6 +364,121 @@ class PathSafetyTest(Fixture):
             self.assertOne("alpha: could not be checked (PermissionError")
 
 
+class NameRuleTest(Fixture):
+    SAME = {
+        "plain comment": "name: {n} # note",
+        "double-quoted comment": 'name: "{n}" # note',
+        "single-quoted comment": "name: '{n}'  # note",
+        "folded": "name: >-\n  {n}",
+        "folded with comment": "name: > # note\n\n  {n}",
+        "literal": "name: |\n  {n}",
+        "literal strip": "name: |-\n  {n}",
+        "quoted hash kept": 'name: "{n}"',
+    }
+    DIFFERENT = {
+        "hash without space": ("name: {n}#x", "{n}#x"),
+        "different with comment": ("name: other # {n}", "other"),
+        "quoted hash inside": ('name: "{n} # x"', "{n} # x"),
+        "folded different": ("name: >-\n  other", "other"),
+        "block without content": ("name: >-\ndescription: x", ""),
+    }
+
+    def test_forms_matching_the_directory_pass(self):
+        # Each byte-identical adapter failed against the previous rule.
+        for i, (label, line) in enumerate(self.SAME.items()):
+            with self.subTest(label):
+                n = f"s{i}"
+                fm = "---\n" + line.format(n=n) + "\ndescription: x\n---\n"
+                self.add_skill(n, fm=fm)
+                self.assertClean()
+
+    def test_genuinely_different_names_fail(self):
+        for i, (label, (line, got)) in enumerate(self.DIFFERENT.items()):
+            with self.subTest(label):
+                n = f"d{i}"
+                fm = "---\n" + line.format(n=n) + "\ndescription: x\n---\n"
+                self.add_skill(n, fm=fm)
+                self.assertOne(
+                    f"{n}: skills/{n}/SKILL.md frontmatter name "
+                    f"{got.format(n=n)!r} does not match"
+                )
+                shutil.rmtree(self.root / "skills" / n)
+                shutil.rmtree(self.root / ".claude/skills" / n)
+                self.codex(n).unlink()
+
+
+class FilesystemFallbackTest(Fixture):
+    def test_ds_store_is_ignored_without_git(self):
+        self.assertIsNone(adapters.tracked_files(os.fspath(self.root)))
+        for parent in ("skills", ".claude/skills", ".agents/skills"):
+            (self.root / parent / ".DS_Store").write_bytes(b"\0")
+        self.assertClean()
+
+    def test_git_unavailable_falls_back(self):
+        with mock.patch.object(
+            adapters.subprocess, "run", side_effect=FileNotFoundError("git")
+        ):
+            self.assertIsNone(adapters.tracked_files(os.fspath(self.root)))
+            self.assertClean()
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class GitTrackedTest(Fixture):
+    def git(self, *args, cwd=None):
+        subprocess.run(
+            ["git", *args], cwd=cwd or self.root, check=True, capture_output=True
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.git("init", "-q")
+        (self.root / ".gitignore").write_text(".DS_Store\n")
+        self.git("add", "-A")
+
+    def test_tracked_tree_passes(self):
+        self.assertIsNotNone(adapters.tracked_files(os.fspath(self.root)))
+        self.assertClean()
+
+    def test_ignored_ds_store_passes(self):
+        (self.root / ".claude/skills/.DS_Store").write_bytes(b"\0")
+        (self.root / "skills/.DS_Store").write_bytes(b"\0")
+        self.assertClean()
+
+    def test_untracked_orphan_adapter_does_not_fail(self):
+        self.write_wrapper("old", front("old"))
+        os.symlink("../../skills/old", self.codex("old"))
+        self.assertClean()
+
+    def test_staged_deletion_with_untracked_leftover_fails(self):
+        self.git("rm", "-q", "--cached", ".claude/skills/alpha/SKILL.md")
+        self.git("rm", "-q", "--cached", ".agents/skills/beta")
+        self.assertTrue(self.wrapper().exists())
+        got = self.problems()
+        self.assertEqual(2, len(got), got)
+        self.assertIn("alpha: missing Claude adapter", got[0])
+        self.assertIn("beta: missing Codex adapter", got[1])
+
+    def test_untracked_workflow_is_invisible_until_added(self):
+        self.add_skill("gamma", claude=False, agents=False)
+        self.assertClean()
+        self.git("add", "-N", "skills/gamma/SKILL.md")
+        got = self.problems()
+        self.assertEqual(2, len(got), got)
+        self.assertTrue(all(p.startswith("gamma: missing") for p in got), got)
+
+    def test_symlinked_root_is_still_rejected(self):
+        (self.root / ".claude").rename(self.root / "moved")
+        os.symlink("moved", self.root / ".claude")
+        self.git("add", "-A")
+        self.assertOne(".claude: is a symlink")
+
+    def test_root_below_work_tree_top_falls_back_to_filesystem(self):
+        shutil.rmtree(self.root / ".git")
+        self.git("init", "-q", cwd=self.root.parent)
+        self.assertIsNone(adapters.tracked_files(os.fspath(self.root)))
+        self.assertClean()
+
+
 class MainTest(Fixture):
     def run_script(self):
         return subprocess.run(
@@ -372,7 +488,7 @@ class MainTest(Fixture):
     def test_exit_status(self):
         r = self.run_script()
         self.assertEqual((0, ""), (r.returncode, r.stderr), r)
-        self.assertIn("2 skills, adapters consistent", r.stdout)
+        self.assertIn("2 skills, adapters consistent (filesystem)", r.stdout)
         self.codex().unlink()
         r = self.run_script()
         self.assertEqual(1, r.returncode, r)
@@ -385,6 +501,15 @@ class CurrentTreeTest(unittest.TestCase):
         workflows = adapters.check_tree(os.fspath(REPO), problems)
         self.assertEqual([], problems)
         self.assertGreater(len(workflows), 0)
+
+
+def setUpModule():
+    # Keep fixture git repos independent of any repo (or hook) we run inside,
+    # and of the user's git configuration.
+    for var in [v for v in os.environ if v.startswith("GIT_")]:
+        del os.environ[var]
+    os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+    os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
 
 
 if __name__ == "__main__":

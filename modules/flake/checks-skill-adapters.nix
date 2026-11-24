@@ -9,7 +9,12 @@ _: {
       checks.skill-adapters =
         pkgs.runCommand "skill-adapters-tests"
           {
-            nativeBuildInputs = [ pkgs.python3 ];
+            # git runs the temporary-repo fixtures; the copied tree below has no
+            # .git, so the tree check itself uses the filesystem fallback.
+            nativeBuildInputs = [
+              pkgs.python3
+              pkgs.git
+            ];
           }
           ''
             mkdir -p repo/scripts repo/.claude repo/.agents
