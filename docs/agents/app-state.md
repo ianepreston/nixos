@@ -18,14 +18,20 @@ Both run only where preservation is enabled (the server hosts).
   `modules/system/_app-state/state-directory-audit.nix`) is the independent
   check (#1024). It reads every enabled unit's systemd `StateDirectory=` and
   fails eval naming `<unit>: <dir>` for any directory nothing preserved covers.
-  - Parsing follows systemd: entries split on any whitespace and accumulate
-    across assignments (a list renders one assignment per element), an empty
-    assignment clears earlier ones, and `:<symlink>` suffixes are dropped.
-    Quoted, absolute and `..` entries, and unparsable `DynamicUser=` values,
-    fail eval rather than being guessed at.
+  - Parsing follows systemd: within one assignment, spaces and tabs separate
+    entries; entries accumulate across assignments (a list renders one
+    assignment per element); an empty `StateDirectory=` assignment clears
+    earlier ones; `:<symlink>` suffixes are dropped.
+  - Unsupported syntax fails eval with the unit and value named rather than
+    being guessed at: quoting, `%` specifiers (`%N`, `%i`, ...), backslash
+    escapes, a newline inside a value (NixOS writes it verbatim, which ends
+    the assignment; use a list instead), and absolute or `..` paths.
   - Directories become `/var/lib/<dir>`, or `/var/lib/private/<dir>` when
-    `DynamicUser` is true (any systemd spelling, case-insensitive, last
-    assignment wins); the `/var/lib/<dir>` symlink is not storage.
+    `DynamicUser` is true; the `/var/lib/<dir>` symlink is not storage.
+    `DynamicUser=` accepts systemd's boolean spellings case-insensitively,
+    with surrounding whitespace stripped, and the last assignment wins. An
+    empty or unparsable `DynamicUser=` assignment fails eval, since systemd
+    rejects it too.
   - Coverage counts what preservation actually preserves: every
     `preserveAt.*.directories` and `preserveAt.*.users.*.directories` entry
     except `how = "_intermediate"` ones, which only create a parent. An entry
@@ -57,7 +63,11 @@ myAppStateAudit.exemptions.<owner> = {
 
 `disposition = "pending"` records a known uncovered directory whose owner has
 not decided yet. It passes eval but prints a warning on every build, so it is
-never silent. Eval also fails on an exemption with an empty `reason`, on one
+never silent. Gate an exemption on the evaluated unit, the way the audit
+sees it (`lib.mkIf (config.systemd.services.<unit>.enable or false)`), not on
+the options that usually produce the unit, or turning the unit off another way
+leaves a stale exemption. `checks.x86_64-linux.state-directory-audit-hosts`
+exercises this for the dhcpcd and NetworkManager exemptions on hpp-1. Eval also fails on an exemption with an empty `reason`, on one
 that no longer names an uncovered directory of that unit (renamed, removed or
 since preserved), and when two owners claim the same unit and directory, so
 exemptions cannot outlive or duplicate what they excuse.
@@ -70,7 +80,8 @@ file that enables it (`modules/hosts/{amos1,hpp-1,tests-server}.nix`), and
 dhcpcd in `homeassistant.nix`, whose IoT-VLAN lease is what enables it.
 
 `nix build .#checks.x86_64-linux.state-directory-audit --no-link` runs the
-synthetic compositions (`modules/flake/checks-state-directory-audit.nix`).
+synthetic compositions and `.#checks.x86_64-linux.state-directory-audit-hosts`
+the host gate cases (both in `modules/flake/checks-state-directory-audit.nix`).
 
 ## Recovery metadata: declare it beside the app
 

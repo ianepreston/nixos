@@ -468,9 +468,12 @@
       # That lease is what turns on dhcpcd (nixpkgs enables it only when
       # some interface uses DHCP), so its state is owned here. dhcpcd keeps
       # its DUID and leases in /var/lib/dhcpcd, which is not preserved; see
-      # myAppStateAudit in modules/system/app-state.nix.
+      # myAppStateAudit in modules/system/app-state.nix. Gated on the
+      # evaluated unit, as the audit sees it, not on the options that
+      # usually produce it: overriding the lease off or disabling
+      # dhcpcd.service must not leave a stale exemption.
       myAppStateAudit.exemptions.homeassistant-dhcpcd =
-        lib.mkIf (iotEnabled && config.networking.dhcpcd.enable)
+        lib.mkIf (iotEnabled && (config.systemd.services.dhcpcd.enable or false))
           {
             unit = "dhcpcd.service";
             directories = [ "/var/lib/dhcpcd" ];

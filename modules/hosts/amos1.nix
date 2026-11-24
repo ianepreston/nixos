@@ -90,12 +90,23 @@
           # NetworkManager keeps its DHCP leases and the secret_key behind
           # stable-privacy IPv6 addresses in /var/lib/NetworkManager, which is
           # not preserved; see myAppStateAudit in modules/system/app-state.nix.
-          myAppStateAudit.exemptions.networkmanager = {
-            unit = "NetworkManager.service";
-            directories = [ "/var/lib/NetworkManager" ];
-            disposition = "pending";
-            reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
-          };
+          # Gated on the evaluated unit, as the audit sees it, so turning
+          # NetworkManager.service off does not leave a stale exemption.
+          imports = [
+            (
+              { config, lib, ... }:
+              {
+                myAppStateAudit.exemptions.networkmanager =
+                  lib.mkIf (config.systemd.services.NetworkManager.enable or false)
+                    {
+                      unit = "NetworkManager.service";
+                      directories = [ "/var/lib/NetworkManager" ];
+                      disposition = "pending";
+                      reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+                    };
+              }
+            )
+          ];
 
           # Always-on local inference on the RTX 3070. Complements terra's
           # larger model, which is only reachable when that desktop is on.

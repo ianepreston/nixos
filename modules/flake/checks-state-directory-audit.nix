@@ -130,12 +130,46 @@
 
         whitespace-separates-entries = {
           module = {
-            systemd.services.ws = svc { StateDirectory = "kept/child\tomitted\nalso-omitted"; };
+            systemd.services.ws = svc { StateDirectory = "kept/child\tomitted  also-omitted"; };
             preservation.preserveAt."/persist".directories = [ "/var/lib/kept" ];
           };
           fail = [
             "ws.service: /var/lib/also-omitted"
             "ws.service: /var/lib/omitted"
+          ];
+        };
+
+        # NixOS writes a newline into the unit file verbatim, ending the
+        # assignment, so it is reported rather than read as a separator.
+        newline-is-not-a-separator = {
+          module = {
+            systemd.services.nl = svc { StateDirectory = "nl-a\nnl-b"; };
+            preservation.preserveAt."/persist".directories = [
+              "/var/lib/nl-a"
+              "/var/lib/nl-b"
+            ];
+          };
+          fail = [
+            "nl.service: StateDirectory value `nl-a\\nnl-b` (a newline splits the unit-file line; use a list)"
+          ];
+        };
+
+        # systemd expands these before naming the directory, so neither the
+        # expanded nor the literal preserved path may be taken as coverage.
+        specifiers-and-escapes-fail-closed = {
+          module = {
+            systemd.services.demo = svc { StateDirectory = "%N"; };
+            systemd.services.esc = svc { StateDirectory = "esc\\x2dname"; };
+            preservation.preserveAt."/persist".directories = [
+              "/var/lib/demo"
+              "/var/lib/%N"
+              "/var/lib/esc-name"
+              "/var/lib/esc\\x2dname"
+            ];
+          };
+          fail = [
+            "demo.service: StateDirectory value `%N` (`%` specifiers are not resolved by this audit)"
+            "esc.service: StateDirectory value `esc\\x2dname` (backslash escapes are not decoded by this audit)"
           ];
         };
 
@@ -200,6 +234,10 @@
               DynamicUser = "Y";
               StateDirectory = "upper-y";
             };
+            padded = svc {
+              DynamicUser = " Y ";
+              StateDirectory = "padded";
+            };
             mixed-on = svc {
               DynamicUser = "On";
               StateDirectory = "mixed-on";
@@ -215,6 +253,7 @@
               ];
               StateDirectory = "last-wins";
             };
+            # An empty DynamicUser= is a parse error, not a reset.
             reset = svc {
               DynamicUser = [
                 true
@@ -232,7 +271,9 @@
             "garbage.service: DynamicUser value `maybe` (not a systemd boolean)"
             "last-wins.service: /var/lib/private/last-wins"
             "mixed-on.service: /var/lib/private/mixed-on"
-            "reset.service: /var/lib/du-reset"
+            "padded.service: /var/lib/private/padded"
+            "reset.service: /var/lib/private/du-reset"
+            "reset.service: DynamicUser value `` (empty assignment is not a boolean)"
             "upper-off.service: /var/lib/upper-off"
             "upper-y.service: /var/lib/private/upper-y"
           ];
@@ -360,24 +401,84 @@
             got:${show gotWarn}'';
 
       problems = lib.concatLists (lib.mapAttrsToList check cases);
+
+      # Owner gates on real hosts: an exemption is gated on the evaluated
+      # unit, so turning that unit off by any route leaves eval clean
+      # (no stale exemption) and drops exactly that unit's warning.
+      auditOf = cfg: {
+        lines = lib.sort lib.lessThan (
+          lib.concatMap (a: lib.filter (lib.hasPrefix "  ") (lib.splitString "\n" a.message)) (
+            lib.filter (a: !a.assertion && lib.hasPrefix "myAppStateAudit" a.message) cfg.assertions
+          )
+        );
+        warnings = lib.sort lib.lessThan (lib.filter (lib.hasPrefix "myAppStateAudit") cfg.warnings);
+      };
+      hostCases = {
+        hpp-1-iot-lease-off = {
+          host = "hpp-1";
+          module.networking.interfaces.iot.useDHCP = lib.mkOverride 10 false;
+          drops = "dhcpcd.service";
+        };
+        hpp-1-dhcpcd-unit-off = {
+          host = "hpp-1";
+          module.systemd.services.dhcpcd.enable = lib.mkForce false;
+          drops = "dhcpcd.service";
+        };
+        hpp-1-networkmanager-unit-off = {
+          host = "hpp-1";
+          module.systemd.services.NetworkManager.enable = lib.mkForce false;
+          drops = "NetworkManager.service";
+        };
+      };
+      hostProblems = lib.concatLists (
+        lib.mapAttrsToList (
+          name: c:
+          let
+            base = inputs.self.nixosConfigurations.${c.host};
+            before = auditOf base.config;
+            after = auditOf (base.extendModules { modules = [ c.module ]; }).config;
+            wantWarn = lib.filter (w: !lib.hasPrefix "myAppStateAudit: ${c.drops} " w) before.warnings;
+          in
+          lib.optional (after.lines != [ ])
+            "${name}: unexpected audit failures:${lib.concatMapStrings (l: "\n  ${l}") after.lines}"
+          ++ lib.optional (
+            lib.length wantWarn != lib.length before.warnings - 1
+          ) "${name}: base host has no single ${c.drops} warning to drop"
+          ++
+            lib.optional (after.warnings != wantWarn)
+              "${name}: warnings differ:${
+                lib.concatMapStrings (l: "\n  ${l}") (
+                  lib.subtractLists wantWarn after.warnings ++ lib.subtractLists after.warnings wantWarn
+                )
+              }"
+        ) hostCases
+      );
+
+      reportCheck =
+        name: count: what: ps:
+        pkgs.runCommand name
+          {
+            passAsFile = [ "report" ];
+            report = lib.concatStringsSep "\n\n" ps;
+          }
+          ''
+            ${if ps == [ ] then ''echo "${toString count} ${what} passed"'' else ''cat "$reportPath"; exit 1''}
+            touch "$out"
+          '';
     in
     {
-      checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        state-directory-audit =
-          pkgs.runCommand "state-directory-audit"
-            {
-              passAsFile = [ "report" ];
-              report = lib.concatStringsSep "\n\n" problems;
-            }
-            ''
-              ${
-                if problems == [ ] then
-                  ''echo "${toString (lib.length (lib.attrNames cases))} synthetic compositions passed"''
-                else
-                  ''cat "$reportPath"; exit 1''
-              }
-              touch "$out"
-            '';
-      };
+      checks =
+        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          state-directory-audit = reportCheck "state-directory-audit" (lib.length (
+            lib.attrNames cases
+          )) "synthetic compositions" problems;
+        }
+        # Evaluates full host configurations, so only once, for the system
+        # the servers run.
+        // lib.optionalAttrs (system == "x86_64-linux") {
+          state-directory-audit-hosts = reportCheck "state-directory-audit-hosts" (lib.length (
+            lib.attrNames hostCases
+          )) "host owner-gate cases" hostProblems;
+        };
     };
 }
