@@ -57,6 +57,26 @@ technical deployment gate. Do not claim sandboxing or permission enforcement.
   advice; else the last model known to work; else a fallback not recorded
   unavailable (`system.ai.gpt-6-2-sol` for `codex`,
   `system.ai.claude-opus-5-5` for `claude_code`), else the worker default.
+- Pass the worker's ladder below as that agent entry's `models` list on every
+  `sys_advise_models` call, cheapest first. The built-in router picks the
+  first entry for simple work, the middle for moderate and the last for
+  complex, and clamps an id it garbles to the FIRST entry (observed: a
+  `claude-opus-5.5` pick clamped to `claude-fable-5`), so a short ordered list
+  keeps picks and mistakes cheap. Drop ids recorded unavailable or not
+  reported by `sys_list_models` for that worker; with fewer than two left,
+  omit `models`.
+  - `claude_code`: `system.ai.claude-haiku-5-5`, `system.ai.claude-sonnet-5-5`,
+    `system.ai.claude-opus-5-5`
+  - `codex`: `system.ai.gpt-6-luna`, `system.ai.gpt-6-1-terra`,
+    `system.ai.gpt-6-2-sol`
+  - `pi`, `opencode`: `system.ai.glm-5-3-flash`, `system.ai.kimi-k3-1-pro`,
+    `system.ai.claude-sonnet-5-5`
+
+  Source: the Databricks AI Index coding frontier (cost per completed task,
+  pass rate; 2026-11-24). Sonnet 5.5 scored above Opus 5.5 at half the cost
+  and the GPT ladder's pass rate was flat. Use `system.ai.claude-fable-5-1`
+  only as a verified override for a final review of high-risk code; never
+  Fable 5.2, Gemini 3.8 Flash or Grok 4.7. Refresh when the Index updates.
 - A continuation (same title, or `session_id`) runs on the session's
   **original** model and ignores `args.model`; start a new title to change
   model or vendor, and keep the same session when a denied-action follow-up or
