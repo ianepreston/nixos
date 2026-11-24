@@ -78,8 +78,63 @@ LOGGER = r"""
 log() { printf '%s\t%s\tNIX_SSHOPTS=[%s]\n' "$(basename "$0")" "$*" "${NIX_SSHOPTS-}" >> "$STUB_LOG"; }
 """
 
+# A faithful model of how Nix starts ssh for ssh:// and ssh-ng:// stores
+# (src/libstore/ssh.cc, SSHMaster, upstream Nix 2.24-2.34 at the default
+# max-connections=1, so no Nix-owned master): argv is
+#   ssh <authority> -x <NIX_SSHOPTS words> -oPermitLocalCommand=yes \
+#     '-oLocalCommand=echo started' -- <remote command>
+# The effective settings are resolved by the REAL OpenSSH client with `ssh -G`
+# (parses options, connects to nothing) against a hostile fixture ssh_config,
+# so OpenSSH's own first-value-wins precedence decides the outcome. Nix skips
+# its `started` handshake only when `ssh -O check` with the same options finds
+# a master (modelled as STUB_MASTER_RC=0 with an effective ControlPath; ssh -G
+# omits controlpath when it is none); otherwise the connection is fresh and Nix fails unless ssh would
+# run exactly `echo started`. NIX_SSHOPTS is split on whitespace: Nix
+# shell-splits it, which is the same for the helper's allowlisted options.
+NIX_SSH_MODEL = r"""
+nix_ssh() {
+  [ -n "${STUB_REAL_SSH:-}" ] || return 0
+  local uri=$1 authority cfg
+  local -a opts=()
+  authority=${uri#*://}
+  read -ra opts <<<"${NIX_SSHOPTS-}"
+  cfg=$("$STUB_REAL_SSH" -F "$STUB_SSH_FIXTURE_CONFIG" -G "$authority" -x \
+    ${opts[@]+"${opts[@]}"} -oPermitLocalCommand=yes '-oLocalCommand=echo started' \
+    -- nix-daemon --stdio </dev/null 2>&1) || {
+    printf 'error: ssh rejected the store options: %s\n' "$cfg" >&2
+    exit 1
+  }
+  printf 'uri %s\n%s\n--\n' "$uri" "$cfg" >> "$STUB_LOG.nix-ssh"
+  if [ "${STUB_MASTER_RC:-0}" = 0 ] && grep -q '^controlpath ' <<<"$cfg"; then
+    return 0
+  fi
+  if grep -qx 'permitlocalcommand yes' <<<"$cfg" && grep -qx 'localcommand echo started' <<<"$cfg"; then
+    return 0
+  fi
+  printf "error: failed to start SSH connection to '%s'\n" "${authority#*@}" >&2
+  exit 1
+}
+"""
+
+# Contradicts every probe and store option, so a test passes only if the
+# helper's command-line options (and Nix's) win over ssh_config.
+SSH_FIXTURE_CONFIG = """\
+Host *
+  PermitLocalCommand no
+  LocalCommand /fixture/hostile-local-command
+  BatchMode no
+  StrictHostKeyChecking accept-new
+  UpdateHostKeys yes
+  AddKeysToAgent yes
+  ForkAfterAuthentication yes
+  ControlMaster auto
+  ControlPath /fixture/cm-%C
+"""
+REAL_SSH = shutil.which("ssh")
+
 STUBS = {
-    "nix": r"""
+    "nix": NIX_SSH_MODEL
+    + r"""
 log "$@"
 case $1 in
   build | eval)
@@ -88,7 +143,13 @@ case $1 in
       *networking.hostName*) echo "$STUB_CFG_HOSTNAME" ;;
       *) echo "$STUB_CLOSURE" ;;
     esac ;;
-  copy) exit "${STUB_COPY_RC:-0}" ;;
+  copy)
+    prev=""
+    for a in "$@"; do
+      case $prev:$a in --to:ssh://* | --to:ssh-ng://* | --from:ssh://* | --from:ssh-ng://*) nix_ssh "$a" ;; esac
+      prev=$a
+    done
+    exit "${STUB_COPY_RC:-0}" ;;
   config) printf '%s\n' "${STUB_BUILDERS:-}" ;;
   store)
     if [ "$4" = "${STUB_STORE_URI:-ssh://ipreston@hpp-1}" ]; then
@@ -96,8 +157,9 @@ case $1 in
         printf '%s\n' "$STUB_STORE_ERROR" >&2
         exit "${STUB_STORE_RC:-1}"
       fi
-      exit "${STUB_STORE_RC:-0}"
-    fi ;;
+      [ "${STUB_STORE_RC:-0}" = 0 ] || exit "$STUB_STORE_RC"
+    fi
+    nix_ssh "$4" ;;
 esac
 """,
     "nix-store": 'log "$@"; echo "$STUB_CLOSURE"',
@@ -254,6 +316,11 @@ class Harness(unittest.TestCase):
             p.chmod(0o755)
         self.log = self.tmp / "log"
         self.log.write_text("")
+        self.assertIsNotNone(
+            REAL_SSH, "these tests need a real OpenSSH client (ssh -G) on PATH"
+        )
+        ssh_config = self.tmp / "ssh_config"
+        ssh_config.write_text(SSH_FIXTURE_CONFIG)
         self.host = "hpp-1"
         self.closure = self.make_closure(self.host)
         self.env = {
@@ -269,6 +336,8 @@ class Harness(unittest.TestCase):
             "STUB_IDENTITY_AGENT": "/stub/effective-agent.sock",
             "STUB_AGENT": "ok",
             "STUB_BUILDERS": "",
+            "STUB_REAL_SSH": REAL_SSH,
+            "STUB_SSH_FIXTURE_CONFIG": str(ssh_config),
         }
 
     def make_closure(self, host, name=None, etc_host=None, store=None):
@@ -317,6 +386,19 @@ class Harness(unittest.TestCase):
             if not row[1].startswith("-oBatchMode=yes ")
         ]
 
+    def nix_ssh_sessions(self):
+        """(uri, effective ssh -G settings) for each modelled Nix ssh start."""
+        path = Path(f"{self.log}.nix-ssh")
+        sessions = []
+        if not path.exists():
+            return sessions
+        for block in path.read_text().split("\n--\n"):
+            rows = [ln.split(" ", 1) for ln in block.splitlines() if ln]
+            if rows:
+                assert rows[0][0] == "uri", rows[0]
+                sessions.append((rows[0][1], {r[0]: r[-1] for r in rows[1:]}))
+        return sessions
+
     def copies(self):
         return [x for x in self.lines("nix") if x[1].startswith("copy")]
 
@@ -325,10 +407,11 @@ class Harness(unittest.TestCase):
 
 
 class TransportPreflight(Harness):
-    def probe(self, *args, **env):
+    def probe(self, *args, helper=None, **env):
         return self.run_helper(
-            "--host", "hpp-1", "--dest", "hpp-1", "--preflight", *args, **env
-        )
+            "--host", "hpp-1", "--dest", "hpp-1", "--preflight", *args,
+            helper=helper, **env,
+        )  # fmt: skip
 
     def assert_probe_failed(self, result, reason):
         self.assertNotEqual(result.returncode, 0)
@@ -410,7 +493,8 @@ class TransportPreflight(Harness):
 
     def test_preflight_rejects_an_unexpected_hostname(self):
         self.assert_probe_failed(
-            self.probe(STUB_HOSTNAME="amos1"), "hostname was 'amos1', expected 'hpp-1'"
+            self.probe(STUB_HOSTNAME="amos1"),
+            "hostname probe did not report the expected hostname 'hpp-1'",
         )
 
     def test_probe_timeouts_are_classified_by_leg(self):
@@ -438,7 +522,7 @@ class TransportPreflight(Harness):
 
     def test_hostname_permission_denied_is_classified_from_stderr(self):
         r = self.probe(
-            STUB_HOSTNAME_SSH_WARNING="Permission denied (publickey). private-detail",
+            STUB_HOSTNAME_SSH_WARNING="ipreston@hpp-1: Permission denied (publickey).\nprivate-detail",
             STUB_HOSTNAME_SSH_RC=255,
         )
         self.assert_probe_failed(
@@ -490,7 +574,8 @@ class TransportPreflight(Harness):
                     STUB_BUILDER_ERROR=message, STUB_BUILDER_RC=code,
                 )  # fmt: skip
                 self.assert_probe_failed(
-                    r, f"preflight: on ipreston@hpp-1: builder terra: {reason}"
+                    r,
+                    f"preflight: on ipreston@hpp-1: a Nix builder configured there: {reason}",
                 )
                 self.assertNotIn("matches the locked revision", r.stderr)
 
@@ -528,7 +613,7 @@ class TransportPreflight(Harness):
         )  # fmt: skip
         self.assert_probe_failed(
             r,
-            "preflight: on builder@build1: builder terra: Host key verification failed",
+            "preflight: on builder@build1: a Nix builder configured there: Host key verification failed",
         )
 
     def test_remote_build_environment_classifies_ssh_failure_without_remote_marker(
@@ -536,7 +621,7 @@ class TransportPreflight(Harness):
     ):
         r = self.probe(
             "--remote-flake", "src/nixos",
-            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail\nPermission denied (publickey)",
+            STUB_REMOTE_PROBE_WARNING="preflight: informational private-detail\nipreston@hpp-1: Permission denied (publickey).",
             STUB_REMOTE_PROBE_RC=255,
         )  # fmt: skip
         self.assert_probe_failed(
@@ -551,6 +636,554 @@ class TransportPreflight(Harness):
         )  # fmt: skip
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("preflight: passed for hpp-1", r.stderr)
+
+    # Nix's fresh-connection `started` handshake (#1041): see NIX_SSH_MODEL.
+    HANDSHAKE = {
+        "permitlocalcommand": "yes",
+        "localcommand": "echo started",
+        "batchmode": "yes",
+        "stricthostkeychecking": "true",
+        "connecttimeout": "8",
+        "updatehostkeys": "false",
+        "addkeystoagent": "false",
+        "clearallforwardings": "yes",
+        "forkafterauthentication": "no",
+    }
+
+    def assert_store_handshake(self, settings):
+        for key, value in self.HANDSHAKE.items():
+            self.assertEqual(settings.get(key), value, key)
+        self.assertNotIn("hostile", settings.get("localcommand", ""))
+
+    def regressed_helper(self):
+        """The helper with the pre-#1041 store probe options (the plain ssh
+        probes' -oPermitLocalCommand=no), to show the fixture catches it."""
+        text = self.helper.read_text()
+        old = '"${store_probe_opts[@]}" -T)'
+        self.assertEqual(text.count(old), 1)
+        regressed = self.helper.with_name("activate-nixos-regressed.sh")
+        regressed.write_text(text.replace(old, '"${probe_opts[@]}" -T)'))
+        return regressed
+
+    def test_fresh_store_connection_completes_nix_handshake(self):
+        # bootstrap continues without a master, so Nix's ssh starts fresh
+        r = self.probe("--remote-flake", "src/nixos", STUB_MASTER_RC=255)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("warning: no usable SSH master", r.stderr)
+        ((uri, settings),) = self.nix_ssh_sessions()
+        self.assertEqual(uri, "ssh://ipreston@hpp-1")
+        self.assert_store_handshake(settings)
+        self.assertEqual(settings["controlmaster"], "false")
+        store = [x for x in self.lines("nix") if x[1].startswith("store ")][0]
+        self.assertNotIn("PermitLocalCommand", store[2])
+        self.assertNotIn("LocalCommand", store[2])
+        # plain ssh probes still forbid any local command
+        plain = [row for row in self.lines("ssh") if "-oBatchMode=yes" in row[1]]
+        self.assertTrue(plain)
+        self.assertTrue(all("-oPermitLocalCommand=no" in row[1] for row in plain))
+
+    def test_split_host_fresh_store_connections_complete_handshake(self):
+        r = self.probe(
+            "--build-host", "builder@build1",
+            "--target-ssh-opt=-oIdentityAgent=~/target-agent",
+            "--build-ssh-opt=-oIdentityAgent=~/builder-agent",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sessions = self.nix_ssh_sessions()
+        self.assertEqual(
+            [uri for uri, _ in sessions],
+            ["ssh-ng://ipreston@hpp-1", "ssh-ng://builder@build1"],
+        )
+        for (_, settings), agent in zip(sessions, ("target-agent", "builder-agent")):
+            self.assert_store_handshake(settings)
+            self.assertNotIn("controlpath", settings)  # ssh -G omits none
+            self.assertTrue(settings["identityagent"].endswith(agent))
+
+    def test_warm_single_host_store_probe_reuses_the_master(self):
+        r = self.probe()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ((uri, settings),) = self.nix_ssh_sessions()
+        self.assertEqual(uri, "ssh://ipreston@hpp-1")
+        self.assertEqual(settings["controlmaster"], "false")
+        self.assertTrue(settings["controlpath"].startswith("/fixture/cm-"))
+        # the same options would also complete a fresh connection
+        self.assert_store_handshake(settings)
+
+    def test_real_copy_legs_complete_the_handshake_too(self):
+        r = self.run_helper(
+            "--host", "hpp-1", "--dest", "hpp-1", "--build-host", "builder@build1"
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        copies = self.nix_ssh_sessions()[2:]
+        self.assertEqual(
+            [uri for uri, _ in copies],
+            ["ssh-ng://builder@build1"] * 2 + ["ssh-ng://ipreston@hpp-1"],
+        )
+        for _, settings in copies:
+            self.assertEqual(settings["permitlocalcommand"], "yes")
+            self.assertEqual(settings["localcommand"], "echo started")
+            self.assertNotIn("controlpath", settings)
+
+    def test_fixture_catches_a_store_probe_that_disables_local_commands(self):
+        regressed = self.regressed_helper()
+        for args, env in (
+            (("--remote-flake", "src/nixos"), {"STUB_MASTER_RC": 255}),
+            (("--build-host", "builder@build1"), {}),
+        ):
+            with self.subTest(args=args):
+                self.log.write_text("")
+                Path(f"{self.log}.nix-ssh").unlink(missing_ok=True)
+                r = self.probe(*args, helper=regressed, **env)
+                self.assert_probe_failed(
+                    r, "Nix's SSH session did not complete its start handshake"
+                )
+                ((_, settings),) = self.nix_ssh_sessions()
+                self.assertEqual(settings["permitlocalcommand"], "no")
+        # a warm master hides the regression, which is why stubs missed it
+        self.log.write_text("")
+        r = self.probe(helper=regressed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_handshake_failure_after_auth_markers_keeps_the_auth_message(self):
+        for message, reason in (
+            ("sign_and_send_pubkey: signing failed: agent refused operation\n"
+             "error: failed to start SSH connection to 'hpp-1'", "SSH signing failed"),
+            ("ipreston@hpp-1: Permission denied (publickey).\n"
+             "error: failed to start SSH connection to 'hpp-1'", "SSH authentication denied"),
+            ("error: failed to start SSH master connection to 'hpp-1'",
+             "Nix's SSH session did not complete its start handshake"),
+        ):  # fmt: skip
+            with self.subTest(reason=reason):
+                self.log.write_text("")
+                self.assert_probe_failed(
+                    self.probe(STUB_STORE_ERROR=message),
+                    f"store transport ssh://ipreston@hpp-1: {reason}",
+                )
+
+    def test_network_errors_and_deadlines_beat_the_nix_handshake_message(self):
+        # Nix adds its generic message whenever it did not read `started`,
+        # including when ssh never authenticated.
+        handshake = "error: failed to start SSH connection to 'hpp-1'"
+        legs = (
+            ("store transport ssh://ipreston@hpp-1", (), {}),
+            ("store transport ssh-ng://builder@build1",
+             ("--build-host", "builder@build1"),
+             {"STUB_STORE_URI": "ssh-ng://builder@build1"}),
+        )  # fmt: skip
+        cases = (
+            ("ssh: Could not resolve hostname private-detail: nodename nor servname",
+             1, "unreachable over SSH"),
+            ("ssh: connect to host private-detail port 22: Connection refused",
+             1, "unreachable over SSH"),
+            ("ssh: connect to host private-detail port 22: Operation timed out",
+             255, "unreachable over SSH"),
+            ("", 124, "probe timed out"),
+            ("", 137, "probe timed out"),
+            ("Host key verification failed. private-detail", 1,
+             "Host key verification failed"),
+            ("sign_and_send_pubkey: signing failed private-detail", 1,
+             "SSH signing failed"),
+            ("ipreston@hpp-1: Permission denied (publickey).\nprivate-detail", 1,
+             "SSH authentication denied"),
+            ("", 1, "Nix's SSH session did not complete its start handshake"),
+        )  # fmt: skip
+        for leg, args, env in legs:
+            for stderr, code, reason in cases:
+                with self.subTest(leg=leg, reason=reason, code=code):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_STORE_ERROR=f"{stderr}\n{handshake}".lstrip(),
+                        STUB_STORE_RC=code,
+                        **env,
+                    )
+                    self.assert_probe_failed(r, f"{leg}: {reason}")
+                    if "handshake" not in reason:
+                        self.assertNotIn("start handshake", r.stderr)
+
+    # Cause classes in precedence order: (name, output text, exit status).
+    # Mirrors the comment above ssh_failure_class in activate-nixos.sh.
+    SSH_CLASSES = (
+        ("hostkey", "Host key verification failed.", 1),
+        ("signing", "sign_and_send_pubkey: signing failed for ED25519-SK", 1),
+        ("denied", "ipreston@hpp-1: Permission denied (publickey).", 1),
+        ("protocol", "error: protocol mismatch, got 'x'", 1),
+        ("unreachable", "ssh: Could not resolve hostname x: unknown", 1),
+        ("dropped", "kex_exchange_identification: read: Connection reset by peer", 1),
+        ("timeout", "", 124),
+        ("handshake", "error: failed to start SSH connection to 'hpp-1'", 1),
+        ("failed", "", 1),
+    )
+    SSH_MESSAGES = {
+        "hostkey": "Host key verification failed",
+        "signing": "SSH signing failed",
+        "denied": "SSH authentication denied in BatchMode",
+        "protocol": "Nix store protocol mismatch",
+        "unreachable": "unreachable over SSH",
+        "dropped": "the SSH server closed the connection before authentication",
+        "timeout": "probe timed out",
+        "handshake": "Nix's SSH session did not complete its start handshake",
+        "failed": "probe failed. Verify the SSH connection",
+    }
+
+    @staticmethod
+    def pairs(classes):
+        """Every pair of distinct classes, in both orders, with the winner."""
+        for i, high in enumerate(classes):
+            for low in classes[i + 1 :]:
+                for first, second in ((high, low), (low, high)):
+                    text = "\n".join(x[1] for x in (first, second) if x[1])
+                    status = max(first[2], second[2])
+                    yield high[0], (first[0], second[0]), text, status
+
+    def test_classifier_precedence_for_every_pair_of_causes(self):
+        legs = (
+            ("store transport ssh://ipreston@hpp-1", (), {}),
+            ("store transport ssh-ng://builder@build1",
+             ("--build-host", "builder@build1"),
+             {"STUB_STORE_URI": "ssh-ng://builder@build1"}),
+        )  # fmt: skip
+        for leg, args, env in legs:
+            for winner, order, text, status in self.pairs(self.SSH_CLASSES):
+                with self.subTest(leg=leg, order=order):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args, STUB_STORE_ERROR=text, STUB_STORE_RC=status, **env
+                    )
+                    self.assert_probe_failed(r, f"{leg}: {self.SSH_MESSAGES[winner]}")
+                    for other, message in self.SSH_MESSAGES.items():
+                        if other != winner:
+                            self.assertNotIn(message, r.stderr)
+
+    # Every code the remote build-environment script can emit, with the
+    # fixed local text it must produce (a prefix is enough).
+    CODE_MESSAGES = {
+        "tool-timeout": "required tool 'timeout' is missing",
+        "tool-nix": "required tool 'nix' is missing",
+        "tool-jq": "required tool 'jq' is missing",
+        "tool-git": "required tool 'git' is missing",
+        "secrets-lock-unreadable": "cannot read the locked nix-secrets revision",
+        "secrets-checkout-missing": "the local nix-secrets override is missing",
+        "secrets-head-unreadable": "cannot read the local nix-secrets HEAD",
+        "secrets-worktree-unreadable": "cannot inspect the local nix-secrets",
+        "secrets-stale-clean": "stale local nix-secrets (clean)",
+        "secrets-stale-dirty": "stale local nix-secrets (has uncommitted changes)",
+        "builders-unreadable": "cannot read Nix builders on the build machine",
+        "tool-cat": "required tool 'cat' is missing",
+        "builders-file-unreadable": "cannot read the Nix builders file",
+        "builder-destination-invalid": "invalid SSH builder destination",
+        "tool-ssh": "required tool 'ssh' is missing",
+        **{
+            f"builder-{c}": "a Nix builder configured there: " + m
+            for c, m in (
+                ("hostkey", "Host key verification failed"),
+                ("signing", "SSH signing failed"),
+                ("denied", "SSH authentication denied in BatchMode"),
+                ("protocol", "Nix store protocol mismatch"),
+                ("unreachable", "unreachable over SSH"),
+                ("dropped", "the SSH server closed the connection"),
+                ("timeout", "probe timed out"),
+                ("handshake", "Nix's SSH session did not complete"),
+                ("failed", "probe failed."),
+            )
+        },
+    }
+    GENERIC_CODES = (
+        "builder-handshake",
+        "builder-failed",
+        "internal",
+        "private-detail",
+    )
+    REMOTE_PATHS = (
+        (("--remote-flake", "src/nixos", "--local-secrets"), "ipreston@hpp-1", True),
+        (("--build-host", "builder@build1"), "builder@build1", False),
+    )
+
+    def remote_expected(self, endpoint, name):
+        if name in self.SSH_MESSAGES:
+            return (
+                f"preflight: build environment on {endpoint}: {self.SSH_MESSAGES[name]}"
+            )
+        if name in self.CODE_MESSAGES:
+            return f"preflight: on {endpoint}: {self.CODE_MESSAGES[name]}"
+        return (
+            f"preflight: on {endpoint}: the remote preflight failed with an "
+            "unrecognized error"
+        )
+
+    def assert_remote_winner(self, args, endpoint, text, status, winner):
+        self.log.write_text("")
+        r = self.probe(
+            *args,
+            STUB_REMOTE_PROBE_WARNING=f"noise private-detail\n{text}",
+            STUB_REMOTE_PROBE_RC=status,
+        )
+        expected = self.remote_expected(endpoint, winner)
+        self.assert_probe_failed(r, expected)
+        self.assertTrue(r.stderr.splitlines()[-1].startswith(expected), r.stderr)
+
+    @staticmethod
+    def code_class(code):
+        return (code, f"preflight-error: {code}", 1)
+
+    def test_remote_decoder_precedence_for_every_pair_of_causes(self):
+        # The single total order of remote_failure_rank, sampled: ssh causes,
+        # specific codes, the deadline, generic codes, the unrecognised
+        # marker, then Nix's handshake and the generic failure.
+        classes = (
+            *self.SSH_CLASSES[:6],
+            self.code_class("tool-nix"),
+            self.code_class("builder-hostkey"),
+            self.SSH_CLASSES[6],  # timeout
+            self.code_class("builder-handshake"),
+            self.code_class("builder-failed"),
+            ("unrecognized", "preflight-error: private-detail", 1),
+            *self.SSH_CLASSES[7:],
+        )
+        for args, endpoint, _ in self.REMOTE_PATHS:
+            for winner, order, text, status in self.pairs(classes):
+                with self.subTest(args=args, order=order):
+                    self.assert_remote_winner(args, endpoint, text, status, winner)
+
+    def test_every_generic_remote_code_yields_to_every_specific_cause(self):
+        for args, endpoint, secrets in self.REMOTE_PATHS:
+            specific = [
+                *self.SSH_CLASSES[:7],  # ssh causes and the deadline
+                *(
+                    self.code_class(code)
+                    for code in self.CODE_MESSAGES
+                    if code not in ("builder-handshake", "builder-failed")
+                    and (
+                        secrets
+                        or not code.startswith(("secrets-", "tool-jq", "tool-git"))
+                    )
+                ),
+            ]
+            for generic in self.GENERIC_CODES:
+                low = (generic, f"preflight-error: {generic}", 1)
+                for high in specific:
+                    for first, second in ((high, low), (low, high)):
+                        with self.subTest(args=args, order=(first[0], second[0])):
+                            text = "\n".join(x[1] for x in (first, second) if x[1])
+                            self.assert_remote_winner(
+                                args, endpoint, text, max(first[2], second[2]), high[0]
+                            )
+
+    def test_remote_codes_follow_the_scripts_emission_order(self):
+        args, endpoint, _ = self.REMOTE_PATHS[0]  # bootstrap with --local-secrets
+        for earlier, later in (
+            ("tool-nix", "secrets-stale-clean"),  # the reviewed reproduction
+            ("tool-timeout", "tool-nix"),
+            ("tool-jq", "secrets-stale-dirty"),
+            ("secrets-lock-unreadable", "secrets-stale-clean"),
+            ("secrets-stale-clean", "builders-unreadable"),
+            ("secrets-head-unreadable", "builder-hostkey"),
+            ("builders-unreadable", "tool-cat"),
+            ("tool-ssh", "builder-denied"),
+            ("builder-hostkey", "builder-unreachable"),
+        ):
+            for lines in ((earlier, later), (later, earlier)):
+                with self.subTest(lines=lines):
+                    text = "\n".join(f"preflight-error: {c}" for c in lines)
+                    self.assert_remote_winner(args, endpoint, text, 1, earlier)
+
+    def test_reviewed_masking_reproductions(self):
+        for args, endpoint, _ in self.REMOTE_PATHS:
+            for text, status, winner in (
+                ("preflight-error: builder-failed\n"
+                 f"{endpoint}: Permission denied (publickey).", 255, "denied"),
+                ("preflight-error: builder-failed", 124, "timeout"),
+                ("preflight-error: builder-failed\npreflight-error: builder-hostkey",
+                 1, "builder-hostkey"),
+                ("preflight-error: builder-handshake\nHost key verification failed.",
+                 255, "hostkey"),
+                ("bash: line 1: /run/current-system/sw/bin/nix: Permission denied",
+                 126, "failed"),
+                ("ssh: connect to host x port 22: Network is unreachable", 255,
+                 "unreachable"),
+            ):  # fmt: skip
+                with self.subTest(args=args, winner=winner, text=text):
+                    self.assert_remote_winner(args, endpoint, text, status, winner)
+
+    def test_permission_denied_counts_only_as_an_explicit_ssh_denial(self):
+        leg = "store transport ssh://ipreston@hpp-1"
+        for text, reason in (
+            ("ipreston@hpp-1: Permission denied (publickey).", "denied"),
+            ("Permission denied (publickey,keyboard-interactive).", "denied"),
+            ("Permission denied, please try again.", "denied"),
+            ("Received disconnect from 192.0.2.9 port 22:2: Too many "
+             "authentication failures", "denied"),
+            ("bash: line 1: /nix/var/nix/profiles/default/bin/nix-daemon: "
+             "Permission denied", "failed"),
+            ("error: cannot open '/nix/var/nix/db': Permission denied", "failed"),
+            ("error: protocol mismatch, got 'ipreston@hpp-1: Permission denied "
+             "(publickey).'", "protocol"),
+            ("error: protocol mismatch, got 'Permission denied'", "protocol"),
+        ):  # fmt: skip
+            with self.subTest(text=text):
+                self.log.write_text("")
+                r = self.probe(STUB_STORE_ERROR=text, STUB_STORE_RC=1)
+                self.assert_probe_failed(r, f"{leg}: {self.SSH_MESSAGES[reason]}")
+                if reason != "denied":
+                    self.assertNotIn("authentication denied", r.stderr)
+
+    def test_every_openssh_connect_failure_has_a_specific_class(self):
+        handshake = "error: failed to start SSH connection to 'hpp-1'"
+        for text, reason in (
+            ("ssh: connect to host hpp-1 port 22: Connection refused", "unreachable"),
+            ("ssh: connect to host hpp-1 port 22: Connection timed out", "unreachable"),
+            ("ssh: connect to host hpp-1 port 22: Operation timed out", "unreachable"),
+            ("ssh: connect to host hpp-1 port 22: No route to host", "unreachable"),
+            ("ssh: connect to host hpp-1 port 22: Network is unreachable", "unreachable"),
+            ("ssh: connect to host hpp-1 port 22: Host is down", "unreachable"),
+            ("ssh: Could not resolve hostname hpp-1: Name or service not known",
+             "unreachable"),
+            ("ssh: Could not resolve hostname hpp-1: Temporary failure in name "
+             "resolution", "unreachable"),
+            ("ssh: Could not resolve hostname hpp-1: nodename nor servname "
+             "provided, or not known", "unreachable"),
+            ('ssh: Could not resolve host "hpp-1"', "unreachable"),
+            ("kex_exchange_identification: read: Connection reset by peer", "dropped"),
+            ("kex_exchange_identification: Connection closed by remote host", "dropped"),
+            ("ssh_exchange_identification: Connection closed by remote host", "dropped"),
+            ("Connection closed by 192.0.2.9 port 22", "dropped"),
+            ("Connection reset by 192.0.2.9 port 22", "dropped"),
+            ("banner exchange: Connection to 192.0.2.9 port 22: invalid format",
+             "dropped"),
+        ):  # fmt: skip
+            for leg, args, env in (
+                ("store transport ssh://ipreston@hpp-1", (), {}),
+                ("store transport ssh-ng://builder@build1",
+                 ("--build-host", "builder@build1"),
+                 {"STUB_STORE_URI": "ssh-ng://builder@build1"}),
+            ):  # fmt: skip
+                with self.subTest(text=text, leg=leg):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_STORE_ERROR=f"{text}\n{handshake}",
+                        STUB_STORE_RC=255,
+                        **env,
+                    )
+                    self.assert_probe_failed(r, f"{leg}: {self.SSH_MESSAGES[reason]}")
+                    self.assertNotIn("start handshake", r.stderr)
+
+    FORGED = ("forged-builder", "forgedhost", "217", "c0ffee", "deadbeef")
+
+    def assert_nothing_forged(self, r):
+        for token in (*self.FORGED, "private-detail"):
+            self.assertNotIn(token, r.stdout)
+            self.assertNotIn(token, r.stderr)
+
+    def test_forged_remote_values_never_reach_local_output(self):
+        rev = "c0ffee" * 6 + "dead"
+        old_style = (
+            "preflight-error: builder forged-builder@forgedhost: probe failed "
+            "(exit 217). Verify the SSH connection from an operator terminal.",
+            "preflight-error: builder forged-builder: Host key verification failed. "
+            "Verify the host key out of band and update the SSH trust entry.",
+            f"preflight-error: stale local nix-secrets (clean): HEAD {rev} differs "
+            f"from locked {'deadbeef' * 5}. Check out the locked revision or omit "
+            "--local-secrets.",
+            "preflight-error: required tool 'forgedhost' is missing. Install it on "
+            "the machine running this probe.",
+        )
+        for args, endpoint in (
+            (("--remote-flake", "src/nixos", "--local-secrets"), "ipreston@hpp-1"),
+            (("--build-host", "builder@build1"), "builder@build1"),
+        ):
+            for line in old_style:
+                with self.subTest(args=args, line=line):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args, STUB_REMOTE_PROBE_WARNING=line, STUB_REMOTE_PROBE_RC=217
+                    )
+                    # "Host key verification failed" text is itself a cause
+                    reason = (
+                        f"build environment on {endpoint}: Host key verification failed"
+                        if "Host key" in line
+                        else f"on {endpoint}: the remote preflight failed with an "
+                        "unrecognized error"
+                    )
+                    self.assert_probe_failed(r, reason)
+                    self.assert_nothing_forged(r)
+            with self.subTest(args=args, exit_status=217):
+                self.log.write_text("")
+                r = self.probe(*args, STUB_REMOTE_PROBE_RC=217)
+                self.assert_probe_failed(
+                    r, f"build environment on {endpoint}: probe failed."
+                )
+                self.assert_nothing_forged(r)
+
+    def test_secrets_codes_count_only_where_the_secrets_check_ran(self):
+        for code in ("secrets-stale-clean", "secrets-head-unreadable", "tool-git"):
+            for path, args in (
+                ("split-host", ("--build-host", "builder@build1")),
+                ("bootstrap without --local-secrets", ("--remote-flake", "src/nixos")),
+            ):
+                with self.subTest(code=code, path=path):
+                    self.log.write_text("")
+                    r = self.probe(
+                        *args,
+                        STUB_REMOTE_PROBE_WARNING=f"preflight-error: {code}",
+                        STUB_REMOTE_PROBE_RC=1,
+                    )
+                    self.assert_probe_failed(r, "failed with an unrecognized error")
+                    self.assertNotIn("nix-secrets", r.stderr)
+                    self.assertNotIn("'git'", r.stderr)
+        self.log.write_text("")
+        r = self.probe(
+            "--remote-flake", "src/nixos", "--local-secrets",
+            STUB_REMOTE_PROBE_WARNING="preflight-error: secrets-stale-dirty",
+            STUB_REMOTE_PROBE_RC=1,
+        )  # fmt: skip
+        self.assert_probe_failed(
+            r, "preflight: on ipreston@hpp-1: stale local nix-secrets (has "
+            "uncommitted changes): HEAD differs from the locked revision",
+        )  # fmt: skip
+        # a forged success line is ignored where no comparison ran
+        self.log.write_text("")
+        r = self.probe(
+            "--build-host", "builder@build1",
+            STUB_REMOTE_PROBE_WARNING="preflight-ok: secrets-clean",
+        )  # fmt: skip
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("matches the locked revision", r.stderr)
+
+    def test_hostname_replies_are_never_printed(self):
+        for args in ((), ("--remote-flake", "src/nixos")):
+            with self.subTest(args=args):
+                self.log.write_text("")
+                r = self.probe(*args, STUB_HOSTNAME="forgedhost")
+                self.assert_probe_failed(
+                    r, "did not report the expected hostname 'hpp-1'"
+                )
+                self.assert_nothing_forged(r)
+        self.log.write_text("")
+        r = self.run_helper(
+            "--host", "hpp-1", "--preflight", STUB_HOSTNAME="forgedhost"
+        )  # fmt: skip
+        self.assert_probe_failed(r, "did not report the expected hostname 'hpp-1'")
+        self.assert_nothing_forged(r)
+
+    def test_agent_diagnostics_stay_distinct(self):
+        messages = {
+            "hang": "SSH agent unresponsive",
+            "empty": "SSH agent has no identities (a locked agent also lists none)",
+            "refused": "SSH agent refused operation",
+        }
+        for state, reason in messages.items():
+            with self.subTest(state=state):
+                self.log.write_text("")
+                r = self.probe(STUB_AGENT=state)
+                self.assert_probe_failed(r, reason)
+                for other, text in messages.items():
+                    if other != state:
+                        self.assertNotIn(text, r.stderr)
+                self.assertNotIn("SSH signing failed", r.stderr)
+                self.assertEqual(
+                    [x for x in self.lines("nix") if x[1].startswith("store ")], []
+                )
 
     def test_agent_refusal_is_classified(self):
         self.assert_probe_failed(
@@ -590,7 +1223,7 @@ class TransportPreflight(Harness):
         r = self.probe(
             "--build-host", "builder@build1",
             STUB_STORE_URI="ssh-ng://builder@build1",
-            STUB_STORE_ERROR="Permission denied (publickey). private-detail",
+            STUB_STORE_ERROR="ipreston@hpp-1: Permission denied (publickey).\nprivate-detail",
         )  # fmt: skip
         self.assert_probe_failed(
             r,
@@ -968,9 +1601,10 @@ class RemoteActivation(Harness):
         self.assertEqual(rows, ["nix-env", "ACTIVATED"], "generation recorded first")
 
     # Single-host copies must reuse the user's pre-opened ssh master (hardware
-    # key auth cannot be answered by an agent). ssh-ng:// always starts Nix's
-    # own master, so single-host mode copies over the legacy ssh:// store, with
-    # only ControlMaster=no (never become a master) ahead of caller options, and
+    # key auth cannot be answered by an agent). They use the legacy ssh://
+    # store, the transport observed to work in #1039 (whether ssh-ng:// would
+    # reuse it depends on the Nix version and max-connections), with only
+    # ControlMaster=no (never become a master) ahead of caller options, and
     # never ControlPath=none, which would defeat reuse of the existing socket.
     COPY_FORCED = ["-oControlMaster=no"]
 
@@ -1582,7 +2216,8 @@ class TaskRouting(Harness):
     def test_rebuild_host_refuses_a_hostname_mismatch(self):
         r = self.task("rebuild:hpp-1", STUB_HOSTNAME="amos1")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("expected 'hpp-1'", r.stderr)
+        self.assertIn("expected hostname 'hpp-1'", r.stderr)
+        self.assertNotIn("amos1", r.stderr)
         self.assertFalse(self.activated())
 
     def activation_tasks(self):

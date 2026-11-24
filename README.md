@@ -1734,10 +1734,13 @@ With a separate build host every ssh leg (including `nix copy`) is forced to
 single-host deploys still accept `-J` and reuse your pre-opened ssh master
 (needed for hardware-key auth): the closure is copied over the legacy `ssh://`
 store (one plain `ssh` per command, which picks up the master's `ControlPath`),
-because `ssh-ng://` always opens its own ssh master and so can never use the
-pre-opened one. In split-host mode every leg authenticates afresh, so a
-hardware key needs a touch per leg. Split-host and builder probes can open
-connections that authenticate in BatchMode. When a probe reports that a
+the path observed to work with no touch (#1039). Whether `ssh-ng://` would
+reuse the master depends on the Nix version and its `max-connections` store
+option (see `skills/_shared/host-access.md`). In split-host mode every leg
+authenticates afresh, so a hardware key needs a touch per leg. Split-host and builder probes can open
+connections that authenticate in BatchMode. The builder probe runs from the
+caller's ssh context, not the Nix daemon's, and a warm builder master can
+mask a host-key or authentication failure. When a probe reports that a
 touch or PIN is required, the operator handles it in their terminal.
 The one accepted exception is `system.autoUpgrade`
 (`modules/system/auto-rebuild.nix`): it only ever activates the local host from

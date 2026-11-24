@@ -50,12 +50,18 @@
 # Single-host mode REUSES the ssh master you pre-opened (hardware-key ssh auth
 # cannot be answered by an agent): the closure is copied over the legacy
 # ssh:// store, which runs one plain `ssh` per command, so each of those picks
-# up the ControlPath socket from ~/.ssh/config. ssh-ng:// is NOT used there: it
-# always starts Nix's own ssh master on a private socket, so it can never use
-# the pre-opened one and would demand a fresh authentication. The copy leg is
-# given -oControlMaster=no (use an existing master, never become one) and never
-# ControlPath=none, which would defeat the reuse. The direct ssh activation
-# connection reuses the same master.
+# up the ControlPath socket from ~/.ssh/config. That is the transport observed
+# to work with no touch (#1039); ssh-ng:// is NOT used there. Whether ssh-ng://
+# can reuse the master depends on the Nix version and store options: upstream
+# Nix 2.24-2.34 starts its own master on a private `-S` socket (which bypasses
+# a pre-opened one) only when the store's max-connections is above 1; at the
+# default of 1 each store connection is a plain ssh, like ssh://. Either way,
+# when `ssh -O check` with the same options finds no master, Nix opens a fresh
+# connection and waits for its fixed `-oLocalCommand=echo started` handshake
+# (see the preflight's store probe). The copy leg is given -oControlMaster=no
+# (use an existing master, never become one) and never ControlPath=none, which
+# would defeat the reuse. The direct ssh activation connection reuses the same
+# master.
 # With --build-host, every ssh connection to EITHER host (build, pull, push,
 # activate; including the transports nix copy spawns) is forced to
 # -oControlMaster=no -oControlPath=none, placed before any user option so it
@@ -63,12 +69,12 @@
 # ~/.ssh/config, `Match` blocks included). Nothing is multiplexed, so no socket
 # can carry a command meant for one host to the other; isolation does not
 # depend on parsing or comparing socket paths. The price: every leg in split
-# mode authenticates afresh (ssh-ng:// opens one Nix master per copy), so a
-# hardware key needs a touch per leg. A jump host would be a separate
-# ssh client that never sees those forced options (and could reuse a shared
-# master), so split-host mode also rejects -J/-oProxyJump and forces
-# -oProxyJump=none -oProxyCommand=none, overriding any jump or proxy from
-# ~/.ssh/config. Single-host mode keeps -J/-oProxyJump allowed.
+# mode authenticates afresh (no shared socket, whether or not Nix starts its
+# own private master for a copy), so a hardware key needs a touch per leg. A
+# jump host would be a separate ssh client that never sees those forced
+# options (and could reuse a shared master), so split-host mode also rejects
+# -J/-oProxyJump and forces -oProxyJump=none -oProxyCommand=none, overriding
+# any jump or proxy from ~/.ssh/config. Single-host mode keeps -J/-oProxyJump allowed.
 #
 # Every ssh to the target passes -T, so `RequestTTY force` in client config
 # cannot allocate a tty (merging stderr into stdout, adding CRs); -t, -tt and
@@ -328,10 +334,10 @@ target_nix_sshopts() {
   printf '%s' "$s"
 }
 
-# ssh:// reuses the caller's pre-opened master (one plain ssh per command);
-# ssh-ng:// always opens its own master, so it is only used where multiplexing
-# is forbidden anyway (split-host mode: one authentication per copy, not per
-# store command).
+# ssh:// reuses the caller's pre-opened master (one plain ssh per command; the
+# path observed to work in #1039). ssh-ng:// is only used where multiplexing is
+# forbidden anyway (split-host mode); whether it would reuse a master depends
+# on the Nix version and max-connections (see the header).
 target_store_scheme() {
   if [ -n "$build_host" ]; then printf 'ssh-ng'; else printf 'ssh'; fi
 }
@@ -398,11 +404,28 @@ bounded() {
   LC_ALL=C SSH_ASKPASS_REQUIRE=never timeout -k 1s "$@"
 }
 
-preflight_error_prefix=preflight
+# The functions below also run on a remote machine (the build-environment
+# probe), whose output reaches us merged with arbitrary remote text. There
+# (preflight_remote=true) a failure prints only `preflight-error: <code>` and
+# the local side renders a fixed message for a code it recognises.
+preflight_remote=false
 
 preflight_fail() {
-  printf '%s: %s\n' "$preflight_error_prefix" "$*" >&2
+  if [ "$preflight_remote" = true ]; then
+    printf 'preflight-error: internal\n'
+    exit 1
+  fi
+  printf 'preflight: %s\n' "$*" >&2
   exit 1
+}
+
+preflight_fail_code() { # preflight_fail_code CODE MESSAGE...
+  if [ "$preflight_remote" = true ]; then
+    printf 'preflight-error: %s\n' "$1"
+    exit 1
+  fi
+  shift
+  preflight_fail "$@"
 }
 
 require_preflight_tools() {
@@ -410,8 +433,8 @@ require_preflight_tools() {
   for tool in "$@"; do
     if ! command -v "$tool" >/dev/null; then
       case $tool in
-        timeout) preflight_fail "required tool 'timeout' is missing. Install GNU coreutils." ;;
-        *) preflight_fail "required tool '$tool' is missing. Install it on the machine running this probe." ;;
+        timeout) preflight_fail_code tool-timeout "required tool 'timeout' is missing. Install GNU coreutils." ;;
+        *) preflight_fail_code "tool-$tool" "required tool '$tool' is missing. Install it on the machine running this probe." ;;
       esac
     fi
   done
@@ -419,32 +442,199 @@ require_preflight_tools() {
 
 # Place these before caller options (OpenSSH uses the first value it sees).
 # A probe cannot accept/update host keys, add identities, or set up forwards.
-probe_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
+probe_common_opts=(-oBatchMode=yes -oConnectTimeout=8 -oStrictHostKeyChecking=yes
   -oUpdateHostKeys=no -oAddKeysToAgent=no -oClearAllForwardings=yes
-  -oPermitLocalCommand=no -oForkAfterAuthentication=no)
+  -oForkAfterAuthentication=no)
+# Plain ssh probes run no local command at all.
+probe_opts=("${probe_common_opts[@]}" -oPermitLocalCommand=no)
+# Store probes go through Nix's own ssh, which puts NIX_SSHOPTS FIRST and then
+# appends -oPermitLocalCommand=yes -oLocalCommand='echo started'. On a fresh
+# (not multiplexed) connection Nix fails unless it reads `started` back, so a
+# PermitLocalCommand=no here would win and break the handshake after a
+# successful authentication; a warm master hides that, since its multiplexed
+# sessions never run LocalCommand. Leave both unset: Nix's command-line values
+# then beat any ssh_config PermitLocalCommand/LocalCommand, so the only local
+# command is Nix's fixed `echo started` (the option allowlist keeps callers
+# from setting either). Everything else matches the plain probes.
+store_probe_opts=("${probe_common_opts[@]}")
 
-ssh_probe_failure() {
-  local leg=$1 status=$2 output=$3
-  case $output in
-    *"Host key verification failed"*)
-      preflight_fail "$leg: Host key verification failed. Verify the host key out of band and update the SSH trust entry."
-      ;;
-    *"agent refused operation"* | *"signing failed"* | *"PIN required"* | *"user presence"*)
-      preflight_fail "$leg: SSH signing failed (agent refused operation or needs touch/PIN). Unlock the key and verify authentication from an operator terminal."
-      ;;
-    *"protocol mismatch"*)
-      preflight_fail "$leg: Nix store protocol mismatch. Check the remote Nix store command and unexpected shell startup output."
-      ;;
-    *"Permission denied"*)
-      preflight_fail "$leg: SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal."
-      ;;
-    *"Could not resolve hostname"* | *"Connection refused"* | *"No route to host"* | *"Operation timed out"* | *"Connection timed out"*)
-      preflight_fail "$leg: unreachable over SSH. Check the host, network and SSH port."
+# Classify a failed ssh/Nix-store probe from its exit status and output.
+# Precedence, first match wins (each pair is tested in both orders). Patterns
+# are the OpenSSH client's (10.x) and Nix's own wording:
+#   1. hostkey      "Host key verification failed"
+#   2. signing      "agent refused operation" / "signing failed" /
+#                   "PIN required" / "user presence"
+#   3. denied       an explicit SSH authentication denial, as a WHOLE line in
+#                   the client's format: "[user@host: ]Permission denied
+#                   (<methods>)." / "Permission denied, please try again." /
+#                   "Received disconnect from <addr> port <n>:<code>: Too many
+#                   authentication failures". A bare "Permission denied" (a
+#                   remote exec error, or text quoted inside Nix's protocol
+#                   error) is not an SSH denial and does not match.
+#   4. protocol     "protocol mismatch" (Nix store protocol)
+#   5. unreachable  TCP connect or name resolution failed: "Could not resolve
+#                   host[name]" (covers "Name or service not known",
+#                   "Temporary failure in name resolution", "nodename nor
+#                   servname ..."), and the strerror of "ssh: connect to host
+#                   <h> port <p>: ...": "Connection refused", "Connection
+#                   timed out", "Operation timed out", "No route to host",
+#                   "Network is unreachable", "Host is down"
+#   6. dropped      TCP connected, then the server closed it before
+#                   authentication: "kex_exchange_identification",
+#                   "ssh_exchange_identification", "banner exchange",
+#                   "Connection closed by <addr>", "Connection reset by"
+#                   (sshd down mid-start, MaxStartups, a firewall or proxy)
+#   7. timeout      exit status 124 or 137 (our deadline fired)
+#   8. handshake    Nix's "failed to start SSH (master) connection", which it
+#                   prints whenever it did not read `started`, including when
+#                   ssh exited before authenticating, so 1-7 win over it
+#   9. failed       anything else
+# The remote build-environment leg extends this into one total order with
+# the remote codes (see remote_failure_rank).
+output_has_line() { # output_has_line ERE OUTPUT: any whole line matches
+  local line
+  while IFS= read -r line; do
+    line=${line%$'\r'}
+    [[ $line =~ $1 ]] && return 0
+  done <<<"$2"
+  return 1
+}
+
+ssh_failure_class() { # ssh_failure_class STATUS OUTPUT
+  local denied_methods='^([^[:space:]@]+@[^[:space:]]+: )?Permission denied \([a-z0-9@.,-]+\)\.[[:space:]]*$'
+  local denied_retry='^Permission denied, please try again\.[[:space:]]*$'
+  local denied_limit='^Received disconnect from .+: Too many authentication failures[[:space:]]*$'
+  case $2 in *"Host key verification failed"*) echo hostkey && return ;; esac
+  case $2 in *"agent refused operation"* | *"signing failed"* | *"PIN required"* | *"user presence"*) echo signing && return ;; esac
+  if output_has_line "$denied_methods" "$2" || output_has_line "$denied_retry" "$2" ||
+    output_has_line "$denied_limit" "$2"; then
+    echo denied && return
+  fi
+  case $2 in *"protocol mismatch"*) echo protocol && return ;; esac
+  case $2 in
+    *"Could not resolve host"* | *"Connection refused"* | *"Connection timed out"* | \
+      *"Operation timed out"* | *"No route to host"* | *"Network is unreachable"* | *"Host is down"*)
+      echo unreachable && return
       ;;
   esac
-  case $status in
-    124 | 137) preflight_fail "$leg: probe timed out. Check connectivity and any pending SSH touch/PIN prompt." ;;
-    *) preflight_fail "$leg: probe failed (exit $status). Verify the SSH connection from an operator terminal." ;;
+  case $2 in
+    *"kex_exchange_identification"* | *"ssh_exchange_identification"* | *"banner exchange"* | \
+      *"Connection closed by "* | *"Connection reset by "*)
+      echo dropped && return
+      ;;
+  esac
+  case $1 in 124 | 137) echo timeout && return ;; esac
+  case $2 in *"failed to start SSH connection"* | *"failed to start SSH master connection"*) echo handshake && return ;; esac
+  echo failed
+}
+
+ssh_failure_message() { # fixed text per class; no status, host or output
+  case $1 in
+    hostkey) echo "Host key verification failed. Verify the host key out of band and update the SSH trust entry." ;;
+    signing) echo "SSH signing failed (agent refused operation or needs touch/PIN). Unlock the key and verify authentication from an operator terminal." ;;
+    denied) echo "SSH authentication denied in BatchMode. Verify the SSH identity and complete any required touch/PIN from an operator terminal." ;;
+    protocol) echo "Nix store protocol mismatch. Check the remote Nix store command and unexpected shell startup output." ;;
+    unreachable) echo "unreachable over SSH. Check the host, network and SSH port." ;;
+    dropped) echo "the SSH server closed the connection before authentication. Check sshd on the host and any firewall or connection limit." ;;
+    timeout) echo "probe timed out. Check connectivity and any pending SSH touch/PIN prompt." ;;
+    handshake) echo "Nix's SSH session did not complete its start handshake. Verify the connection with the same options from an operator terminal." ;;
+    failed) echo "probe failed. Verify the SSH connection from an operator terminal." ;;
+    *) return 1 ;;
+  esac
+}
+
+# LEG is locally supplied (our own arguments or our own builder-list parse).
+# Remotely this only runs for builder probes, hence the builder-<class> code.
+ssh_probe_failure() { # ssh_probe_failure LEG STATUS OUTPUT
+  local class
+  class=$(ssh_failure_class "$2" "$3")
+  preflight_fail_code "builder-$class" "$1: $(ssh_failure_message "$class")"
+}
+
+# The fixed local message for a remote build-environment code, or status 1 if
+# the code is unknown or names a check that did not run on this path (the
+# secrets comparison runs only for a bootstrap with --local-secrets).
+remote_preflight_message() { # remote_preflight_message CODE SECRETS_CHECKED
+  local install="is missing. Install it on the machine running this probe."
+  case $1 in
+    tool-timeout) echo "required tool 'timeout' is missing. Install GNU coreutils." ;;
+    tool-nix) echo "required tool 'nix' $install" ;;
+    tool-cat) echo "required tool 'cat' $install" ;;
+    tool-ssh) echo "required tool 'ssh' $install" ;;
+    builders-unreadable) echo "cannot read Nix builders on the build machine. Check its Nix configuration." ;;
+    builders-file-unreadable) echo "cannot read the Nix builders file. Check its permissions." ;;
+    builder-destination-invalid) echo "invalid SSH builder destination. Check the Nix builders configuration." ;;
+    builder-hostkey | builder-signing | builder-denied | builder-protocol | builder-unreachable | builder-dropped | builder-timeout | builder-handshake | builder-failed)
+      echo "a Nix builder configured there: $(ssh_failure_message "${1#builder-}")"
+      ;;
+    tool-jq | tool-git | secrets-*)
+      [ "$2" = true ] || return 1
+      case $1 in
+        tool-jq) echo "required tool 'jq' $install" ;;
+        tool-git) echo "required tool 'git' $install" ;;
+        secrets-lock-unreadable) echo "cannot read the locked nix-secrets revision. Check flake.lock." ;;
+        secrets-checkout-missing) echo "the local nix-secrets override is missing its Git checkout. Sync the checkout or use the locked input." ;;
+        secrets-head-unreadable) echo "cannot read the local nix-secrets HEAD. Check the checkout or use the locked input." ;;
+        secrets-worktree-unreadable) echo "cannot inspect the local nix-secrets worktree. Check the checkout or use the locked input." ;;
+        secrets-stale-clean) echo "stale local nix-secrets (clean): HEAD differs from the locked revision. Check out the locked revision or omit --local-secrets." ;;
+        secrets-stale-dirty) echo "stale local nix-secrets (has uncommitted changes): HEAD differs from the locked revision. Check out the locked revision or omit --local-secrets." ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# One total order for the remote build-environment leg, over the class of
+# our own ssh to that machine (ssh_failure_class), the remote codes and our
+# deadline; the lowest rank wins, whatever the line order:
+#   10-60   ssh hostkey, signing, denied, protocol, unreachable, dropped
+#   100-    specific remote codes, in the order the remote script can emit
+#           them (each run stops at its first): tool-timeout, tool-nix,
+#           tool-jq, tool-git, secrets-* (the comparison runs only after
+#           its tools, and only for a bootstrap with --local-secrets),
+#           builders-unreadable, tool-cat, builders-file-unreadable,
+#           builder-destination-invalid, tool-ssh, then builder-hostkey,
+#           -signing, -denied, -protocol, -unreachable, -dropped, -timeout
+#   300     ssh timeout (exit 124/137)
+#   310-320 generic remote codes: builder-handshake, builder-failed
+#   400     an unrecognised or internal `preflight-error:` marker
+#   500-600 ssh handshake, failed
+remote_failure_rank() { # remote_failure_rank CLASS|code:CODE SECRETS_CHECKED
+  local order i=0 item
+  case $1 in
+    hostkey) echo 10 ;;
+    signing) echo 20 ;;
+    denied) echo 30 ;;
+    protocol) echo 40 ;;
+    unreachable) echo 50 ;;
+    dropped) echo 60 ;;
+    timeout) echo 300 ;;
+    code:builder-handshake) echo 310 ;;
+    code:builder-failed) echo 320 ;;
+    handshake) echo 500 ;;
+    failed) echo 600 ;;
+    code:*)
+      remote_preflight_message "${1#code:}" "$2" >/dev/null || {
+        echo 400
+        return
+      }
+      order="tool-timeout tool-nix tool-jq tool-git secrets-lock-unreadable
+        secrets-checkout-missing secrets-head-unreadable secrets-worktree-unreadable
+        secrets-stale-clean secrets-stale-dirty builders-unreadable tool-cat
+        builders-file-unreadable builder-destination-invalid tool-ssh
+        builder-hostkey builder-signing builder-denied builder-protocol
+        builder-unreachable builder-dropped builder-timeout"
+      for item in $order; do
+        [ "$item" != "${1#code:}" ] || {
+          echo $((100 + i))
+          return
+        }
+        i=$((i + 1))
+      done
+      echo 400
+      ;;
+    *) echo 400 ;;
   esac
 }
 
@@ -486,7 +676,8 @@ probe_agent() {
     status=$?
     case $status:$output in
       124:* | 137:*) preflight_fail "$endpoint: SSH agent unresponsive. Check for a pending touch or PIN prompt in the operator terminal." ;;
-      *"The agent has no identities"*) preflight_fail "$endpoint: SSH agent has no identities. Load the SSH keys into the effective agent." ;;
+      # A locked OpenSSH agent (ssh-add -x) normally lists no identities too.
+      *"The agent has no identities"*) preflight_fail "$endpoint: SSH agent has no identities (a locked agent also lists none). Unlock the effective agent or load the SSH keys into it." ;;
       *"agent refused operation"*) preflight_fail "$endpoint: SSH agent refused operation. Unlock the effective agent and retry." ;;
       *) preflight_fail "$endpoint: cannot query the effective SSH agent. Check that its socket is reachable." ;;
     esac
@@ -499,17 +690,23 @@ probe_agent() {
 
 probe_store() {
   local uri=$1 opts=$2 output
-  output=$(NIX_SSHOPTS="$(sshopts_string "${probe_opts[@]}" -T) $opts" \
+  output=$(NIX_SSHOPTS="$(sshopts_string "${store_probe_opts[@]}" -T) $opts" \
     bounded 12s nix store info --store "$uri" </dev/null 2>&1) ||
     ssh_probe_failure "store transport $uri" "$?" "$output"
 }
 
+# A bounded `ssh ... <builder> true` from the caller's context (this user's
+# ssh config, agent and known_hosts), not the Nix daemon's, which is what
+# really connects for a distributed build. -oControlMaster=no still uses a
+# warm master on the effective ControlPath, and that masks host-key and
+# authentication failures. A pass shows this caller can reach (and, with no
+# warm master, authenticate to) the builder; it does not prove the daemon can.
 probe_builders() {
   local builders machine endpoint identity output port
   local -a opts
   require_preflight_tools nix
   builders=$(bounded 4s nix config show builders </dev/null 2>/dev/null) ||
-    preflight_fail "cannot read Nix builders on the build machine. Check its Nix configuration."
+    preflight_fail_code builders-unreadable "cannot read Nix builders on the build machine. Check its Nix configuration."
   # Nix accepts semicolon/newline-delimited machine specs or @/path/to/file.
   case $builders in
     @*)
@@ -518,7 +715,7 @@ probe_builders() {
       [ -e "$machine" ] || return 0
       require_preflight_tools cat
       builders=$(bounded 4s cat -- "$machine" 2>/dev/null) ||
-        preflight_fail "cannot read the Nix builders file. Check its permissions."
+        preflight_fail_code builders-file-unreadable "cannot read the Nix builders file. Check its permissions."
       ;;
   esac
   while read -r machine _ identity _; do
@@ -538,7 +735,7 @@ probe_builders() {
     fi
     endpoint=${endpoint//[\[\]]/}
     [[ $endpoint =~ ^([a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?([a-zA-Z0-9_][a-zA-Z0-9._:%-]*|::[a-zA-Z0-9._:%-]*)$ ]] ||
-      preflight_fail "invalid SSH builder destination. Check the Nix builders configuration."
+      preflight_fail_code builder-destination-invalid "invalid SSH builder destination. Check the Nix builders configuration."
     require_preflight_tools ssh
     output=$(bounded 12s ssh "${probe_opts[@]}" -oControlMaster=no "${opts[@]+"${opts[@]}"}" -T "$endpoint" true </dev/null 2>&1 >/dev/null) ||
       ssh_probe_failure "builder $endpoint" "$?" "$output"
@@ -546,37 +743,45 @@ probe_builders() {
 }
 
 probe_secrets() {
-  local lock=$1 dir=$2 locked head dirty state
+  local lock=$1 dir=$2 locked head dirty state code
   require_preflight_tools jq git
   locked=$(bounded 4s jq -er 'getpath(["nodes", .nodes[.root].inputs["nix-secrets"], "locked", "rev"]) |
     select(type == "string" and test("^[a-f0-9]{40}$"))' "$lock" 2>/dev/null) ||
-    preflight_fail "cannot read the locked nix-secrets revision. Check flake.lock."
+    preflight_fail_code secrets-lock-unreadable "cannot read the locked nix-secrets revision. Check flake.lock."
   [ -e "$dir/.git" ] ||
-    preflight_fail "the local nix-secrets override is missing its Git checkout. Sync the checkout or use the locked input."
+    preflight_fail_code secrets-checkout-missing "the local nix-secrets override is missing its Git checkout. Sync the checkout or use the locked input."
   head=$(bounded 4s git -C "$dir" rev-parse --verify HEAD 2>/dev/null) ||
-    preflight_fail "cannot read the local nix-secrets HEAD. Check the checkout or use the locked input."
+    preflight_fail_code secrets-head-unreadable "cannot read the local nix-secrets HEAD. Check the checkout or use the locked input."
   dirty=$(bounded 4s git --no-optional-locks -C "$dir" status --porcelain --untracked-files=normal 2>/dev/null) ||
-    preflight_fail "cannot inspect the local nix-secrets worktree. Check the checkout or use the locked input."
-  state=clean
-  [ -z "$dirty" ] || state="has uncommitted changes"
+    preflight_fail_code secrets-worktree-unreadable "cannot inspect the local nix-secrets worktree. Check the checkout or use the locked input."
+  state=clean code=clean
+  [ -z "$dirty" ] || state="has uncommitted changes" code=dirty
   if [ "$head" != "$locked" ]; then
-    preflight_fail "stale local nix-secrets ($state): HEAD $head differs from locked $locked. Check out the locked revision or omit --local-secrets."
+    preflight_fail_code "secrets-stale-$code" "stale local nix-secrets ($state): HEAD $head differs from locked $locked. Check out the locked revision or omit --local-secrets."
   fi
-  printf 'preflight: local nix-secrets matches the locked revision (%s)\n' "$state" >&2
+  if [ "$preflight_remote" = true ]; then
+    printf 'preflight-ok: secrets-%s\n' "$code"
+  else
+    printf 'preflight: local nix-secrets matches the locked revision (%s)\n' "$state" >&2
+  fi
 }
 
 probe_remote_build_environment() {
-  local endpoint=$1 directory=$2 secrets=$3 output line status
+  local endpoint=$1 directory=$2 secrets=$3 output line status code class rank best=999 reason
   shift 3
   # Discover and reach distributed builders from the machine running the build.
   # For bootstrap, compare the synced checkout with that machine's flake.lock.
+  # Everything the remote side says is untrusted: only exact code lines are
+  # read, and only fixed local text (plus our own endpoint) is printed.
   output=$(
     {
-      declare -f bounded preflight_fail require_preflight_tools ssh_probe_failure probe_builders probe_secrets
+      declare -f bounded preflight_fail preflight_fail_code require_preflight_tools \
+        output_has_line ssh_failure_class ssh_failure_message ssh_probe_failure \
+        probe_builders probe_secrets
       declare -p probe_opts
       cat <<'REMOTE'
 set -euo pipefail
-preflight_error_prefix=preflight-error
+preflight_remote=true
 require_preflight_tools timeout nix
 if [ "$2" = true ]; then probe_secrets "$1/flake.lock" "$1/../nix-secrets"; fi
 probe_builders
@@ -584,21 +789,37 @@ REMOTE
     } | bounded 45s ssh "${probe_opts[@]}" "$@" -T "$endpoint" "bash -s -- $directory $secrets" 2>&1
   ) || {
     status=$?
-    # Ignore progress messages when extracting a failure from the remote
-    # script. A successful secrets comparison may already have logged one.
+    # The lowest remote_failure_rank wins (ok lines are ignored here).
+    class=$(ssh_failure_class "$status" "$output")
+    best=$(remote_failure_rank "$class" "$secrets")
+    reason="build environment on $endpoint: $(ssh_failure_message "$class")"
     while IFS= read -r line; do
-      case $line in preflight-error:\ *) preflight_fail "on $endpoint: ${line#preflight-error: }" ;; esac
+      case $line in "preflight-error: "*) ;; *) continue ;; esac
+      code=${line#preflight-error: }
+      rank=$(remote_failure_rank "code:$code" "$secrets")
+      [ "$rank" -lt "$best" ] || continue
+      best=$rank
+      if [ "$rank" -eq 400 ]; then
+        reason="on $endpoint: the remote preflight failed with an unrecognized error. Run the same preflight from an operator terminal."
+      else
+        reason="on $endpoint: $(remote_preflight_message "$code" "$secrets")"
+      fi
     done <<<"$output"
-    ssh_probe_failure "build environment on $endpoint" "$status" "$output"
+    preflight_fail "$reason"
   }
-  case $output in
-    *"local nix-secrets matches the locked revision (clean)"*)
-      printf 'preflight: local nix-secrets on %s matches the locked revision (clean)\n' "$endpoint" >&2
-      ;;
-    *"local nix-secrets matches the locked revision (has uncommitted changes)"*)
-      printf 'preflight: local nix-secrets on %s matches the locked revision (has uncommitted changes)\n' "$endpoint" >&2
-      ;;
-  esac
+  [ "$secrets" = true ] || return 0
+  while IFS= read -r line; do
+    case $line in
+      "preflight-ok: secrets-clean")
+        printf 'preflight: local nix-secrets on %s matches the locked revision (clean)\n' "$endpoint" >&2
+        return
+        ;;
+      "preflight-ok: secrets-dirty")
+        printf 'preflight: local nix-secrets on %s matches the locked revision (has uncommitted changes)\n' "$endpoint" >&2
+        return
+        ;;
+    esac
+  done <<<"$output"
 }
 
 probe_hostname() {
@@ -651,9 +872,9 @@ run_preflight() {
     probe_builders
     actual=$(probe_hostname "local hostname probe" 4s hostname)
   fi
+  # Never print the reply itself: it is remote (or command) output.
   if [ "$actual" != "$host" ]; then
-    [[ $actual =~ $host_re ]] || actual='(unexpected output)'
-    preflight_fail "hostname was '$actual', expected '$host'. Check the destination and --host."
+    preflight_fail "hostname probe did not report the expected hostname '$host'. Check the destination and --host."
   fi
   [ -z "$secrets_dir" ] || probe_secrets "$flake/flake.lock" "$secrets_dir"
   printf 'preflight: passed for %s\n' "$host" >&2
