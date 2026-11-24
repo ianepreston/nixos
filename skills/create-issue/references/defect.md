@@ -35,8 +35,13 @@ lines that carry the argument:
 
 Where the same fault recurred, group into episodes with durations (#662's two
 PlayFab episodes, ~1 min and ~6 min). Where ordering matters, make it a section
-of its own and state the conclusion — a symptom that appears *after* the first
-failure is an amplifier, not a trigger.
+of its own and state what the order establishes. Order is not a causal role: a
+symptom that appears *after* the first failure may be an amplifier or another
+consequence of a shared cause (in #662 both the relay drop and the DNS failures
+were consequences of a WAN outage). Give separate evidence before labelling an
+event trigger, amplifier or consequence, mark each claim observation,
+hypothesis or confirmed mechanism, and say what observation would confirm or
+refute it.
 
 ## Root cause
 
