@@ -33,11 +33,12 @@ record (no secret contents) into a run directory outside the git checkout:
              --require-clean instead requires `running` and no failed unit
   observe    only with --observe: repeat the post checks every --interval;
              the running closure must not change. The window runs on a clock
-             that counts runner suspend, cross-checked against wall time; a
-             check that starts more than one interval later than planned (a
-             sleeping laptop) fails the stage. The record holds wall-clock
-             started_at/finished_at, the true elapsed span and the largest gap
-             between checks
+             that counts runner suspend; a check that starts, or spends
+             suspended, more than its scheduled wait (at most one interval,
+             at least 2s) fails the stage (a sleeping laptop). Wall time is
+             a cross-check only. The record holds started_at/finished_at,
+             the true elapsed span, the largest gap and lateness, and slow
+             checks (see stage_observe)
   evidence   always written, also after a failure: evidence.json
 
 Every host command goes through the helper or through one read-only ssh that
@@ -96,6 +97,17 @@ SYSTEM_STATES = {
 FAILED_UNIT_MARK_RE = re.compile(r"(?:[0-9a-f]{32}|-) [1-9][0-9]*")
 UNIT_NAME_RE = re.compile(
     r"[A-Za-z0-9:_.@\\-]+\.(?:service|socket|device|mount|automount|swap|target|path|timer|slice|scope)"
+)
+# Keys remote.sh can name in `VALIDATE-READ-FAILED <key>`.
+READ_KEYS = (
+    "current_system",
+    "booted_system",
+    "system_profile",
+    "system_state",
+    "failed_units",
+    "failed_unit_mark",
+    "upgrade_service",
+    "upgrade_timer_next",
 )
 # Single-valued keys of a state read; each must appear at most once.
 STATE_KEYS = (
@@ -167,38 +179,51 @@ def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
 
 
-def span_clock():
+def span_clock(platform=sys.platform, clocks=time):
     """(name, read) of a monotonic clock that keeps counting while the runner
     is suspended (#1090): CLOCK_BOOTTIME on Linux, CLOCK_MONOTONIC_RAW on
     macOS (where time.monotonic() is mach_absolute_time and stops during
     sleep; Linux's CLOCK_MONOTONIC_RAW stops too, so it is not used there).
-    Elsewhere, time.monotonic(); the observe stage also compares wall time,
-    so a suspend still shows up as a gap."""
-    if sys.platform.startswith("linux") and hasattr(time, "CLOCK_BOOTTIME"):
-        name, clock = "CLOCK_BOOTTIME", time.CLOCK_BOOTTIME
-    elif sys.platform == "darwin" and hasattr(time, "CLOCK_MONOTONIC_RAW"):
-        name, clock = "CLOCK_MONOTONIC_RAW", time.CLOCK_MONOTONIC_RAW
+    If neither is available or readable: ("monotonic", time.monotonic), the
+    fallback stage_observe records as `suspend_aware: false`."""
+    if platform.startswith("linux"):
+        name = "CLOCK_BOOTTIME"
+    elif platform == "darwin":
+        name = "CLOCK_MONOTONIC_RAW"
     else:
-        return "monotonic", time.monotonic
+        return "monotonic", clocks.monotonic
+    clock = getattr(clocks, name, None)
     try:
-        time.clock_gettime(clock)
-    except OSError:
-        return "monotonic", time.monotonic
-    return name, lambda: time.clock_gettime(clock)
+        if clock is None:
+            raise OSError
+        clocks.clock_gettime(clock)
+    except (OSError, ValueError):
+        return "monotonic", clocks.monotonic
+    return name, lambda: clocks.clock_gettime(clock)
+
+
+def wall_iso(seconds):
+    return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat(
+        timespec="seconds"
+    )
 
 
 # The observe stage's clocks, module-level so the tests can replace them:
-# SPAN_CLOCK counts suspend, AWAKE_CLOCK (time.monotonic) may not, WALL_CLOCK
-# is time.time.
+# SPAN_CLOCK counts suspend, AWAKE_CLOCK (time.monotonic) does not on Linux
+# or macOS, WALL_CLOCK (time.time) is a cross-check only.
 SPAN_CLOCK_NAME, SPAN_CLOCK = span_clock()
 AWAKE_CLOCK = time.monotonic
 WALL_CLOCK = time.time
 SLEEP = time.sleep
-# A sleep is cut into slices this long and the deadline re-read after each,
-# because time.sleep() itself may not count a suspend.
-SLEEP_SLICE = 5.0
-# Smallest tolerance for a late observation check (see stage_observe).
+# A wait is cut into slices this long and the deadline re-read after each:
+# time.sleep() itself may not count a suspend, so after a resume it can run
+# on for at most one slice.
+SLEEP_SLICE = 1.0
+# Smallest tolerance for a late or suspended observation check.
 MIN_LATE_TOLERANCE = 2
+# Largest accepted duration for any option (beyond it float arithmetic on
+# deadlines can overflow); --interval is also capped at MAX_OBSERVE.
+MAX_DURATION = 7 * 24 * 3600
 
 
 def say(msg):
@@ -247,7 +272,12 @@ def duration(text):
         raise argparse.ArgumentTypeError(
             f"invalid duration {text!r} (use N, Ns, Nm or Nh)"
         )
-    return int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
+    seconds = int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600}[m.group(2)]
+    if seconds > MAX_DURATION:
+        raise argparse.ArgumentTypeError(
+            f"duration {text!r} is longer than {MAX_DURATION}s"
+        )
+    return seconds
 
 
 class Once(argparse.Action):
@@ -328,6 +358,8 @@ def parse_args(argv):
     a.switch_timeout = 7200 if a.switch_timeout is None else a.switch_timeout
     if a.observe > MAX_OBSERVE:
         p.error(f"--observe is capped at {MAX_OBSERVE}s")
+    if a.interval > MAX_OBSERVE:
+        p.error(f"--interval is capped at {MAX_OBSERVE}s")
     if (
         a.interval < 1
         or a.probe_timeout < 1
@@ -787,7 +819,7 @@ class Validation:
             *extra,
         ]
 
-    def remote(self, stage, command, timeout, log_filter=None):
+    def remote(self, stage, command, timeout, log_filter=None, reads=False):
         """One read-only ssh to the target; the script asserts the hostname
         before anything else. Returns stdout lines."""
         nonce = nonce_source.token_hex(16)
@@ -814,11 +846,23 @@ class Validation:
                 f"{self.target} did not report hostname {self.host}; stopping (inspect the ssh route)",
                 rc,
             )
-        failed = [x.split()[1] for x in lines if x.startswith("VALIDATE-READ-FAILED ")]
-        if failed:
-            raise StageFailed(
-                f"required read '{failed[0]}' failed on {self.host}; stopping", rc
-            )
+        # Only a state read can report a failed read. The key is matched
+        # against a fixed list and never copied: the persisted text comes
+        # from this file, not from remote output (a probe can print anything).
+        if reads:
+            failed = [
+                line.split()[1:2]
+                for line in lines
+                if line.split()[:1] == ["VALIDATE-READ-FAILED"]  # fmt: skip
+            ]
+            if failed:
+                key = next((k for k in READ_KEYS if [k] == failed[0]), None)
+                raise StageFailed(
+                    f"required read '{key}' failed on {self.host}; stopping"
+                    if key
+                    else f"a required read failed on {self.host} (unrecognised key); stopping",
+                    rc,
+                )
         # A marker alone is not enough: ssh itself must succeed too.
         if rc != 0:
             raise StageFailed(
@@ -829,7 +873,11 @@ class Validation:
 
     def read_state(self, stage):
         rc, lines, nonce = self.remote(
-            stage, lambda _n: "state", READ_TIMEOUT, log_filter=log_safe_state
+            stage,
+            lambda _n: "state",
+            READ_TIMEOUT,
+            log_filter=log_safe_state,
+            reads=True,
         )
         # The snapshot is everything before its one end marker; a missing or
         # repeated marker, or any output after it, makes it ambiguous.
@@ -1267,96 +1315,172 @@ class Validation:
         return problems
 
     def stage_observe(self):
-        """Repeat the post checks every interval until the window ends.
+        """Repeat the post checks every interval until the window ends (#1090).
 
-        The window, the waits and every reported span run on a clock that
-        counts runner suspend (SPAN_CLOCK), each span cross-checked against
-        wall time (the larger wins). A check that starts more than one
-        interval (at least MIN_LATE_TOLERANCE s) later than planned, or that
-        spends longer than that suspended itself, fails the stage: the host
-        went unsampled for that long (#1090). Planned is one
-        interval after the previous check began, or that check's own awake
-        duration if it ran longer, so slow probes are not a gap but a suspend
-        during a check is."""
+        The window, the waits and every recorded span run on SPAN_CLOCK, which
+        counts runner suspend. Check n is due `min(n * interval, window)`
+        after the window starts, or when check n-1 ends if that ran longer.
+        Its tolerance is the wait it was scheduled for: at most one interval,
+        at least MIN_LATE_TOLERANCE. The stage fails closed, before running
+        the check, when a check starts more than that after it was due, and
+        after the check when it spent more than that suspended (its
+        SPAN_CLOCK span beyond its AWAKE_CLOCK time). An awake but slow check
+        is recorded (`slow_checks`, `max_check_s`), never a failure. Timing
+        fields are updated on every exit path.
+
+        Wall time is a cross-check only: a step is recorded (`wall_skew_s`)
+        and warned about, and never changes the verdict or the span. The
+        exception is the fallback (`suspend_aware: false`, SPAN_CLOCK is
+        time.monotonic), where wall time is the only suspend signal: wall
+        time gained beyond the tolerance then fails closed, a backward wall
+        step can hide a suspend, and a suspend inside a check is missed if
+        that platform's time.monotonic counts suspend."""
         a = self.a
-        tolerance = max(a.interval, MIN_LATE_TOLERANCE)
+        aware = SPAN_CLOCK_NAME != "monotonic"
         record = {
             "requested_s": a.observe,
             "interval_s": a.interval,
             "clock": SPAN_CLOCK_NAME,
-            "started_at": now(),
+            "suspend_aware": aware,
+            "started_at": None,
             "finished_at": None,
             "iterations": 0,
             "elapsed_s": 0,
-            "max_gap_s": 0,
-            "max_late_s": 0,
-            "late_tolerance_s": tolerance,
+            "max_gap_s": None,
+            "max_check_s": 0,
+            "slow_checks": 0,
+            "max_late_s": 0.0,
+            "late_tolerance_s": None,
+            "wall_skew_s": 0,
             "ok": False,
         }
         self.evidence["observe"] = record
         baseline = self.evidence["post"].get("current_system")
-        start, start_wall = SPAN_CLOCK(), WALL_CLOCK()
+        t0 = SPAN_CLOCK()
+        w0 = WALL_CLOCK()
+        record["started_at"] = wall_iso(w0)
 
-        def since(span, wall):
-            return max(SPAN_CLOCK() - span, WALL_CLOCK() - wall)
+        def read():
+            span, wall = SPAN_CLOCK(), WALL_CLOCK()
+            # wall time gained on SPAN_CLOCK since the window started
+            return span, (wall - w0) - (span - t0)
 
-        # The previous check's start (span, wall) and its awake duration; the
-        # window start stands in for a zero-length check 0.
-        prev, prev_awake = (start, start_wall), 0.0
+        def unseen(skew, before):
+            """Suspend only wall time can show (the fallback)."""
+            return 0.0 if aware else max(0.0, skew - before)
+
+        def note_late(value, tolerance):
+            if value > record["max_late_s"]:
+                record["max_late_s"] = round(value, 3)
+                record["late_tolerance_s"] = tolerance
+
+        def wait_late(wait):
+            due, tolerance, before = wait
+            t, skew = read()
+            late = t - due + unseen(skew, before)
+            note_late(late, tolerance)
+            return late
+
+        def check_done(check):
+            """Close the timing of a check (also one that raised); returns
+            (seconds suspended, span)."""
+            t, awake, tolerance, before = check
+            awake_s = AWAKE_CLOCK() - awake  # read before the span clock, so a
+            t_end, skew = read()  # suspend between the two reads counts
+            span = t_end - t
+            stalled = span - awake_s + unseen(skew, before)
+            record["max_check_s"] = max(record["max_check_s"], round(span))
+            if awake_s > a.interval:
+                record["slow_checks"] += 1
+            note_late(stalled, tolerance)
+            return stalled, span
+
+        wait = check = None
+        prev_start, ready = None, t0  # last check's start; when the next may start
         try:
             while True:
-                due = min(a.interval * (record["iterations"] + 1), a.observe)
-                while (remaining := due - since(start, start_wall)) > 0:
-                    SLEEP(min(remaining, SLEEP_SLICE))
-                gap = since(*prev)
-                late = gap - max(a.interval, prev_awake)
-                prev, awake = (SPAN_CLOCK(), WALL_CLOCK()), AWAKE_CLOCK()
+                n = record["iterations"] + 1
+                due = max(t0 + min(a.interval * n, a.observe), ready)
+                ref = t0 if prev_start is None else prev_start
+                tolerance = max(MIN_LATE_TOLERANCE, min(a.interval, due - ref))
+                wait = (due, tolerance, read()[1])
+                while True:
+                    t, skew = read()
+                    if t >= due:
+                        break
+                    SLEEP(min(due - t, SLEEP_SLICE))
+                # That one reading is both the lateness measure and the check
+                # start: nothing between them goes unmeasured.
+                late = t - due + unseen(skew, wait[2])
+                note_late(late, tolerance)
+                wait = None
+                if late > tolerance:
+                    self.observe_failed(
+                        record,
+                        n,
+                        None,
+                        [
+                            f"check would start {late:.3f}s after it was due (tolerance {tolerance}s); "
+                            "the host went unsampled, was the runner suspended?"
+                        ],
+                    )
+                if prev_start is not None:
+                    record["max_gap_s"] = max(
+                        record["max_gap_s"] or 0, round(t - prev_start)
+                    )
+                check = (t, AWAKE_CLOCK(), tolerance, skew)
                 record["last_probes"] = []
                 state, problems = self.health("observe", record["last_probes"])
-                prev_awake = AWAKE_CLOCK() - awake
-                # Time this check spent suspended (its span beyond its awake
-                # duration): caught here, so the last check counts too.
-                stalled = since(*prev) - prev_awake
-                record["iterations"] += 1
-                record["elapsed_s"] = round(since(start, start_wall))
-                record["max_gap_s"] = max(record["max_gap_s"], round(gap))
-                record["max_late_s"] = max(
-                    record["max_late_s"], round(max(late, stalled, 0))
-                )
+                stalled, span = check_done(check)
+                check = None
+                record["iterations"] = n
+                prev_start, ready = t, t + span
                 if state.get("current_system") != baseline:
                     problems.insert(0, "the running system changed during observation")  # fmt: skip
-                if late > tolerance:
+                if stalled > tolerance:
                     problems.append(
-                        f"check started {round(gap)}s after the previous one (interval {a.interval}s, "
-                        f"{round(late)}s late); the host went unsampled, was the runner suspended?"
-                    )
-                elif stalled > tolerance:
-                    problems.append(
-                        f"check spanned {round(since(*prev))}s but ran only {round(prev_awake)}s; "
+                        f"check spent {stalled:.3f}s suspended (tolerance {tolerance}s); "
                         "the host went unsampled, was the runner suspended?"
                     )
                 if problems:
-                    self.observe_failed(record, state, problems)
-                if since(start, start_wall) >= a.observe:
+                    self.observe_failed(record, n, state, problems)
+                if read()[0] - t0 >= a.observe:
                     break
         finally:
-            record["finished_at"] = now()
+            if check:
+                check_done(check)
+            elif wait:
+                wait_late(wait)
+            t, skew = read()
+            elapsed = max(0.0, t - t0)
+            record["elapsed_s"] = round(elapsed)
+            # Anchored on the start, so it can never precede it.
+            record["finished_at"] = wall_iso(w0 + elapsed)
+            record["wall_skew_s"] = round(skew)
+            if aware and abs(skew) > MIN_LATE_TOLERANCE:
+                say(
+                    f"WARNING: observe: the wall clock moved {record['wall_skew_s']}s against "
+                    f"{SPAN_CLOCK_NAME} during the window; spans are from {SPAN_CLOCK_NAME}"
+                )
         record["ok"] = True
-        return (
-            f"{record['iterations']} check(s) over {record['elapsed_s']}s passed "
-            f"(largest gap {record['max_gap_s']}s, interval {a.interval}s)"
-        )
+        summary = f"{record['iterations']} check(s) over {record['elapsed_s']}s passed (interval {a.interval}s"
+        if record["max_gap_s"] is not None:
+            summary += f", largest gap {record['max_gap_s']}s"
+        if record["slow_checks"]:
+            summary += f", {record['slow_checks']} check(s) slower than the interval, longest {record['max_check_s']}s"
+        if not aware:
+            summary += ", suspend detection by wall clock only"
+        return summary + ")"
 
-    def observe_failed(self, record, state, problems):
-        record["last"] = {
-            "system_state": state.get("system_state"),
-            "failed_unit_count": state["failed_unit_count"],
-            "new_failed_units": self.evidence["failed_units"]["new"],
-            "changed_failed_units": self.evidence["failed_units"]["changed"],
-        }
-        raise StageFailed(
-            f"observation check {record['iterations']}: " + "; ".join(problems)
-        )
+    def observe_failed(self, record, n, state, problems):
+        if state is not None:
+            record["last"] = {
+                "system_state": state.get("system_state"),
+                "failed_unit_count": state["failed_unit_count"],
+                "new_failed_units": self.evidence["failed_units"]["new"],
+                "changed_failed_units": self.evidence["failed_units"]["changed"],
+            }
+        raise StageFailed(f"observation check {n}: " + "; ".join(problems))
 
     # --- driver ---------------------------------------------------------------
     def run(self):

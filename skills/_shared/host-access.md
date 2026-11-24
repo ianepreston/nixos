@@ -301,10 +301,15 @@ the switch, post-switch checks (expected closure running, no failed unit that
 is new or changed state since the baseline, `is-system-running` = running or,
 with only tolerated pre-existing failures, degraded; each `--probe` command
 exits 0 on the target) and an optional `--observe <duration>` window. The
-window runs on a clock that counts runner sleep, cross-checked against wall
-time; a check that starts or runs more than one interval late (a sleeping
-laptop) fails the stage, and the `observe` record carries wall-clock
-`started_at`/`finished_at`, the true `elapsed_s` and `max_gap_s`. A unit
+window runs on a clock that counts runner sleep (`CLOCK_BOOTTIME` on Linux,
+`CLOCK_MONOTONIC_RAW` on macOS); a check that starts more than its scheduled
+wait (at most one interval, at least 2s) late, or spends that long suspended,
+fails the stage (a sleeping laptop). Wall time is only a cross-check: a clock
+step is recorded as `wall_skew_s`, except on the `time.monotonic` fallback
+(`suspend_aware: false`), where it is the only suspend signal. The `observe`
+record (evidence schema `nixos-validate-host/3`) carries `started_at`/
+`finished_at`, the true `elapsed_s`, `max_gap_s`, `max_late_s` and
+`slow_checks`. A unit
 already failing before the run is tolerated but reported as a warning and in
 the evidence's `failed_units`; `-- --require-clean` fails on any failed unit
 or a non-running system instead (already at pre-state, before check or
