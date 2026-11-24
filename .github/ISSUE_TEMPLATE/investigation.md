@@ -25,8 +25,15 @@ recurred. -->
 ## What the ordering tells us
 
 <!-- OPTIONAL but usually the point. Where several symptoms co-occur, establish
-which precedes which, and say plainly what that rules in or out — a symptom
-that appears after the first failure is an amplifier, not a trigger. -->
+which precedes which, and say plainly what that rules in or out. Order alone
+does not assign roles: a later symptom may be an amplifier, or just another
+consequence of a shared cause. Before calling an event a trigger, amplifier or
+consequence, cite separate evidence for that role, consider a shared upstream
+cause, and label each claim an observation, a hypothesis, or a confirmed
+mechanism. For each causal claim, say what observation would confirm or refute
+it. Example (#662): the relay drop preceded the recorded DNS failures, but
+order did not show a role; planned router maintenance and tailscaled losing
+upstream in the same seconds showed both were consequences of the WAN outage. -->
 
 ## Ruled out
 

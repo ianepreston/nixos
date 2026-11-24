@@ -25,18 +25,32 @@ reconstructing causality needs the gaps between lines, not just the lines.
 ## What the ordering tells us
 
 Usually the analytical core. Establish which symptom precedes which, then state
-what that rules in or out:
+what that rules in or out. Order is evidence about sequence, not about role:
 
-> 1. **The relay drop comes first.** `PlayFab network error ... code '63'` at
->    16:50:41 precedes any DNS failure. So DNS is not the trigger.
-> 2. **DNS then fails during recovery**, which is what prolongs it... So the DNS
->    failures are a secondary amplifier, not the root cause — but they are the
->    difference between a momentary blip and six minutes off the relay. (#662)
+> 1. **The relay drop is recorded first.** `PlayFab network error ... code '63'`
+>    at 16:50:41 precedes the recorded DNS failures.
+> 2. **DNS failures are recorded after it.** That order alone shows only
+>    sequence in the logs. (#662, as first written, inferred a "secondary
+>    amplifier" from it.)
 
-Getting this backwards is the expensive failure mode. #662's own framing was
-later corrected in its closing comment — with the WAN absent, both symptoms
-were consequences of the same cause, and "DNS prolonged recovery" had the
-causality backwards.
+Getting this wrong is the expensive failure mode. #662's closing comment
+corrected it, and not from ordering: the router had been taken down for planned
+maintenance, and tailscaled lost upstream in the same seconds while the NIC
+link never flapped. With the WAN absent, both the relay drop and the DNS
+failures (DNS is the router) were consequences of one outage, and "DNS
+prolonged recovery" had the causality backwards.
+
+Before labelling any event a trigger, amplifier or consequence:
+
+- Give separate evidence for the role, beyond its timestamp (e.g. the symptom
+  persists after the suspected cause is removed, or clears when it is).
+- Explicitly consider a shared upstream cause of both symptoms.
+- Mark each claim as an **observation** (seen directly), a **hypothesis**
+  (consistent with the data, untested) or a **confirmed mechanism** (a
+  discriminating observation was made).
+- Say what observation would confirm or refute it — in #662, whether the WAN
+  link was down for the whole window, checked from the gateway rather than
+  from the container.
 
 ## Ruled out
 

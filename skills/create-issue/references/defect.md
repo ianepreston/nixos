@@ -33,10 +33,18 @@ lines that carry the argument:
 16:56:43  Session ... with join code 555295 ... is active   <- what the relay serves
 ```
 
-Where the same fault recurred, group into episodes with durations (#662's two
-PlayFab episodes, ~1 min and ~6 min). Where ordering matters, make it a section
-of its own and state the conclusion — a symptom that appears *after* the first
-failure is an amplifier, not a trigger.
+Where the same fault recurred, group into episodes with durations (#662's
+Sep 18 six-minute window was two separate recoveries, 1m46s and 2m01s). Where
+ordering matters, make it a section of its own and state what the order
+establishes. Order is not a causal role: a symptom that appears *after* the
+first failure may be an amplifier or another consequence of a shared cause.
+Give separate evidence before labelling an event trigger, amplifier or
+consequence, **explicitly consider whether one upstream cause explains both**,
+mark each claim observation, hypothesis or confirmed mechanism, and say what
+observation would confirm or refute it. In #662 the relay drop preceded the
+recorded DNS failures, but that order did not settle anything; planned router
+maintenance and tailscaled losing upstream in the same seconds showed both were
+consequences of the WAN outage.
 
 ## Root cause
 
