@@ -25,7 +25,9 @@ discovery adapters are thin: `.claude/skills/<name>/SKILL.md` carries a verbatim
 copy of the canonical frontmatter (Claude Code reads `name`/`description` from
 it) followed by an `@` import of the workflow, and `.agents/skills/<name>` is a
 directory symlink for Codex. Add or update both when adding a workflow or
-changing its description; never duplicate the body.
+changing its description; never duplicate the body. `scripts/skill-adapters.py`
+(the `skill-adapters` hook, run by `task check`) fails with the fix when either
+set is missing, orphaned, stale or mis-targeted.
 Local runner state (settings, caches, worktrees) stays untracked.
 
 ## PII never goes in git or GitHub
