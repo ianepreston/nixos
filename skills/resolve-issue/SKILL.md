@@ -159,7 +159,7 @@ Only checks that ran successfully count as passes.
 
 A fix usually orphans something elsewhere: a comment describing the bug as
 open, a workaround now dead, an `AGENTS.md` or `docs/agents/` gotcha that no longer applies, a
-recovery task or `expectedPreservedDirs` entry that should move with it, a
+`myAppState` or `myRecovery.apps` declaration that should move with it, a
 sibling module that copy-pasted the same mistake.
 
 ```sh

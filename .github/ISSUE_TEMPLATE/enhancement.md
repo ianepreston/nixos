@@ -41,8 +41,10 @@ a different question from how the behaviour is wired. -->
 ## Work
 
 <!-- Checklist, one line per edit, naming the file. Include the obligations
-this repo attaches to the shape you're building: a recovery:<app> task and
-expectedPreservedDirs for a new app, a task hashes run after a pin edit,
+this repo attaches to the shape you're building: app-owned myAppState and
+myRecovery.apps.<app> declarations for a new app (the preservation, backup and
+recovery consumers are generated from them; see docs/agents/app-state.md), a
+task hashes run after a pin edit,
 restartUnits placement, comments that need rewriting because their rationale
 changed. -->
 
@@ -51,7 +53,7 @@ changed. -->
 ## No change needed
 
 <!-- Verified-and-listed, so it isn't re-derived during implementation. Secrets,
-preservation/backups, recovery tasks, alert rules — whichever you checked. Say
+preservation/backups (myAppState), recovery (myRecovery.apps), alert rules — whichever you checked. Say
 what you checked, not just "nothing else". -->
 
 ## What must not change
