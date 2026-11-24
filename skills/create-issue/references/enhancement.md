@@ -74,7 +74,8 @@ obligations for the shape you're building, since they are easy to forget and
 - a new app under `modules/apps/` declares `myAppState.<app>` (preservation,
   backup) and `myRecovery.apps.<app>` (restore metadata) in its own module.
   Name both as Work items and list the generated consumers to validate
-  (preservation entry, restic path, recovery manifest entry). Don't list a
+  (preservation entry, restic path, the generated `expectedPreservedDirs`
+  guard, recovery manifest entry). Don't list a
   per-app Task registry entry, a `recovery:all` edit or a hand-maintained
   `expectedPreservedDirs`: those are derived. Schemas and the `kind` table live
   in [docs/agents/app-state.md](../../../docs/agents/app-state.md); link it,
