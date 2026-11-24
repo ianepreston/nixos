@@ -1649,9 +1649,20 @@ class ObserveClock(unittest.TestCase):
         self.delay_after_check = {}  # nth check -> awake delay before the next read
         self.wall_step_in_check = {}  # nth check -> wall clock step
         self.raise_in_check = {}  # nth check -> exception
-        self.vh.CLOCK = lambda: self.clock
+        self.break_clock_on_raise = False
+        self.clock_fails = None  # predicate on the fake time: CLOCK raises
+        self.clock_broken = False  # once broken, every later read raises
+        self.clock_reads_after_break = 0
+        self.vh.CLOCK = self.read_clock
         self.vh.WALL_CLOCK = lambda: self.wall
         self.vh.SLEEP = self.sleep
+
+    def read_clock(self):
+        if self.clock_broken or (self.clock_fails and self.clock_fails(self.clock)):
+            self.clock_reads_after_break += self.clock_broken
+            self.clock_broken = True
+            raise OSError(22, "Invalid argument")
+        return self.clock
 
     def advance(self, seconds):
         self.clock += seconds
@@ -1669,6 +1680,8 @@ class ObserveClock(unittest.TestCase):
         self.advance(self.check_s + self.suspend_in_check.get(n, 0.0))
         self.wall += self.wall_step_in_check.get(n, 0.0)
         if n in self.raise_in_check:
+            if self.break_clock_on_raise:
+                self.clock_broken = True
             raise self.raise_in_check[n]
         # an awake scheduling delay after the check, before its end read
         self.advance(self.delay_after_check.get(n, 0.0))
@@ -1688,7 +1701,6 @@ class ObserveClock(unittest.TestCase):
             health=self.health,
         )
         v.observe_failed = lambda *args: self.vh.Validation.observe_failed(v, *args)
-        v.observe_check_end = lambda *args: self.vh.Validation.observe_check_end(v, *args)  # fmt: skip
         return v
 
     def observe(self, observe=180, interval=30):
@@ -1727,8 +1739,9 @@ class ObserveClock(unittest.TestCase):
         self.assertEqual(rec["tolerance_s"], 30)
         self.assertEqual(rec["clock"], self.vh.CLOCK_NAME)
         self.assertEqual(self.wall_span(rec), 180)
-        for flag in ("slow_check", "cadence_warning", "wall_step"):
+        for flag in ("slow_check", "cadence_warning", "wall_step", "clock_fallback"):
             self.assertIs(rec[flag], False, flag)
+        self.assertIsNone(rec["failed_check"])
         self.assertEqual(summary, "6 check(s) over 180s passed (interval 30s, largest gap 30s)")  # fmt: skip
 
     def test_suspend_during_a_wait_fails_and_records_the_wall_span(self):
@@ -1819,8 +1832,67 @@ class ObserveClock(unittest.TestCase):
         self.assertEqual(rec["elapsed_s"], 480)
         self.assertEqual(self.wall_span(rec), 480)
         self.assertGreaterEqual(rec["max_check_s"], 300)
-        self.assertEqual(rec["iterations"], 5)
-        self.assertEqual(rec["max_gap_s"], 30)  # check 6 never completed
+        self.assertEqual(rec["iterations"], 6)  # check 6 started
+        self.assertEqual(rec["failed_check"], 6)
+        self.assertEqual(rec["max_gap_s"], 30)
+
+    def test_a_check_that_raises_counts_from_its_start(self):
+        # starts at 30s and 80s (20s late, tolerated); check 2 then raises
+        self.suspend_in_sleep = {59: 20.5}  # the slice from 58.5s
+        self.raise_in_check = {2: self.vh.StageFailed("required read failed")}
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertEqual(self.starts, [30.0, 80.0])
+        self.assertEqual(rec["iterations"], 2)
+        self.assertEqual(rec["failed_check"], 2)
+        self.assertEqual(rec["max_gap_s"], 50)
+        self.assertIs(rec["cadence_warning"], True)
+
+    def test_a_failing_clock_read_falls_back_to_the_wall_clock(self):
+        cases = {
+            "first wait": lambda t: t >= 10,
+            "mid-window wait": lambda t: t >= 45,
+            "check start": lambda t: t >= 60,  # the read that ends wait 2
+            "check end": lambda t: 30 < t < 31,  # check 1's end read
+        }
+        for where, fails in cases.items():
+            with self.subTest(where=where):
+                self.setUp()
+                self.clock_fails = fails
+                summary, rec = self.observe()
+                self.assert_passed(summary, rec)
+                self.assertTrue(self.clock_broken)
+                self.assertEqual(self.clock_reads_after_break, 0)  # never re-read
+                self.assertEqual(rec["clock"], "wall")
+                self.assertIs(rec["clock_fallback"], True)
+                # the wall clock carries on from the last boundary
+                self.assertEqual(rec["iterations"], 6)
+                self.assertEqual(rec["elapsed_s"], 180)
+                self.assertEqual(rec["max_gap_s"], 30)
+                self.assertEqual(rec["max_late_s"], 0)
+                self.assertEqual(self.wall_span(rec), 180)
+                self.assertTrue(summary.endswith(", wall clock)"))
+
+    def test_a_clock_failing_in_the_finalizer_still_leaves_timing(self):
+        self.suspend_in_check = {2: 10.0}
+        self.raise_in_check = {2: self.vh.StageFailed("ssh dropped")}
+        self.break_clock_on_raise = True
+        err, rec = self.observe()
+        self.assertIsInstance(err, self.vh.StageFailed)
+        self.assertEqual(err.summary, "ssh dropped")  # not the clock error
+        self.assertEqual(rec["clock"], "wall")
+        self.assertIs(rec["clock_fallback"], True)
+        self.assertEqual(rec["failed_check"], 2)
+        self.assertEqual(rec["elapsed_s"], 70)  # check 2: 60s + 10.5s
+        self.assertEqual(self.wall_span(rec), 70)
+        self.assertEqual(self.clock_reads_after_break, 1)  # the one failing read
+
+    def test_the_initial_clock_read_failing_runs_on_the_wall_clock(self):
+        self.clock_broken = True
+        summary, rec = self.observe()
+        self.assert_passed(summary, rec)
+        self.assertEqual(rec["clock"], "wall")
+        self.assertEqual(rec["elapsed_s"], 180)
 
     def test_an_interrupted_wait_leaves_truthful_timing(self):
         def interrupted(seconds):
