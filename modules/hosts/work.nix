@@ -24,6 +24,12 @@ in
       {
         system.primaryUser = hostSpec.username;
 
+        # GUI apps inherit this after the session-environment agent runs.
+        # Login items have no ordering guarantee: launch Omnigent.app after
+        # `launchctl getenv DATABRICKS_CONFIG_PROFILE` reports DEFAULT, or
+        # quit and reopen it if it started earlier at login.
+        launchd.user.envVariables.DATABRICKS_CONFIG_PROFILE = "DEFAULT";
+
         # One model on demand; 48 GB is shared with desktop applications.
         # Keep the initial disk and context budget conservative (#884).
         myLlamaCpp = {

@@ -6,6 +6,8 @@
 {
   flake.modules.darwin.base =
     {
+      config,
+      lib,
       pkgs,
       hostSpec,
       ...
@@ -36,6 +38,23 @@
       };
 
       programs.zsh.enable = true;
+
+      # Pinned nix-darwin applies launchd.user.envVariables only on activation,
+      # not at login. Reapply them in the GUI session after each reboot.
+      launchd.user.agents.session-environment = lib.mkIf (config.launchd.user.envVariables != { }) {
+        script = ''
+          set -e
+          ${lib.concatStringsSep "\n" (
+            lib.mapAttrsToList (
+              name: value: "/bin/launchctl setenv ${lib.escapeShellArg name} ${lib.escapeShellArg value}"
+            ) config.launchd.user.envVariables
+          )}
+        '';
+        serviceConfig = {
+          RunAtLoad = true;
+          LimitLoadToSessionType = "Aqua";
+        };
+      };
 
       # ========== Home-Manager ==========
       home-manager = {
