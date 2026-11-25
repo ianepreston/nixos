@@ -57,14 +57,35 @@ technical deployment gate. Do not claim sandboxing or permission enforcement.
   advice; else the last model known to work; else a fallback not recorded
   unavailable (`system.ai.gpt-6-2-sol` for `codex`,
   `system.ai.claude-opus-5-5` for `claude_code`), else the worker default.
+- **How the router really behaves** (read from Omnigent 0.22.0, observed in
+  batch 11). One LLM judge call per **task**, however many `agents` you list:
+  the entries are merged into one menu and the judge picks the worker **and**
+  the model, so you get one recommendation, not one per agent. The
+  first/middle/last tiering is only a prompt instruction; code does not
+  enforce it, and identical-shaped tasks can land on different ladder
+  positions. The rationale is the judge's own prose ("most capable" means
+  "last entry in my list", not a capability finding) and is not rewritten
+  after clamping. The judge sees only the first 4000 characters of `task`,
+  never `purpose` or read-only status, and the `tier` field the tool
+  description mentions is not returned.
+  Consequences: (1) to get advice for a specific worker, send a **separate
+  call with only that agent** (one task per call or per worker); listing
+  several workers asks the router to choose among them. (2) Do not read the
+  rationale as a capability claim; check that the returned model is in the
+  ladder you passed and that its position matches the work (first = simple,
+  middle = moderate, last = complex). Record any mismatch in `plan` routing
+  notes, and apply the verified-override precedence above instead of
+  accepting a pick that contradicts the task (a security-sensitive or
+  correctness review on the cheapest entry, or a trivial edit on the last).
+  (3) Put complexity and risk in the first lines of `task`, since only the
+  head is judged.
 - Pass the worker's ladder below as that agent entry's `models` list on every
-  `sys_advise_models` call, cheapest first. The built-in router picks the
-  first entry for simple work, the middle for moderate and the last for
-  complex, and clamps an id it garbles to the FIRST entry (observed: a
-  `claude-opus-5.5` pick clamped to `claude-fable-5`), so a short ordered list
-  keeps picks and mistakes cheap. Drop ids recorded unavailable or not
-  reported by `sys_list_models` for that worker; with fewer than two left,
-  omit `models`.
+  `sys_advise_models` call, cheapest first. A short ordered list keeps picks
+  cheap, and the router clamps an unknown id to the FIRST entry of the merged
+  menu (observed: a `claude-opus-5.5` pick clamped to `claude-fable-5`). Drop
+  ids recorded unavailable or not reported by `sys_list_models` for that
+  worker; with fewer than two left, omit `models`. An empty list means
+  discovery, not "no models".
   - `claude_code`: `system.ai.claude-haiku-5-5`, `system.ai.claude-sonnet-5-5`,
     `system.ai.claude-opus-5-5`
   - `codex`: `system.ai.gpt-6-luna`, `system.ai.gpt-6-1-terra`,
@@ -77,6 +98,13 @@ technical deployment gate. Do not claim sandboxing or permission enforcement.
   and the GPT ladder's pass rate was flat. Use `system.ai.claude-fable-5-1`
   only as a verified override for a final review of high-risk code; never
   Fable 5.2, Gemini 3.8 Flash or Grok 4.7. Refresh when the Index updates.
+- **`codex` implementers append a `Co-authored-by` trailer** to every commit
+  (observed three times in batch 11, even when told not to) and `claude_code`
+  did not. For a `codex` implement packet, ask it to leave its edits
+  **uncommitted** and report the diff and checks, then commit and open the PR
+  yourself with `finish_child.py`, which refuses trailers. Check
+  `git log --format=%B base..HEAD` for the trailer on any child's commits
+  before review or publication.
 - A continuation (same title, or `session_id`) runs on the session's
   **original** model and ignores `args.model`; start a new title to change
   model or vendor, and keep the same session when a denied-action follow-up or
