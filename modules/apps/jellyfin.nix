@@ -25,7 +25,7 @@
 # everything including a pre-stamped outpost token so no UI steps are
 # needed (see goauthentik/authentik#9711). Only manual one-time bit
 # is installing the LDAP plugin DLL inside jellyfin and filling its
-# config form — see the Jellyfin section of the README.
+# config form — see docs/runbooks/jellyfin.md.
 #
 # Backups: /var/lib/jellyfin contains both XML config and the library
 # SQLite databases. Restic snapshots the whole tree, but live SQLite
@@ -223,7 +223,8 @@
         # the NFS share lands 0600 — unreadable to the NAS `guest` user
         # (and anything not in the `servers` group) browsing over SMB/DSM.
         # Relax to 0022 so generated files are other-readable (0644),
-        # matching the rest of the library. See README / NFS notes.
+        # matching the rest of the library. See the NFS UID notes
+        # in docs/server-apps.md.
         services.jellyfin.serviceConfig.UMask = lib.mkForce "0022";
 
         services.jellyfin-trickplay-cleanup = {

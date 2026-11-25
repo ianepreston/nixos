@@ -9,7 +9,7 @@
 #      for containerized ones), to the NFS-mounted Synology share at
 #      /mnt/backups/restic/<hostname>.
 #
-# Restore is a manual operator action; see README "Server App Pattern".
+# Restore is a manual operator action; see docs/runbooks/backup-restore.md.
 #
 # The restic password lives in server-shared.yaml (not per-host) so any
 # server can decrypt any other server's repo for cross-host recovery
