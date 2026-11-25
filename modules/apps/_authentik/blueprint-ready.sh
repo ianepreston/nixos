@@ -4,49 +4,77 @@
 # until Django serves /-/health/ready/. See the authentik-blueprint-ready-*
 # units in modules/apps/authentik.nix and #682.
 #
-# usage: blueprint-ready <blueprint-file>...   (basenames, e.g. sparkyfitness.yaml)
+# usage: blueprint-ready <blueprint-file>...
+#        Each argument is the file's path relative to authentik's
+#        blueprints_dir, exactly as authentik stores it in the instance
+#        `path` column (every contributed file sits at the root, so it is
+#        the bare filename, e.g. sparkyfitness.yaml).
 # env:   AUTHENTIK_HOST   base URL of the local authentik API
 #        CREDENTIALS_DIRECTORY/bootstrap_token   admin API token (systemd credential)
-#        ATTEMPTS         poll attempts, 2s apart (default 60)
+#        BUDGET           seconds to keep polling before degrading (default 120)
+#
+# DEGRADES, NEVER FAILS: if the blueprint is not applied within BUDGET, this
+# logs a warning and exits 0. A failed unit makes switch-to-configuration
+# report the whole switch as failed (exit 4) even for a `wants` dependency,
+# and the dependent app is meant to start anyway (local-auth fallback).
 #
 # writeShellApplication sets -euo pipefail; every network/parse step below is
-# guarded with `|| true` so a transient 503/502 during startup retries instead
-# of aborting (the authentik-ldap-token-fetcher precedent: no `set -e` over
-# curl). `-m 3` bounds each request; without it a wedged API is waited on
-# forever (#762).
+# guarded so a transient 503/502 during startup retries instead of aborting
+# (the authentik-ldap-token-fetcher precedent: no `set -e` over curl).
 
-token="$(cat "$CREDENTIALS_DIRECTORY/bootstrap_token")"
-attempts="${ATTEMPTS:-60}"
+budget="${BUDGET:-120}"
 
-# The token is handed to curl on stdin as a curl config, never in argv (which
-# any local user can read from /proc/<pid>/cmdline) and never echoed. printf
-# is a shell builtin, so it does not appear in a process listing either.
-fetch() {
-  printf 'header = "Authorization: Bearer %s"\n' "$token" |
-    curl -sS -m 3 -K - "$AUTHENTIK_HOST/api/v3/managed/blueprints/?page_size=500" \
-      2>/dev/null || true
+degrade() {
+  echo "WARNING: authentik blueprint gate degraded, continuing without it: $*" >&2
+  exit 0
+}
+
+token="$(cat "$CREDENTIALS_DIRECTORY/bootstrap_token" 2>/dev/null)" ||
+  degrade "cannot read bootstrap_token credential"
+
+# One exact-match lookup per file: `?path=` is a django-filter exact filter
+# on BlueprintInstance.path (authentik/blueprints/api.py filterset_fields),
+# so it needs no pagination and cannot miss a result on page 2.
+#
+# Hardening of the admin-token request:
+#   -q            first arg: ignore ~/.curlrc and any default config
+#   --noproxy '*' never send the token through http(s)_proxy / ALL_PROXY
+#   -f            HTTP >= 400 (e.g. 503 while starting) is a curl failure, so
+#                 a body that merely looks right can never open the gate
+#   -H @-         headers are read from stdin as raw lines: not argv (visible
+#                 in /proc/<pid>/cmdline), not config-file syntax (so a `"`
+#                 or `\` in the token is passed through unaltered)
+#   -m 3          bound each request (#762)
+# The caller checks curl's exit status BEFORE looking at the body, so a
+# truncated transfer is also a failure. The token is never echoed or logged.
+applied() {
+  local f="$1" body
+  body="$(
+    printf 'Authorization: Bearer %s\n' "$token" |
+      curl -q -sS -f -m 3 --noproxy '*' -H @- -G \
+        --data-urlencode "path=$f" \
+        "$AUTHENTIK_HOST/api/v3/managed/blueprints/" 2>/dev/null
+  )" || return 1
+  printf '%s' "$body" | jq -e --arg f "$f" \
+    '[.results[]? | select(.path == $f and .status == "successful")] | length > 0' \
+    >/dev/null 2>&1
 }
 
 all_applied() {
-  local resp="$1" f
-  shift
+  local f
   for f in "$@"; do
-    # Match on the file's basename: the instance `path` is relative to the
-    # merged blueprints dir, where every contributed file sits at the root.
-    printf '%s' "$resp" | jq -e --arg f "$f" \
-      '[.results[]? | select((.path | split("/") | last) == $f and .status == "successful")] | length > 0' \
-      >/dev/null 2>&1 || return 1
+    applied "$f" || return 1
   done
 }
 
-for _ in $(seq 1 "$attempts"); do
-  resp="$(fetch)"
-  if all_applied "$resp" "$@"; then
+while true; do
+  if all_applied "$@"; then
     exit 0
+  fi
+  # SECONDS is bash's own elapsed-time counter; the loop is bounded in time,
+  # not attempts, so slow requests cannot stretch it past BUDGET + one round.
+  if [ "$SECONDS" -ge "$budget" ]; then
+    degrade "not applied after ${budget}s: $*"
   fi
   sleep 2
 done
-
-# Never print the response: it is not secret, but there is no reason to log it.
-echo "blueprint(s) not applied after $attempts attempts: $*" >&2
-exit 1

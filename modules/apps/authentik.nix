@@ -53,7 +53,7 @@
 # miniflux, komga, and actualbudget use the generated client-ID/secret vars.
 # tandoor and paperless-ngx set clientCredsInAppEnv = false but still consume
 # an env file: extraEnvLines puts their OIDC credentials in JSON settings.
-# DB/UI-configured apps (bookorbit, audiobookshelf, seerr) also set false,
+# DB/UI-configured apps (bookorbit, audiobookshelf, seerr, homeassistant) also set false,
 # without consuming OIDC env settings. Non-OIDC secrets can use extraEnvLines
 # or a separate template (bookorbit's database password and app tokens).
 #
@@ -1013,9 +1013,19 @@
             # Trust boundary: the admin API token is the sops-managed
             # authentik/bootstrap_token, delivered via LoadCredential into
             # $CREDENTIALS_DIRECTORY (tmpfs, unit-private). It is read in the
-            # script, passed to curl on stdin as a config line (never argv, so
-            # not visible in /proc), never echoed, and never enters the store.
-            # The poll is read-only GET against localhost:9000.
+            # script, passed to curl as a header on stdin (`-H @-`: never
+            # argv, so not visible in /proc, and never parsed as config
+            # syntax), with `-q --noproxy '*'` so no curlrc or proxy can see
+            # it. Never echoed, never in the store. The poll is a read-only
+            # GET against localhost:9000.
+            #
+            # Delay bound. The gate starts after authentik-ready, which can
+            # itself wait up to 180s, so a dependent can be held at most
+            # 180s (ready) + 120s polling budget + one ~5s round = ~305s
+            # past authentik start. The script degrades (warns, exit 0)
+            # rather than failing, because a failed unit makes
+            # switch-to-configuration exit 4 even for a `wants` dependency;
+            # TimeoutStartSec is only a backstop above the script's budget.
             (lib.mapAttrs' (
               appName: app:
               lib.nameValuePair (blueprintGateName appName) {
@@ -1040,11 +1050,13 @@
                 serviceConfig = {
                   Type = "oneshot";
                   RemainAfterExit = true;
-                  # 60 attempts x (2s sleep + <=3s curl) = 300s worst case.
-                  # Dependents `want` (not `require`) this unit, so a timeout
-                  # or failure releases them after the bound instead of
-                  # blocking boot; they degrade to local auth.
-                  TimeoutStartSec = "330s";
+                  # The script's own 120s budget (+ <=one round) ends the
+                  # wait and exits 0 with a journal warning; this backstop
+                  # sits well above it so systemd never has to kill the
+                  # unit into a failed state. Dependents `want` (not
+                  # `require`) the gate, so they start after it and degrade
+                  # to local auth.
+                  TimeoutStartSec = "180s";
                   LoadCredential = "bootstrap_token:${config.sops.secrets."authentik/bootstrap_token".path}";
                   ExecStart = "${blueprintReady}/bin/authentik-blueprint-ready ${lib.escapeShellArgs (blueprintFiles app)}";
                 };
@@ -1052,7 +1064,7 @@
             ) oidcApps)
             # Order every OIDC app's startup-probing units after its gate.
             # Apps with neither appRestartUnit nor startupProbeUnits
-            # (DB/UI-configured: bookorbit, audiobookshelf, seerr) no-op
+            # (DB/UI-configured: bookorbit, audiobookshelf, seerr, homeassistant) no-op
             # through genAttrs. Being UI-configured says where the creds
             # live, not when the app probes discovery: bindery probes at boot
             # and latches the failure, so it lists its unit in
