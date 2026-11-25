@@ -320,6 +320,7 @@
                   host = lib.mkOption {
                     type = lib.types.str;
                     default = "${name}.${hostSpec.serverDomain}";
+                    defaultText = lib.literalExpression ''"<name>.''${hostSpec.serverDomain}"'';
                     description = "External hostname Caddy matches and authentik enforces.";
                   };
                   port = lib.mkOption {
@@ -334,7 +335,7 @@
                   upstreamHost = lib.mkOption {
                     type = lib.types.str;
                     default = "localhost";
-                    example = "terra.ipreston.net";
+                    example = "workstation.example.internal";
                     description = ''
                       Host Caddy proxies to. Defaults to localhost — nearly
                       every app runs on the same box as caddy. Set it to
@@ -588,7 +589,7 @@
             same-credentials login is the goal, not full SSO.
 
             One-time manual setup is required to capture the outpost
-            token: see the Jellyfin section of the README.
+            token: see docs/runbooks/jellyfin.md.
           '';
         };
       };

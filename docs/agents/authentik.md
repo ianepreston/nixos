@@ -1,8 +1,8 @@
 # Authentik (SSO)
 
 Deployed via `nix-community/authentik-nix` (flake input `authentik-nix`), not
-containers — see README "Authentik (SSO)" for rationale and the per-app
-onboarding pattern. The `myAuthentik.{oidcApps,forwardAuthApps}` surface lives
+containers — see the [Authentik runbook](../runbooks/authentik-sso.md) for
+rationale and the per-app onboarding pattern. The `myAuthentik.{oidcApps,forwardAuthApps}` surface lives
 in `modules/apps/authentik.nix` beside the IDP.
 
 - **`bypassAuthPaths` for key-gated APIs.** When registering

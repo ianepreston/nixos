@@ -65,7 +65,10 @@ Before introducing or changing a cross-cutting feature, be able to name:
 ## Cross-cutting option surfaces
 
 Declared inline next to the service that consumes them (no separate platform
-directory):
+directory). This table is a map of owners; each option's type, default and
+description are in the generated [option reference](../reference/options.md)
+(`task docs:options`), which covers every top-level `my*` surface on
+tests-server — classify a new one in `modules/flake/options-reference.nix`:
 
 | Option                   | File                                   | Purpose                                 |
 | ------------------------ | -------------------------------------- | --------------------------------------- |

@@ -104,6 +104,18 @@
           pass_filenames = false;
         };
 
+        # Relative Markdown links (files and `#heading` anchors) must resolve
+        # (#1026), so a moved runbook section can't strand its inbound links.
+        # Whole-tree for the same reasons as skill-adapters: deleting or
+        # renaming a target breaks links in files the commit didn't touch.
+        doc-links = {
+          enable = true;
+          name = "doc-links";
+          entry = "${pkgs.python3}/bin/python3 scripts/doc-links.py";
+          always_run = true;
+          pass_filenames = false;
+        };
+
         # Whitespace hygiene
         trim-trailing-whitespace.enable = true;
         end-of-file-fixer.enable = true;

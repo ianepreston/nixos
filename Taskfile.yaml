@@ -54,6 +54,15 @@ tasks:
         *) echo "LOCAL_SECRETS must be true or false" >&2; exit 1 ;;
       esac
       ./scripts/regen-fetch-hashes.sh {{.CLI_ARGS}}
+  docs:options:
+    desc: Regenerate docs/reference/options.md from the public my* option declarations
+    # Evaluates option declarations only (modules/flake/options-reference.nix):
+    # no host build, secret decryption or host connection. The
+    # options-reference flake check fails until the result is committed.
+    cmd: |
+      set -euo pipefail
+      out=$(nix build .#options-reference --no-link --print-out-paths)
+      install -m 0644 "$out" docs/reference/options.md
   build:
     desc: Build a specific host (default luna)
     vars:
