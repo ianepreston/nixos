@@ -39,8 +39,10 @@ _: {
       ...
     }:
     let
-      # Uniform across servers; see the header for why it is not 8080.
-      port = 18080;
+      # The port sabnzbd actually listens on (declared in `settings.misc`
+      # below), so the route, widget and published endpoint follow any
+      # override of the listener.
+      inherit (config.services.sabnzbd.settings.misc) port;
       # podman's name for the host on its bridge; whitelisted below and
       # published as the container-side endpoint.
       containerHost = "host.containers.internal";
@@ -175,7 +177,8 @@ _: {
         settings = {
           misc = {
             host = "0.0.0.0";
-            inherit port;
+            # Uniform across servers; see the header for why it is not 8080.
+            port = 18080;
             host_whitelist = "${sabnzbdHost},${containerHost}";
             # RAM article cache. Pinned here because the nixpkgs module
             # declares cache_limit as an option with default "" and that

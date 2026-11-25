@@ -4,15 +4,18 @@
 # API keys only through their `myRuntimeCredentials.readers`.
 #
 # `download-contracts` extends tests-server, which imports every one of these
-# apps, with synthetic producer changes and compares what both consumers
-# render: container env, decluttarr's base URLs and ordering, and the
-# endpoint/consumer assertion messages. `baseline` pins today's values.
+# apps, with synthetic producer changes (the services' real listening ports
+# as well as the published endpoints, units and readers) and compares what
+# both consumers render: container env, decluttarr's base URLs and ordering,
+# and the endpoint/consumer assertion messages. `baseline` pins today's
+# values.
 #
 # `download-contracts-decluttarr-runtime` runs decluttarr's real preStart
 # against fixture key files (paths rewritten into the build directory, with a
 # `sleep` stub counting retries): it renders the complete config.yaml, renders
-# again on the next start, blocks on a missing key, and follows a moved
-# reader with no consumer change.
+# again on the next start, blocks on a missing key, follows a moved reader
+# with no consumer change, writes a URL holding `$` and quotes as data, and
+# runs a reader that needs jq.
 { inputs, ... }:
 {
   perSystem =
@@ -47,12 +50,13 @@
         let
           decluttarr = cfg.systemd.services.podman-decluttarr;
           env = cfg.virtualisation.oci-containers.containers.shelfmark.environment;
+          # The printf arguments: a single-quoted JSON URL, then its key.
           baseUrls = lib.concatMap (
             l:
             let
-              m = builtins.match " *- base_url: \"(.*)\"" l;
+              m = builtins.match " *'([^']*)' \"[$][a-z]+_key\".*" l;
             in
-            lib.optional (m != null) (lib.head m)
+            lib.optional (m != null) (builtins.fromJSON (lib.head m))
           ) (lib.splitString "\n" decluttarr.preStart);
         in
         {
@@ -95,7 +99,7 @@
             after = [ "network-online.target" ] ++ units;
             wants = [ "network-online.target" ] ++ units;
           };
-          inherit failures;
+          failures = lib.sort lib.lessThan failures;
         };
 
       endpointMessage =
@@ -109,6 +113,63 @@
         inherit containerUrl;
         unit = "fixture.service";
       };
+      # `fixture-<index>` endpoints, one per container URL.
+      fixtureEndpoints =
+        urls:
+        lib.listToAttrs (
+          lib.imap0 (i: u: lib.nameValuePair "fixture-${toString i}" (fixtureEndpoint u)) urls
+        );
+      rejectedUrls = [
+        # Loopback and "this host" names, with case, userinfo, port and
+        # trailing dots.
+        "http://LocalHost:1/"
+        "http://localhost.:1"
+        "http://LOCALHOST..:1"
+        "http://app.localhost"
+        "http://app.localhost."
+        "http://user@localhost:1"
+        "http://user:pw@127.0.0.1:1"
+        "https://127.1.2.3:8443/path"
+        "http://127.0.0.1.:1"
+        "http://0.0.0.0:1"
+        # Non-canonical numeric spellings a resolver reads as 127.0.0.1.
+        "http://2130706433"
+        "http://0x7f.1"
+        "http://0177.0.0.1"
+        "http://127.000.0.1"
+        # IPv6 loopback and wildcard, compressed, expanded and zero-padded,
+        # with a zone, and IPv4-mapped or -compatible.
+        "http://[::1]:1"
+        "http://[0:0:0:0:0:0:0:1]:1"
+        "http://[::0001]"
+        "http://[::1%25eth0]:1"
+        "http://[::]:1"
+        "http://[0::0]"
+        "http://[0:0:0:0:0:0:0:0]"
+        "http://[::ffff:127.0.0.1]:1"
+        "http://[::FFFF:7f00:1]"
+        "http://[::ffff:0.0.0.0]"
+        "http://[::127.0.0.1]"
+        # Not an absolute URL with a plain host.
+        "host.containers.internal:1"
+        "http://:1"
+        "http://%6cocalhost"
+        "http://[fd00::1::2]"
+        "http://[1:2:3:4:5:6:7:8:9]"
+        "http://[::ffff:256.0.0.1]"
+      ];
+      acceptedUrls = [
+        (hci 1)
+        "http://user@host.containers.internal:1/x"
+        "http://host.containers.internal.:1"
+        "https://10.88.0.1:443/x"
+        "http://127-0-0-1.example:1"
+        "http://[fd00::1]:80"
+        "http://[1:2:3:4:5:6:7:8]"
+        "http://[::ffff:10.88.0.1]:1"
+        "http://[::ffff:a00:1]"
+        "http://[fd00::10.0.0.1]"
+      ];
 
       cases = {
         baseline = {
@@ -124,6 +185,23 @@
             sabnzbd.containerUrl = lib.mkForce (hci 18181);
             sonarr.containerUrl = lib.mkForce (hci 18989);
             radarr.containerUrl = lib.mkForce (hci 17878);
+          };
+          want = expect {
+            prowlarr = hci 19696;
+            sabnzbd = hci 18181;
+            sonarr = hci 18989;
+            radarr = hci 17878;
+          };
+        };
+
+        # The producers publish the port their service actually listens
+        # on, so moving the listener moves both consumers.
+        listener-ports-propagate = {
+          module.services = {
+            prowlarr.settings.server.port = lib.mkForce 19696;
+            sabnzbd.settings.misc.port = lib.mkForce 18181;
+            sonarr.settings.server.port = lib.mkForce 18989;
+            radarr.settings.server.port = lib.mkForce 17878;
           };
           want = expect {
             prowlarr = hci 19696;
@@ -177,42 +255,26 @@
           };
         };
 
+        # Every spelling of a loopback or wildcard host, and anything that
+        # is not an absolute URL with a plain host, is refused.
         loopback-container-urls-rejected = {
           module.myServiceEndpoints = {
             prowlarr.containerUrl = lib.mkForce "http://127.0.0.1:9696";
-            lo-name = fixtureEndpoint "http://LocalHost:1/";
-            lo-sub = fixtureEndpoint "http://app.localhost";
-            lo-v4 = fixtureEndpoint "https://127.1.2.3:8443/path";
-            lo-v6 = fixtureEndpoint "http://[::1]:1";
-            any-v4 = fixtureEndpoint "http://0.0.0.0:1";
-            any-v6 = fixtureEndpoint "http://[::]:1";
-            relative = fixtureEndpoint "host.containers.internal:1";
-            empty-host = fixtureEndpoint "http://:1";
-          };
+          }
+          // fixtureEndpoints rejectedUrls;
           want = expect {
             prowlarr = "http://127.0.0.1:9696";
             failures = [
-              (endpointMessage "any-v4" "http://0.0.0.0:1")
-              (endpointMessage "any-v6" "http://[::]:1")
-              (endpointMessage "empty-host" "http://:1")
-              (endpointMessage "lo-name" "http://LocalHost:1/")
-              (endpointMessage "lo-sub" "http://app.localhost")
-              (endpointMessage "lo-v4" "https://127.1.2.3:8443/path")
-              (endpointMessage "lo-v6" "http://[::1]:1")
               (endpointMessage "prowlarr" "http://127.0.0.1:9696")
-              (endpointMessage "relative" "host.containers.internal:1")
-            ];
+            ]
+            ++ lib.imap0 (i: endpointMessage "fixture-${toString i}") rejectedUrls;
           };
         };
 
         # Reachable hosts pass, and a host-only endpoint may omit the
         # container URL altogether.
         reachable-container-urls-pass = {
-          module.myServiceEndpoints = {
-            bridge-name = fixtureEndpoint (hci 1);
-            bridge-v4 = fixtureEndpoint "https://10.88.0.1:443/x";
-            bridge-v6 = fixtureEndpoint "http://[fd00::1]:80";
-            loopback-like = fixtureEndpoint "http://127-0-0-1.example:1";
+          module.myServiceEndpoints = fixtureEndpoints acceptedUrls // {
             host-only = fixtureEndpoint null;
           };
           want = expect { };
@@ -236,6 +298,13 @@
       # sees what an earlier one left. `keys` writes fixture key files
       # (absent: none); `config` selects the composition whose preStart runs.
       movedConfig = extend cases.producer-credential-moves.module;
+      # A valid URL holding shell and YAML metacharacters, and a sabnzbd
+      # reader that needs jq from `readerPath`.
+      oddUrl = "http://host.containers.internal:8989/$status?q=%41&x=\"y\"`z`";
+      oddConfig = extend {
+        myServiceEndpoints.sonarr.containerUrl = lib.mkForce oddUrl;
+        myRuntimeCredentials.readers.SABNZBD_API_KEY.readScript = lib.mkForce "jq -r .misc.api_key /var/lib/sabnzbd/keys.json";
+      };
       unitPath = lib.makeBinPath base.config.systemd.services.podman-decluttarr.path;
       script = cfg: pkgs.writeText "decluttarr-prestart" cfg.systemd.services.podman-decluttarr.preStart;
       arrXml = key: "<Config><ApiKey>${key}</ApiKey></Config>";
@@ -245,6 +314,7 @@
           sonarr,
           radarr,
           sabnzbd,
+          sonarrUrl ? "http://host.containers.internal:8989",
         }:
         ''
           general:
@@ -275,7 +345,7 @@
 
           instances:
             sonarr:
-              - base_url: "http://host.containers.internal:8989"
+              - base_url: ${builtins.toJSON sonarrUrl}
                 api_key: "${sonarr}"
             radarr:
               - base_url: "http://host.containers.internal:7878"
@@ -374,6 +444,25 @@
             sonarr = "sonarr-5";
             radarr = "radarr-5";
             sabnzbd = "sab-5";
+          };
+        }
+        {
+          # The URL is written as data, not expanded, and a reader using a
+          # `readerPath` tool works.
+          name = "literal-url-and-jq-reader";
+          config = oddConfig;
+          keys = {
+            ${sonarrXml} = arrXml "sonarr-6";
+            ${radarrXml} = arrXml "radarr-6";
+            "var/lib/sabnzbd/keys.json" = ''{"misc":{"api_key":"sab-6"}}'';
+          };
+          status = 0;
+          sleeps = 0;
+          rendered = configYaml {
+            sonarr = "sonarr-6";
+            radarr = "radarr-6";
+            sabnzbd = "sab-6";
+            sonarrUrl = oddUrl;
           };
         }
       ];

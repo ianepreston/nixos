@@ -24,7 +24,6 @@ _: {
     {
       config,
       lib,
-      pkgs,
       ...
     }:
     let
@@ -62,6 +61,52 @@ _: {
           ++ lib.optional (reader u.key != null) (reader u.key).sourceUnit
         ) upstreams
       );
+      # printf format for config.yaml, in `upstreams` order: each `%s`
+      # pair is an app's base URL, as a JSON string (which YAML reads as
+      # a double-quoted scalar), then its API key. Both are arguments, so
+      # neither is expanded or interpreted; the static text must not
+      # contain another `%` or a backslash.
+      configFormat = ''
+        general:
+          log_level: INFO
+          timer: 10
+          test_run: false
+
+        job_defaults:
+          max_strikes: 3
+          min_days_between_searches: 7
+          max_concurrent_searches: 3
+
+        jobs:
+          remove_failed_imports:
+            message_patterns:
+              - "Not a Custom Format upgrade for existing*"
+              - "Not an upgrade for existing*"
+              - "*Found potentially dangerous file with extension*"
+              - "Invalid video file*"
+              - "No files found are eligible for import*"
+              - "One or more episodes expected in this release were not imported or missing from the release"
+          remove_failed_downloads:
+          remove_stalled:
+          remove_metadata_missing:
+          remove_unmonitored:
+          remove_orphans:
+          remove_missing_files:
+
+        instances:
+          sonarr:
+            - base_url: %s
+              api_key: "%s"
+          radarr:
+            - base_url: %s
+              api_key: "%s"
+
+        download_clients:
+          sabnzbd:
+            - base_url: %s
+              api_key: "%s"
+              name: "SABnzbd"
+      '';
       configDir = "/run/decluttarr";
       configFile = "${configDir}/config.yaml";
     in
@@ -95,11 +140,8 @@ _: {
         # than letting decluttarr boot with a broken config.
         after = upstreamUnits;
         wants = upstreamUnits;
-        path = with pkgs; [
-          coreutils
-          gnugrep
-          gawk
-        ];
+        # Whatever the producers' reader scripts may use.
+        path = config.myRuntimeCredentials.readerPath;
         serviceConfig = {
           RuntimeDirectory = "decluttarr";
           RuntimeDirectoryPreserve = "yes";
@@ -134,47 +176,12 @@ _: {
           '') upstreams}
 
           tmp="${configFile}.tmp"
-          cat > "$tmp" <<EOF
-          general:
-            log_level: INFO
-            timer: 10
-            test_run: false
-
-          job_defaults:
-            max_strikes: 3
-            min_days_between_searches: 7
-            max_concurrent_searches: 3
-
-          jobs:
-            remove_failed_imports:
-              message_patterns:
-                - "Not a Custom Format upgrade for existing*"
-                - "Not an upgrade for existing*"
-                - "*Found potentially dangerous file with extension*"
-                - "Invalid video file*"
-                - "No files found are eligible for import*"
-                - "One or more episodes expected in this release were not imported or missing from the release"
-            remove_failed_downloads:
-            remove_stalled:
-            remove_metadata_missing:
-            remove_unmonitored:
-            remove_orphans:
-            remove_missing_files:
-
-          instances:
-            sonarr:
-              - base_url: "${containerUrl "sonarr"}"
-                api_key: "$sonarr_key"
-            radarr:
-              - base_url: "${containerUrl "radarr"}"
-                api_key: "$radarr_key"
-
-          download_clients:
-            sabnzbd:
-              - base_url: "${containerUrl "sabnzbd"}"
-                api_key: "$sabnzbd_key"
-                name: "SABnzbd"
-          EOF
+          printf ${lib.escapeShellArg configFormat} \
+          ${
+            lib.concatMapStrings (u: ''
+              ${lib.escapeShellArg (builtins.toJSON (containerUrl u.app))} "''$${u.app}_key" \
+            '') upstreams
+          }  > "$tmp"
           chmod 0444 "$tmp"
           mv "$tmp" ${configFile}
         '';

@@ -10,9 +10,11 @@ let
 in
 {
   flake.modules.nixos.radarr =
-    { hostSpec, ... }:
+    { config, hostSpec, ... }:
     let
-      port = 7878;
+      # The port radarr actually listens on, so the route, widget and
+      # published endpoint follow any override of the listener.
+      inherit (config.services.radarr.settings.server) port;
     in
     {
       myObservability.monitoredSystemdUnits = [ "radarr" ];
@@ -67,7 +69,10 @@ in
         enable = true;
         user = hostSpec.serverUser;
         group = hostSpec.serverGroup;
-        settings = arrLib.externalAuthSettings;
+        settings = arrLib.externalAuthSettings // {
+          # nixpkgs' default, pinned here as the one declaration.
+          server.port = 7878;
+        };
       };
 
       myAppState.radarr = {

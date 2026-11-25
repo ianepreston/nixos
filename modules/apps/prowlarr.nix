@@ -11,10 +11,12 @@
 # `myAuthentik.forwardAuthApps.prowlarr` by modules/apps/authentik.nix.
 _: {
   flake.modules.nixos.prowlarr =
-    { lib, ... }:
+    { config, lib, ... }:
     let
       arrLib = import ./_arr-lib.nix;
-      port = 9696;
+      # The port prowlarr actually listens on, so the route, widget and
+      # published endpoint follow any override of the listener.
+      inherit (config.services.prowlarr.settings.server) port;
       uid = 891;
     in
     {
@@ -74,7 +76,7 @@ _: {
         enable = true;
         settings = arrLib.externalAuthSettings // {
           server = {
-            inherit port;
+            port = 9696;
             bindAddress = "*";
           };
         };
