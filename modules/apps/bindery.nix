@@ -144,7 +144,7 @@ _: {
 
       virtualisation.oci-containers.containers.bindery = {
         # renovate: datasource=docker depName=ghcr.io/vavallee/bindery
-        image = "ghcr.io/vavallee/bindery:v1.53.1";
+        image = "ghcr.io/vavallee/bindery:v1.53.2";
         volumes = [
           "/var/lib/containers/bindery/config:/config"
           # Bookorbit's library: the reconcile target, read-only — see the
