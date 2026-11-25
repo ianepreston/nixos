@@ -1011,9 +1011,11 @@
             # wedged blueprint delays only its own app.
             #
             # Trust boundary: the admin API token is the sops-managed
-            # authentik/bootstrap_token, delivered via LoadCredential into
-            # $CREDENTIALS_DIRECTORY (tmpfs, unit-private). It is read in the
-            # script, passed to curl as a header on stdin (`-H @-`: never
+            # authentik/bootstrap_token. Only its *path* is in the unit
+            # (BOOTSTRAP_TOKEN_FILE); the script, running as root, reads it
+            # itself. LoadCredential= is deliberately not used: a missing
+            # file fails the unit during credential setup, before the script
+            # could degrade. The token is passed to curl as a header on stdin (`-H @-`: never
             # argv, so not visible in /proc, and never parsed as config
             # syntax), with `-q --noproxy '*'` so no curlrc or proxy can see
             # it. Never echoed, never in the store. The poll is a read-only
@@ -1021,11 +1023,23 @@
             #
             # Delay bound. The gate starts after authentik-ready, which can
             # itself wait up to 180s, so a dependent can be held at most
-            # 180s (ready) + 120s polling budget + one ~5s round = ~305s
-            # past authentik start. The script degrades (warns, exit 0)
-            # rather than failing, because a failed unit makes
-            # switch-to-configuration exit 4 even for a `wants` dependency;
-            # TimeoutStartSec is only a backstop above the script's budget.
+            # 180s (ready) + 120s polling budget = ~300s past authentik
+            # start. The budget is a monotonic deadline (/proc/uptime) that
+            # caps every request and sleep, so it holds exactly. The script
+            # degrades (warns, exit 0) rather than failing, because a failed
+            # unit makes switch-to-configuration exit 4 even for a `wants`
+            # dependency; TimeoutStartSec is only a backstop above it.
+            #
+            # Semantics: NO RemainAfterExit. The gate is active only while it
+            # polls, then goes inactive, so every start of a dependent (the
+            # app alone, or a switch) re-runs it through Wants=. A degraded
+            # release is therefore never cached as "ready": the next app
+            # restart polls again instead of skipping the check. A restart
+            # after a verified apply costs one instant request. Because the
+            # gate never stays active there is nothing to go stale, so no
+            # PartOf is needed; an authentik restart in the same transaction
+            # as an app restart orders the re-run after authentik-ready
+            # (itself PartOf-restarted) and the worker.
             (lib.mapAttrs' (
               appName: app:
               lib.nameValuePair (blueprintGateName appName) {
@@ -1040,16 +1054,12 @@
                   "authentik.service"
                   "authentik-worker.service"
                 ];
-                # Same stale-gate reasoning as authentik-ready: re-poll when
-                # authentik restarts so dependents in that transaction wait.
-                partOf = [
-                  "authentik.service"
-                  "authentik-worker.service"
-                ];
-                environment.AUTHENTIK_HOST = "http://localhost:${toString authentikPort}";
+                environment = {
+                  AUTHENTIK_HOST = "http://localhost:${toString authentikPort}";
+                  BOOTSTRAP_TOKEN_FILE = config.sops.secrets."authentik/bootstrap_token".path;
+                };
                 serviceConfig = {
                   Type = "oneshot";
-                  RemainAfterExit = true;
                   # The script's own 120s budget (+ <=one round) ends the
                   # wait and exits 0 with a journal warning; this backstop
                   # sits well above it so systemd never has to kill the
@@ -1057,7 +1067,6 @@
                   # `require`) the gate, so they start after it and degrade
                   # to local auth.
                   TimeoutStartSec = "180s";
-                  LoadCredential = "bootstrap_token:${config.sops.secrets."authentik/bootstrap_token".path}";
                   ExecStart = "${blueprintReady}/bin/authentik-blueprint-ready ${lib.escapeShellArgs (blueprintFiles app)}";
                 };
               }

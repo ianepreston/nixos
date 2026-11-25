@@ -8,11 +8,15 @@ import subprocess
 import tempfile
 import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 SCRIPT = Path(__file__).with_name("blueprint-ready.sh")
+# The flake check sets SCRIPT_BIN to the real writeShellApplication wrapper
+# (the exact binary the systemd unit runs); locally fall back to bash.
+SCRIPT_BIN = os.environ.get("SCRIPT_BIN")
 TOKEN = 'to"k\\en'  # quote and backslash survive untouched
 
 
@@ -43,12 +47,18 @@ class Fixture:
                         "auth": self.headers.get("Authorization"),
                     }
                 )
+                if outer.mode == "hang":
+                    time.sleep(30)
+                    return
                 if outer.mode == "truncated":
-                    # Promise more bytes than are sent, then hang up.
+                    # A complete, matching, valid-JSON body but a larger
+                    # Content-Length, then hang up: only curl's transfer
+                    # check can tell this from success.
+                    body = json.dumps(outer.results(q)).encode()
                     self.send_response(200)
-                    self.send_header("Content-Length", "10000")
+                    self.send_header("Content-Length", str(len(body) + 500))
                     self.end_headers()
-                    self.wfile.write(json.dumps(outer.results(q)).encode()[:20])
+                    self.wfile.write(body)
                     self.wfile.flush()
                     self.connection.shutdown(socket.SHUT_RDWR)
                     return
@@ -58,13 +68,18 @@ class Fixture:
                 self.end_headers()
                 self.wfile.write(body)
 
-        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
         self.url = f"http://127.0.0.1:{self.server.server_port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def results(self, q):
         wanted = q.get("path", [None])[0]
-        rows = [i for i in self.instances if wanted is None or i["path"] == wanted]
+        if wanted is None:
+            # Like the real API: unfiltered, only the first page comes back.
+            rows = self.instances[:100]
+        else:
+            rows = [i for i in self.instances if i["path"] == wanted]
         return {"count": len(rows), "results": rows}
 
     def close(self):
@@ -74,17 +89,23 @@ class Fixture:
 class BlueprintReadyTest(unittest.TestCase):
     def run_script(self, fixture, *files, budget=1, env_extra=None, token=TOKEN):
         with tempfile.TemporaryDirectory() as creds:
+            token_file = Path(creds, "bootstrap_token")
             if token is not None:
-                Path(creds, "bootstrap_token").write_text(token)
+                token_file.write_text(token)
             env = {
                 **os.environ,
                 "AUTHENTIK_HOST": fixture.url,
-                "CREDENTIALS_DIRECTORY": creds,
+                "BOOTSTRAP_TOKEN_FILE": str(token_file),
                 "BUDGET": str(budget),
             }
             env.update(env_extra or {})
+            cmd = (
+                [SCRIPT_BIN]
+                if SCRIPT_BIN
+                else ["bash", "-euo", "pipefail", str(SCRIPT)]
+            )
             return subprocess.run(
-                ["bash", "-euo", "pipefail", str(SCRIPT), *files],
+                [*cmd, *files],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -166,6 +187,26 @@ class BlueprintReadyTest(unittest.TestCase):
         f = Fixture("ok", [instance("a.yaml", "successful")])
         self.addCleanup(f.close)
         self.assert_degraded(self.run_script(f, "a.yaml", token=None))
+
+    def test_unreadable_credential_degrades(self):
+        f = Fixture("ok", [instance("a.yaml", "successful")])
+        self.addCleanup(f.close)
+        with tempfile.TemporaryDirectory() as d:
+            # A directory where the file should be: cat fails.
+            self.assert_degraded(
+                self.run_script(f, "a.yaml", env_extra={"BOOTSTRAP_TOKEN_FILE": d})
+            )
+
+    def test_hung_api_respects_budget(self):
+        f = Fixture("hang", [instance("a.yaml", "successful")])
+        self.addCleanup(f.close)
+        start = time.monotonic()
+        r = self.run_script(f, "a.yaml", budget=2)
+        elapsed = time.monotonic() - start
+        self.assert_degraded(r)
+        # Requests are capped to the time left, so the 3s per-request limit
+        # cannot stretch a 2s budget past it (generous slack for slow CI).
+        self.assertLess(elapsed, 3.5, elapsed)
 
     def test_token_not_logged(self):
         f = Fixture("503", [])

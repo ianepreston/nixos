@@ -10,7 +10,11 @@
 #        `path` column (every contributed file sits at the root, so it is
 #        the bare filename, e.g. sparkyfitness.yaml).
 # env:   AUTHENTIK_HOST   base URL of the local authentik API
-#        CREDENTIALS_DIRECTORY/bootstrap_token   admin API token (systemd credential)
+#        BOOTSTRAP_TOKEN_FILE   path of the file holding the admin API token
+#                         (the sops secret path; the unit runs as root). It is
+#                         read here, not via systemd LoadCredential=, because a
+#                         missing credential file fails the unit during
+#                         credential setup, before this script can degrade.
 #        BUDGET           seconds to keep polling before degrading (default 120)
 #
 # DEGRADES, NEVER FAILS: if the blueprint is not applied within BUDGET, this
@@ -29,12 +33,30 @@ degrade() {
   exit 0
 }
 
-token="$(cat "$CREDENTIALS_DIRECTORY/bootstrap_token" 2>/dev/null)" ||
-  degrade "cannot read bootstrap_token credential"
+token="$(cat "$BOOTSTRAP_TOKEN_FILE" 2>/dev/null)" ||
+  degrade "cannot read the bootstrap token file"
+
+# Monotonic clock in centiseconds. /proc/uptime is CLOCK_BOOTTIME, immune to
+# wall-clock steps (NTP, suspend resume); EPOCHREALTIME is only the fallback
+# for non-Linux dev machines running the offline test.
+now_cs() {
+  local up
+  if read -r up _ 2>/dev/null </proc/uptime; then
+    echo $((10#${up/./}))
+  else
+    up="${EPOCHREALTIME/[.,]/}"
+    echo $((10#${up} / 10000))
+  fi
+}
+
+fmt_cs() { printf '%d.%02d' $(($1 / 100)) $(($1 % 100)); }
 
 # One exact-match lookup per file: `?path=` is a django-filter exact filter
 # on BlueprintInstance.path (authentik/blueprints/api.py filterset_fields),
 # so it needs no pagination and cannot miss a result on page 2.
+#
+# Every request and sleep is capped to the time remaining until `deadline`,
+# so the total wait cannot exceed BUDGET however slow the API is.
 #
 # Hardening of the admin-token request:
 #   -q            first arg: ignore ~/.curlrc and any default config
@@ -44,14 +66,17 @@ token="$(cat "$CREDENTIALS_DIRECTORY/bootstrap_token" 2>/dev/null)" ||
 #   -H @-         headers are read from stdin as raw lines: not argv (visible
 #                 in /proc/<pid>/cmdline), not config-file syntax (so a `"`
 #                 or `\` in the token is passed through unaltered)
-#   -m 3          bound each request (#762)
+#   -m            bound each request to min(3s, time left) (#762)
 # The caller checks curl's exit status BEFORE looking at the body, so a
 # truncated transfer is also a failure. The token is never echoed or logged.
 applied() {
-  local f="$1" body
+  local f="$1" body left tmo
+  left=$((deadline - $(now_cs)))
+  [ "$left" -gt 0 ] || return 1
+  tmo=$((left < 300 ? left : 300))
   body="$(
     printf 'Authorization: Bearer %s\n' "$token" |
-      curl -q -sS -f -m 3 --noproxy '*' -H @- -G \
+      curl -q -sS -f -m "$(fmt_cs "$tmo")" --noproxy '*' -H @- -G \
         --data-urlencode "path=$f" \
         "$AUTHENTIK_HOST/api/v3/managed/blueprints/" 2>/dev/null
   )" || return 1
@@ -67,14 +92,16 @@ all_applied() {
   done
 }
 
+deadline=$(($(now_cs) + budget * 100))
+
 while true; do
   if all_applied "$@"; then
     exit 0
   fi
-  # SECONDS is bash's own elapsed-time counter; the loop is bounded in time,
-  # not attempts, so slow requests cannot stretch it past BUDGET + one round.
-  if [ "$SECONDS" -ge "$budget" ]; then
+  left=$((deadline - $(now_cs)))
+  if [ "$left" -le 0 ]; then
     degrade "not applied after ${budget}s: $*"
   fi
-  sleep 2
+  nap=$((left < 200 ? left : 200))
+  sleep "$(fmt_cs "$nap")"
 done
