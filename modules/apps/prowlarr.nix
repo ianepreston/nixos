@@ -55,6 +55,14 @@ _: {
         };
       };
 
+      # Listens on every interface (`bindAddress = "*"` below), so
+      # containers on the podman bridge can reach it too.
+      myServiceEndpoints.prowlarr = {
+        url = "http://127.0.0.1:${toString port}";
+        containerUrl = "http://host.containers.internal:${toString port}";
+        unit = "prowlarr.service";
+      };
+
       myRuntimeCredentials.readers.PROWLARR_API_KEY = {
         sourceUnit = "prowlarr.service";
         readScript = ''

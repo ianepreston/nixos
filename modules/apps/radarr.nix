@@ -11,6 +11,9 @@ in
 {
   flake.modules.nixos.radarr =
     { hostSpec, ... }:
+    let
+      port = 7878;
+    in
     {
       myObservability.monitoredSystemdUnits = [ "radarr" ];
 
@@ -22,7 +25,7 @@ in
       };
 
       myAuthentik.forwardAuthApps.radarr = {
-        port = 7878;
+        inherit port;
         displayName = "Radarr";
         # Skip forward_auth for the REST API, healthcheck, and iCal feeds
         # so non-browser clients (iOS app, calendar subscribers) can
@@ -39,10 +42,18 @@ in
           description = "Movie manager";
           widget = {
             type = "radarr";
-            url = "http://localhost:7878";
+            url = "http://localhost:${toString port}";
             key = "{{HOMEPAGE_VAR_RADARR_API_KEY}}";
           };
         };
+      };
+
+      # Radarr binds every interface by default, so containers on the
+      # podman bridge can reach it too.
+      myServiceEndpoints.radarr = {
+        url = "http://127.0.0.1:${toString port}";
+        containerUrl = "http://host.containers.internal:${toString port}";
+        unit = "radarr.service";
       };
 
       myRuntimeCredentials.readers.RADARR_API_KEY = {

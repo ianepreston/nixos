@@ -28,7 +28,9 @@ surface hosted beside the IDP. A *new* exception needs a stated reason.
    dispatcher manifest. No parallel Taskfile or profile inventory.
 4. **Cross-module consumers use a published contract, not a private read.** A
    producer publishes only what a consumer needs — `myServiceEndpoints` for a
-   URL + readiness unit, `myObservability.nodeExporterTextfileDirectory` for
+   URL + readiness unit (plus `containerUrl`, never loopback, when containers
+   on the podman bridge can reach it),
+   `myObservability.nodeExporterTextfileDirectory` for
    the textfile drop directory. No consumer reads another module's
    `services.*` / container attrset, and no shared literal is copied between
    producer and consumer; the contract owner does duplicate/conflict checking.
@@ -87,3 +89,6 @@ beside the service that writes it; a consumer declares
 `.envFile`. Nothing chose these keys, so they can't live in sops — they're read
 off disk at boot into a tmpfs env file instead of the store. Consumers today:
 homepage (`HOMEPAGE_VAR_` prefix) and shelfmark (prowlarr + sabnzbd).
+Decluttarr reuses the readers' `readScript`/`sourceUnit` directly instead,
+because it must block on a missing key and re-read keys on every container
+start, which the tolerant once-per-boot consumer oneshot does not do.

@@ -11,6 +11,9 @@ in
 {
   flake.modules.nixos.sonarr =
     { hostSpec, ... }:
+    let
+      port = 8989;
+    in
     {
       myObservability.monitoredSystemdUnits = [ "sonarr" ];
 
@@ -22,7 +25,7 @@ in
       };
 
       myAuthentik.forwardAuthApps.sonarr = {
-        port = 8989;
+        inherit port;
         displayName = "Sonarr";
         # Skip forward_auth for the REST API, healthcheck, and iCal feeds
         # so non-browser clients (iOS app, calendar subscribers) can
@@ -39,10 +42,18 @@ in
           description = "TV manager";
           widget = {
             type = "sonarr";
-            url = "http://localhost:8989";
+            url = "http://localhost:${toString port}";
             key = "{{HOMEPAGE_VAR_SONARR_API_KEY}}";
           };
         };
+      };
+
+      # Sonarr binds every interface by default, so containers on the
+      # podman bridge can reach it too.
+      myServiceEndpoints.sonarr = {
+        url = "http://127.0.0.1:${toString port}";
+        containerUrl = "http://host.containers.internal:${toString port}";
+        unit = "sonarr.service";
       };
 
       myRuntimeCredentials.readers.SONARR_API_KEY = {

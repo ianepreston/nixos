@@ -8,31 +8,75 @@
 #
 # Container only (no nixpkgs module). Stateless — no /var/lib state,
 # no preservation entry, no recovery task. Config.yaml is rendered in
-# `podman-decluttarr.service`'s own preStart, which scrapes the
-# sonarr/radarr/sabnzbd API keys out of their respective config files
-# (same approach the homepage credentials reader uses), so we don't
-# have to mint and rotate a separate sops secret for keys the arrs
-# already manage themselves.
+# `podman-decluttarr.service`'s own preStart, which reads the
+# sonarr/radarr/sabnzbd API keys with the readers those apps publish in
+# `myRuntimeCredentials.readers` (the scripts homepage's widgets use),
+# so we don't have to mint and rotate a separate sops secret for keys
+# the arrs already manage themselves. Only the reader scripts are
+# shared: decluttarr keeps its own render-on-every-start, fail-on-
+# missing-key policy rather than the tolerant `consumers` oneshot (see
+# the preStart below).
 #
-# Sonarr/Radarr/Sabnzbd are reachable from inside the podman bridge
-# at `host.containers.internal:<port>` — same trick as grimmory.
+# Sonarr/Radarr/Sabnzbd are reached from inside the podman bridge at
+# the container-side URL each publishes in `myServiceEndpoints`.
 _: {
   flake.modules.nixos.decluttarr =
     {
       config,
+      lib,
       pkgs,
       ...
     }:
     let
-      arrLib = import ./_arr-lib.nix;
-      # Same API-key extraction fragment the homepage credential
-      # readers use (radarr.nix / sonarr.nix), sourced from one place.
-      sonarrKeyScript = arrLib.mkArrApiKeyScript "/var/lib/sonarr/.config/NzbDrone/config.xml";
-      radarrKeyScript = arrLib.mkArrApiKeyScript "/var/lib/radarr/.config/Radarr/config.xml";
+      # Upstream app -> the runtime-credentials reader for its API key.
+      # Listed in read order; the app name is also the label in the
+      # failure message.
+      upstreams = [
+        {
+          app = "sonarr";
+          key = "SONARR_API_KEY";
+        }
+        {
+          app = "radarr";
+          key = "RADARR_API_KEY";
+        }
+        {
+          app = "sabnzbd";
+          key = "SABNZBD_API_KEY";
+        }
+      ];
+      endpoint = app: config.myServiceEndpoints.${app} or null;
+      reader = key: config.myRuntimeCredentials.readers.${key} or null;
+      # The empty fallback leaves the diagnostic to the assertions below.
+      containerUrl =
+        app:
+        let
+          url = (endpoint app).containerUrl or null;
+        in
+        if url == null then "" else url;
+      # Ready before reaching an app, and before reading its key.
+      upstreamUnits = lib.unique (
+        lib.concatMap (
+          u:
+          lib.optional (endpoint u.app != null) (endpoint u.app).unit
+          ++ lib.optional (reader u.key != null) (reader u.key).sourceUnit
+        ) upstreams
+      );
       configDir = "/run/decluttarr";
       configFile = "${configDir}/config.yaml";
     in
     {
+      assertions = lib.concatMap (u: [
+        {
+          assertion = containerUrl u.app != "";
+          message = "modules/apps/decluttarr.nix runs in a container and needs myServiceEndpoints.${u.app}.containerUrl, published by modules/apps/${u.app}.nix.";
+        }
+        {
+          assertion = reader u.key != null;
+          message = "modules/apps/decluttarr.nix needs myRuntimeCredentials.readers.${u.key}, published by modules/apps/${u.app}.nix.";
+        }
+      ]) upstreams;
+
       myObservability.monitoredSystemdUnits = [ "podman-decluttarr" ];
 
       # Render config.yaml as part of podman-decluttarr's own start
@@ -49,16 +93,8 @@ _: {
         # concern as homepage-credentials — handled with a retry
         # loop in the script so a missing key blocks here rather
         # than letting decluttarr boot with a broken config.
-        after = [
-          "sonarr.service"
-          "radarr.service"
-          "sabnzbd.service"
-        ];
-        wants = [
-          "sonarr.service"
-          "radarr.service"
-          "sabnzbd.service"
-        ];
+        after = upstreamUnits;
+        wants = upstreamUnits;
         path = with pkgs; [
           coreutils
           gnugrep
@@ -69,14 +105,23 @@ _: {
           RuntimeDirectoryPreserve = "yes";
           UMask = "0077";
         };
+        # Unlike a `myRuntimeCredentials.consumers` oneshot, which skips
+        # an empty key and starts once, this retries for 30s, fails the
+        # start when any key stays empty, and re-reads every key on
+        # every container start.
         preStart = ''
           set -euo pipefail
 
+          ${lib.concatMapStrings (u: ''
+            read_${u.app}_key() {
+            ${(reader u.key).readScript or ""}
+            }
+          '') upstreams}
           read_key() {
-            local label="$1" reader="$2"
+            local label="$1"
             local val=""
             for _ in 1 2 3 4 5 6 7 8 9 10; do
-              val="$(eval "$reader" 2>/dev/null | tr -d '\n\r' || true)"
+              val="$("read_''${label}_key" 2>/dev/null | tr -d '\n\r' || true)"
               [ -n "$val" ] && { printf '%s' "$val"; return 0; }
               sleep 3
             done
@@ -84,9 +129,9 @@ _: {
             return 1
           }
 
-          sonarr_key="$(read_key sonarr "${sonarrKeyScript}")"
-          radarr_key="$(read_key radarr "${radarrKeyScript}")"
-          sabnzbd_key="$(read_key sabnzbd "awk -F= '/^[[:space:]]*api_key[[:space:]]*=/ { gsub(/^[[:space:]]+|[[:space:]]+\$/,\"\",\$2); print \$2; exit }' /var/lib/sabnzbd/sabnzbd.ini")"
+          ${lib.concatMapStrings (u: ''
+            ${u.app}_key="$(read_key ${u.app})"
+          '') upstreams}
 
           tmp="${configFile}.tmp"
           cat > "$tmp" <<EOF
@@ -118,15 +163,15 @@ _: {
 
           instances:
             sonarr:
-              - base_url: "http://host.containers.internal:8989"
+              - base_url: "${containerUrl "sonarr"}"
                 api_key: "$sonarr_key"
             radarr:
-              - base_url: "http://host.containers.internal:7878"
+              - base_url: "${containerUrl "radarr"}"
                 api_key: "$radarr_key"
 
           download_clients:
             sabnzbd:
-              - base_url: "http://host.containers.internal:${toString config.services.sabnzbd.settings.misc.port}"
+              - base_url: "${containerUrl "sabnzbd"}"
                 api_key: "$sabnzbd_key"
                 name: "SABnzbd"
           EOF

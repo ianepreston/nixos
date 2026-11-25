@@ -25,7 +25,10 @@
 #
 # Lives in its own file rather than inline next to a consumer because
 # there are two of them (homepage, shelfmark) pulling from the same
-# reader registry — same rationale as sqlite-quiesce.nix.
+# reader registry — same rationale as sqlite-quiesce.nix. A unit that
+# needs a stricter policy (decluttarr blocks its start on a missing key)
+# may run a reader's `readScript` itself after its `sourceUnit`, rather
+# than declaring a consumer.
 _: {
   flake.modules.nixos.runtime-credentials =
     {
@@ -66,8 +69,10 @@ _: {
                     Shell snippet that prints the credential value to
                     stdout (no trailing newline). Runs as root with
                     coreutils + gnugrep + gnused + gawk + jq + sqlite on
-                    PATH. Empty/missing output is tolerated — the env
-                    line is omitted rather than blocking the consumer.
+                    PATH. Empty/missing output is tolerated by
+                    `consumers` — the env line is omitted rather than
+                    blocking the consumer; a unit running the script
+                    directly applies its own policy.
                   '';
                 };
               };

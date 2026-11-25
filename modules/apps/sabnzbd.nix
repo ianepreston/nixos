@@ -28,8 +28,8 @@
 # shelfmark persists its own copy of SABNZBD_URL next to the env var, so
 # returning to the default would mean a hand-edit in five apps on a live
 # host and buy nothing. One port for one app on every server is worth
-# more than reclaiming a default. The in-repo consumers below derive
-# their URL from this setting rather than repeating it.
+# more than reclaiming a default. In-repo consumers reach it through
+# `myServiceEndpoints.sabnzbd` rather than repeating the port.
 _: {
   flake.modules.nixos.sabnzbd =
     {
@@ -41,6 +41,9 @@ _: {
     let
       # Uniform across servers; see the header for why it is not 8080.
       port = 18080;
+      # podman's name for the host on its bridge; whitelisted below and
+      # published as the container-side endpoint.
+      containerHost = "host.containers.internal";
       sabnzbdHost = "sabnzbd.${hostSpec.serverDomain}";
       sabnzbdUser = hostSpec.serverUser;
       inherit (hostSpec) serverUid serverGid;
@@ -142,6 +145,14 @@ _: {
         };
       };
 
+      # `host = 0.0.0.0` and the whitelist entry (both below) are what make
+      # the container-side URL usable.
+      myServiceEndpoints.sabnzbd = {
+        url = "http://127.0.0.1:${toString port}";
+        containerUrl = "http://${containerHost}:${toString port}";
+        unit = "sabnzbd.service";
+      };
+
       myRuntimeCredentials.readers.SABNZBD_API_KEY = {
         sourceUnit = "sabnzbd.service";
         readScript = ''
@@ -165,7 +176,7 @@ _: {
           misc = {
             host = "0.0.0.0";
             inherit port;
-            host_whitelist = "${sabnzbdHost},host.containers.internal";
+            host_whitelist = "${sabnzbdHost},${containerHost}";
             # RAM article cache. Pinned here because the nixpkgs module
             # declares cache_limit as an option with default "" and that
             # empty default is rendered into public-settings.ini, which the
