@@ -6,6 +6,83 @@
 restic path (unless `backup = false`), and the `expectedPreservedDirs` guard in
 `modules/profiles/server-apps.nix`. There is no profile edit to make.
 
+## Two state checks, and what each catches
+
+Both run only where preservation is enabled (the server hosts).
+
+- **`expectedPreservedDirs`** (`modules/profiles/server-apps.nix`) is derived
+  from `myAppState`, so it catches a *declared* directory that was later
+  dropped from `preservation.preserveAt` (a `mkForce`, a filter). It cannot see
+  state nobody declared.
+- **`myAppStateAudit`** (`modules/system/app-state.nix`, path rules in
+  `modules/system/_app-state/state-directory-audit.nix`) is the independent
+  check (#1024). It reads every enabled unit's systemd `StateDirectory=` and
+  fails eval naming `<unit>: <dir>` for any directory nothing preserved covers.
+  - Parsing follows systemd: within one assignment, spaces and tabs separate
+    entries; entries accumulate across assignments (a list renders one
+    assignment per element); an empty `StateDirectory=` assignment clears
+    earlier ones; `:<symlink>` suffixes are dropped.
+  - Unsupported syntax fails eval with the unit and value named rather than
+    being guessed at: quoting, `%` specifiers (`%N`, `%i`, ...), backslash
+    escapes, a newline inside a value (NixOS writes it verbatim, which ends
+    the assignment; use a list instead), and absolute or `..` paths.
+  - Directories become `/var/lib/<dir>`, or `/var/lib/private/<dir>` when
+    `DynamicUser` is true; the `/var/lib/<dir>` symlink is not storage.
+    `DynamicUser=` accepts systemd's boolean spellings case-insensitively,
+    with surrounding whitespace stripped, and the last assignment wins. An
+    empty or unparsable `DynamicUser=` assignment fails eval, since systemd
+    rejects it too.
+  - Coverage counts what preservation actually preserves: every
+    `preserveAt.*.directories` and `preserveAt.*.users.*.directories` entry
+    except `how = "_intermediate"` ones, which only create a parent. An entry
+    covers itself and its descendants on a path-component boundary:
+    `/var/lib/foo` covers `/var/lib/foo/bar`, not `/var/lib/foobar`.
+
+The audit only sees `StateDirectory=` declared through `systemd.services`. It
+does not see state an app writes elsewhere, `CacheDirectory=`, bind mounts, or
+directories set only in an upstream unit file shipped via `systemd.packages`;
+those still depend on the owner declaring `myAppState`.
+
+### Fixing an audit failure
+
+Preserve it: declare `myAppState.<app>` in the owning module (with
+`dynamicUser = true` and the private path for a DynamicUser unit). That also
+backs it up unless `backup = false`.
+
+Or, if the owner decides the state may be lost, declare an exemption **beside
+the service**, never in a central list:
+
+```nix
+myAppStateAudit.exemptions.<owner> = {
+  unit = "<unit>.service";
+  directories = [ "/var/lib/<dir>" ]; # exactly as the audit names it
+  disposition = "disposable";
+  reason = "Why losing this on every reboot is fine.";
+};
+```
+
+`disposition = "pending"` records a known uncovered directory whose owner has
+not decided yet. It passes eval but prints a warning on every build, so it is
+never silent. Gate an exemption on the evaluated unit, the way the audit
+sees it (`lib.mkIf (config.systemd.services.<unit>.enable or false)`), not on
+the options that usually produce the unit, or turning the unit off another way
+leaves a stale exemption. `checks.x86_64-linux.state-directory-audit-hosts`
+exercises this for the dhcpcd and NetworkManager exemptions on hpp-1. Eval also fails on an exemption with an empty `reason`, on one
+that no longer names an uncovered directory of that unit (renamed, removed or
+since preserved), and when two owners claim the same unit and directory, so
+exemptions cannot outlive or duplicate what they excuse.
+
+Current exemptions (`rg -n 'myAppStateAudit.exemptions' modules`) are all
+`pending` from the #1024 audit: the redis instances (`authentik.nix`,
+`paperless-ngx.nix`, `manyfold.nix`), `homepage.nix`, `vector.nix`,
+`llm-metrics.nix`, `github-runner.nix`, NetworkManager in each server host
+file that enables it (`modules/hosts/{amos1,hpp-1,tests-server}.nix`), and
+dhcpcd in `homeassistant.nix`, whose IoT-VLAN lease is what enables it.
+
+`nix build .#checks.x86_64-linux.state-directory-audit --no-link` runs the
+synthetic compositions and `.#checks.x86_64-linux.state-directory-audit-hosts`
+the host gate cases (both in `modules/flake/checks-state-directory-audit.nix`).
+
 ## Recovery metadata: declare it beside the app
 
 `taskfiles/recovery.yaml` holds the generic restore templates; app modules

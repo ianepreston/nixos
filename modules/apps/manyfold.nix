@@ -105,6 +105,16 @@ _: {
         '';
       };
 
+      # Not preserved; see myAppStateAudit in modules/system/app-state.nix.
+      # profiles/server.nix calls the sidekiq queue ephemeral, but nobody
+      # has decided that losing queued jobs on reboot is fine.
+      myAppStateAudit.exemptions.manyfold-redis = {
+        unit = "redis-manyfold.service";
+        directories = [ "/var/lib/redis-manyfold" ];
+        disposition = "pending";
+        reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+      };
+
       # Per-app redis on 6380 (loopback only). Sidekiq is busy enough
       # that giving it its own instance avoids both noisy-neighbour
       # latency on authentik's redis and the "did you migrate the

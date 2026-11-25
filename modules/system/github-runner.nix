@@ -93,6 +93,17 @@ _: {
         restartUnits = [ "github-runner-${runnerName}.service" ];
       };
 
+      # The runner's StateDirectory. Not preserved; see myAppStateAudit in
+      # modules/system/app-state.nix. `ephemeral` below already wipes it
+      # after every job for isolation (#180), but nobody has re-declared
+      # it `disposable` yet.
+      myAppStateAudit.exemptions.github-runner = {
+        unit = "github-runner-${runnerName}.service";
+        directories = [ "/var/lib/github-runner/${runnerName}" ];
+        disposition = "pending";
+        reason = "Found by the #1024 StateDirectory audit. This module already wipes it after every job (`ephemeral`, for isolation; #180) and its old preservation entry was removed for the same reason; the owner has yet to record that as `disposable`.";
+      };
+
       services.github-runners.${runnerName} = {
         enable = true;
         url = "https://github.com/ianepreston/nixos";

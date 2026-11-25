@@ -195,6 +195,15 @@
               sopsFile = "${inputs.nix-secrets}/sops/llm.yaml";
             };
 
+            # The collector's per-model memory (see the header). Not
+            # preserved; see myAppStateAudit in modules/system/app-state.nix.
+            myAppStateAudit.exemptions.llama-metrics = {
+              unit = "llama-metrics.service";
+              directories = [ "/var/lib/llama-metrics" ];
+              disposition = "pending";
+              reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+            };
+
             systemd.services.llama-metrics = {
               description = "publish llama-server per-model usage to node_exporter textfile collector";
               serviceConfig = {

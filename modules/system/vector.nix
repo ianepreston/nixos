@@ -107,6 +107,16 @@ _: {
       icmpDropRule = "OUTPUT -p icmp --icmp-type port-unreachable -d ${pfsenseAddress} -j DROP";
     in
     {
+      # DynamicUser, so its StateDirectory (which holds the journald
+      # cursor the comment below relies on) is the private path. Not
+      # preserved; see myAppStateAudit in modules/system/app-state.nix.
+      myAppStateAudit.exemptions.vector = {
+        unit = "vector.service";
+        directories = [ "/var/lib/private/vector" ];
+        disposition = "pending";
+        reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+      };
+
       services.vector = {
         enable = true;
         journaldAccess = true;

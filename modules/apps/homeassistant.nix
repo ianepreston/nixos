@@ -465,6 +465,22 @@
       # opened elsewhere is reachable from a device.
       networking.interfaces.iot.useDHCP = lib.mkIf iotEnabled (lib.mkForce true);
 
+      # That lease is what turns on dhcpcd (nixpkgs enables it only when
+      # some interface uses DHCP), so its state is owned here. dhcpcd keeps
+      # its DUID and leases in /var/lib/dhcpcd, which is not preserved; see
+      # myAppStateAudit in modules/system/app-state.nix. Gated on the
+      # evaluated unit, as the audit sees it, not on the options that
+      # usually produce it: overriding the lease off or disabling
+      # dhcpcd.service must not leave a stale exemption.
+      myAppStateAudit.exemptions.homeassistant-dhcpcd =
+        lib.mkIf (iotEnabled && (config.systemd.services.dhcpcd.enable or false))
+          {
+            unit = "dhcpcd.service";
+            directories = [ "/var/lib/dhcpcd" ];
+            disposition = "pending";
+            reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+          };
+
       myCaddy.apps.homeassistant = {
         host = homeassistantHost;
         routeConfig = ''

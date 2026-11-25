@@ -730,6 +730,16 @@
             restartUnits = restartAuthentik;
           };
 
+          # Not preserved; see myAppStateAudit in modules/system/app-state.nix.
+          # profiles/server.nix calls the authentik sessions ephemeral, but
+          # nobody has decided that losing them on reboot is fine.
+          myAppStateAudit.exemptions.authentik-redis = {
+            unit = "redis.service";
+            directories = [ "/var/lib/redis" ];
+            disposition = "pending";
+            reason = "Unreviewed since the #1024 StateDirectory audit found it; preserve it with `myAppState` or re-declare it `disposable` with the reason.";
+          };
+
           services = {
             authentik = {
               enable = true;
