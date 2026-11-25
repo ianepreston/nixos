@@ -85,7 +85,10 @@ _: {
                     truncated to 63 bytes. Two entries resolving to one
                     name (`foo-bar` and `foo_bar`, `Foo` and `foo`, or
                     two names sharing their first 63 bytes) fail
-                    evaluation. No app shares one.
+                    evaluation. No app shares one. Known limits: the
+                    reserved role names `current_user` and `session_user`,
+                    and names containing `$`, are not rejected; don't
+                    use them.
                   '';
                 };
                 consumerService = lib.mkOption {

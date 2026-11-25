@@ -244,7 +244,7 @@
         caddy-host-repeated-in-one-matcher = {
           module.myCaddy.apps.beta = hosts "beta.${domain} Beta.${domain}.";
           fail = [
-            "myCaddy.apps.beta.host: `beta.${domain}` is listed more than once; Caddy rejects a repeated host in one matcher."
+            "myCaddy.apps.beta.host: `beta.${domain}` is listed more than once in one matcher; this registry treats spellings differing only in case or a trailing dot as one host (stricter than Caddy, which rejects case-insensitive repeats)."
           ];
         };
 
@@ -438,6 +438,34 @@
             ".hidden.db=${fx}/h/.hidden.db"
             "visible.db=${fx}/v/visible.db"
           ];
+        };
+
+        # A lone runtime-named entry is checked too: sqlite would write
+        # `trim.db ` as trim.db over the previous copy.
+        single-glob-unsafe-name-fails-closed = {
+          databases = [ "${fx}/sg/*" ];
+          setup = [ "sg/trim.db " ];
+          previous = "trim.db";
+          status = 1;
+          stderr = "mySqliteQuiesce: ${fx}/sg/trim.db  stages as `trim.db `, which sqlite's .backup cannot take unquoted; no staged copy was written";
+          staged = [ "trim.db=previous" ];
+        };
+
+        # `$(basename ...)` would strip the newline, validating and writing
+        # bad.db; the raw name is rejected and nothing is copied.
+        newline-name-fails-closed = {
+          databases = [
+            "${fx}/nl/*"
+            "${fx}/nl2/other.db"
+          ];
+          setup = [
+            "nl/bad.db\n"
+            "nl2/other.db"
+          ];
+          previous = "bad.db";
+          status = 1;
+          stderr = "mySqliteQuiesce: ${fx}/nl/bad.db\n stages as `bad.db\n`, which sqlite's .backup cannot take unquoted; no staged copy was written";
+          staged = [ "bad.db=previous" ];
         };
       };
 

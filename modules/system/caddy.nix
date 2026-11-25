@@ -165,7 +165,8 @@ _: {
       checked = lib.filter comparable claims;
       route = name: "myCaddy.apps.${lib.strings.escapeNixIdentifier name}";
 
-      # Hosts one app lists twice; Caddy refuses such a matcher.
+      # Hosts one app lists twice, by this registry's comparison (case and a
+      # trailing dot ignored); Caddy itself rejects only case-insensitive repeats.
       repeated = lib.concatLists (
         lib.mapAttrsToList (
           name: cs:
@@ -223,6 +224,9 @@ _: {
                     internationalized names) with no port, placeholder or
                     partial-label wildcard: those cannot be compared and
                     fail evaluation. No intentional sharing is supported.
+                    Known limit: a hostname containing a carriage return or
+                    another control character is not detected as a
+                    duplicate; don't write one.
                   '';
                 };
                 routeConfig = lib.mkOption {
@@ -321,7 +325,7 @@ _: {
           }) (lib.filter (c: !comparable c) claims)
           ++ map (r: {
             assertion = false;
-            message = "${route r.name}.host: `${r.host}` is listed more than once; Caddy rejects a repeated host in one matcher.";
+            message = "${route r.name}.host: `${r.host}` is listed more than once in one matcher; this registry treats spellings differing only in case or a trailing dot as one host (stricter than Caddy, which rejects case-insensitive repeats).";
           }) repeated
           ++ lib.mapAttrsToList (host: names: {
             assertion = false;

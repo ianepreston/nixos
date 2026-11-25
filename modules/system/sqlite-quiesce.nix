@@ -52,9 +52,10 @@ _: {
         lib.filterAttrs (_: dbs: lib.length dbs > 1) (
           lib.groupBy baseNameOf (lib.filter staticName app.databases)
         );
-      # Only a runtime-named entry beside another entry can collide after
-      # evaluation; those units resolve every entry before writing.
-      needsRuntimeCheck = app: lib.length app.databases > 1 && !lib.all staticName app.databases;
+      # A runtime-named entry can resolve to a name sqlite would alter, or
+      # collide with another entry, so any unit with one (even a single
+      # entry) resolves every entry and checks it before writing.
+      needsRuntimeCheck = app: !lib.all staticName app.databases;
 
       # Resolve a glob entry into `srcs`, which must hold exactly one match.
       # No trailing newline: callers interpolate it as a line of their own.
