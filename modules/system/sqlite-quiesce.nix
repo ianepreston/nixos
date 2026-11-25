@@ -36,9 +36,16 @@ _: {
       stagingRoot = "/var/backup/sqlite";
       isGlob = db: builtins.match ".*[*?[].*" db != null;
 
-      # A staged copy is named after its source's basename, which is known
-      # at evaluation unless the glob is in the last path component.
-      staticName = db: !isGlob (baseNameOf db);
+      # The staged name is passed to sqlite's `.backup` unquoted, and its
+      # dot-command parser splits on whitespace and treats quotes and
+      # backslashes specially, so only these characters reach the file
+      # name intact. stage-checked.sh uses the same set.
+      safeName = base: builtins.match "[A-Za-z0-9._+@%,:=~-]+" base != null;
+      # A staged copy is named after its source's basename. A literal's is
+      # known at evaluation; so is a glob's whose last component is a plain
+      # safe name. Any other glob tail (a pattern, a shell escape such as
+      # `plain\.db`, quoting) is only known once the shell resolves it.
+      staticName = db: !isGlob db || safeName (baseNameOf db);
       # Static names claimed by more than one entry of an app.
       staticCollisions =
         app:
@@ -81,15 +88,21 @@ _: {
                 in /var/backup/sqlite/<name>/<basename>, so basenames
                 must be distinct within an app: no two entries may share
                 a staged file. A collision between names known at
-                evaluation fails evaluation.
+                evaluation fails evaluation. Staged names may only use
+                letters, digits and `._+@%,:=~-`, because sqlite's
+                `.backup` takes them unquoted; a literal path with any
+                other basename fails evaluation.
                 An entry may be a glob for a path the app picks at
                 runtime (wealthfolio's per-profile directory); it must
                 match exactly one file, and the quiesce unit fails
                 otherwise. Recovery resolves the same glob on restore.
-                When a glob's last component is itself a pattern, its
-                staged name is checked once resolved: the unit fails
-                before writing any staged copy if two entries would
-                share one.
+                When a glob's last component is anything but a plain
+                safe name (a pattern, a shell escape such as
+                `plain\.db`), its staged name is checked once resolved:
+                the unit fails before writing any staged copy if two
+                entries would share one or a resolved name has any
+                other character. A hidden file only matches a pattern
+                that spells out its leading dot (`.*.db`).
               '';
             };
           }
@@ -163,7 +176,11 @@ _: {
         assertions = lib.concatLists (
           lib.mapAttrsToList (
             name: app:
-            lib.mapAttrsToList (base: dbs: {
+            map (db: {
+              assertion = false;
+              message = "mySqliteQuiesce.apps.${lib.strings.escapeNixIdentifier name}.databases: `${db}` stages as `${baseNameOf db}`, which sqlite's .backup cannot take unquoted; staged names may only use letters, digits and `._+@%,:=~-`.";
+            }) (lib.filter (db: !isGlob db && !safeName (baseNameOf db)) app.databases)
+            ++ lib.mapAttrsToList (base: dbs: {
               assertion = false;
               message = "mySqliteQuiesce.apps.${lib.strings.escapeNixIdentifier name}.databases: ${
                 lib.concatMapStringsSep ", " (db: "`${db}`") dbs

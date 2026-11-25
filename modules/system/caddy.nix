@@ -136,20 +136,65 @@ _: {
         log_skip @gatusProbe
       '';
 
-      # Every host an app's matcher claims, lowercased because Caddy
-      # matches hosts case-insensitively. `host` may list several.
-      claimedHosts =
-        app:
-        lib.unique (
-          map lib.toLower (lib.filter (h: lib.isString h && h != "") (builtins.split "[[:space:]]+" app.host))
-        );
-      hostClaims = lib.filterAttrs (_: names: lib.length names > 1) (
-        lib.zipAttrs (
-          lib.concatLists (
-            lib.mapAttrsToList (name: app: map (h: { ${h} = name; }) (claimedHosts app)) config.myCaddy.apps
-          )
-        )
+      # Host ownership (see `myCaddy.apps.<name>.host`). A matcher lists
+      # whitespace-separated Caddyfile tokens, which may be quoted. Caddy's
+      # host matcher compares names case-insensitively, converts exact
+      # Unicode names to Punycode, and lets a whole-label `*` stand for any
+      # one label at that position. This check lowercases, strips quotes and
+      # also treats a trailing dot as the same name, which can only report
+      # more overlaps than Caddy would serve, never fewer. Anything it cannot
+      # compare that way (non-ASCII, a port, a `{placeholder}`, a partial-label
+      # `*`) fails closed instead of being guessed at.
+      claims = lib.concatLists (
+        lib.mapAttrsToList (
+          name: app:
+          map (token: {
+            inherit name token;
+            host = lib.removeSuffix "." (
+              lib.toLower (
+                let
+                  quoted = builtins.match ''"(.*)"|`(.*)`'' token;
+                in
+                if quoted == null then token else lib.findFirst (q: q != null) "" quoted
+              )
+            );
+          }) (lib.filter (t: lib.isString t && t != "") (builtins.split "[[:space:]]+" app.host))
+        ) config.myCaddy.apps
       );
+      comparable = c: builtins.match "(([a-z0-9_-]+|\\*)\\.)*([a-z0-9_-]+|\\*)" c.host != null;
+      checked = lib.filter comparable claims;
+      route = name: "myCaddy.apps.${lib.strings.escapeNixIdentifier name}";
+
+      # Hosts one app lists twice; Caddy refuses such a matcher.
+      repeated = lib.concatLists (
+        lib.mapAttrsToList (
+          name: cs:
+          lib.mapAttrsToList (host: _: { inherit name host; }) (
+            lib.filterAttrs (_: same: lib.length same > 1) (lib.groupBy (c: c.host) cs)
+          )
+        ) (lib.groupBy (c: c.name) checked)
+      );
+      # The same host claimed by several apps.
+      sharedHosts = lib.filterAttrs (_: names: lib.length names > 1) (
+        lib.mapAttrs (_: cs: lib.unique (map (c: c.name) cs)) (lib.groupBy (c: c.host) checked)
+      );
+      # Distinct patterns of different apps that match a common host.
+      overlaps =
+        a: b:
+        let
+          la = lib.splitString "." a.host;
+          lb = lib.splitString "." b.host;
+        in
+        a.name != b.name
+        && a.host != b.host
+        && lib.length la == lib.length lb
+        && lib.all lib.id (lib.zipListsWith (x: y: x == y || x == "*" || y == "*") la lb);
+      overlapping = lib.concatLists (
+        lib.imap0 (
+          i: a: map (b: { inherit a b; }) (lib.filter (overlaps a) (lib.drop (i + 1) checked))
+        ) checked
+      );
+
     in
     {
       options.myCaddy.apps = lib.mkOption {
@@ -163,10 +208,21 @@ _: {
                   default = "${name}.${hostSpec.serverDomain}";
                   defaultText = lib.literalExpression ''"<name>.''${hostSpec.serverDomain}"'';
                   description = ''
-                    Hostname matched for this app. Defaults to <name>.<serverDomain>.
-                    Each hostname belongs to one app: a host claimed by two
-                    entries (compared case-insensitively) fails evaluation,
-                    since only one of their routes could ever be served.
+                    Hostnames matched for this app, whitespace-separated.
+                    Defaults to <name>.<serverDomain>.
+
+                    One owner per host: no request host may be matched by
+                    two apps, since only one of their routes could ever be
+                    served. Hosts are compared as Caddy matches them
+                    (case-insensitively, a whole-label `*` matching any
+                    one label), so `*.lab.<serverDomain>` and
+                    `x.lab.<serverDomain>` in different apps fail
+                    evaluation, as do a quoted and a bare spelling of one
+                    name; a trailing dot is treated as the same name.
+                    Write plain ASCII hostnames (Punycode for
+                    internationalized names) with no port, placeholder or
+                    partial-label wildcard: those cannot be compared and
+                    fail evaluation. No intentional sharing is supported.
                   '';
                 };
                 routeConfig = lib.mkOption {
@@ -258,12 +314,25 @@ _: {
           config.sops.templates."caddy.env".path
         ];
 
-        assertions = lib.mapAttrsToList (host: names: {
-          assertion = false;
-          message = "myCaddy.apps: host `${host}` is claimed by ${
-            lib.concatMapStringsSep ", " (name: "myCaddy.apps.${lib.strings.escapeNixIdentifier name}") names
-          }; only one route per host can be served.";
-        }) hostClaims;
+        assertions =
+          map (c: {
+            assertion = false;
+            message = "${route c.name}.host: `${c.token}` cannot be checked for overlapping claims; write a plain ASCII hostname (Punycode for internationalized names) with no port or placeholder, using `*` only as a whole label.";
+          }) (lib.filter (c: !comparable c) claims)
+          ++ map (r: {
+            assertion = false;
+            message = "${route r.name}.host: `${r.host}` is listed more than once; Caddy rejects a repeated host in one matcher.";
+          }) repeated
+          ++ lib.mapAttrsToList (host: names: {
+            assertion = false;
+            message = "myCaddy.apps: host `${host}` is claimed by ${
+              lib.concatMapStringsSep ", " route names
+            }; only one route per host can be served.";
+          }) sharedHosts
+          ++ map (o: {
+            assertion = false;
+            message = "myCaddy.apps: host `${o.a.host}` (${route o.a.name}) overlaps host `${o.b.host}` (${route o.b.name}); only one route per host can be served.";
+          }) overlapping;
 
         networking.firewall.allowedTCPPorts = [
           80
