@@ -35,6 +35,7 @@ _: {
     {
       config,
       hostSpec,
+      lib,
       pkgs,
       ...
     }:
@@ -178,7 +179,8 @@ _: {
           misc = {
             host = "0.0.0.0";
             # Uniform across servers; see the header for why it is not 8080.
-            port = 18080;
+            # mkDefault so a host can still set it with a plain assignment.
+            port = lib.mkDefault 18080;
             host_whitelist = "${sabnzbdHost},${containerHost}";
             # RAM article cache. Pinned here because the nixpkgs module
             # declares cache_limit as an option with default "" and that

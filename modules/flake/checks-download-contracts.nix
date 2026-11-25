@@ -102,9 +102,12 @@
           failures = lib.sort lib.lessThan failures;
         };
 
-      endpointMessage =
-        name: url:
-        "myServiceEndpoints.${name}.containerUrl: `${url}` must be an absolute URL whose host a container can reach (normally host.containers.internal); a loopback or wildcard host names the container itself.";
+      endpointProblem =
+        problem: name: url:
+        "myServiceEndpoints.${name}.containerUrl: `${url}` ${problem}.";
+      endpointMessage = endpointProblem "must be an absolute URL whose host a container can reach (normally host.containers.internal); a loopback or wildcard host names the container itself";
+      userinfoMessage = endpointProblem "carries userinfo (`user@` before the host); a container URL must not embed credentials";
+      controlMessage = endpointProblem "contains whitespace or a control character";
       consumerMessage =
         consumer: name:
         "modules/apps/${consumer}.nix runs in a container and needs myServiceEndpoints.${name}.containerUrl, published by modules/apps/${name}.nix.";
@@ -113,22 +116,36 @@
         inherit containerUrl;
         unit = "fixture.service";
       };
-      # `fixture-<index>` endpoints, one per container URL.
+      # `<prefix>-<index>` endpoints, one per container URL.
+      fixtureName = prefix: i: "${prefix}-${toString i}";
       fixtureEndpoints =
-        urls:
+        prefix: urls:
         lib.listToAttrs (
-          lib.imap0 (i: u: lib.nameValuePair "fixture-${toString i}" (fixtureEndpoint u)) urls
+          lib.imap0 (i: u: lib.nameValuePair (fixtureName prefix i) (fixtureEndpoint u)) urls
         );
+      # Credentials in the authority, whatever the host.
+      userinfoUrls = [
+        "http://user@host.containers.internal:1/x"
+        "http://@host.containers.internal:1"
+        "http://user@localhost:1"
+        "http://user:pw@127.0.0.1:1"
+      ];
+      # URL parsers strip these, so `local<TAB>host` would read as localhost.
+      controlUrls = [
+        "http://local\thost:1"
+        "http://local\nhost:1"
+        "http://local host:1"
+        "http://localhost\r:1"
+        "\thttp://host.containers.internal:1"
+        "http://host.containers.internal:1/a b"
+      ];
       rejectedUrls = [
-        # Loopback and "this host" names, with case, userinfo, port and
-        # trailing dots.
+        # Loopback and "this host" names, with case, port and trailing dots.
         "http://LocalHost:1/"
         "http://localhost.:1"
         "http://LOCALHOST..:1"
         "http://app.localhost"
         "http://app.localhost."
-        "http://user@localhost:1"
-        "http://user:pw@127.0.0.1:1"
         "https://127.1.2.3:8443/path"
         "http://127.0.0.1.:1"
         "http://0.0.0.0:1"
@@ -160,7 +177,9 @@
       ];
       acceptedUrls = [
         (hci 1)
-        "http://user@host.containers.internal:1/x"
+        # Credential-free, with an `@` only in the query.
+        "http://host.containers.internal:1/x"
+        "http://host.containers.internal/x?to=a@b"
         "http://host.containers.internal.:1"
         "https://10.88.0.1:443/x"
         "http://127-0-0-1.example:1"
@@ -202,6 +221,23 @@
             sabnzbd.settings.misc.port = lib.mkForce 18181;
             sonarr.settings.server.port = lib.mkForce 18989;
             radarr.settings.server.port = lib.mkForce 17878;
+          };
+          want = expect {
+            prowlarr = hci 19696;
+            sabnzbd = hci 18181;
+            sonarr = hci 18989;
+            radarr = hci 17878;
+          };
+        };
+
+        # The producers' port pins are defaults, so a host's plain
+        # assignment wins without a priority override.
+        listener-ports-plain-assignment = {
+          module.services = {
+            prowlarr.settings.server.port = 19696;
+            sabnzbd.settings.misc.port = 18181;
+            sonarr.settings.server.port = 18989;
+            radarr.settings.server.port = 17878;
           };
           want = expect {
             prowlarr = hci 19696;
@@ -261,20 +297,24 @@
           module.myServiceEndpoints = {
             prowlarr.containerUrl = lib.mkForce "http://127.0.0.1:9696";
           }
-          // fixtureEndpoints rejectedUrls;
+          // fixtureEndpoints "loopback" rejectedUrls
+          // fixtureEndpoints "userinfo" userinfoUrls
+          // fixtureEndpoints "control" controlUrls;
           want = expect {
             prowlarr = "http://127.0.0.1:9696";
             failures = [
               (endpointMessage "prowlarr" "http://127.0.0.1:9696")
             ]
-            ++ lib.imap0 (i: endpointMessage "fixture-${toString i}") rejectedUrls;
+            ++ lib.imap0 (i: endpointMessage (fixtureName "loopback" i)) rejectedUrls
+            ++ lib.imap0 (i: userinfoMessage (fixtureName "userinfo" i)) userinfoUrls
+            ++ lib.imap0 (i: controlMessage (fixtureName "control" i)) controlUrls;
           };
         };
 
         # Reachable hosts pass, and a host-only endpoint may omit the
         # container URL altogether.
         reachable-container-urls-pass = {
-          module.myServiceEndpoints = fixtureEndpoints acceptedUrls // {
+          module.myServiceEndpoints = fixtureEndpoints "accepted" acceptedUrls // {
             host-only = fixtureEndpoint null;
           };
           want = expect { };

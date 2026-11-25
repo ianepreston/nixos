@@ -76,7 +76,9 @@ _: {
         enable = true;
         settings = arrLib.externalAuthSettings // {
           server = {
-            port = 9696;
+            # mkDefault so a host can still set the port with a plain
+            # assignment.
+            port = lib.mkDefault 9696;
             bindAddress = "*";
           };
         };

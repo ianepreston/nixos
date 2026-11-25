@@ -10,7 +10,12 @@ let
 in
 {
   flake.modules.nixos.radarr =
-    { config, hostSpec, ... }:
+    {
+      config,
+      hostSpec,
+      lib,
+      ...
+    }:
     let
       # The port radarr actually listens on, so the route, widget and
       # published endpoint follow any override of the listener.
@@ -70,8 +75,9 @@ in
         user = hostSpec.serverUser;
         group = hostSpec.serverGroup;
         settings = arrLib.externalAuthSettings // {
-          # nixpkgs' default, pinned here as the one declaration.
-          server.port = 7878;
+          # nixpkgs' default, pinned here as the one declaration; mkDefault
+          # so a host can still set the port with a plain assignment.
+          server.port = lib.mkDefault 7878;
         };
       };
 

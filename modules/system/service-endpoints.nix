@@ -18,18 +18,35 @@ _: {
   flake.modules.nixos.service-endpoints =
     { config, lib, ... }:
     let
+      # Why a `containerUrl` is refused, or null. Whitespace and control
+      # characters are refused outright because URL parsers strip them
+      # (`local<TAB>host` reads as `localhost`), and userinfo because a
+      # container URL must not embed credentials.
+      containerUrlProblem =
+        url:
+        let
+          m = builtins.match "[a-z][a-z0-9+.-]*://([^/?#]*).*" (lib.toLower url);
+        in
+        if builtins.match "[^[:space:][:cntrl:]]*" url == null then
+          "contains whitespace or a control character"
+        else if m != null && lib.hasInfix "@" (lib.head m) then
+          "carries userinfo (`user@` before the host); a container URL must not embed credentials"
+        else if !(reachableHost url) then
+          "must be an absolute URL whose host a container can reach (normally host.containers.internal); a loopback or wildcard host names the container itself"
+        else
+          null;
+
       # Whether a `containerUrl` host can name something other than the
       # container itself. Only literal spellings are judged: loopback and
-      # wildcard names and addresses in any form a resolver accepts
-      # (userinfo, port and a trailing dot removed; IPv6 expanded, including
-      # IPv4-mapped and -compatible forms). Whether a host *name* resolves
-      # to the host from the bridge is the producer's responsibility.
+      # wildcard names and addresses in any form a resolver accepts (port
+      # and a trailing dot removed; IPv6 expanded, including IPv4-mapped
+      # and -compatible forms). Whether a host *name* resolves to the host
+      # from the bridge is the producer's responsibility.
       reachableHost =
         url:
         let
           m = builtins.match "[a-z][a-z0-9+.-]*://([^/?#]*).*" (lib.toLower url);
-          # Userinfo ends at the last `@`.
-          hostPort = lib.last (lib.splitString "@" (lib.head m));
+          hostPort = lib.head m;
           v6 = builtins.match "\\[([0-9a-f:.]+)(%[^]]*)?](:[0-9]*)?" hostPort;
           # `%` would be percent-decoded into the name.
           named = builtins.match "([^]:[%]+)(:[0-9]*)?" hostPort;
@@ -160,7 +177,8 @@ _: {
                     `host.containers.internal`. Set only by a producer that
                     listens on the bridge; null means containers cannot reach
                     it. Never a loopback or wildcard address: an assertion
-                    rejects every literal spelling of one. That a host name
+                    rejects every literal spelling of one, as well as
+                    userinfo and any whitespace or control character. That a host name
                     resolves to this host from inside a container is the
                     producer's responsibility.
                   '';
@@ -180,9 +198,12 @@ _: {
       config.assertions = lib.concatLists (
         lib.mapAttrsToList (
           name: endpoint:
+          let
+            problem = containerUrlProblem endpoint.containerUrl;
+          in
           lib.optional (endpoint.containerUrl != null) {
-            assertion = reachableHost endpoint.containerUrl;
-            message = "myServiceEndpoints.${name}.containerUrl: `${endpoint.containerUrl}` must be an absolute URL whose host a container can reach (normally host.containers.internal); a loopback or wildcard host names the container itself.";
+            assertion = problem == null;
+            message = "myServiceEndpoints.${name}.containerUrl: `${endpoint.containerUrl}` ${problem}.";
           }
         ) config.myServiceEndpoints
       );
