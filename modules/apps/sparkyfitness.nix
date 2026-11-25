@@ -108,6 +108,21 @@
 # trigger-granted admin holds the admin panel until they log in again.
 # Log in on a freshly-provisioned host promptly.
 #
+# First-provision race (#682, ancestor #200). The backend probes the OIDC
+# discovery URL once per boot and, if that fails, does NOT retry or crash:
+# it upserts its sso_provider row with the env issuer *trailing slash
+# stripped* and all endpoint columns NULL, then reports healthy. authentik's
+# issuer has the slash, so every login then fails ID-token validation and
+# bounces back to the login page, silently. The discovery URL 404s until the
+# worker has applied this app's blueprint, which on a brand-new host
+# happens seconds *after* authentik serves HTTP. The platform therefore
+# orders sparkyfitness.service after authentik-blueprint-ready-sparkyfitness
+# (modules/apps/authentik.nix), not just authentik-ready. Do NOT "fix" this
+# by dropping the slash from SPARKY_FITNESS_OIDC_ISSUER_URL: upstream strips
+# it unconditionally, only a successful discovery restores it. If SSO is
+# dead with the service `active`, check `select issuer, jwks_endpoint from
+# sso_provider` and restart the unit.
+#
 # Beyond admin, an ordinary account is RLS-scoped to its own rows.
 #
 # What open signup does leave, neither of which is escalation: anyone
