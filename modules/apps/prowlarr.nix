@@ -11,10 +11,12 @@
 # `myAuthentik.forwardAuthApps.prowlarr` by modules/apps/authentik.nix.
 _: {
   flake.modules.nixos.prowlarr =
-    { lib, ... }:
+    { config, lib, ... }:
     let
       arrLib = import ./_arr-lib.nix;
-      port = 9696;
+      # The port prowlarr actually listens on, so the route, widget and
+      # published endpoint follow any override of the listener.
+      inherit (config.services.prowlarr.settings.server) port;
       uid = 891;
     in
     {
@@ -55,6 +57,14 @@ _: {
         };
       };
 
+      # Listens on every interface (`bindAddress = "*"` below), so
+      # containers on the podman bridge can reach it too.
+      myServiceEndpoints.prowlarr = {
+        url = "http://127.0.0.1:${toString port}";
+        containerUrl = "http://host.containers.internal:${toString port}";
+        unit = "prowlarr.service";
+      };
+
       myRuntimeCredentials.readers.PROWLARR_API_KEY = {
         sourceUnit = "prowlarr.service";
         readScript = ''
@@ -66,7 +76,9 @@ _: {
         enable = true;
         settings = arrLib.externalAuthSettings // {
           server = {
-            inherit port;
+            # mkDefault so a host can still set the port with a plain
+            # assignment.
+            port = lib.mkDefault 9696;
             bindAddress = "*";
           };
         };

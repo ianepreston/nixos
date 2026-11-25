@@ -39,9 +39,10 @@
 # from sops — they're read off disk at boot by
 # `myRuntimeCredentials` (modules/system/runtime-credentials.nix), the
 # same registry homepage's widgets pull from, and handed to podman as a
-# second --env-file. Both run natively on the host, hence
-# host.containers.internal rather than a container name; sabnzbd's
-# `host_whitelist` already includes that name.
+# second --env-file. Both run natively on the host, so their URLs are the
+# container-side ones each publishes in `myServiceEndpoints`
+# (modules/system/service-endpoints.nix) rather than a container name or
+# a copied port.
 { inputs, ... }:
 {
   flake.modules.nixos.shelfmark =
@@ -54,9 +55,18 @@
       sopsFolder = (builtins.toString inputs.nix-secrets) + "/sops";
       shelfmarkHost = "shelfmark.${hostSpec.serverDomain}";
       authentikHost = "authentik.${hostSpec.serverDomain}";
-      # Native host services, reached over the podman bridge.
-      prowlarrUrl = "http://host.containers.internal:9696";
-      sabnzbdUrl = "http://host.containers.internal:${toString config.services.sabnzbd.settings.misc.port}";
+      # Native host services, reached over the podman bridge. The empty
+      # fallback leaves the diagnostic to the assertion below.
+      upstreams = [
+        "prowlarr"
+        "sabnzbd"
+      ];
+      containerUrl =
+        name:
+        let
+          url = (config.myServiceEndpoints.${name} or { }).containerUrl or null;
+        in
+        if url == null then "" else url;
       # gatus already owns 127.0.0.1:8084 on the host, so publish on a
       # distinct host port and leave the container on the image default
       # (which is also what its built-in HEALTHCHECK probes).
@@ -64,6 +74,11 @@
       containerPort = 8084;
     in
     {
+      assertions = map (name: {
+        assertion = containerUrl name != "";
+        message = "modules/apps/shelfmark.nix runs in a container and needs myServiceEndpoints.${name}.containerUrl, published by modules/apps/${name}.nix.";
+      }) upstreams;
+
       myObservability.monitoredSystemdUnits = [ "podman-shelfmark" ];
 
       myRecovery.apps.shelfmark = {
@@ -145,9 +160,9 @@
           # category has to be named explicitly; left empty, audiobooks
           # would be filed under `books`.
           PROWLARR_ENABLED = "true";
-          PROWLARR_URL = prowlarrUrl;
+          PROWLARR_URL = containerUrl "prowlarr";
           PROWLARR_USENET_CLIENT = "sabnzbd";
-          SABNZBD_URL = sabnzbdUrl;
+          SABNZBD_URL = containerUrl "sabnzbd";
           SABNZBD_CATEGORY = "books";
           SABNZBD_CATEGORY_AUDIOBOOK = "audiobooks";
 

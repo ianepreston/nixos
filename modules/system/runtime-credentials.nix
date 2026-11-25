@@ -25,7 +25,10 @@
 #
 # Lives in its own file rather than inline next to a consumer because
 # there are two of them (homepage, shelfmark) pulling from the same
-# reader registry — same rationale as sqlite-quiesce.nix.
+# reader registry — same rationale as sqlite-quiesce.nix. A unit that
+# needs a stricter policy (decluttarr blocks its start on a missing key)
+# may run a reader's `readScript` itself, after its `sourceUnit` and
+# with `readerPath` on PATH, rather than declaring a consumer.
 _: {
   flake.modules.nixos.runtime-credentials =
     {
@@ -35,7 +38,7 @@ _: {
       ...
     }:
     let
-      inherit (config.myRuntimeCredentials) readers consumers;
+      inherit (config.myRuntimeCredentials) readers readerPath consumers;
     in
     {
       options.myRuntimeCredentials = {
@@ -65,14 +68,35 @@ _: {
                   description = ''
                     Shell snippet that prints the credential value to
                     stdout (no trailing newline). Runs as root with
-                    coreutils + gnugrep + gnused + gawk + jq + sqlite on
-                    PATH. Empty/missing output is tolerated — the env
-                    line is omitted rather than blocking the consumer.
+                    `readerPath` on PATH. Empty/missing output is tolerated by
+                    `consumers` — the env line is omitted rather than
+                    blocking the consumer; a unit running the script
+                    directly applies its own policy.
                   '';
                 };
               };
             })
           );
+        };
+
+        readerPath = lib.mkOption {
+          type = lib.types.listOf lib.types.package;
+          default = with pkgs; [
+            coreutils
+            gnugrep
+            gnused
+            gawk
+            jq
+            sqlite
+          ];
+          # Names, not store paths, so a nixpkgs bump leaves the generated
+          # option reference current.
+          defaultText = lib.literalExpression "with pkgs; [ coreutils gnugrep gnused gawk jq sqlite ]";
+          readOnly = true;
+          description = ''
+            Tools every `readScript` may rely on. Any unit that runs a
+            reader puts these on its PATH (`systemd.services.<unit>.path`).
+          '';
         };
 
         consumers = lib.mkOption {
@@ -157,14 +181,7 @@ _: {
               wants = sourceUnits;
               before = consumer.units;
               wantedBy = consumer.units;
-              path = with pkgs; [
-                coreutils
-                gnugrep
-                gnused
-                gawk
-                jq
-                sqlite
-              ];
+              path = readerPath;
               serviceConfig = {
                 Type = "oneshot";
                 RemainAfterExit = true;
