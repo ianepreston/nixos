@@ -158,6 +158,23 @@ instead of reading the producer's implementation configuration.
 - **Default:** `{ }`
 - **Declared in:** [`modules/system/service-endpoints.nix`](../../modules/system/service-endpoints.nix)
 
+### `myServiceEndpoints.<name>.containerUrl`
+
+URL a container on the default podman bridge uses to reach
+the ‹name› service, normally via
+`host.containers.internal`. Set only by a producer that
+listens on the bridge; null means containers cannot reach
+it. Never a loopback or wildcard address: an assertion
+rejects every literal spelling of one, as well as
+userinfo and any whitespace or control character. That a host name
+resolves to this host from inside a container is the
+producer's responsibility.
+
+- **Type:** `null or string`
+- **Default:** `null`
+- **Example:** `"http://host.containers.internal:8080"`
+- **Declared in:** [`modules/system/service-endpoints.nix`](../../modules/system/service-endpoints.nix)
+
 ### `myServiceEndpoints.<name>.unit`
 
 Systemd unit local consumers order after before reaching ‹name›.
@@ -169,7 +186,7 @@ Systemd unit local consumers order after before reaching ‹name›.
 
 ### `myServiceEndpoints.<name>.url`
 
-URL local consumers use to reach the ‹name› service.
+URL local host processes use to reach the ‹name› service.
 
 - **Type:** `string`
 - **Default:** none (required)
@@ -610,6 +627,16 @@ assertion catches typos at eval time.
 - **Default:** `[ ]`
 - **Declared in:** [`modules/system/runtime-credentials.nix`](../../modules/system/runtime-credentials.nix)
 
+### `myRuntimeCredentials.readerPath`
+
+Tools every `readScript` may rely on. Any unit that runs a
+reader puts these on its PATH (`systemd.services.<unit>.path`).
+
+- **Type:** `list of package`
+- **Default:** `with pkgs; [ coreutils gnugrep gnused gawk jq sqlite ]`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/runtime-credentials.nix`](../../modules/system/runtime-credentials.nix)
+
 ### `myRuntimeCredentials.readers`
 
 Registry of readable credentials, keyed by the env var name
@@ -625,9 +652,10 @@ it is a separate opt-in via `consumers.<name>.vars`.
 
 Shell snippet that prints the credential value to
 stdout (no trailing newline). Runs as root with
-coreutils + gnugrep + gnused + gawk + jq + sqlite on
-PATH. Empty/missing output is tolerated — the env
-line is omitted rather than blocking the consumer.
+`readerPath` on PATH. Empty/missing output is tolerated by
+`consumers` — the env line is omitted rather than
+blocking the consumer; a unit running the script
+directly applies its own policy.
 
 - **Type:** `strings concatenated with "\n"`
 - **Default:** none (required)

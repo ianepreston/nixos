@@ -89,6 +89,9 @@ _: {
             jq
             sqlite
           ];
+          # Names, not store paths, so a nixpkgs bump leaves the generated
+          # option reference current.
+          defaultText = lib.literalExpression "with pkgs; [ coreutils gnugrep gnused gawk jq sqlite ]";
           readOnly = true;
           description = ''
             Tools every `readScript` may rely on. Any unit that runs a
