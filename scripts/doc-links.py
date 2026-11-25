@@ -5,11 +5,13 @@ Usage: doc-links.py [ROOT]
 
 Every tracked `*.md` file is scanned (`git ls-files`, or a filesystem walk when
 ROOT is not a Git checkout, as in the flake-check sandbox copy). For each
-inline link, image or reference definition whose target is relative, the
-target path must exist under ROOT, and a `#fragment` pointing into a Markdown
-file must name one of that file's headings (GitHub's anchor rules) or an
-explicit `<a name|id="...">` anchor. External URLs (any `scheme:`) are not
-fetched. Links inside fenced code blocks and inline code spans are ignored.
+inline link (also one wrapped over several lines), image (also one nested in
+a link's text) or reference definition whose target is relative, the
+percent-decoded target path must exist under ROOT, and a `#fragment` pointing
+into a Markdown file must name one of that file's ATX or setext headings
+(GitHub's anchor rules) or an explicit `<a name|id="...">` anchor. External
+URLs (any `scheme:`) are not fetched. Links inside fenced code blocks and
+inline code spans are ignored.
 
 Offline and read-only; exits 1 and lists every broken link if any are found.
 """
@@ -21,15 +23,18 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
-INLINE_CODE = re.compile(r"(`+)(.+?)\1")
-# [text](target) and ![alt](target); the text may itself hold an image.
+SETEXT = re.compile(r"^ {0,3}(=+|-+)\s*$")
+INLINE_CODE = re.compile(r"(`+)(.+?)\1", re.S)
+# [text](target) and ![alt](target), possibly spanning lines. The text may
+# hold one level of brackets, e.g. an image inside a link; it is scanned too.
 INLINE_LINK = re.compile(
-    r"!?\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\s*(<[^>]*>|[^)\s]*)[^)]*\)"
+    r"!?\[((?:[^\[\]]|\[[^\[\]]*\])*)\]\(\s*(<[^>]*>|[^)\s]*)[^)]*\)"
 )
-REF_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)")
+REF_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)", re.M)
 HTML_ANCHOR = re.compile(r"<a\s[^>]*\b(?:name|id)=[\"']([^\"']+)[\"']", re.I)
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 SKIP_DIRS = {".git", "node_modules", ".direnv"}
@@ -54,19 +59,28 @@ def markdown_files(root: Path) -> list[Path]:
         return sorted(found)
 
 
-def prose_lines(text: str):
-    """Yield (line number, line) outside fenced code blocks."""
-    fence = None
-    for n, line in enumerate(text.split("\n"), 1):
+def strip_fences(text: str) -> list[str]:
+    """The file's lines with fenced code blocks (fences included) blanked."""
+    out, fence = [], None
+    for line in text.split("\n"):
         m = FENCE.match(line)
         if fence:
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
                 fence = None
+            out.append("")
             continue
         if m:
             fence = m.group(1)
+            out.append("")
             continue
-        yield n, line
+        out.append(line)
+    return out
+
+
+def prose(text: str) -> str:
+    """Text outside code, same length and line breaks, for link scanning."""
+    joined = "\n".join(strip_fences(text))
+    return INLINE_CODE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), joined)
 
 
 def slug(heading: str) -> str:
@@ -81,26 +95,46 @@ def slug(heading: str) -> str:
 def anchors(text: str) -> set[str]:
     seen: dict[str, int] = {}
     out = set()
-    for _, line in prose_lines(text):
+
+    def add(heading: str) -> None:
+        base = slug(heading)
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        out.add(base if count == 0 else f"{base}-{count}")
+
+    paragraph: list[str] = []
+    for line in strip_fences(text):
+        out.update(HTML_ANCHOR.findall(line))
         m = HEADING.match(line)
         if m:
-            base = slug(m.group(2))
-            count = seen.get(base, 0)
-            seen[base] = count + 1
-            out.add(base if count == 0 else f"{base}-{count}")
-        out.update(HTML_ANCHOR.findall(line))
+            add(m.group(2))
+            paragraph = []
+        elif SETEXT.match(line) and paragraph:
+            # `Title` underlined with === or --- (a bare --- is a rule).
+            add(" ".join(s.strip() for s in paragraph))
+            paragraph = []
+        elif line.strip():
+            paragraph.append(line)
+        else:
+            paragraph = []
     return out
 
 
 def link_targets(text: str):
-    for n, line in prose_lines(text):
-        m = REF_DEF.match(line)
-        if m:
-            yield n, m.group(1)
-            continue
-        stripped = INLINE_CODE.sub("", line)
-        for m in INLINE_LINK.finditer(stripped):
-            yield n, m.group(1)
+    body = prose(text)
+
+    def line_of(pos: int) -> int:
+        return body.count("\n", 0, pos) + 1
+
+    for m in REF_DEF.finditer(body):
+        yield line_of(m.start(1)), m.group(1)
+
+    def scan(start: int, end: int):
+        for m in INLINE_LINK.finditer(body, start, end):
+            yield line_of(m.start(2)), m.group(2)
+            yield from scan(m.start(1), m.end(1))
+
+    yield from scan(0, len(body))
 
 
 def check(root: Path) -> list[str]:
@@ -120,6 +154,7 @@ def check(root: Path) -> list[str]:
             if not target or SCHEME.match(target) or target.startswith("//"):
                 continue
             path_part, _, fragment = target.partition("#")
+            path_part, fragment = unquote(path_part), unquote(fragment)
             if path_part:
                 base = root if path_part.startswith("/") else md.parent
                 dest = (base / path_part.lstrip("/")).resolve()

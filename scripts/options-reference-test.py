@@ -40,7 +40,11 @@ def opt(name="myThing.enable", **kw):
     return base
 
 
-def doc(*options, forbidden=()):
+def lit(text):
+    return {"_type": "literalExpression", "text": text}
+
+
+def doc(*options, domains=("fleet.example",)):
     return {
         "fixture": "fixture-host",
         "groups": [
@@ -51,7 +55,7 @@ def doc(*options, forbidden=()):
                 "options": list(options),
             }
         ],
-        "forbidden": list(forbidden),
+        "forbiddenDomains": list(domains),
     }
 
 
@@ -122,24 +126,55 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(optref.code("a`b"), "``a`b``")
         self.assertEqual(optref.code("`x`"), "`` `x` ``")
 
-    def test_forbidden_value_fails_without_printing_it(self):
-        rc, out, err = run(
-            doc(
-                opt(
-                    default={"_type": "literalExpression", "text": '"app.host.example"'}
-                ),
-                forbidden=["host.example"],
-            )
-        )
-        self.assertEqual(rc, 1)
+    def assert_refused(self, value, stage="input", **opt_kw):
+        rc, out, err = run(doc(opt(**opt_kw) if opt_kw else opt(example=lit(value))))
+        self.assertEqual(rc, 1, value)
         self.assertEqual(out, "")
+        self.assertIn(f"options-reference: {stage} contains", err)
         self.assertIn("myThing.enable", err)
-        self.assertNotIn("host.example", err)
+        self.assertNotIn(value, err)
+
+    def test_fleet_domain_name_fails_without_printing_it(self):
+        self.assert_refused('"workstation.fleet.example"')
+        self.assert_refused('"FLEET.example"')
+
+    def test_email_fails(self):
+        self.assert_refused('"someone@mail.example.org"')
+
+    def test_tailnet_name_fails(self):
+        self.assert_refused('"box.tail1234.ts.net"')
+
+    def test_private_addresses_fail(self):
+        for ip in ("10.1.2.3", "172.20.0.1", "192.168.1.50", "100.101.102.103"):
+            self.assert_refused(f'"{ip}"')
 
     def test_store_path_fails(self):
         rc, _, err = run(doc(opt(declarations=["/nix/store/abc-source/modules/x.nix"])))
         self.assertEqual(rc, 1)
         self.assertIn("myThing.enable", err)
+
+    def test_email_in_input_only_fails(self):
+        # Not rendered anywhere, but still in the store artifact.
+        d = doc(opt())
+        d["groups"][0]["options"][0]["unused"] = "someone@mail.example.org"
+        rc, _, err = run(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("input contains email address", err)
+
+    def test_placeholders_pass(self):
+        for value in (
+            '"workstation.example.internal"',
+            '"192.0.2.10"',
+            '"127.0.0.1"',
+            '"@env@"',
+            '"‹name›.fixture.example"',
+            '"110.1.2.3.4"',
+        ):
+            rc, _, err = run(doc(opt(example=lit(value))))
+            self.assertEqual(rc, 0, (value, err))
+
+    def test_domain_list_itself_is_not_a_leak(self):
+        self.assertEqual(run(doc(opt(), domains=("fleet.example",)))[0], 0)
 
 
 if __name__ == "__main__":

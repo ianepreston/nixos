@@ -253,7 +253,7 @@ nixpkgs build can't run in a guest, is packaged in its bundle from a fixed tag
 or release and its hash. Unity Gateway and the Databricks CLI are packaged like
 this and tracked by Renovate; CI regenerates their hashes (the Databricks
 CLI's through `regen-hash:` markers, see
-[fetch hashes](agents/fetch-hashes.md)). Adding a bundle means adding one
+[fetch hashes](runbooks/fetch-hashes.md)). Adding a bundle means adding one
 file; the catalog is the directory listing.
 
 `sandbox plan` shows each selected bundle with its source digest, commands,

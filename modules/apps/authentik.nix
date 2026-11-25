@@ -335,7 +335,7 @@
                   upstreamHost = lib.mkOption {
                     type = lib.types.str;
                     default = "localhost";
-                    example = "terra.ipreston.net";
+                    example = "workstation.example.internal";
                     description = ''
                       Host Caddy proxies to. Defaults to localhost — nearly
                       every app runs on the same box as caddy. Set it to

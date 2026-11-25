@@ -9,16 +9,18 @@ values. Run it through `task docs:options` rather than by hand.
 
 The input is
   {"fixture": str, "groups": [{"title", "intro", "options": [...]}],
-   "forbidden": [str]}
+   "forbiddenDomains": [str]}
 where each option carries name, type, description, default, example,
 declarations and readOnly, and `default`/`example` are nixpkgs literal values
 (`{"_type": "literalExpression" | "literalMD", "text": ...}`), null when the
 option has none, or `{"_type": "unrenderable"}` when the default could not be
 evaluated without a host.
 
-Rendering fails (exit 1) rather than publish a machine-specific value: when the
-output contains a store path or any `forbidden` string (the fixture host's
-domain and contact values).
+Rendering fails (exit 1) rather than store or publish a personal or
+machine-specific value: when the input (minus `forbiddenDomains`) or the output
+contains an email address, a store path, a tailnet name, a private IPv4
+address, or a name under one of `forbiddenDomains` (the fleet's real domains).
+Errors name the option and the kind of value, never the value.
 """
 
 from __future__ import annotations
@@ -41,11 +43,11 @@ the `options-reference` flake check fails when it is stale.
 
 Defaults are shown as declared (`defaultText`) where the declaration gives
 one, otherwise as evaluated against the option declarations of the
-`{fixture}` configuration, without any host's settings. `<name>` in an option
-path and `‹name›` in a default stand for the attribute name of an entry in an
-attribute set of submodules. Option
-descriptions say what an option does; when and why to use it is in
-[server app conventions](../server-apps.md) and the
+`{fixture}` module set with a placeholder host (`fixture.example`), so no
+host's own settings appear. `<name>` in an option path and `‹name›` in a
+default stand for the attribute name of an entry in an attribute set of
+submodules. Option descriptions say what an option does; when and why to use
+it is in [server app conventions](../server-apps.md) and the
 [architecture guide](../agents/architecture.md).
 """
 
@@ -158,11 +160,45 @@ def render(doc: dict) -> str:
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-def leaks(text: str, forbidden: list[str]) -> list[str]:
-    found = [f for f in forbidden if f and f in text]
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+TAILNET = re.compile(r"[A-Za-z0-9-]+\.ts\.net\b", re.I)
+# RFC 1918 and the CGNAT range Tailscale assigns from; loopback and the
+# documentation ranges (192.0.2.0/24 etc.) are fine.
+PRIVATE_IP = re.compile(
+    r"(?<![\d.])(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168"
+    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\.\d{1,3}\.\d{1,3}(?![\d.])"
+)
+
+
+def leaks(text: str, domains: list[str]) -> list[str]:
+    """Kinds of machine-specific or personal value present in `text`."""
+    found = []
     if "/nix/store/" in text:
-        found.append("/nix/store/")
+        found.append("store path")
+    if EMAIL.search(text):
+        found.append("email address")
+    if TAILNET.search(text):
+        found.append("tailnet name")
+    if PRIVATE_IP.search(text):
+        found.append("private address")
+    for d in domains:
+        if d and re.search(
+            rf"(?<![A-Za-z0-9-]){re.escape(d)}(?![A-Za-z0-9-])", text, re.I
+        ):
+            found.append("name under a fleet domain")
+            break
     return found
+
+
+def refuse(stage: str, kinds: list[str], names: list[str]) -> int:
+    # Name the options and the kind of value, never the value itself.
+    print(
+        f"options-reference: {stage} contains {', '.join(kinds)} in: "
+        f"{', '.join(names) or 'the page header'}; use a placeholder "
+        "(`defaultText`, or an `example` under example.invalid / 192.0.2.0/24)",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def main(argv: list[str]) -> int:
@@ -171,23 +207,20 @@ def main(argv: list[str]) -> int:
         return 2
     with open(argv[1], encoding="utf-8") as f:
         doc = json.load(f)
+    domains = doc.get("forbiddenDomains", [])
+    options = [o for g in doc["groups"] for o in g["options"]]
+    # The intermediate JSON lives in the store: it must be clean too.
+    kinds = leaks(
+        json.dumps({k: v for k, v in doc.items() if k != "forbiddenDomains"}), domains
+    )
+    if kinds:
+        names = [o["name"] for o in options if leaks(json.dumps(o), domains)]
+        return refuse("input", kinds, names)
     text = render(doc)
-    forbidden = doc.get("forbidden", [])
-    if leaks(text, forbidden):
-        # Name the options, never the values: these may be contact details.
-        names = [
-            o["name"]
-            for g in doc["groups"]
-            for o in g["options"]
-            if leaks(render_option(o), forbidden)
-        ]
-        print(
-            "options-reference: output contains a store path or a fixture host "
-            f"value in: {', '.join(names) or 'the page header'}; give the "
-            "option a `defaultText` (or a literal `example`) instead",
-            file=sys.stderr,
-        )
-        return 1
+    kinds = leaks(text, domains)
+    if kinds:
+        names = [o["name"] for o in options if leaks(render_option(o), domains)]
+        return refuse("output", kinds, names)
     sys.stdout.write(text)
     return 0
 

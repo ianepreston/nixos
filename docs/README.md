@@ -8,7 +8,7 @@ restating it.
 | ---- | ---- | ----- |
 | Onboarding | [`README.md`](../README.md) | what this repo is, hosts, layout, the module and server-app patterns, the Task entry points, links onward |
 | Extension guidance | [`docs/server-apps.md`](server-apps.md) | conventions an app module follows (runtime, networking, NFS UIDs, volumes, secrets) |
-| Option contracts | [`docs/reference/options.md`](reference/options.md) | **generated** reference for the public `my*` options: type, default, description, declaring file |
+| Option contracts | [`docs/reference/options.md`](reference/options.md) | **generated** reference for the `my*` options the server configuration declares: type, default, description, declaring file (not yet `myLlamaCpp`, `myLlmMetrics`, `myBambuddy`, or the home-manager `myPi`/`myVibes`) |
 | Operations | [`docs/runbooks/`](runbooks/) | operator procedures: restore, upgrades, bootstrap, activation, per-subsystem setup and their rationale |
 | Agent constraints | [`docs/agents/`](agents/), indexed from [`AGENTS.md`](../AGENTS.md) | rules agents must follow; short, imperative, linking to runbooks for procedure |
 | Agent workflows | [`skills/`](../skills/) | canonical multi-step workflows (`add-app`, `resolve-issue`, …); adapters under `.claude/` and `.agents/` only point at them |

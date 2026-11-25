@@ -88,6 +88,29 @@ class LinkTest(unittest.TestCase):
             self.problems(), ["a.md:1: ../../etc/passwd: points outside the repository"]
         )
 
+    # Review findings on #1112: each failed before the whole-text scanner.
+    def test_multiline_link_to_missing_file(self):
+        self.write("a.md", "see [the restore\nrunbook](\n  gone.md) for details\n")
+        self.assertEqual(self.problems(), ["a.md:3: gone.md: no such file"])
+
+    def test_missing_image_inside_valid_link(self):
+        self.write("b.md", "# B\n")
+        self.write("a.md", "[![diagram](missing.png)](b.md)\n")
+        self.assertEqual(self.problems(), ["a.md:1: missing.png: no such file"])
+
+    def test_setext_headings_are_anchors(self):
+        self.write(
+            "b.md",
+            "Restore Runbook\n===============\n\nPer app\nrestore\n-------\n\n---\n",
+        )
+        self.write("a.md", "[1](b.md#restore-runbook) [2](b.md#per-app-restore)\n")
+        self.assertEqual(self.problems(), [])
+
+    def test_percent_encoded_file_name(self):
+        self.write("docs/My Notes.md", "# Top\n")
+        self.write("a.md", "[n](docs/My%20Notes.md#top) [m](docs/My%20Gone.md)\n")
+        self.assertEqual(self.problems(), ["a.md:1: docs/My%20Gone.md: no such file"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
