@@ -954,6 +954,13 @@
         })
 
         (lib.mkIf (oidcApps != { }) {
+          # Guard the gate's start-rate-limit opt-out (see the gate unit):
+          # a re-introduced limit would fail the gate before its script runs.
+          assertions = lib.mapAttrsToList (appName: _: {
+            assertion = config.systemd.services.${blueprintGateName appName}.startLimitIntervalSec == 0;
+            message = "${blueprintGateName appName} must set startLimitIntervalSec = 0 (shared-gate start-limit-hit, #682).";
+          }) oidcApps;
+
           # OIDC client_id/_secret per app, plus any extras the app declares.
           sops.secrets =
             (lib.foldl' lib.mergeAttrs { } (
@@ -1054,6 +1061,13 @@
                   "authentik.service"
                   "authentik-worker.service"
                 ];
+                # The gate is non-persistent (no RemainAfterExit), so every
+                # dependent start re-runs it. Dependents sharing one gate
+                # (paperless-ngx's four units) start in quick succession and
+                # would trip systemd's default start rate limit (5 starts per
+                # 10s), landing the gate in `failed` (start-limit-hit) before
+                # its script runs. Disable the limit for the gate itself.
+                startLimitIntervalSec = 0;
                 environment = {
                   AUTHENTIK_HOST = "http://localhost:${toString authentikPort}";
                   BOOTSTRAP_TOKEN_FILE = config.sops.secrets."authentik/bootstrap_token".path;
