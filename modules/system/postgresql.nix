@@ -35,6 +35,17 @@ _: {
     }:
     let
       apps = config.myPostgresApp;
+
+      # Contributors whose `field` collides with another app's: value →
+      # the apps claiming it, for every value claimed more than once.
+      shared =
+        field:
+        lib.filterAttrs (_: owners: lib.length owners > 1) (
+          lib.groupBy (name: apps.${name}.${field}) (lib.attrNames apps)
+        );
+      owners = lib.concatMapStringsSep ", " (
+        name: "myPostgresApp.${lib.strings.escapeNixIdentifier name}"
+      );
     in
     {
       options.myPostgresApp = lib.mkOption {
@@ -59,6 +70,10 @@ _: {
                     attribute name with hyphens replaced by underscores
                     (paperless-ngx → paperless_ngx) so the role name is
                     a valid SQL identifier.
+
+                    Each app owns its database and role exclusively:
+                    two entries resolving to one name (e.g. `foo-bar`
+                    and `foo_bar`) fail evaluation. No app shares one.
                   '';
                 };
                 consumerService = lib.mkOption {
@@ -83,6 +98,9 @@ _: {
                     sops secret name for the role's password. Defaults
                     to "<name>/db_password". Override only if the
                     secret already exists under a non-standard name.
+                    Must be unique across entries: a shared secret would
+                    restart only one app's rotation oneshot, so a
+                    collision fails evaluation.
                   '';
                 };
               };
@@ -180,6 +198,16 @@ _: {
               '';
             }
           ) apps;
+
+          assertions =
+            lib.mapAttrsToList (db: names: {
+              assertion = false;
+              message = "myPostgresApp: database and role `${db}` is claimed by ${owners names}; each app needs its own dbName (the default replaces hyphens in the attribute name with underscores).";
+            }) (shared "dbName")
+            ++ lib.mapAttrsToList (secret: names: {
+              assertion = false;
+              message = "myPostgresApp: sops secret `${secret}` is claimed by ${owners names}; each role needs its own secretName.";
+            }) (shared "secretName");
         })
       ];
     };

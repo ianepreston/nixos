@@ -135,6 +135,21 @@ _: {
         }
         log_skip @gatusProbe
       '';
+
+      # Every host an app's matcher claims, lowercased because Caddy
+      # matches hosts case-insensitively. `host` may list several.
+      claimedHosts =
+        app:
+        lib.unique (
+          map lib.toLower (lib.filter (h: lib.isString h && h != "") (builtins.split "[[:space:]]+" app.host))
+        );
+      hostClaims = lib.filterAttrs (_: names: lib.length names > 1) (
+        lib.zipAttrs (
+          lib.concatLists (
+            lib.mapAttrsToList (name: app: map (h: { ${h} = name; }) (claimedHosts app)) config.myCaddy.apps
+          )
+        )
+      );
     in
     {
       options.myCaddy.apps = lib.mkOption {
@@ -147,7 +162,12 @@ _: {
                   type = lib.types.str;
                   default = "${name}.${hostSpec.serverDomain}";
                   defaultText = lib.literalExpression ''"<name>.''${hostSpec.serverDomain}"'';
-                  description = "Hostname matched for this app. Defaults to <name>.<serverDomain>.";
+                  description = ''
+                    Hostname matched for this app. Defaults to <name>.<serverDomain>.
+                    Each hostname belongs to one app: a host claimed by two
+                    entries (compared case-insensitively) fails evaluation,
+                    since only one of their routes could ever be served.
+                  '';
                 };
                 routeConfig = lib.mkOption {
                   type = lib.types.lines;
@@ -237,6 +257,13 @@ _: {
         systemd.services.caddy.serviceConfig.EnvironmentFile = [
           config.sops.templates."caddy.env".path
         ];
+
+        assertions = lib.mapAttrsToList (host: names: {
+          assertion = false;
+          message = "myCaddy.apps: host `${host}` is claimed by ${
+            lib.concatMapStringsSep ", " (name: "myCaddy.apps.${lib.strings.escapeNixIdentifier name}") names
+          }; only one route per host can be served.";
+        }) hostClaims;
 
         networking.firewall.allowedTCPPorts = [
           80

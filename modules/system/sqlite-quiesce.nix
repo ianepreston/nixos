@@ -35,6 +35,31 @@ _: {
       inherit (config.mySqliteQuiesce) apps;
       stagingRoot = "/var/backup/sqlite";
       isGlob = db: builtins.match ".*[*?[].*" db != null;
+
+      # A staged copy is named after its source's basename, which is known
+      # at evaluation unless the glob is in the last path component.
+      staticName = db: !isGlob (baseNameOf db);
+      # Static names claimed by more than one entry of an app.
+      staticCollisions =
+        app:
+        lib.filterAttrs (_: dbs: lib.length dbs > 1) (
+          lib.groupBy baseNameOf (lib.filter staticName app.databases)
+        );
+      # Only a runtime-named entry beside another entry can collide after
+      # evaluation; those units resolve every entry before writing.
+      needsRuntimeCheck = app: lib.length app.databases > 1 && !lib.all staticName app.databases;
+
+      # Resolve a glob entry into `srcs`, which must hold exactly one match.
+      # No trailing newline: callers interpolate it as a line of their own.
+      resolveGlob =
+        db:
+        lib.removeSuffix "\n" ''
+          srcs=( ${db} )
+          if [ "''${#srcs[@]}" -ne 1 ]; then
+            echo ${lib.escapeShellArg db}" matched ''${#srcs[@]} files, expected 1" >&2
+            exit 1
+          fi
+        '';
     in
     {
       options.mySqliteQuiesce.apps = lib.mkOption {
@@ -53,12 +78,18 @@ _: {
               type = lib.types.listOf lib.types.str;
               description = ''
                 Absolute paths to SQLite files. The basename ends up
-                in /var/backup/sqlite/<name>/<basename>; basename
-                collisions across the list are the caller's problem.
+                in /var/backup/sqlite/<name>/<basename>, so basenames
+                must be distinct within an app: no two entries may share
+                a staged file. A collision between names known at
+                evaluation fails evaluation.
                 An entry may be a glob for a path the app picks at
                 runtime (wealthfolio's per-profile directory); it must
                 match exactly one file, and the quiesce unit fails
                 otherwise. Recovery resolves the same glob on restore.
+                When a glob's last component is itself a pattern, its
+                staged name is checked once resolved: the unit fails
+                before writing any staged copy if two entries would
+                share one.
               '';
             };
           }
@@ -90,28 +121,56 @@ _: {
               set -euo pipefail
               shopt -s nullglob
               dstdir=${lib.escapeShellArg "${stagingRoot}/${name}"}
-              ${lib.concatMapStringsSep "\n" (
-                db:
-                if isGlob db then
-                  ''
-                    srcs=( ${db} )
-                    if [ "''${#srcs[@]}" -ne 1 ]; then
-                      echo ${lib.escapeShellArg db}" matched ''${#srcs[@]} files, expected 1" >&2
-                      exit 1
-                    fi
-                    ${pkgs.sqlite}/bin/sqlite3 "''${srcs[0]}" ".backup $dstdir/$(basename "''${srcs[0]}")"
-                  ''
-                else
-                  ''
-                    src=${lib.escapeShellArg db}
-                    if [ -f "$src" ]; then
-                      ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dstdir/$(basename "$src")"
-                    fi
-                  ''
-              ) app.databases}
-            '';
+            ''
+            + (
+              if needsRuntimeCheck app then
+                ''
+                  ${builtins.readFile ./_sqlite-quiesce/stage-checked.sh}
+                  entries=()
+                  ${lib.concatMapStringsSep "\n" (
+                    db:
+                    if isGlob db then
+                      ''
+                        ${resolveGlob db}
+                        entries+=( resolved "''${srcs[0]}" )
+                      ''
+                    else
+                      "entries+=( literal ${lib.escapeShellArg db} )"
+                  ) app.databases}
+                  stage_checked ${pkgs.sqlite}/bin/sqlite3 "$dstdir" "''${entries[@]}"
+                ''
+              else
+                lib.concatMapStringsSep "\n" (
+                  db:
+                  if isGlob db then
+                    ''
+                      ${resolveGlob db}
+                      ${pkgs.sqlite}/bin/sqlite3 "''${srcs[0]}" ".backup $dstdir/$(basename "''${srcs[0]}")"
+                    ''
+                  else
+                    ''
+                      src=${lib.escapeShellArg db}
+                      if [ -f "$src" ]; then
+                        ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dstdir/$(basename "$src")"
+                      fi
+                    ''
+                ) app.databases
+                + "\n"
+            );
           }
         ) apps;
+
+        assertions = lib.concatLists (
+          lib.mapAttrsToList (
+            name: app:
+            lib.mapAttrsToList (base: dbs: {
+              assertion = false;
+              message = "mySqliteQuiesce.apps.${lib.strings.escapeNixIdentifier name}.databases: ${
+                lib.concatMapStringsSep ", " (db: "`${db}`") dbs
+              } all stage to ${stagingRoot}/${name}/${base}; each database needs a distinct basename.";
+            }) (staticCollisions app)
+          ) apps
+        );
       };
     };
 }
