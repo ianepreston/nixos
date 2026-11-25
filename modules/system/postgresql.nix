@@ -35,6 +35,23 @@ _: {
     }:
     let
       apps = config.myPostgresApp;
+
+      # Contributors whose `key` collides with another app's: value → the
+      # apps claiming it, for every value claimed more than once.
+      shared =
+        key:
+        lib.filterAttrs (_: owners: lib.length owners > 1) (
+          lib.groupBy (name: key apps.${name}) (lib.attrNames apps)
+        );
+      owner = name: "myPostgresApp.${lib.strings.escapeNixIdentifier name}";
+      owners = lib.concatMapStringsSep ", " owner;
+
+      # The rotation oneshot passes dbName to `ALTER USER` unquoted, so it
+      # must be a plain identifier, and PostgreSQL resolves it by folding
+      # to lower case and truncating to 63 bytes (NAMEDATALEN - 1). Plain
+      # identifiers are ASCII, so bytes and characters coincide.
+      plainIdentifier = db: builtins.match "[A-Za-z_][A-Za-z0-9_$]*" db != null;
+      identifier = app: builtins.substring 0 63 (lib.toLower app.dbName);
     in
     {
       options.myPostgresApp = lib.mkOption {
@@ -59,6 +76,19 @@ _: {
                     attribute name with hyphens replaced by underscores
                     (paperless-ngx → paperless_ngx) so the role name is
                     a valid SQL identifier.
+
+                    Must be a plain identifier (letters, digits, `_`
+                    and `$`), since the password rotation passes it to
+                    `ALTER USER` unquoted. Each app owns its database
+                    and role exclusively, compared as PostgreSQL
+                    resolves the name: folded to lower case and
+                    truncated to 63 bytes. Two entries resolving to one
+                    name (`foo-bar` and `foo_bar`, `Foo` and `foo`, or
+                    two names sharing their first 63 bytes) fail
+                    evaluation. No app shares one. Known limits: the
+                    reserved role names `current_user` and `session_user`,
+                    and names containing `$`, are not rejected; don't
+                    use them.
                   '';
                 };
                 consumerService = lib.mkOption {
@@ -83,6 +113,9 @@ _: {
                     sops secret name for the role's password. Defaults
                     to "<name>/db_password". Override only if the
                     secret already exists under a non-standard name.
+                    Must be unique across entries: a shared secret would
+                    restart only one app's rotation oneshot, so a
+                    collision fails evaluation.
                   '';
                 };
               };
@@ -180,6 +213,22 @@ _: {
               '';
             }
           ) apps;
+
+          assertions =
+            lib.mapAttrsToList (name: app: {
+              assertion = plainIdentifier app.dbName;
+              message = "${owner name}.dbName: `${app.dbName}` is not a plain SQL identifier (letters, digits, `_` and `$`, not starting with a digit or `$`); the password rotation passes it to ALTER USER unquoted.";
+            }) apps
+            ++ lib.mapAttrsToList (db: names: {
+              assertion = false;
+              message = "myPostgresApp: database and role `${db}` is claimed by ${
+                lib.concatMapStringsSep ", " (name: "${owner name} (dbName `${apps.${name}.dbName}`)") names
+              }; PostgreSQL folds unquoted names to lower case and truncates them to 63 bytes, so each app needs a dbName that stays distinct after that (the default replaces hyphens in the attribute name with underscores).";
+            }) (shared identifier)
+            ++ lib.mapAttrsToList (secret: names: {
+              assertion = false;
+              message = "myPostgresApp: sops secret `${secret}` is claimed by ${owners names}; each role needs its own secretName.";
+            }) (shared (app: app.secretName));
         })
       ];
     };

@@ -35,6 +35,39 @@ _: {
       inherit (config.mySqliteQuiesce) apps;
       stagingRoot = "/var/backup/sqlite";
       isGlob = db: builtins.match ".*[*?[].*" db != null;
+
+      # The staged name is passed to sqlite's `.backup` unquoted, and its
+      # dot-command parser splits on whitespace and treats quotes and
+      # backslashes specially, so only these characters reach the file
+      # name intact. stage-checked.sh uses the same set.
+      safeName = base: builtins.match "[A-Za-z0-9._+@%,:=~-]+" base != null;
+      # A staged copy is named after its source's basename. A literal's is
+      # known at evaluation; so is a glob's whose last component is a plain
+      # safe name. Any other glob tail (a pattern, a shell escape such as
+      # `plain\.db`, quoting) is only known once the shell resolves it.
+      staticName = db: !isGlob db || safeName (baseNameOf db);
+      # Static names claimed by more than one entry of an app.
+      staticCollisions =
+        app:
+        lib.filterAttrs (_: dbs: lib.length dbs > 1) (
+          lib.groupBy baseNameOf (lib.filter staticName app.databases)
+        );
+      # A runtime-named entry can resolve to a name sqlite would alter, or
+      # collide with another entry, so any unit with one (even a single
+      # entry) resolves every entry and checks it before writing.
+      needsRuntimeCheck = app: !lib.all staticName app.databases;
+
+      # Resolve a glob entry into `srcs`, which must hold exactly one match.
+      # No trailing newline: callers interpolate it as a line of their own.
+      resolveGlob =
+        db:
+        lib.removeSuffix "\n" ''
+          srcs=( ${db} )
+          if [ "''${#srcs[@]}" -ne 1 ]; then
+            echo ${lib.escapeShellArg db}" matched ''${#srcs[@]} files, expected 1" >&2
+            exit 1
+          fi
+        '';
     in
     {
       options.mySqliteQuiesce.apps = lib.mkOption {
@@ -53,12 +86,24 @@ _: {
               type = lib.types.listOf lib.types.str;
               description = ''
                 Absolute paths to SQLite files. The basename ends up
-                in /var/backup/sqlite/<name>/<basename>; basename
-                collisions across the list are the caller's problem.
+                in /var/backup/sqlite/<name>/<basename>, so basenames
+                must be distinct within an app: no two entries may share
+                a staged file. A collision between names known at
+                evaluation fails evaluation. Staged names may only use
+                letters, digits and `._+@%,:=~-`, because sqlite's
+                `.backup` takes them unquoted; a literal path with any
+                other basename fails evaluation.
                 An entry may be a glob for a path the app picks at
                 runtime (wealthfolio's per-profile directory); it must
                 match exactly one file, and the quiesce unit fails
                 otherwise. Recovery resolves the same glob on restore.
+                When a glob's last component is anything but a plain
+                safe name (a pattern, a shell escape such as
+                `plain\.db`), its staged name is checked once resolved:
+                the unit fails before writing any staged copy if two
+                entries would share one or a resolved name has any
+                other character. A hidden file only matches a pattern
+                that spells out its leading dot (`.*.db`).
               '';
             };
           }
@@ -90,28 +135,60 @@ _: {
               set -euo pipefail
               shopt -s nullglob
               dstdir=${lib.escapeShellArg "${stagingRoot}/${name}"}
-              ${lib.concatMapStringsSep "\n" (
-                db:
-                if isGlob db then
-                  ''
-                    srcs=( ${db} )
-                    if [ "''${#srcs[@]}" -ne 1 ]; then
-                      echo ${lib.escapeShellArg db}" matched ''${#srcs[@]} files, expected 1" >&2
-                      exit 1
-                    fi
-                    ${pkgs.sqlite}/bin/sqlite3 "''${srcs[0]}" ".backup $dstdir/$(basename "''${srcs[0]}")"
-                  ''
-                else
-                  ''
-                    src=${lib.escapeShellArg db}
-                    if [ -f "$src" ]; then
-                      ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dstdir/$(basename "$src")"
-                    fi
-                  ''
-              ) app.databases}
-            '';
+            ''
+            + (
+              if needsRuntimeCheck app then
+                ''
+                  ${builtins.readFile ./_sqlite-quiesce/stage-checked.sh}
+                  entries=()
+                  ${lib.concatMapStringsSep "\n" (
+                    db:
+                    if isGlob db then
+                      ''
+                        ${resolveGlob db}
+                        entries+=( resolved "''${srcs[0]}" )
+                      ''
+                    else
+                      "entries+=( literal ${lib.escapeShellArg db} )"
+                  ) app.databases}
+                  stage_checked ${pkgs.sqlite}/bin/sqlite3 "$dstdir" "''${entries[@]}"
+                ''
+              else
+                lib.concatMapStringsSep "\n" (
+                  db:
+                  if isGlob db then
+                    ''
+                      ${resolveGlob db}
+                      ${pkgs.sqlite}/bin/sqlite3 "''${srcs[0]}" ".backup $dstdir/$(basename "''${srcs[0]}")"
+                    ''
+                  else
+                    ''
+                      src=${lib.escapeShellArg db}
+                      if [ -f "$src" ]; then
+                        ${pkgs.sqlite}/bin/sqlite3 "$src" ".backup $dstdir/$(basename "$src")"
+                      fi
+                    ''
+                ) app.databases
+                + "\n"
+            );
           }
         ) apps;
+
+        assertions = lib.concatLists (
+          lib.mapAttrsToList (
+            name: app:
+            map (db: {
+              assertion = false;
+              message = "mySqliteQuiesce.apps.${lib.strings.escapeNixIdentifier name}.databases: `${db}` stages as `${baseNameOf db}`, which sqlite's .backup cannot take unquoted; staged names may only use letters, digits and `._+@%,:=~-`.";
+            }) (lib.filter (db: !isGlob db && !safeName (baseNameOf db)) app.databases)
+            ++ lib.mapAttrsToList (base: dbs: {
+              assertion = false;
+              message = "mySqliteQuiesce.apps.${lib.strings.escapeNixIdentifier name}.databases: ${
+                lib.concatMapStringsSep ", " (db: "`${db}`") dbs
+              } all stage to ${stagingRoot}/${name}/${base}; each database needs a distinct basename.";
+            }) (staticCollisions app)
+          ) apps
+        );
       };
     };
 }
