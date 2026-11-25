@@ -16,14 +16,26 @@
 #                         forward_auth
 #   * oidcApps          — apps that speak OIDC against authentik directly
 #
-# `oidcApps` also handles boot-time HTTP readiness: each app's
-# `appRestartUnit` is pulled `After=authentik-ready.service` so apps
-# that fetch the OIDC discovery URL once at startup (actualbudget,
-# miniflux, komga) don't race authentik's Django worker and 502.
-# No per-app `After=authentik.service` is needed — adding one would
-# be redundant. An app with no `appRestartUnit` gets nothing from
-# this and must order itself against `authentik-ready.service` if it
-# probes discovery at startup (bindery does).
+# `oidcApps` also handles boot-time readiness, at two boundaries. Every
+# app's `appRestartUnit` (plus any `startupProbeUnits`) is pulled
+# `After=authentik-blueprint-ready-<app>.service`, a per-app gate that
+# waits for that app's blueprint to be APPLIED by the worker (instance
+# status "successful" in /api/v3/managed/blueprints/). That gate is itself
+# ordered after `authentik-ready.service` (Django answers
+# /-/health/ready/), so both races are covered:
+#   * #200 — a not-yet-listening Django answers 502 on the discovery URL;
+#   * #682 — Django is up but the worker has not applied the app's
+#     *new* blueprint, so discovery 404s. Apps that persist the result of
+#     a startup discovery probe (sparkyfitness writes a slash-stripped
+#     issuer and NULL endpoints into its own DB) are poisoned by this one.
+# No per-app `After=authentik.service` is needed — adding one would be
+# redundant. An app with neither `appRestartUnit` nor `startupProbeUnits`
+# gets nothing from this and must order itself if it probes discovery at
+# startup. The gates are `wants`, never `requires`, and time out: a wedged
+# blueprint degrades the app to local auth instead of holding the boot.
+# The gate only helps a blueprint's *first* application on a host; a
+# changed blueprint on an already-applied instance still reads "successful"
+# until the worker re-applies it, but discovery then already exists.
 #
 # Forward-auth specifics: the embedded outpost has a single global
 # `providers` list. To avoid two blueprints clobbering it, this module
@@ -41,7 +53,7 @@
 # miniflux, komga, and actualbudget use the generated client-ID/secret vars.
 # tandoor and paperless-ngx set clientCredsInAppEnv = false but still consume
 # an env file: extraEnvLines puts their OIDC credentials in JSON settings.
-# DB/UI-configured apps (bookorbit, audiobookshelf, seerr) also set false,
+# DB/UI-configured apps (bookorbit, audiobookshelf, seerr, homeassistant) also set false,
 # without consuming OIDC env settings. Non-OIDC secrets can use extraEnvLines
 # or a separate template (bookorbit's database password and app tokens).
 #
@@ -76,6 +88,24 @@
         "authentik-worker.service"
         "authentik-migrate.service"
       ];
+
+      # Blueprint-applied poll, source in ./_authentik/blueprint-ready.sh.
+      blueprintReady = pkgs.writeShellApplication {
+        name = "authentik-blueprint-ready";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.curl
+          pkgs.jq
+        ];
+        text = builtins.readFile ./_authentik/blueprint-ready.sh;
+      };
+
+      # Blueprint files an app contributes (basenames; they land at the root
+      # of the merged blueprints dir, which is what the API reports as `path`).
+      blueprintFiles =
+        app: lib.filter (lib.hasSuffix ".yaml") (lib.attrNames (builtins.readDir app.blueprintsDir));
+
+      blueprintGateName = appName: "authentik-blueprint-ready-${appName}";
 
       fwApps = config.myAuthentik.forwardAuthApps;
       fwAppNames = lib.attrNames fwApps;
@@ -495,6 +525,18 @@
                       so they all bounce on credential rotation.
                     '';
                   };
+                  startupProbeUnits = lib.mkOption {
+                    type = lib.types.listOf lib.types.str;
+                    default = [ ];
+                    description = ''
+                      Units that probe the OIDC discovery URL at startup but
+                      are not restarted by the per-app env file (e.g. bindery,
+                      which keeps its OIDC config in its own database and
+                      latches a failed discovery). They are ordered after
+                      this app's blueprint-applied gate exactly like
+                      `appRestartUnit`, without being restart targets.
+                    '';
+                  };
                   publicClient = lib.mkOption {
                     type = lib.types.bool;
                     default = false;
@@ -720,6 +762,9 @@
             '';
           };
 
+          # authentik-ready (above) is HTTP readiness only; per-app
+          # blueprint-applied gates are rendered from `oidcApps` below.
+
           sops.templates."authentik.env" = {
             content = ''
               AUTHENTIK_SECRET_KEY=${config.sops.placeholder."authentik/secret_key"}
@@ -909,6 +954,13 @@
         })
 
         (lib.mkIf (oidcApps != { }) {
+          # Guard the gate's start-rate-limit opt-out (see the gate unit):
+          # a re-introduced limit would fail the gate before its script runs.
+          assertions = lib.mapAttrsToList (appName: _: {
+            assertion = config.systemd.services.${blueprintGateName appName}.startLimitIntervalSec == 0;
+            message = "${blueprintGateName appName} must set startLimitIntervalSec = 0 (shared-gate start-limit-hit, #682).";
+          }) oidcApps;
+
           # OIDC client_id/_secret per app, plus any extras the app declares.
           sops.secrets =
             (lib.foldl' lib.mergeAttrs { } (
@@ -959,22 +1011,94 @@
                 config.sops.templates."authentik-oidc-apps.env".path
               ];
             }
-            # Inject After=authentik-ready.service on every OIDC app's
-            # restart units so apps that probe the OIDC discovery URL at
-            # startup don't race the Django worker. Apps with empty
-            # appRestartUnit (DB/UI-configured: bookorbit, audiobookshelf,
-            # seerr, bindery) no-op through genAttrs and have to order
-            # themselves — being UI-configured says where the creds live,
-            # not when the app probes discovery. bindery probes at boot and
-            # latches the failure permanently, so it declares its own
-            # After=authentik-ready in modules/apps/bindery.nix; check that
-            # behaviour before assuming a new DB/UI app is race-immune.
+            # Per-app gate: wait for the worker to have APPLIED this app's
+            # blueprint, not merely for Django to serve HTTP (#682: the
+            # discovery URL 404s until the app's application slug exists, and
+            # sparkyfitness persists that failure). One unit per app so a
+            # wedged blueprint delays only its own app.
+            #
+            # Trust boundary: the admin API token is the sops-managed
+            # authentik/bootstrap_token. Only its *path* is in the unit
+            # (BOOTSTRAP_TOKEN_FILE); the script, running as root, reads it
+            # itself. LoadCredential= is deliberately not used: a missing
+            # file fails the unit during credential setup, before the script
+            # could degrade. The token is passed to curl as a header on stdin (`-H @-`: never
+            # argv, so not visible in /proc, and never parsed as config
+            # syntax), with `-q --noproxy '*'` so no curlrc or proxy can see
+            # it. Never echoed, never in the store. The poll is a read-only
+            # GET against localhost:9000.
+            #
+            # Delay bound. The gate starts after authentik-ready, which can
+            # itself wait up to 180s, so a dependent can be held at most
+            # 180s (ready) + 120s polling budget = ~300s past authentik
+            # start. The budget is a monotonic deadline (/proc/uptime) that
+            # caps every request and sleep, so it holds exactly. The script
+            # degrades (warns, exit 0) rather than failing, because a failed
+            # unit makes switch-to-configuration exit 4 even for a `wants`
+            # dependency; TimeoutStartSec is only a backstop above it.
+            #
+            # Semantics: NO RemainAfterExit. The gate is active only while it
+            # polls, then goes inactive, so every start of a dependent (the
+            # app alone, or a switch) re-runs it through Wants=. A degraded
+            # release is therefore never cached as "ready": the next app
+            # restart polls again instead of skipping the check. A restart
+            # after a verified apply costs one instant request. Because the
+            # gate never stays active there is nothing to go stale, so no
+            # PartOf is needed; an authentik restart in the same transaction
+            # as an app restart orders the re-run after authentik-ready
+            # (itself PartOf-restarted) and the worker.
+            (lib.mapAttrs' (
+              appName: app:
+              lib.nameValuePair (blueprintGateName appName) {
+                description = "Wait for authentik to apply the ${appName} blueprint";
+                after = [
+                  "authentik-ready.service"
+                  "authentik.service"
+                  "authentik-worker.service"
+                ];
+                wants = [
+                  "authentik-ready.service"
+                  "authentik.service"
+                  "authentik-worker.service"
+                ];
+                # The gate is non-persistent (no RemainAfterExit), so every
+                # dependent start re-runs it. Dependents sharing one gate
+                # (paperless-ngx's four units) start in quick succession and
+                # would trip systemd's default start rate limit (5 starts per
+                # 10s), landing the gate in `failed` (start-limit-hit) before
+                # its script runs. Disable the limit for the gate itself.
+                startLimitIntervalSec = 0;
+                environment = {
+                  AUTHENTIK_HOST = "http://localhost:${toString authentikPort}";
+                  BOOTSTRAP_TOKEN_FILE = config.sops.secrets."authentik/bootstrap_token".path;
+                };
+                serviceConfig = {
+                  Type = "oneshot";
+                  # The script's own 120s budget (+ <=one round) ends the
+                  # wait and exits 0 with a journal warning; this backstop
+                  # sits well above it so systemd never has to kill the
+                  # unit into a failed state. Dependents `want` (not
+                  # `require`) the gate, so they start after it and degrade
+                  # to local auth.
+                  TimeoutStartSec = "180s";
+                  ExecStart = "${blueprintReady}/bin/authentik-blueprint-ready ${lib.escapeShellArgs (blueprintFiles app)}";
+                };
+              }
+            ) oidcApps)
+            # Order every OIDC app's startup-probing units after its gate.
+            # Apps with neither appRestartUnit nor startupProbeUnits
+            # (DB/UI-configured: bookorbit, audiobookshelf, seerr, homeassistant) no-op
+            # through genAttrs. Being UI-configured says where the creds
+            # live, not when the app probes discovery: bindery probes at boot
+            # and latches the failure, so it lists its unit in
+            # startupProbeUnits. Check that behaviour before assuming a new
+            # DB/UI app is race-immune.
             (lib.mkMerge (
               lib.mapAttrsToList (
-                _appName: app:
-                lib.genAttrs (map (lib.removeSuffix ".service") app.appRestartUnit) (_: {
-                  after = [ "authentik-ready.service" ];
-                  wants = [ "authentik-ready.service" ];
+                appName: app:
+                lib.genAttrs (map (lib.removeSuffix ".service") (app.appRestartUnit ++ app.startupProbeUnits)) (_: {
+                  after = [ "${blueprintGateName appName}.service" ];
+                  wants = [ "${blueprintGateName appName}.service" ];
                 })
               ) oidcApps
             ))

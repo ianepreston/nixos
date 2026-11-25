@@ -1078,6 +1078,19 @@ both sops and the env files.
 - **Default:** `false`
 - **Declared in:** [`modules/apps/authentik.nix`](../../modules/apps/authentik.nix)
 
+### `myAuthentik.oidcApps.<name>.startupProbeUnits`
+
+Units that probe the OIDC discovery URL at startup but
+are not restarted by the per-app env file (e.g. bindery,
+which keeps its OIDC config in its own database and
+latches a failed discovery). They are ordered after
+this app's blueprint-applied gate exactly like
+`appRestartUnit`, without being restart targets.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Declared in:** [`modules/apps/authentik.nix`](../../modules/apps/authentik.nix)
+
 ## Routing and dashboard
 
 Reverse-proxy routes on the wildcard vhost and homepage tiles.
