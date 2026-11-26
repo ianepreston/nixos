@@ -9,7 +9,7 @@
 { pkgsUnstable, lib, ... }:
 let
   # renovate: datasource=github-releases depName=databricks/cli
-  version = "1.26.0";
+  version = "1.27.0";
   release =
     { arch, hash }:
     pkgsUnstable.fetchurl {
