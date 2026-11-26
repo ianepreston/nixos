@@ -37,7 +37,11 @@ REPO = (
 )
 DRIVER = REPO / "scripts" / "flake-checks.sh"
 # The Nix build sandbox has no /usr/bin/env: run the driver with this bash.
-BASH = os.path.realpath(shutil.which("bash") or "/bin/bash")
+# FLAKE_CHECKS_BASH runs the driver under another bash (e.g. macOS /bin/bash
+# 3.2) to check compatibility; the Nix check uses the sandbox's bash.
+BASH = os.path.realpath(
+    os.environ.get("FLAKE_CHECKS_BASH") or shutil.which("bash") or "/bin/bash"
+)
 PYTHON = os.path.realpath(sys.executable)
 FLAKE = "/synthetic/flake"
 REAL_NIX = os.environ.get("FLAKE_CHECKS_REAL_NIX")
@@ -793,6 +797,65 @@ class Platforms(Harness):
         include.mkdir()
         self.refused(f"ssh://b x86_64-linux - 4; @{include}", "could not be expanded")
 
+    def test_include_under_a_regular_file_refuses(self):
+        # stat fails with ENOTDIR, not ENOENT: nix throws, so this must refuse
+        # even though a valid inline x86_64-linux entry is present.
+        plain = self.tmp / "plain"
+        plain.write_text("ssh://b x86_64-linux - 4\n")
+        for include in (f"{plain}/machines", f"{plain}/sub/machines", f"{plain}/"):
+            with self.subTest(include=include):
+                self.refused(
+                    f"ssh://b x86_64-linux - 4; @{include}", "could not be expanded"
+                )
+
+    def test_include_with_an_unsearchable_parent_refuses(self):
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses directory search permission")
+        locked = self.tmp / "locked"
+        locked.mkdir()
+        locked.chmod(0o600)
+        self.addCleanup(locked.chmod, 0o700)
+        self.refused(
+            f"ssh://b x86_64-linux - 4; @{locked}/machines", "could not be expanded"
+        )
+
+    def test_unreadable_include_refuses(self):
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses file read permission")
+        path = self.tmp / "unreadable"
+        path.write_text("ssh://b x86_64-linux - 4\n")
+        path.chmod(0o000)
+        self.addCleanup(path.chmod, 0o600)
+        self.refused(f"@{path}", "could not be expanded")
+
+    def test_symlink_loop_and_dangling_symlink_includes_refuse(self):
+        loop = self.tmp / "loop"
+        loop.symlink_to(loop)
+        dangling = self.tmp / "dangling"
+        dangling.symlink_to(self.tmp / "nowhere")
+        for include in (loop, dangling):
+            with self.subTest(include=include):
+                self.refused(
+                    f"ssh://b x86_64-linux - 4; @{include}", "could not be expanded"
+                )
+
+    def test_genuinely_missing_include_is_skipped_beside_a_valid_entry(self):
+        for include in (
+            self.tmp / "missing",
+            self.tmp / "no-such-dir" / "deeper" / "machines",
+            f"{self.tmp}/missing/",
+        ):
+            with self.subTest(include=include):
+                self.set_fixture(
+                    config={"builders": f"ssh://b x86_64-linux - 4; @{include}"}
+                )
+                r = self.drive(
+                    "build-checks", "--system", "x86_64-linux", "--remote-builder"
+                )
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("declares it on: ssh://b (4 jobs)", r.stdout)
+                self.assertEqual(len(self.built()), 3)
+
     def test_missing_builders_file_is_skipped_like_nix(self):
         self.refused(f"@{self.tmp}/missing", "no configured builder declares")
 
@@ -878,6 +941,90 @@ class Platforms(Harness):
         self.assertNotIn("task check:linux", r.stdout)
 
 
+class DefaultFlake(Harness):
+    """No --flake: the driver resolves the checkout holding it, with every step
+    status-checked and verified, and refuses (exit 2, before any nix call)
+    rather than checking some other directory."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = Path(os.path.realpath(self.tmp)) / "repo"
+        (self.repo / "scripts").mkdir(parents=True)
+        self.script = self.repo / "scripts" / DRIVER.name
+        shutil.copy(DRIVER, self.script)
+        self.env["STUB_FLAKE"] = str(self.repo)
+
+    def run_default(self, script, cwd, **env):
+        self.log.write_text("")
+        return subprocess.run(
+            [BASH, str(script), "lock"],
+            check=False,
+            cwd=cwd,
+            env={**self.env, **env},
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120,
+        )
+
+    def metadata_paths(self):
+        return [
+            os.path.realpath(c[2])
+            for c in self.calls()
+            if c[:2] == ["flake", "metadata"]
+        ]
+
+    def assert_refused(self, r, why):
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn(why, r.stderr)
+        self.assertIn("pass --flake", r.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertNotIn("PASS", r.stdout)
+
+    def test_default_is_the_checkout_holding_the_script(self):
+        scripts = self.repo / "scripts"
+        for script, cwd in (
+            (self.script, self.tmp),
+            ("./scripts/flake-checks.sh", self.repo),
+            ("scripts/flake-checks.sh", self.repo),
+            ("flake-checks.sh", scripts),
+            ("../scripts/flake-checks.sh", scripts),
+        ):
+            with self.subTest(script=script, cwd=cwd):
+                r = self.run_default(script, cwd)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("PASS     lock", r.stdout)
+                self.assertEqual(self.metadata_paths(), [str(self.repo)])
+
+    def test_cdpath_cannot_redirect_the_default(self):
+        decoy = self.tmp / "decoy"
+        (decoy / "scripts").mkdir(parents=True)
+        r = self.run_default("scripts/flake-checks.sh", self.repo, CDPATH=str(decoy))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.metadata_paths(), [str(self.repo)])
+
+    def test_failing_dirname_refuses(self):
+        path = self.stub_path("dirname", 'printf ".\\n"; exit 47')
+        r = self.run_default(self.script, self.tmp, PATH=path)
+        self.assert_refused(r, "dirname failed")
+
+    def test_empty_dirname_refuses(self):
+        path = self.stub_path("dirname", "exit 0")
+        r = self.run_default(self.script, self.tmp, PATH=path)
+        self.assert_refused(r, "is not a directory (empty)")
+
+    def test_dirname_naming_another_directory_refuses(self):
+        # Exit 0 but the wrong answer: "." from a cwd that does not hold it.
+        path = self.stub_path("dirname", 'printf ".\\n"')
+        r = self.run_default(self.script, self.tmp, PATH=path)
+        self.assert_refused(r, "does not contain it")
+
+    def test_dirname_naming_a_missing_directory_refuses(self):
+        path = self.stub_path("dirname", f'printf "%s\\n" "{self.tmp}/gone"')
+        r = self.run_default(self.script, self.tmp, PATH=path)
+        self.assert_refused(r, "is not a directory")
+
+
 class Interface(Harness):
     def test_usage_errors(self):
         for argv in (
@@ -889,6 +1036,7 @@ class Interface(Harness):
             ["lint", "--exclude", "x"],
             ["build-checks", "--system"],
             ["build-checks", "--system", 'x86_64-linux"; x'],
+            ["--flake", "", "lock"],
         ):
             with self.subTest(argv=argv):
                 r = self.drive(*argv)

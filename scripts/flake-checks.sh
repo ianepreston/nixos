@@ -61,8 +61,8 @@
 #      machine may not build
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-FLAKE=$(cd "$SCRIPT_DIR/.." && pwd)
+# Empty until main: --flake, or default_flake (the checkout holding this file).
+FLAKE=""
 NIX_FLAGS=(--no-update-lock-file)
 NAME_RE='^[A-Za-z0-9_][A-Za-z0-9_+.-]*$'
 SYSTEM_RE='^[a-z0-9_]+-[a-z0-9_]+$'
@@ -92,6 +92,31 @@ die_usage() {
 refuse() {
   echo "flake-checks: $*" >&2
   exit 2
+}
+
+# default_flake — sets FLAKE to the checkout holding this script. Every step
+# is status-checked and the result verified: dirname must succeed and name an
+# existing directory that really holds this file (so a failing or lying
+# dirname, or bash 3.2 accepting `cd ""` as a no-op, cannot point the checks at
+# another directory); cd runs with CDPATH cleared (CDPATH would choose another
+# directory and print it into the captured path); the parent must exist.
+default_flake() {
+  local src=${BASH_SOURCE[0]-} dir root
+  if [ -z "$src" ]; then
+    refuse "cannot locate this script to find the default flake; pass --flake"
+  fi
+  dir=$(dirname -- "$src") || refuse "dirname failed for $src; pass --flake"
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    refuse "dirname of $src is not a directory (${dir:-empty}); pass --flake"
+  fi
+  if [ ! "$dir/${src##*/}" -ef "$src" ]; then
+    refuse "dirname of $src ($dir) does not contain it; pass --flake"
+  fi
+  root=$(CDPATH='' cd -- "$dir/.." && pwd) || refuse "could not resolve the parent of $dir; pass --flake"
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    refuse "default flake ${root:-(empty)} is not a directory; pass --flake"
+  fi
+  FLAKE=$root
 }
 
 in_ci() { [ "${GITHUB_ACTIONS:-}" = true ]; }
@@ -207,13 +232,44 @@ native_systems() {
   NATIVES=(${PARTS[@]+"${PARTS[@]}"})
 }
 
+# path_missing PATH — status 0 only if opening PATH would fail with ENOENT,
+# the one include error Nix skips (src/libstore/machines.cc). `[ -e ]` alone is
+# false for ENOENT, ENOTDIR (a component is a regular file), EACCES (a parent
+# is not searchable), ELOOP and a dangling symlink alike, so: PATH must not
+# exist and must not be a symlink, and its parent must be a searchable
+# directory or itself genuinely missing. Anything else is "present", and the
+# caller's checked read then fails and refuses. A dangling symlink is refused,
+# not skipped (stricter than Nix, which reports ENOENT for it). Tests only:
+# no subprocess or redirect.
+path_missing() {
+  local p=$1 parent
+  # A trailing slash needs no special case: "dir/" recurses to "dir".
+  if [ -e "$p" ] || [ -L "$p" ]; then
+    return 1
+  fi
+  case $p in
+    */*) parent=${p%/*} ;;
+    *) parent=. ;;
+  esac
+  [ -n "$parent" ] || parent=/
+  if [ -d "$parent" ]; then
+    [ -x "$parent" ]
+    return
+  fi
+  if [ "$parent" = "$p" ]; then
+    return 1
+  fi
+  path_missing "$parent"
+}
+
 # builder_entries SPEC — appends each machine entry to BUILDERS, following
 # Nix's expandBuilderLines (src/libstore/machines.cc): split SPEC on newlines,
 # drop everything from '#' to the end of each line, THEN split on ';', trim,
-# skip blanks, and expand `@FILE` recursively. A missing FILE (ENOENT) is
-# skipped as nix does; any other read error (unreadable, a directory, a failed
-# read) is fatal in nix, so it returns 1 here. The file is read into a variable
-# with cat's own status checked before anything in it is used.
+# skip blanks, and expand `@FILE` recursively. Only a genuinely missing FILE
+# (ENOENT, see path_missing) is skipped, as nix does; any other error (a path
+# under a regular file, an unsearchable parent, unreadable, a directory, a
+# symlink loop or a failed read) is fatal in nix, so it returns 1 here. The
+# file is read into a variable with cat's own status checked before use.
 builder_entries() {
   local spec=$1 depth=${2:-0} line entry path content
   local -a lines entries
@@ -231,7 +287,7 @@ builder_entries() {
         @*)
           trim "${entry#@}"
           path=$TRIMMED
-          if [ ! -e "$path" ]; then
+          if path_missing "$path"; then
             continue
           fi
           if ! content=$(cat -- "$path"); then
@@ -450,7 +506,7 @@ main() {
   while [ $# -gt 0 ]; do
     case $1 in
       --flake)
-        [ $# -ge 2 ] || die_usage "--flake needs a value"
+        [ $# -ge 2 ] && [ -n "$2" ] || die_usage "--flake needs a non-empty value"
         FLAKE=$2
         shift 2
         ;;
@@ -481,6 +537,7 @@ main() {
     esac
   done
   [ -n "$mode" ] || die_usage "no mode given"
+  [ -n "$FLAKE" ] || default_flake
   case $mode in
     lint | build-checks) ;;
     *)

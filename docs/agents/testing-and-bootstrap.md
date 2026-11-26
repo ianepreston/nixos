@@ -53,7 +53,10 @@ and `build-checks` now run one at a time.
 Rules the driver enforces:
 
 - **One flake identity**: every stage passes the `--flake` reference to nix
-  verbatim (git metadata, `?dir=` and all).
+  verbatim (git metadata, `?dir=` and all). Without `--flake` the driver uses
+  the checkout that holds it, resolved with every step checked; if that
+  cannot be established it refuses (exit 2) rather than check another
+  directory.
 - **All outputs**: every build requests `^*`, as `nix flake check` did,
   locally and in CI (a superset of CI's former default-output builds).
 - **Required sets**: each of the three configuration kinds must exist and have
@@ -78,9 +81,11 @@ system is refused (exit 2) unless `--remote-builder` is given *and* a
 successful `nix config show builders` declares a machine for that system with
 at least one build slot. The `builders` value is read as Nix's own parser
 does: per line, `#` to end of line is a comment first, then `;` separates
-entries, `@FILE` includes are expanded (a missing file is skipped, as Nix
-does; any other read error refuses, because Nix fails on it too); zero-slot
-and malformed entries are ignored. That is all it verifies: Nix chooses the
+entries, `@FILE` includes are expanded. Only a genuinely nonexistent file
+(ENOENT) is skipped, as Nix does; every other error refuses, because Nix fails
+on it too: a path beneath a regular file, an unsearchable parent directory, an
+unreadable file, a directory or a symlink loop. A dangling symlink is refused
+too, which is stricter than Nix. Zero-slot and malformed entries are ignored. That is all it verifies: Nix chooses the
 machine per build, reachability is not probed, and an output already in the
 store or a substituter is not rebuilt, so a pass shows the check's output
 exists, not that the builder ran it.
