@@ -49,8 +49,11 @@
 # evaluation raced on concurrent addToStore on the Linux runner (check.yml).
 # Every attribute name passes one validator (read_names): a whole-string match
 # of [A-Za-z0-9_][A-Za-z0-9_+.-]*, decoded from JSON without rewriting;
-# anything else fails. A result is recorded only after the exit status of
-# every command producing it was checked. A failed item does not stop the
+# anything else fails the whole list. A result is recorded only after the exit
+# status of every command producing it was checked. Nothing is written to a
+# temporary file: lists are held in bash arrays filled from status-checked
+# command substitutions and split without redirects (split_on), so no
+# unchecked write or read can truncate a list. A failed item does not stop the
 # rest of its stage, so one run reports every failure. Exit status:
 #   0  every executed item passed (DEFERRED items were not executed)
 #   1  at least one item failed, or a stage could not run
@@ -74,8 +77,11 @@ CONFIG_KINDS=(
 RESULTS=()
 FAILED=0
 EVAL_OUTPUTS=not-run
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/flake-checks.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+NAMES=()
+PARTS=()
+BUILDERS=()
+NATIVES=()
+TRIMMED=""
 
 die_usage() {
   echo "flake-checks: $*" >&2
@@ -96,7 +102,9 @@ group_end() { if in_ci; then echo "::endgroup::"; fi; }
 # Must run in the main shell (never inside $(...)), or the result is lost;
 # DETAIL must already be computed and status-checked by the caller.
 record() {
-  RESULTS+=("$(printf '%-8s %s%s' "$1" "$2" "${3:+  ($3)}")")
+  local line
+  printf -v line '%-8s %s%s' "$1" "$2" "${3:+  ($3)}"
+  RESULTS+=("$line")
   case $1 in FAIL | NOT-RUN) FAILED=1 ;; esac
 }
 
@@ -123,32 +131,48 @@ finish() {
   exit 0
 }
 
-# nix_to FILE ARGS... — nix with the lock flags, stdout to FILE; returns nix's
-# own exit status (callers branch on it directly).
-nix_to() {
-  local out=$1
-  shift
-  nix "$@" "${NIX_FLAGS[@]}" >"$out"
+# split_on SEP TEXT — sets PARTS to TEXT split on the characters in SEP, with
+# no redirect or subprocess (word splitting with globbing off, so `*` and `?`
+# stay literal). Empty fields from whitespace separators are dropped.
+split_on() {
+  local saved_ifs=$IFS
+  set -f
+  IFS=$1
+  # shellcheck disable=SC2206 # deliberate split on IFS; globbing is off
+  PARTS=($2)
+  IFS=$saved_ifs
+  set +f
 }
 
-# read_names INSTALLABLE LABEL OUT_FILE — the ONE choke point for attribute
-# names: `builtins.attrNames` of INSTALLABLE, each name decoded from its JSON
-# form and accepted only if it contained no escape (so no newline, quote or
-# control character) and matches NAME_RE as a whole string. Valid names go to
-# OUT_FILE one per line; nothing is rewritten. Every failure (nix, jq, a bad
-# name) is recorded as FAIL under LABEL and returns 1.
+# trim TEXT — sets TRIMMED to TEXT without leading/trailing whitespace.
+trim() {
+  TRIMMED=${1#"${1%%[![:space:]]*}"}
+  TRIMMED=${TRIMMED%"${TRIMMED##*[![:space:]]}"}
+}
+
+# read_names INSTALLABLE LABEL — the ONE choke point for attribute names. Sets
+# NAMES to `builtins.attrNames` of INSTALLABLE: every name is decoded from its
+# JSON form and accepted only if it contained no escape (so no newline, quote
+# or control character) and matches NAME_RE as a whole string; nothing is
+# rewritten. nix and jq run in status-checked command substitutions and the
+# list never touches disk. On ANY failure — nix, jq, or a single unsupported
+# name — a FAIL is recorded under LABEL, NAMES is empty and it returns 1, so a
+# caller never sees a partial list. Callers must treat 1 as failure.
 read_names() {
-  local installable=$1 label=$2 out=$3 json="$WORK/names.json" lines="$WORK/names.lines" line name bad=0
-  : >"$out"
-  if ! nix_to "$json" eval --json "$installable" --apply builtins.attrNames; then
+  local installable=$1 label=$2 json decoded line name bad=0
+  local -a accepted=() lines=()
+  NAMES=()
+  if ! json=$(nix eval --json "$installable" --apply builtins.attrNames "${NIX_FLAGS[@]}"); then
     record FAIL "$label" "could not enumerate"
     return 1
   fi
-  if ! jq -c 'if type == "array" then .[] else error("not a list of names") end' "$json" >"$lines"; then
+  if ! decoded=$(jq -c 'if type == "array" then .[] else error("not a list of names") end' <<<"$json"); then
     record FAIL "$label" "could not decode attribute names"
     return 1
   fi
-  while IFS= read -r line; do
+  split_on $'\n' "$decoded"
+  lines=(${PARTS[@]+"${PARTS[@]}"})
+  for line in ${lines[@]+"${lines[@]}"}; do
     name=""
     case $line in
       *\\*) ;;
@@ -158,88 +182,106 @@ read_names() {
         ;;
     esac
     if [ -n "$name" ] && [[ $name =~ $NAME_RE ]]; then
-      printf '%s\n' "$name" >>"$out"
+      accepted+=("$name")
     else
       record FAIL "$label" "unsupported attribute name $line"
       bad=1
     fi
-  done <"$lines"
-  return "$bad"
-}
-
-# count_lines FILE — sets COUNT; returns nonzero if it cannot be read.
-count_lines() {
-  local n
-  n=$(wc -l <"$1") || return 1
-  COUNT=$((n + 0))
+  done
+  if [ "$bad" -ne 0 ]; then
+    return 1
+  fi
+  NAMES=(${accepted[@]+"${accepted[@]}"})
+  return 0
 }
 
 # ---- platform handling -----------------------------------------------------
 
-# native_systems — `system` plus `extra-platforms`; exits 2 if unreadable.
+# native_systems — sets NATIVES to `system` plus `extra-platforms`; exits 2
+# if either setting cannot be read.
 native_systems() {
   local sys extra
   sys=$(nix config show system) || refuse "could not read \`nix config show system\`"
   extra=$(nix config show extra-platforms) || refuse "could not read \`nix config show extra-platforms\`"
-  tr ' ' '\n' <<<"$sys $extra" | sed '/^$/d'
+  split_on $' \t\n' "$sys $extra"
+  NATIVES=(${PARTS[@]+"${PARTS[@]}"})
 }
 
-trim() {
-  local s=$1
-  s=${s#"${s%%[![:space:]]*}"}
-  printf '%s' "${s%"${s##*[![:space:]]}"}"
-}
-
-# builder_entries SPEC — one machine entry per line, following Nix's
-# expandBuilderLines (src/libstore/machines.cc): split SPEC on newlines,
+# builder_entries SPEC — appends each machine entry to BUILDERS, following
+# Nix's expandBuilderLines (src/libstore/machines.cc): split SPEC on newlines,
 # drop everything from '#' to the end of each line, THEN split on ';', trim,
-# skip blanks, and expand `@FILE` recursively (a missing FILE is skipped as
-# nix does; an unreadable one makes nix fail, so it fails here).
+# skip blanks, and expand `@FILE` recursively. A missing FILE (ENOENT) is
+# skipped as nix does; any other read error (unreadable, a directory, a failed
+# read) is fatal in nix, so it returns 1 here. The file is read into a variable
+# with cat's own status checked before anything in it is used.
 builder_entries() {
-  local spec=$1 depth=${2:-0} line entry path entries
+  local spec=$1 depth=${2:-0} line entry path content
+  local -a lines entries
   [ "$depth" -le 8 ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%%#*}
-    IFS=';' read -r -a entries <<<"$line" || true
+  split_on $'\n' "$spec"
+  lines=(${PARTS[@]+"${PARTS[@]}"})
+  for line in ${lines[@]+"${lines[@]}"}; do
+    split_on ';' "${line%%#*}"
+    entries=(${PARTS[@]+"${PARTS[@]}"})
     for entry in ${entries[@]+"${entries[@]}"}; do
-      entry=$(trim "$entry")
+      trim "$entry"
+      entry=$TRIMMED
       [ -n "$entry" ] || continue
       case $entry in
         @*)
-          path=$(trim "${entry#@}")
+          trim "${entry#@}"
+          path=$TRIMMED
           if [ ! -e "$path" ]; then
             continue
           fi
-          if [ ! -r "$path" ]; then
-            echo "flake-checks: builders file $path is not readable" >&2
+          if ! content=$(cat -- "$path"); then
+            echo "flake-checks: builders file $path could not be read" >&2
             return 1
           fi
-          builder_entries "$(cat "$path")" $((depth + 1)) || return 1
+          builder_entries "$content" $((depth + 1)) || return 1
           ;;
-        *) printf '%s\n' "$entry" ;;
+        *) BUILDERS+=("$entry") ;;
       esac
     done
-  done <<<"$spec"
+  done
   return 0
+}
+
+# in_list WORD ITEMS... — status 0 if WORD equals one of ITEMS.
+in_list() {
+  local word=$1 item
+  shift
+  for item in "$@"; do
+    if [ "$item" = "$word" ]; then return 0; fi
+  done
+  return 1
 }
 
 # require_buildable SYSTEM REMOTE — exit 2 unless SYSTEM may be built here.
 require_buildable() {
-  local system=$1 remote=$2 natives spec entries uri systems maxjobs usable="" unusable=""
-  natives=$(native_systems) || exit 2
-  if grep -qxF "$system" <<<"$natives"; then
+  local system=$1 remote=$2 spec entry uri systems maxjobs usable="" unusable=""
+  local -a fields
+  native_systems
+  if in_list "$system" ${NATIVES[@]+"${NATIVES[@]}"}; then
     return 0
   fi
   if [ "$remote" != true ]; then
-    refuse "$system is not native here (native: $(tr '\n' ' ' <<<"$natives" | sed 's/ $//')). Pass --remote-builder to allow delegation to a configured builder, or leave it to CI."
+    refuse "$system is not native here (native: ${NATIVES[*]-none}). Pass --remote-builder to allow delegation to a configured builder, or leave it to CI."
   fi
   spec=$(nix config show builders) || refuse "--remote-builder given, but \`nix config show builders\` failed; refusing $system"
-  entries=$(builder_entries "$spec") || refuse "--remote-builder given, but the builders setting could not be expanded; refusing $system"
-  while read -r uri systems _ maxjobs _; do
-    [ -n "${uri:-}" ] || continue
+  BUILDERS=()
+  builder_entries "$spec" || refuse "--remote-builder given, but the builders setting could not be expanded; refusing $system"
+  for entry in ${BUILDERS[@]+"${BUILDERS[@]}"}; do
+    split_on $' \t' "$entry"
+    fields=(${PARTS[@]+"${PARTS[@]}"})
+    uri=${fields[0]-}
+    [ -n "$uri" ] || continue
     # Field 2 unset or "-" means the local system, never a non-native one.
-    tr ',' '\n' <<<"${systems:--}" | grep -qxF "$system" || continue
-    case ${maxjobs:--} in
+    systems=${fields[1]:--}
+    maxjobs=${fields[3]:--}
+    split_on ',' "$systems"
+    in_list "$system" ${PARTS[@]+"${PARTS[@]}"} || continue
+    case $maxjobs in
       -) maxjobs=1 ;;
       *[!0-9]*) maxjobs=0 ;;
     esac
@@ -248,7 +290,7 @@ require_buildable() {
     else
       unusable="$unusable $uri"
     fi
-  done <<<"$entries"
+  done
   if [ -z "$usable" ]; then
     refuse "--remote-builder given, but no configured builder declares $system with a build slot${unusable:+ (zero-slot or malformed entries ignored:$unusable)}"
   fi
@@ -269,27 +311,30 @@ stage_lock() {
 }
 
 stage_eval_configs() {
-  local kind_spec kind path name names="$WORK/config-names" out="$WORK/config-drv"
+  local kind_spec kind path name drv
+  local -a names
   for kind_spec in "${CONFIG_KINDS[@]}"; do
-    read -r kind path <<<"$kind_spec"
-    read_names "$FLAKE#$kind" "eval $kind" "$names" || true
-    if ! count_lines "$names"; then
-      record FAIL "eval $kind" "could not read the name list"
+    kind=${kind_spec%% *}
+    path=${kind_spec#* }
+    if ! read_names "$FLAKE#$kind" "eval $kind"; then
+      record NOT-RUN "eval $kind" "configuration names could not be enumerated and validated"
       continue
     fi
-    if [ "$COUNT" -eq 0 ]; then
-      record FAIL "eval $kind" "no usable configurations; every configuration kind must be non-empty"
+    if [ "${#NAMES[@]}" -eq 0 ]; then
+      record FAIL "eval $kind" "no configurations; every configuration kind must be non-empty"
       continue
     fi
-    while IFS= read -r name; do
+    names=("${NAMES[@]}")
+    for name in "${names[@]}"; do
       group_start "eval $kind.$name"
-      if nix_to "$out" eval --raw "$FLAKE#$kind.\"$name\".$path.drvPath" && cat "$out" && echo; then
+      if drv=$(nix eval --raw "$FLAKE#$kind.\"$name\".$path.drvPath" "${NIX_FLAGS[@]}") &&
+        [ -n "$drv" ] && printf '%s\n' "$drv"; then
         record PASS "eval $kind.$name"
       else
         record FAIL "eval $kind.$name"
       fi
       group_end
-    done <"$names"
+    done
   done
 }
 
@@ -318,22 +363,22 @@ stage_lint() {
 
 # stage_build_checks SYSTEM [EXCLUDED...]
 stage_build_checks() {
-  local system=$1 name ex skip built=0 names="$WORK/build-names"
+  local system=$1 name built=0
+  local -a names
   shift
-  if ! read_names "$FLAKE#checks.$system" "build checks.$system" "$names"; then
+  if ! read_names "$FLAKE#checks.$system" "build checks.$system"; then
     record NOT-RUN "build checks.$system" "check names could not be enumerated and validated"
     return
   fi
-  if ! count_lines "$names" || [ "$COUNT" -eq 0 ]; then
+  if [ "${#NAMES[@]}" -eq 0 ]; then
     record FAIL "build checks.$system" "no checks; a selected system must have at least one"
     return
   fi
-  while IFS= read -r name; do
-    skip=false
-    for ex in "$@"; do
-      if [ "$ex" = "$name" ]; then skip=true; fi
-    done
-    [ "$skip" = false ] || continue
+  names=("${NAMES[@]}")
+  for name in "${names[@]}"; do
+    if in_list "$name" "$@"; then
+      continue
+    fi
     built=$((built + 1))
     group_start "build checks.$system.$name"
     if nix build --no-link --print-build-logs "$FLAKE#checks.$system.\"$name\"^*" "${NIX_FLAGS[@]}"; then
@@ -342,7 +387,7 @@ stage_build_checks() {
       record FAIL "build checks.$system.$name"
     fi
     group_end
-  done <"$names"
+  done
   if [ "$built" -eq 0 ]; then
     record FAIL "build checks.$system" "nothing left to build after exclusions"
   fi
@@ -352,7 +397,8 @@ stage_build_checks() {
 # explicit DEFERRED (or NOT-RUN, when evaluation failed) line per system it
 # cannot build. Names of deferred checks go through read_names like any other.
 stage_local() {
-  local native=$1 system systems="$WORK/check-systems" names="$WORK/deferred-names" listed footer=""
+  local native=$1 system footer=""
+  local -a systems=()
   stage_lock
   if [ "$FAILED" -ne 0 ]; then
     record NOT-RUN "eval, lint and check builds" "lock check failed"
@@ -362,8 +408,12 @@ stage_local() {
   stage_eval_outputs
   stage_lint "$native"
   stage_build_checks "$native" pre-commit
-  read_names "$FLAKE#checks" "enumerate checks systems" "$systems" || true
-  while IFS= read -r system; do
+  if read_names "$FLAKE#checks" "enumerate checks systems"; then
+    systems=(${NAMES[@]+"${NAMES[@]}"})
+  else
+    record NOT-RUN "build checks of non-native systems" "check systems could not be enumerated and validated"
+  fi
+  for system in ${systems[@]+"${systems[@]}"}; do
     [ "$system" != "$native" ] || continue
     if [[ ! $system =~ $SYSTEM_RE ]]; then
       record FAIL "enumerate checks systems" "invalid system name $system"
@@ -375,20 +425,19 @@ stage_local() {
 flake-checks: $system checks FAILED evaluation; nothing for $system was built."
       continue
     fi
-    if ! read_names "$FLAKE#checks.$system" "build checks.$system" "$names" ||
-      ! count_lines "$names" || ! listed=$(tr '\n' ' ' <"$names"); then
+    if ! read_names "$FLAKE#checks.$system" "build checks.$system"; then
       record NOT-RUN "build checks.$system" "check names could not be enumerated and validated"
       continue
     fi
     record DEFERRED "build checks.$system" \
-      "$COUNT checks evaluated by nix flake check --no-build, not built on $native: ${listed% }"
+      "${#NAMES[@]} checks evaluated by nix flake check --no-build, not built on $native: ${NAMES[*]-}"
     case $system in
       x86_64-linux) footer="$footer
 flake-checks: x86_64-linux checks were evaluated but NOT built here; build them with \`task check:linux\` (remote builder) or rely on the CI checks/lint jobs." ;;
       *) footer="$footer
 flake-checks: $system checks were evaluated but NOT built; they remain deferred (no local task or CI job builds them)." ;;
     esac
-  done <"$systems"
+  done
   if [ -n "$footer" ]; then
     echo "$footer"
   fi

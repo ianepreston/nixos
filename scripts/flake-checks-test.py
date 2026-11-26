@@ -220,6 +220,15 @@ class Harness(unittest.TestCase):
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
+    def stub_path(self, name, body):
+        """PATH with a one-off stub NAME (a bash script) ahead of everything."""
+        bindir = self.tmp / f"stub-{name}"
+        bindir.mkdir(exist_ok=True)
+        stub = bindir / name
+        stub.write_text(f"#!{BASH}\n{body}\n")
+        stub.chmod(0o755)
+        return f"{bindir}:{self.env['PATH']}"
+
     def built(self):
         return [
             next(a for a in c if "#" in a).split("#", 1)[1]
@@ -377,8 +386,27 @@ class Names(Harness):
             'unsupported attribute name "q\\"uote"',
             'unsupported attribute name "sp ace"',
             'unsupported attribute name "café"',
-            "PASS     eval nixosConfigurations.ok",
+            "NOT-RUN  eval nixosConfigurations  (configuration names could not be enumerated and validated)",
         )
+        # One bad name poisons the whole list: the valid "ok" is not evaluated.
+        self.assertNotIn("PASS     eval nixosConfigurations.ok", r.stdout)
+        self.assertFalse(
+            any(c.startswith("nixosConfigurations.") for c in self.evaluated_configs())
+        )
+
+    def test_valid_names_beside_a_bad_one_are_never_built(self):
+        self.set_fixture(
+            config=LINUX,
+            raw_names={"checks.x86_64-linux": ["doc-links", "a\nb", "vm-test"]},
+        )
+        r = self.drive("build-checks")
+        self.assert_failed(
+            r,
+            'unsupported attribute name "a\\nb"',
+            "NOT-RUN  build checks.x86_64-linux  (check names could not be enumerated and validated)",
+        )
+        self.assertNotIn("PASS     build", r.stdout)
+        self.assertEqual(self.built(), [])
 
     def test_non_string_name_fails(self):
         self.set_fixture(raw_json={"nixosConfigurations": "[1]\n"})
@@ -441,6 +469,75 @@ class Decoding(Harness):
         self.assert_failed(r, "FAIL     eval homeConfigurations  (could not decode")
 
 
+class PartialLists(Harness):
+    """A list producer that emits valid names and THEN fails must fail the
+    stage with nothing evaluated or built from the partial list. There is no
+    names output file left to fail a write on (lists are arrays); this is the
+    same failure shape, injected at the one remaining producer (jq)."""
+
+    PARTIAL_JQ = "printf '\"%s\"\\n' hpp-1 doc-links pre-commit; exit 1"
+
+    def test_partial_config_list_then_failure_evaluates_nothing(self):
+        r = self.drive("eval-configs", PATH=self.stub_path("jq", self.PARTIAL_JQ))
+        for kind in (
+            "nixosConfigurations",
+            "darwinConfigurations",
+            "homeConfigurations",
+        ):
+            self.assertIn(
+                f"FAIL     eval {kind}  (could not decode attribute names)", r.stdout
+            )
+            self.assertIn(f"NOT-RUN  eval {kind}", r.stdout)
+        self.assert_failed(r)
+        self.assertNotIn("PASS", r.stdout)
+        self.assertEqual(self.evaluated_configs(), [])
+
+    def test_partial_check_list_then_failure_builds_nothing(self):
+        self.set_fixture(config=LINUX)
+        r = self.drive("build-checks", PATH=self.stub_path("jq", self.PARTIAL_JQ))
+        self.assert_failed(
+            r,
+            "FAIL     build checks.x86_64-linux  (could not decode attribute names)",
+            "NOT-RUN  build checks.x86_64-linux",
+        )
+        self.assertNotIn("PASS", r.stdout)
+        self.assertEqual(self.built(), [])
+
+    def test_partial_system_list_then_failure_is_not_deferred(self):
+        # Every other list decodes with the real jq; only the checks system
+        # list (the one naming x86_64-linux) emits a valid system and fails.
+        real_jq = shutil.which("jq")
+        self.assertIsNotNone(real_jq)
+        body = (
+            "input=$(cat)\n"
+            "case $input in *'\"x86_64-linux\"'*)\n"
+            "  printf '\"%s\"\\n' x86_64-linux; exit 1 ;;\n"
+            "esac\n"
+            f'printf \'%s\' "$input" | {real_jq} "$@"'
+        )
+        r = self.drive("local", PATH=self.stub_path("jq", body))
+        self.assert_failed(
+            r,
+            "FAIL     enumerate checks systems  (could not decode attribute names)",
+            "NOT-RUN  build checks of non-native systems",
+            "PASS     eval nixosConfigurations.hpp-1",
+            "PASS     build checks.aarch64-darwin.doc-links",
+        )
+        self.assertNotIn("DEFERRED", r.stdout)
+        self.assertNotIn("checks were evaluated but NOT built", r.stdout)
+
+    def test_lists_never_touch_a_temporary_file(self):
+        ro = self.tmp / "readonly-tmp"
+        ro.mkdir()
+        ro.chmod(0o500)
+        self.addCleanup(ro.chmod, 0o700)
+        self.set_fixture(config=LINUX)
+        r = self.drive("build-checks", TMPDIR=str(ro))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(self.built()), 3)
+        self.assertEqual(list(ro.iterdir()), [])
+
+
 class RequiredSets(Harness):
     def test_empty_configuration_kind_fails(self):
         for kind in (
@@ -453,13 +550,17 @@ class RequiredSets(Harness):
                 r = self.drive("eval-configs")
                 self.assert_failed(
                     r,
-                    f"FAIL     eval {kind}  (no usable configurations; every configuration kind must be non-empty)",
+                    f"FAIL     eval {kind}  (no configurations; every configuration kind must be non-empty)",
                 )
 
-    def test_kind_with_only_unsupported_names_fails_as_empty(self):
+    def test_kind_with_only_unsupported_names_is_not_run(self):
         self.set_fixture(raw_names={"darwinConfigurations": [""]})
         r = self.drive("eval-configs")
-        self.assert_failed(r, "FAIL     eval darwinConfigurations  (no usable")
+        self.assert_failed(
+            r,
+            'FAIL     eval darwinConfigurations  (unsupported attribute name "")',
+            "NOT-RUN  eval darwinConfigurations",
+        )
 
     def test_missing_configuration_kind_fails(self):
         flake = fixture()["flake"]
@@ -668,6 +769,29 @@ class Platforms(Harness):
 
     def test_no_builders_configured_is_refused(self):
         self.refused("", "no configured builder declares x86_64-linux")
+
+    def test_include_read_error_refuses_even_with_a_valid_entry(self):
+        # cat prints a valid x86_64-linux machine and then fails: nix would
+        # throw on the read error, so nothing from that read may authorize.
+        valid = self.machines("ssh://b x86_64-linux - 4\n")
+        failing_cat = 'printf "ssh://b x86_64-linux - 4\\n"; exit 1'
+        self.set_fixture(config={"builders": valid})
+        r = self.drive(
+            "build-checks",
+            "--system",
+            "x86_64-linux",
+            "--remote-builder",
+            PATH=self.stub_path("cat", failing_cat),
+        )
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("could not be read", r.stderr)
+        self.assertIn("could not be expanded", r.stderr)
+        self.assertEqual(self.built(), [])
+
+    def test_directory_include_refuses_despite_a_valid_inline_entry(self):
+        include = self.tmp / "machines.d"
+        include.mkdir()
+        self.refused(f"ssh://b x86_64-linux - 4; @{include}", "could not be expanded")
 
     def test_missing_builders_file_is_skipped_like_nix(self):
         self.refused(f"@{self.tmp}/missing", "no configured builder declares")

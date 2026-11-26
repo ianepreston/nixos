@@ -63,11 +63,14 @@ Rules the driver enforces:
   through one validator. It is decoded from JSON without rewriting and must
   contain no escape and match `[A-Za-z0-9_][A-Za-z0-9_+.-]*` as a whole
   string; anything else (empty, trailing newline, spaces, quotes, non-ASCII)
-  fails, reported JSON-escaped.
+  fails, reported JSON-escaped, and the whole list it came from is then not
+  used (`NOT-RUN`): no partial list is ever evaluated, built or deferred.
 - **Exit status**: a result is recorded only after the exit status of every
-  command producing it (nix, jq) was checked; output is never trusted on its
-  own. A failed item fails the run (exit 1) but the rest of its stage still
-  runs, so one run reports every failure.
+  command producing it (nix, jq, cat) was checked; output is never trusted on
+  its own. Lists live in bash arrays filled from those checked commands, never
+  in temporary files, so no unchecked write or read can truncate one. A failed
+  item fails the run (exit 1) but the rest of its stage still runs, so one run
+  reports every failure.
 
 **Platform policy.** `lint` and `build-checks` default to this machine's
 `nix config show system`; `extra-platforms` also count as native. Any other
@@ -75,7 +78,8 @@ system is refused (exit 2) unless `--remote-builder` is given *and* a
 successful `nix config show builders` declares a machine for that system with
 at least one build slot. The `builders` value is read as Nix's own parser
 does: per line, `#` to end of line is a comment first, then `;` separates
-entries, `@FILE` includes are expanded (a missing file is skipped); zero-slot
+entries, `@FILE` includes are expanded (a missing file is skipped, as Nix
+does; any other read error refuses, because Nix fails on it too); zero-slot
 and malformed entries are ignored. That is all it verifies: Nix chooses the
 machine per build, reachability is not probed, and an output already in the
 store or a substituter is not rebuilt, so a pass shows the check's output
