@@ -46,10 +46,11 @@ tasks:
   # The restore programs live in tracked, linted source files (#1025):
   # scripts/recovery.sh is the operator-side driver (bash + jq: manifest
   # loading, validation, dispatch, ordering) and scripts/_recovery/remote.sh
-  # the target side (bash only — the servers ship no python3 or jq), sent
-  # base64-encoded in the ssh command under `ssh -n` and confirmed by a per-run
-  # completion marker, so neither ssh_config's StdinNull nor the caller's stdin
-  # can change what runs. That pair owns the stop/restore/start sequence,
+  # the target side (bash only — the servers ship no python3 or jq), sent on
+  # ssh's stdin to a fixed remote command that stages it in a temp file and
+  # runs it with stdin from /dev/null. ssh gets -T and `-o StdinNull=no`, and
+  # a per-run completion marker confirms the program really ran. That pair
+  # owns the stop/restore/start sequence,
   # `restic unlock` + `--retry-lock 10m` (#676), `--delete` (#217), the
   # pg_dumpall replay, the SQLite swaps and the health probe; read the
   # comments there. The tasks below are thin entry points with unchanged
@@ -169,9 +170,10 @@ tasks:
   # authentik first, followed by the independent apps in their existing order.
   # The driver evaluates the manifest once, validates every entry, then
   # restores each app in order and stops at the first failure (status 201,
-  # as when it ran a nested `task recovery:app`). Every ssh runs with -n and
-  # every app with stdin from /dev/null, so a probe cannot drain the remaining
-  # app list — the failure mode that once ended the chain early with exit 0.
+  # as when it ran a nested `task recovery:app`). Every ssh reads only the
+  # driver's program pipe and every app runs with stdin from /dev/null, so a
+  # probe cannot drain the remaining app list — the failure mode that once
+  # ended the chain early with exit 0.
   all:
     desc: Catastrophic restore - every enabled app on HOST from SOURCE_HOST (default same host)
     requires: {vars: [HOST]}

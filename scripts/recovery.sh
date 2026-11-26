@@ -31,12 +31,12 @@
 #
 # Trust boundary: manifest values and operator arguments are validated here
 # with jq and reach the target only as jq `@sh`-quoted bash assignments
-# appended to scripts/_recovery/remote.sh. That program is base64-encoded into
-# the one ssh command (`printf %s '<base64>' | base64 -d | sudo bash -se`), so
-# the target user's login shell parses only that fixed, inert text; ssh runs
-# with -n and never reads the caller's stdin. A run succeeds only when the
-# target prints this run's random completion marker. The restic password
-# stays on the target (/run/secrets/restic/password).
+# appended to scripts/_recovery/remote.sh. That program travels on ssh's
+# stdin; the ssh command line is a fixed, manifest-independent string
+# (`sudo bash -c '<stage and run>'`, see run_remote), so the target user's
+# login shell parses nothing derived from the manifest. A run succeeds only
+# when the target prints this run's random completion marker. The restic
+# password stays on the target (/run/secrets/restic/password).
 #
 # Exit status: `app` and `all` return 201 (Task's status for the nested task
 # they used to run) for any restore or probe failure, 5 for an unknown app or
@@ -68,7 +68,8 @@ command -v jq >/dev/null || die "recovery.sh needs jq on the operator machine"
 # the previous Task dispatcher accepted still passes: empty strings are
 # allowed, empty list elements are dropped (a space-joined list lost them
 # too), numeric probe settings may be numbers or strings (`sleep 0.5`), and
-# an empty `expect` means 200, the old `_health` default. A wrong shape stops
+# an empty `expect`, `retries` or `sleep` means the old `_health` default
+# (200, 30, 2). A wrong shape stops
 # before any connection.
 # shellcheck disable=SC2016 # jq program, not shell
 validate_jq='
@@ -104,8 +105,8 @@ validate_jq='
           | if type == "object" then . else bad("health must be an object or null") end
           | {url: (.url | string("health url")),
              expect: (.expect | scalar("health expect") | if . == "" then "200" else . end),
-             retries: (.retries | scalar("health retries")),
-             sleep: (.sleep | scalar("health sleep"))}
+             retries: (.retries | scalar("health retries") | if . == "" then "30" else . end),
+             sleep: (.sleep | scalar("health sleep") | if . == "" then "2" else . end)}
         end)
     }
 '
@@ -207,34 +208,50 @@ validate_entry() { # name
   printf '%s\n' "$out"
 }
 
-# run_remote LABEL REMOTE_SHELL PROGRAM SSH_ARGS...
+# The constant remote command: stage the program from ssh's stdin into a
+# private temp file, then run it with stdin from /dev/null. Its size never
+# depends on the manifest (the program can exceed the ~128 KiB single-argument
+# limit), nothing the program starts can read its source or the marker line,
+# and the file is removed on exit. Contains no single quote, so it nests in
+# one inertly whatever the target user's login shell is.
+# shellcheck disable=SC2016 # expanded on the target, not here
+stage_and_run='f=$(mktemp) || exit 1; trap "rm -f -- \"\$f\"" EXIT; cat >"$f" || exit 1; bash "$f" </dev/null'
+
+# run_remote LABEL SUDO(yes|no) PROGRAM SSH_ARGS...
 #
-# Runs PROGRAM (bash source) on the target through REMOTE_SHELL (`sudo bash
-# -se` or `bash -se`). The program is base64-encoded into the ssh command
-# (base64's alphabet is inert inside the single quotes, whatever the login
-# shell), and ssh gets -n: it neither depends on its stdin, which `StdinNull
-# yes` would discard, nor reads the caller's, which under `all` is the
-# remaining app list. The program ends with `recovery_done`, which prints a
-# per-run nonce only after the action succeeded; the marker is filtered out
-# of the output and required. Returns ssh's (the remote program's) status,
-# or 1 when it exited 0 without the marker.
+# Runs PROGRAM (bash source) on the target, as root through sudo or as the
+# ssh user. The program goes on ssh's stdin; -T and `-o StdinNull=no` override
+# any ssh_config RequestTTY/StdinNull, and the caller never shares that stdin
+# (under `all` it would otherwise be the remaining app list). The program ends
+# with `recovery_done`, which prints a per-run random nonce on its own line,
+# reached only after the action succeeded. The filter requires that line
+# (ignoring a trailing CR), removes it and the line break that precedes it,
+# and passes everything else through. Returns ssh's (the remote program's)
+# status, or 1 when it exited 0 without the marker — an empty or discarded
+# program, a truncated one, or one that never ran.
 run_remote() {
-  local label=$1 shell=$2 program=$3 nonce encoded
+  local label=$1 sudo=$2 program=$3 nonce remote
   local -a status
   shift 3
   nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n') && [ -n "$nonce" ] || return 1
-  encoded=$(printf '%s\nNONCE=%s\nrecovery_done\n' "$program" "$nonce" | base64 | tr -d '\n') || return 1
+  remote="bash -c '$stage_and_run'"
+  if [ "$sudo" = yes ]; then remote="sudo $remote"; fi
   set +e
-  # shellcheck disable=SC2029 # expanded locally on purpose: the encoded program
-  ssh -n "$@" "printf %s '$encoded' | base64 -d | $shell" |
-    awk -v marker="RECOVERY-DONE $nonce" \
-      '$0 == marker { seen = 1; next } { print; fflush() } END { exit !seen }'
+  printf 'NONCE=%s\n%s\nrecovery_done\n' "$nonce" "$program" |
+    ssh -T -o StdinNull=no "$@" "$remote" |
+    awk -v marker="RECOVERY-DONE $nonce" '
+      { line = $0; sub(/\r$/, "", line) }
+      line == marker { seen = 1; if (blanks > 0) blanks--; next }
+      line == "" { blanks++; next }
+      { for (; blanks > 0; blanks--) print ""; print; fflush() }
+      END { for (; blanks > 0; blanks--) print ""; exit !seen }
+    '
   status=("${PIPESTATUS[@]}")
   set -e
-  if [ "${status[0]}" -ne 0 ]; then
-    return "${status[0]}"
-  fi
   if [ "${status[1]}" -ne 0 ]; then
+    return "${status[1]}"
+  fi
+  if [ "${status[2]}" -ne 0 ]; then
     echo "[!] $label: the remote program did not report completion; treating it as failed" >&2
     return 1
   fi
@@ -260,7 +277,7 @@ restore_entry() { # name entry
       jq -r --arg app "$name" --arg repo "$repo_mount/restic/$source_host" \
         "$restore_preamble_jq" <<<"$entry"
   ) || return
-  run_remote "$name restore" 'sudo bash -se' "$program" \
+  run_remote "$name restore" yes "$program" \
     -p "$ssh_port" -oForwardAgent=yes "$(ssh_target)"
 }
 
@@ -271,7 +288,7 @@ health_entry() { # name entry
     cat "$remote_script" &&
       jq -r --arg app "$name" "$health_preamble_jq" <<<"$entry"
   ) || return
-  run_remote "$name health probe" 'bash -se' "$program" -p "$ssh_port" "$(ssh_target)"
+  run_remote "$name health probe" no "$program" -p "$ssh_port" "$(ssh_target)"
 }
 
 restore_and_probe() { # name entry [phase: both|restore|health]

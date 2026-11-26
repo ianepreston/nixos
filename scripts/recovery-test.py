@@ -25,36 +25,56 @@ REPO = Path(sys.argv[1]).resolve()
 DRIVER = REPO / "scripts" / "recovery.sh"
 BASH = shutil.which("bash")
 
-RESTORE_SHELL = "| sudo bash -se"
-PROBE_SHELL = "| bash -se"
+# The fixed remote commands (the driver's contract with the target): stage
+# the program from stdin in a temp file, run it with stdin from /dev/null.
+STAGE = (
+    'f=$(mktemp) || exit 1; trap "rm -f -- \\"\\$f\\"" EXIT; '
+    'cat >"$f" || exit 1; bash "$f" </dev/null'
+)
+PROBE_CMD = f"bash -c '{STAGE}'"
+RESTORE_CMD = f"sudo {PROBE_CMD}"
+SSH_OPTS = ["-T", "-o", "StdinNull=no"]
 
 # Values a word-splitting or re-parsing implementation would mangle or run.
 ODD_UNIT = "odd unit $(touch PWNED) 'q' \"d\";x.service"
 ODD_PATH = "/srv/a b/`touch PWNED`/semi;colon/$HOME/*"
 
-# ssh stand-in. It records its options and, instead of the base64 program,
-# the remote shell the program is piped into; then it runs the remote command
-# locally the way a real ssh would. SSH_MODE simulates transports:
-#   normal      stdin is forwarded unless -n was given
-#   stdin-null  ssh_config `StdinNull yes`: stdin is always discarded
-#   noexec      the connection "succeeds" but nothing runs on the target
+# ssh stand-in: records its arguments, then runs the remote command locally
+# the way a real ssh would. SSH_MODE simulates hostile transports:
+#   normal        stdin is forwarded unless -n is given
+#   config-null   ssh_config `StdinNull yes`: stdin is discarded unless the
+#                 command line says `-o StdinNull=no`
+#   discard       stdin is discarded whatever the options say
+#   config-tty    ssh_config `RequestTTY force`: output gets CRLF line ends
+#                 unless the command line says -T / RequestTTY=no
+#   crlf          output always gets CRLF line ends (a PTY)
+#   noexec        the connection "succeeds" but nothing runs on the target
 SSH_STUB = r"""args=("$@")
 cmd=${args[$((${#args[@]} - 1))]}
-shown=$cmd
-case "$cmd" in
-  "printf %s '"*"' | base64 -d | "*) shown="| ${cmd##*base64 -d | }" ;;
-esac
-rec ssh "${args[@]:0:$((${#args[@]} - 1))}" "$shown"
-null=0
-for a in "${args[@]}"; do [ "$a" != -n ] || null=1; done
+rec ssh "$@"
+null=0 tty=0
 case "${SSH_MODE:-normal}" in
   noexec) exit 0 ;;
-  stdin-null) null=1 ;;
+  discard) null=1 ;;
+  crlf) tty=1 ;;
+  config-null) null=1 ;;
+  config-tty) tty=1 ;;
 esac
-if [ "$null" = 1 ]; then
-  bash -c "$cmd" </dev/null
+for a in "${args[@]}"; do
+  case "$a" in
+    -n) null=1 ;;
+    StdinNull=no) [ "${SSH_MODE:-}" != config-null ] || null=0 ;;
+    -T | RequestTTY=no) [ "${SSH_MODE:-}" != config-tty ] || tty=0 ;;
+  esac
+done
+run() {
+  if [ "$null" = 1 ]; then bash -c "$cmd" </dev/null; else bash -c "$cmd"; fi
+}
+if [ "$tty" = 1 ]; then
+  rec ssh-allocated-a-pty
+  run | sed 's/$/\r/'
 else
-  bash -c "$cmd"
+  run
 fi
 """
 
@@ -104,9 +124,15 @@ class RecoveryDriverTest(unittest.TestCase):
             "sudo",
             'if [ "$1" = -u ]; then rec sudo "$1" "$2"; shift 2; fi\nexec "$@"\n',
         )
+        # START_TAIL: output without a trailing newline; START_DRAIN: read
+        # stdin to EOF. Both on `systemctl start`, the restore's last command.
         self.stub(
             "systemctl",
-            'rec systemctl "$@"\n[ "$1" != show ] || echo inactive\n',
+            'rec systemctl "$@"\n[ "$1" != show ] || echo inactive\n'
+            'if [ "$1" = start ]; then\n'
+            '  [ -z "${START_TAIL:-}" ] || printf "%s" "$START_TAIL"\n'
+            '  [ -z "${START_DRAIN:-}" ] || cat >/dev/null\n'
+            "fi\n",
         )
         self.stub(
             "restic",
@@ -203,12 +229,12 @@ class RecoveryDriverTest(unittest.TestCase):
             [
                 [
                     "ssh",
-                    "-n",
+                    *SSH_OPTS,
                     "-p",
                     "22",
                     "-oForwardAgent=yes",
                     "ipreston@h",
-                    RESTORE_SHELL,
+                    RESTORE_CMD,
                 ],
                 ["systemctl", "stop", ODD_UNIT],
                 ["systemctl", "show", ODD_UNIT, "--property=ActiveState", "--value"],
@@ -479,7 +505,7 @@ class RecoveryDriverTest(unittest.TestCase):
         self.codes.write_text("000\n302\n")
         self.assertEqual(self.run_driver(manifest, *args), 0, self.output)
         self.assertIn(
-            ["ssh", "-n", "-p", "2222", "op@10.0.0.9", PROBE_SHELL], self.calls
+            ["ssh", *SSH_OPTS, "-p", "2222", "op@10.0.0.9", PROBE_CMD], self.calls
         )
         self.assertEqual(
             [c for c in self.calls if c[0] in ("curl", "sleep")],
@@ -567,12 +593,12 @@ class RecoveryDriverTest(unittest.TestCase):
             self.calls[0],
             [
                 "ssh",
-                "-n",
+                *SSH_OPTS,
                 "-p",
                 "22",
                 "-oForwardAgent=yes",
                 "ipreston@h",
-                RESTORE_SHELL,
+                RESTORE_CMD,
             ],
         )
         self.assertEqual(self.calls[1], ["systemctl", "stop", ODD_UNIT])
@@ -596,12 +622,12 @@ class RecoveryDriverTest(unittest.TestCase):
             self.calls[0],
             [
                 "ssh",
-                "-n",
+                *SSH_OPTS,
                 "-p",
                 "2222",
                 "-oForwardAgent=yes",
                 "op@10.0.0.9",
-                RESTORE_SHELL,
+                RESTORE_CMD,
             ],
         )
         self.assertEqual(self.restore_call()[2], "/mnt/prod-backups/restic/amos1")
@@ -647,28 +673,98 @@ class RecoveryDriverTest(unittest.TestCase):
             self.output,
         )
         self.assertEqual(
-            self.calls[0], ["ssh", "-n", "-p", "22", "ipreston@h", PROBE_SHELL]
+            self.calls[0], ["ssh", *SSH_OPTS, "-p", "22", "ipreston@h", PROBE_CMD]
         )
         self.assertIn("x: 200 OK", self.output)
 
     # ssh transports that drop or never run the program, and Task statuses.
     probe = {"url": "http://127.0.0.1:1/", "expect": "200", "retries": 2, "sleep": 1}
 
-    def test_stdin_null_still_runs_restore_and_probe(self):
-        manifest = {"app": self.entry(health=self.probe)}
-        env = {"SSH_MODE": "stdin-null"}
-        self.codes.write_text("500\n500\n")
-        code = self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env)
-        self.assertEqual(code, 201, self.output)
+    def run_app(self, manifest, **env):
+        return self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env)
+
+    def assert_restored_and_probed(self, probes=1):
         self.assertIn(["systemctl", "start", "app.service"], self.calls)
-        self.assertEqual(sum(c[0] == "curl" for c in self.calls), 2)
-        self.assertIn("did not return 200", self.output)
-        self.assertEqual(
-            self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env),
-            0,
-            self.output,
-        )
+        self.assertEqual(sum(c[0] == "curl" for c in self.calls), probes)
+        self.assertNotIn("RECOVERY-DONE", self.output)
+        self.assertNotIn("did not report completion", self.output)
+
+    def test_ssh_config_stdin_null_and_request_tty_are_overridden(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        for mode in ("config-null", "config-tty"):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.run_app(manifest, SSH_MODE=mode), 0, self.output)
+                self.assert_restored_and_probed()
+                self.assertNotIn("ssh-allocated-a-pty", self.commands())
+                self.codes.write_text("500\n500\n")
+                self.assertEqual(self.run_app(manifest, SSH_MODE=mode), 201)
+                self.assertIn("did not return 200", self.output)
+
+    def test_crlf_output_is_tolerated(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        self.assertEqual(self.run_app(manifest, SSH_MODE="crlf"), 0, self.output)
+        self.assert_restored_and_probed()
         self.assertIn("app: 200 OK", self.output)
+
+    def test_discarded_stdin_fails_closed(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        self.assertEqual(self.run_app(manifest, SSH_MODE="discard"), 201)
+        self.assertIn(
+            "app restore: the remote program did not report completion", self.output
+        )
+        self.assertEqual(self.commands(), ["ssh"])
+        self.assertEqual(
+            self.task(
+                "--exit-code",
+                "recovery:_health",
+                "HOST=h",
+                "APP=x",
+                "URL=u",
+                env={"SSH_MODE": "discard"},
+            ),
+            1,
+        )
+        self.assertNotIn("curl", self.commands())
+
+    def test_last_command_output_and_stdin_cannot_break_completion(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        for env in (
+            {"START_TAIL": "no newline"},
+            {"START_DRAIN": "1"},
+            {"START_TAIL": "x", "START_DRAIN": "1", "SSH_MODE": "crlf"},
+        ):
+            with self.subTest(env=env):
+                self.assertEqual(self.run_app(manifest, **env), 0, self.output)
+                self.assert_restored_and_probed()
+                if "START_TAIL" in env:
+                    self.assertIn(env["START_TAIL"], self.output)
+
+    def test_command_size_is_constant_for_a_huge_manifest(self):
+        paths = [f"/var/lib/huge-app/{i:04d}/" + "x" * 160 for i in range(620)]
+        manifest = {"app": self.entry(paths=paths, health=self.probe)}
+        self.assertGreater(len(json.dumps(manifest)), 110_000)
+        self.assertEqual(self.run_app(manifest), 0, self.output)
+        commands = [c[-1] for c in self.calls if c[0] == "ssh"]
+        self.assertEqual(commands, [RESTORE_CMD, PROBE_CMD])
+        self.assertLess(len(RESTORE_CMD), 200)
+        restore = self.restore_call()
+        self.assertEqual(
+            restore[restore.index("--delete") + 1 :],
+            [x for p in paths for x in ("--include", p)],
+        )
+        self.assert_restored_and_probed()
+
+    def test_empty_probe_timings_use_the_old_defaults(self):
+        health = {"url": "http://u/", "expect": "", "retries": "", "sleep": ""}
+        manifest = {"app": self.entry(health=health)}
+        self.codes.write_text("500\n" * 30)
+        self.assertEqual(self.run_app(manifest), 201)
+        self.assertEqual(
+            [c for c in self.calls if c[0] == "sleep"], [["sleep", "2"]] * 30
+        )
+        self.assertIn(
+            "app: did not return 200 within 30x2s (last code: 500)", self.output
+        )
 
     def test_program_that_never_runs_fails_closed(self):
         manifest = {"app": self.entry(health=self.probe)}
