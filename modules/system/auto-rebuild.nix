@@ -16,10 +16,14 @@ _: {
         dates = "04:40";
         randomizedDelaySec = "1h";
         persistent = true;
-        # Policy default: servers reboot themselves to pick up kernel /
-        # initrd updates. Interactive hosts (workstation profile) flip
-        # this off so an overnight upgrade doesn't yank the desktop out
-        # from under an active session.
+        # Policy default: every host may reboot itself. With allowReboot
+        # nixos-upgrade runs `boot`, then only `switch`es when the
+        # initrd/kernel/kernel-modules are unchanged from the booted
+        # system; otherwise it reboots (or, outside `rebootWindow`,
+        # stages the generation for the next boot without switching).
+        # Servers reboot at any hour. The workstation profile adds a
+        # `rebootWindow` so an interactive desktop is only rebooted in
+        # the early morning.
         allowReboot = lib.mkDefault true;
       };
 

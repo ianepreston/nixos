@@ -32,3 +32,8 @@ touch or PIN is required, the operator handles it in their terminal.
 The one accepted exception is `system.autoUpgrade`
 (`modules/system/auto-rebuild.nix`): it only ever activates the local host from
 `main`, so there is no remote target and no cross-host identity risk.
+Reboot policy: with `allowReboot`, `nixos-upgrade` runs `boot` and only
+`switch`es when the booted and built initrd/kernel/kernel-modules match;
+otherwise it reboots. Servers may reboot at any hour; workstations
+(`modules/profiles/workstation.nix`, including luna) reboot only between 04:00
+and 06:30 and otherwise stage the generation for the next boot.
