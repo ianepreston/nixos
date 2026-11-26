@@ -39,8 +39,10 @@ class RecoveryStopTest(unittest.TestCase):
         self.trace.touch()
         self.env = dict(os.environ, TRACE=str(self.trace))
         self.env["PATH"] = str(self.bin) + os.pathsep + os.environ["PATH"]
-        self.write_command("ssh", "exec bash -se\n")
-        self.write_command("sudo", 'shift 2\nexec "$@"\n')
+        # Run the remote command locally, as ssh would (the program travels in
+        # it; with -n there is no stdin).
+        self.write_command("ssh", 'exec bash -c "${@: -1}" </dev/null\n')
+        self.write_command("sudo", 'if [ "$1" = -u ]; then shift 2; fi\nexec "$@"\n')
         self.write_command("getent", "exit 0\n")
         self.write_command(
             "zcat", "printf '\\\\connect recovery_test\\nSELECT 1;\\n'\n"

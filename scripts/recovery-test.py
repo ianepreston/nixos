@@ -25,9 +25,38 @@ REPO = Path(sys.argv[1]).resolve()
 DRIVER = REPO / "scripts" / "recovery.sh"
 BASH = shutil.which("bash")
 
+RESTORE_SHELL = "| sudo bash -se"
+PROBE_SHELL = "| bash -se"
+
 # Values a word-splitting or re-parsing implementation would mangle or run.
 ODD_UNIT = "odd unit $(touch PWNED) 'q' \"d\";x.service"
 ODD_PATH = "/srv/a b/`touch PWNED`/semi;colon/$HOME/*"
+
+# ssh stand-in. It records its options and, instead of the base64 program,
+# the remote shell the program is piped into; then it runs the remote command
+# locally the way a real ssh would. SSH_MODE simulates transports:
+#   normal      stdin is forwarded unless -n was given
+#   stdin-null  ssh_config `StdinNull yes`: stdin is always discarded
+#   noexec      the connection "succeeds" but nothing runs on the target
+SSH_STUB = r"""args=("$@")
+cmd=${args[$((${#args[@]} - 1))]}
+shown=$cmd
+case "$cmd" in
+  "printf %s '"*"' | base64 -d | "*) shown="| ${cmd##*base64 -d | }" ;;
+esac
+rec ssh "${args[@]:0:$((${#args[@]} - 1))}" "$shown"
+null=0
+for a in "${args[@]}"; do [ "$a" != -n ] || null=1; done
+case "${SSH_MODE:-normal}" in
+  noexec) exit 0 ;;
+  stdin-null) null=1 ;;
+esac
+if [ "$null" = 1 ]; then
+  bash -c "$cmd" </dev/null
+else
+  bash -c "$cmd"
+fi
+"""
 
 RECORD = """rec() {
   local line
@@ -70,10 +99,7 @@ class RecoveryDriverTest(unittest.TestCase):
             DUMP=str(self.root / "dump.sql"),
             NIX_MANIFEST=str(self.root / "manifest.json"),
         )
-        self.stub(
-            "ssh",
-            'rec ssh "$@"\nbash -se\n# Drain whatever is left, as a real ssh would.\ncat >/dev/null\n',
-        )
+        self.stub("ssh", SSH_STUB)
         self.stub(
             "sudo",
             'if [ "$1" = -u ]; then rec sudo "$1" "$2"; shift 2; fi\nexec "$@"\n',
@@ -177,11 +203,12 @@ class RecoveryDriverTest(unittest.TestCase):
             [
                 [
                     "ssh",
+                    "-n",
                     "-p",
                     "22",
                     "-oForwardAgent=yes",
                     "ipreston@h",
-                    "sudo bash -se",
+                    RESTORE_SHELL,
                 ],
                 ["systemctl", "stop", ODD_UNIT],
                 ["systemctl", "show", ODD_UNIT, "--property=ActiveState", "--value"],
@@ -331,61 +358,76 @@ class RecoveryDriverTest(unittest.TestCase):
 
     def test_unknown_app_kind_and_malformed_entries_never_connect(self):
         good = self.entry()
+        probe = {"url": "u", "expect": "200", "retries": 30, "sleep": 2}
         cases = {
-            "unknown recovery app: nope": ({"app": good}, "nope"),
-            "unknown recovery kind: tape": ({"app": self.entry("tape")}, "app"),
-            "unknown recovery kind: null": ({"app": {**good, "kind": None}}, "app"),
-            "units must be a list": ({"app": {**good, "units": "a b"}}, "app"),
-            "paths must be a list": ({"app": {**good, "paths": ["ok", ""]}}, "app"),
-            "database must be": ({"app": self.entry("postgres")}, "app"),
-            "swaps must be a list": ({"app": self.entry("sqlite", swaps=None)}, "app"),
+            "unknown recovery app: nope": ({"app": good}, "nope", 5),
+            "unknown recovery kind: tape": ({"app": self.entry("tape")}, "app", 1),
+            "unknown recovery kind: null": ({"app": {**good, "kind": None}}, "app", 1),
+            "units must be a list": ({"app": {**good, "units": "a b"}}, "app", 5),
+            "paths must be a list": ({"app": {**good, "paths": ["ok", 3]}}, "app", 5),
+            "database must be": ({"app": self.entry("postgres")}, "app", 5),
+            "swaps must be a list": (
+                {"app": self.entry("sqlite", swaps=None)},
+                "app",
+                5,
+            ),
             "swap owner must be": (
-                {
-                    "app": self.entry(
-                        "sqlite", swaps=[{"staged": "a", "live": "b", "owner": ""}]
-                    )
-                },
+                {"app": self.entry("sqlite", swaps=[{"staged": "a", "live": "b"}])},
                 "app",
+                5,
             ),
+            "health must be an object": ({"app": {**good, "health": "x"}}, "app", 5),
             "health retries must be": (
-                {
-                    "app": {
-                        **good,
-                        "health": {
-                            "url": "u",
-                            "expect": "200",
-                            "retries": "30",
-                            "sleep": 2,
-                        },
-                    }
-                },
+                {"app": {**good, "health": {**probe, "retries": None}}},
                 "app",
+                5,
             ),
-            "health expect must be": (
-                {
-                    "app": {
-                        **good,
-                        "health": {
-                            "url": "u",
-                            "expect": 200,
-                            "retries": 30,
-                            "sleep": 2,
-                        },
-                    }
-                },
+            "health url must be": (
+                {"app": {**good, "health": {**probe, "url": 5}}},
                 "app",
+                5,
             ),
         }
-        for message, (manifest, app) in cases.items():
+        for message, (manifest, app, status) in cases.items():
             with self.subTest(message=message):
                 self.assertEqual(
                     self.run_driver(manifest, "app", "--app", app, "--host", "h"),
-                    1,
+                    status,
                     self.output,
                 )
                 self.assertIn(message, self.output)
                 self.assertNotIn("jq: error", self.output)
                 self.assertEqual(self.calls, [])
+
+    def test_schema_valid_inputs_the_old_dispatcher_accepted(self):
+        # Empty strings are valid under the Nix types; empty list elements
+        # vanished from the old space-joined lists; numeric probe settings
+        # may be strings (`sleep 0.5`); an empty `expect` meant 200.
+        health = {"url": "http://u/", "expect": "", "retries": "2", "sleep": "0.5"}
+        manifest = {
+            "app": self.entry(units=["", "a.service"], paths=["/p", ""], health=health)
+        }
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "app", "--host", "h"),
+            0,
+            self.output,
+        )
+        self.assertEqual(self.apps_in_order(), ["a.service"])
+        self.assertEqual(self.restore_call()[-2:], ["--include", "/p"])
+        self.assertIn("Asserting HTTP 200 on app (http://u/)", self.output)
+        self.assertIn("app: 200 OK", self.output)
+        self.codes.write_text("500\n500\n")
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "app", "--host", "h"), 201
+        )
+        self.assertEqual(
+            [c for c in self.calls if c[0] == "sleep"], [["sleep", "0.5"]] * 2
+        )
+        manifest = {"pg": self.entry("postgres", database="", paths=[])}
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "pg", "--host", "h"), 0
+        )
+        self.assertIn(["dropdb", "--if-exists", ""], self.calls)
 
     def test_restore_failure_propagates_without_start_or_probe(self):
         health = {
@@ -406,7 +448,7 @@ class RecoveryDriverTest(unittest.TestCase):
                     "h",
                     env={"RESTIC_FAIL": "1"},
                 )
-                self.assertEqual(code, 11, self.output)
+                self.assertEqual(code, 201, self.output)
                 self.assertNotIn(["systemctl", "start", "app.service"], self.calls)
                 self.assertEqual(
                     [c for c in self.calls if c[0] == "ssh"], [self.calls[0]]
@@ -436,7 +478,9 @@ class RecoveryDriverTest(unittest.TestCase):
         )
         self.codes.write_text("000\n302\n")
         self.assertEqual(self.run_driver(manifest, *args), 0, self.output)
-        self.assertIn(["ssh", "-p", "2222", "op@10.0.0.9", "bash -se"], self.calls)
+        self.assertIn(
+            ["ssh", "-n", "-p", "2222", "op@10.0.0.9", PROBE_SHELL], self.calls
+        )
         self.assertEqual(
             [c for c in self.calls if c[0] in ("curl", "sleep")],
             [
@@ -447,7 +491,7 @@ class RecoveryDriverTest(unittest.TestCase):
         )
         self.assertIn("app: 302 OK", self.output)
         self.codes.write_text("500\n500\n500\n")
-        self.assertEqual(self.run_driver(manifest, *args), 1, self.output)
+        self.assertEqual(self.run_driver(manifest, *args), 201, self.output)
         self.assertIn(
             "app: did not return 302 within 3x5s (last code: 500)", self.output
         )
@@ -503,12 +547,14 @@ class RecoveryDriverTest(unittest.TestCase):
         self.assertEqual(self.apps_in_order(), ["a.service", "b.service"])
         self.assertNotIn(["systemctl", "start", "b.service"], self.calls)
         manifest["c"]["units"] = "c.service"
-        self.assertEqual(self.run_driver(manifest, "all", "--host", "h"), 1)
+        self.assertEqual(self.run_driver(manifest, "all", "--host", "h"), 201)
         self.assertIn("recovery app c: units must be a list", self.output)
         self.assertEqual(self.calls, [])
 
-    def task(self, *args):
-        return self.run_cmd(["task", "--taskfile", str(self.taskfile), *args])
+    def task(self, *args, env=None, manifest=None):
+        if manifest is not None:
+            (self.root / "manifest.json").write_text(json.dumps(manifest))
+        return self.run_cmd(["task", "--taskfile", str(self.taskfile), *args], env)
 
     def test_task_app_passes_variables_and_defaults(self):
         manifest = {"app": self.entry(units=[ODD_UNIT])}
@@ -519,7 +565,15 @@ class RecoveryDriverTest(unittest.TestCase):
         )
         self.assertEqual(
             self.calls[0],
-            ["ssh", "-p", "22", "-oForwardAgent=yes", "ipreston@h", "sudo bash -se"],
+            [
+                "ssh",
+                "-n",
+                "-p",
+                "22",
+                "-oForwardAgent=yes",
+                "ipreston@h",
+                RESTORE_SHELL,
+            ],
         )
         self.assertEqual(self.calls[1], ["systemctl", "stop", ODD_UNIT])
         self.assertEqual(self.restore_call()[2], "/mnt/backups/restic/h")
@@ -540,7 +594,15 @@ class RecoveryDriverTest(unittest.TestCase):
         )
         self.assertEqual(
             self.calls[0],
-            ["ssh", "-p", "2222", "-oForwardAgent=yes", "op@10.0.0.9", "sudo bash -se"],
+            [
+                "ssh",
+                "-n",
+                "-p",
+                "2222",
+                "-oForwardAgent=yes",
+                "op@10.0.0.9",
+                RESTORE_SHELL,
+            ],
         )
         self.assertEqual(self.restore_call()[2], "/mnt/prod-backups/restic/amos1")
         self.assertIn(
@@ -584,8 +646,147 @@ class RecoveryDriverTest(unittest.TestCase):
             0,
             self.output,
         )
-        self.assertEqual(self.calls[0], ["ssh", "-p", "22", "ipreston@h", "bash -se"])
+        self.assertEqual(
+            self.calls[0], ["ssh", "-n", "-p", "22", "ipreston@h", PROBE_SHELL]
+        )
         self.assertIn("x: 200 OK", self.output)
+
+    # ssh transports that drop or never run the program, and Task statuses.
+    probe = {"url": "http://127.0.0.1:1/", "expect": "200", "retries": 2, "sleep": 1}
+
+    def test_stdin_null_still_runs_restore_and_probe(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        env = {"SSH_MODE": "stdin-null"}
+        self.codes.write_text("500\n500\n")
+        code = self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env)
+        self.assertEqual(code, 201, self.output)
+        self.assertIn(["systemctl", "start", "app.service"], self.calls)
+        self.assertEqual(sum(c[0] == "curl" for c in self.calls), 2)
+        self.assertIn("did not return 200", self.output)
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env),
+            0,
+            self.output,
+        )
+        self.assertIn("app: 200 OK", self.output)
+
+    def test_program_that_never_runs_fails_closed(self):
+        manifest = {"app": self.entry(health=self.probe)}
+        env = {"SSH_MODE": "noexec"}
+        code = self.run_driver(manifest, "app", "--app", "app", "--host", "h", env=env)
+        self.assertEqual(code, 201, self.output)
+        self.assertIn(
+            "app restore: the remote program did not report completion", self.output
+        )
+        self.assertEqual(self.commands(), ["ssh"])
+        code = self.task(
+            "recovery:_health", "HOST=h", "APP=x", "URL=http://u/", env=env
+        )
+        self.assertNotEqual(code, 0, self.output)
+        self.assertIn(
+            "x health probe: the remote program did not report completion", self.output
+        )
+        code = self.task("recovery:all", "HOST=h", env=env, manifest=manifest)
+        self.assertNotEqual(code, 0, self.output)
+
+    def test_marker_is_hidden_and_must_carry_this_runs_nonce(self):
+        manifest = {"app": self.entry()}
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "app", "--host", "h"), 0
+        )
+        self.assertNotIn("RECOVERY-DONE", self.output)
+        # A marker from some other run (a fixed string) is not enough.
+        self.stub("ssh", 'rec ssh "$@"\necho "RECOVERY-DONE 0000"\n')
+        self.assertEqual(
+            self.run_driver(manifest, "app", "--app", "app", "--host", "h"), 201
+        )
+
+    def test_task_exit_codes_match_the_old_dispatcher(self):
+        health = self.probe
+        good = {"app": self.entry(health=health)}
+        cases = [
+            (
+                "app restic failure",
+                ["recovery:app", "APP=app", "HOST=h"],
+                good,
+                {"RESTIC_FAIL": "1"},
+                201,
+            ),
+            (
+                "app probe failure",
+                ["recovery:app", "APP=app", "HOST=h"],
+                good,
+                {"CODES": "500\n500\n"},
+                201,
+            ),
+            (
+                "all restic failure",
+                ["recovery:all", "HOST=h"],
+                good,
+                {"RESTIC_FAIL": "1"},
+                201,
+            ),
+            ("unknown app", ["recovery:app", "APP=nope", "HOST=h"], good, {}, 5),
+            (
+                "unknown kind",
+                ["recovery:app", "APP=app", "HOST=h"],
+                {"app": self.entry("tape")},
+                {},
+                1,
+            ),
+            (
+                "template restic failure",
+                [
+                    "recovery:_restore-volume",
+                    "HOST=h",
+                    "APP=a",
+                    "UNITS=a.service",
+                    "PATHS=/p",
+                ],
+                {},
+                {"RESTIC_FAIL": "1"},
+                11,
+            ),
+            (
+                "template probe failure",
+                [
+                    "recovery:_health",
+                    "HOST=h",
+                    "APP=a",
+                    "URL=http://u/",
+                    "RETRIES=1",
+                    "SLEEP=0.5",
+                ],
+                {},
+                {"CODES": "500\n"},
+                1,
+            ),
+            ("app success", ["recovery:app", "APP=app", "HOST=h"], good, {}, 0),
+        ]
+        for name, args, manifest, env, status in cases:
+            with self.subTest(name=name):
+                self.codes.write_text(env.pop("CODES", ""))
+                self.assertEqual(
+                    self.task("--exit-code", *args, env=env, manifest=manifest),
+                    status,
+                    self.output,
+                )
+
+    def test_hidden_health_accepts_old_inputs(self):
+        self.codes.write_text("500\n")
+        code = self.task(
+            "recovery:_health",
+            "HOST=h",
+            "APP=x",
+            "URL=",
+            "EXPECT=",
+            "RETRIES=2",
+            "SLEEP=0.5",
+        )
+        self.assertEqual(code, 0, self.output)
+        self.assertEqual([c for c in self.calls if c[0] == "sleep"], [["sleep", "0.5"]])
+        self.assertEqual([c[-1] for c in self.calls if c[0] == "curl"], ["", ""])
+        self.assertIn("Asserting HTTP 200 on x ()", self.output)
 
 
 if __name__ == "__main__":

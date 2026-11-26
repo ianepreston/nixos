@@ -31,10 +31,17 @@
 #
 # Trust boundary: manifest values and operator arguments are validated here
 # with jq and reach the target only as jq `@sh`-quoted bash assignments
-# appended to scripts/_recovery/remote.sh, which is sent as the remote shell's
-# stdin. They are never part of an ssh command line, so the target user's
-# login shell parses nothing but the fixed `sudo bash -se` / `bash -se`. The
-# restic password stays on the target (/run/secrets/restic/password).
+# appended to scripts/_recovery/remote.sh. That program is base64-encoded into
+# the one ssh command (`printf %s '<base64>' | base64 -d | sudo bash -se`), so
+# the target user's login shell parses only that fixed, inert text; ssh runs
+# with -n and never reads the caller's stdin. A run succeeds only when the
+# target prints this run's random completion marker. The restic password
+# stays on the target (/run/secrets/restic/password).
+#
+# Exit status: `app` and `all` return 201 (Task's status for the nested task
+# they used to run) for any restore or probe failure, 5 for an unknown app or
+# malformed entry and 1 for an unknown kind; `template` returns the failing
+# command's own status, as the templates always did.
 set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -57,18 +64,23 @@ green() {
 command -v jq >/dev/null || die "recovery.sh needs jq on the operator machine"
 
 # Validate one manifest entry and print it, normalized, as compact JSON. The
-# checks mirror the myRecovery.apps option types, so an entry the Nix module
-# can generate always passes; anything else stops before a connection.
+# checks are the myRecovery.apps option types and no stricter, so everything
+# the previous Task dispatcher accepted still passes: empty strings are
+# allowed, empty list elements are dropped (a space-joined list lost them
+# too), numeric probe settings may be numbers or strings (`sleep 0.5`), and
+# an empty `expect` means 200, the old `_health` default. A wrong shape stops
+# before any connection.
 # shellcheck disable=SC2016 # jq program, not shell
 validate_jq='
   def bad($why): error("recovery app \($app): \($why)");
   def strings($field):
-    if type == "array" and all(.[]; type == "string" and length > 0) then .
-    else bad("\($field) must be a list of non-empty strings") end;
+    if type == "array" and all(.[]; type == "string") then map(select(. != ""))
+    else bad("\($field) must be a list of strings") end;
   def string($field):
-    if type == "string" and length > 0 then . else bad("\($field) must be a non-empty string") end;
-  def count($field):
-    if type == "number" and . == floor and . >= 0 then . else bad("\($field) must be a non-negative integer") end;
+    if type == "string" then . else bad("\($field) must be a string") end;
+  def scalar($field):
+    if type == "string" or type == "number" then tostring
+    else bad("\($field) must be a string or number") end;
 
   (if has($app) then .[$app] else error("unknown recovery app: \($app)") end)
   | if type == "object" then . else bad("entry must be an object") end
@@ -91,9 +103,9 @@ validate_jq='
         else .health
           | if type == "object" then . else bad("health must be an object or null") end
           | {url: (.url | string("health url")),
-             expect: (.expect | string("health expect")),
-             retries: (.retries | count("health retries")),
-             sleep: (.sleep | count("health sleep"))}
+             expect: (.expect | scalar("health expect") | if . == "" then "200" else . end),
+             retries: (.retries | scalar("health retries")),
+             sleep: (.sleep | scalar("health sleep"))}
         end)
     }
 '
@@ -153,8 +165,6 @@ parse_args() {
     esac
     shift 2
   done
-  [ -n "$host" ] || die "recovery.sh: --host is required"
-  [ -n "$app" ] || [ "$mode" = all ] || die "recovery.sh: --app is required"
   dest=${dest:-$host}
   source_host=${source_host:-$host}
   ssh_port=${ssh_port:-22}
@@ -180,68 +190,119 @@ cleanup() {
 }
 trap cleanup EXIT
 
-validate_entry() { # name -> normalized entry JSON on stdout
-  local out
-  # jq reports `error(...)` as "jq: error (at <file>:<n>): <message>"; the
-  # operator only needs the message.
+# Prints the normalized entry. Failure statuses are the old dispatcher's: 1
+# for an unknown kind (its own `exit 1`), 5 (jq's error status) otherwise.
+validate_entry() { # name
+  local out msg
   if ! out=$(jq -ce --arg app "$1" "$validate_jq" "$manifest_file" 2>&1); then
-    die "${out#"jq: error (at "*"): "}"
+    # jq reports `error(...)` as "jq: error (at <file>:<n>): <message>"; the
+    # operator only needs the message.
+    msg=${out#"jq: error (at "*"): "}
+    echo "$msg" >&2
+    case "$msg" in
+      "unknown recovery kind: "*) return 1 ;;
+      *) return 5 ;;
+    esac
   fi
   printf '%s\n' "$out"
+}
+
+# run_remote LABEL REMOTE_SHELL PROGRAM SSH_ARGS...
+#
+# Runs PROGRAM (bash source) on the target through REMOTE_SHELL (`sudo bash
+# -se` or `bash -se`). The program is base64-encoded into the ssh command
+# (base64's alphabet is inert inside the single quotes, whatever the login
+# shell), and ssh gets -n: it neither depends on its stdin, which `StdinNull
+# yes` would discard, nor reads the caller's, which under `all` is the
+# remaining app list. The program ends with `recovery_done`, which prints a
+# per-run nonce only after the action succeeded; the marker is filtered out
+# of the output and required. Returns ssh's (the remote program's) status,
+# or 1 when it exited 0 without the marker.
+run_remote() {
+  local label=$1 shell=$2 program=$3 nonce encoded
+  local -a status
+  shift 3
+  nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n') && [ -n "$nonce" ] || return 1
+  encoded=$(printf '%s\nNONCE=%s\nrecovery_done\n' "$program" "$nonce" | base64 | tr -d '\n') || return 1
+  set +e
+  # shellcheck disable=SC2029 # expanded locally on purpose: the encoded program
+  ssh -n "$@" "printf %s '$encoded' | base64 -d | $shell" |
+    awk -v marker="RECOVERY-DONE $nonce" \
+      '$0 == marker { seen = 1; next } { print; fflush() } END { exit !seen }'
+  status=("${PIPESTATUS[@]}")
+  set -e
+  if [ "${status[0]}" -ne 0 ]; then
+    return "${status[0]}"
+  fi
+  if [ "${status[1]}" -ne 0 ]; then
+    echo "[!] $label: the remote program did not report completion; treating it as failed" >&2
+    return 1
+  fi
 }
 
 ssh_target() {
   printf '%s@%s' "$target_user" "$dest"
 }
 
+# These run under `||` (set -e does not apply there), so every step checks
+# its own status.
 restore_entry() { # name entry
-  local name=$1 entry=$2 kind label
-  kind=$(jq -r .kind <<<"$entry")
+  local name=$1 entry=$2 kind label program
+  kind=$(jq -r .kind <<<"$entry") || return
   case "$kind" in
     volume) label=volume-only ;;
     postgres) label="postgres + paths" ;;
     sqlite) label=sqlite-quiesce ;;
   esac
   green "[+] Restoring $name on $host ($label) from $source_host's restic repo"
-  {
-    cat "$remote_script"
-    jq -r --arg app "$name" --arg repo "$repo_mount/restic/$source_host" \
-      "$restore_preamble_jq" <<<"$entry"
-  } | ssh -p "$ssh_port" -oForwardAgent=yes "$(ssh_target)" 'sudo bash -se'
+  program=$(
+    cat "$remote_script" &&
+      jq -r --arg app "$name" --arg repo "$repo_mount/restic/$source_host" \
+        "$restore_preamble_jq" <<<"$entry"
+  ) || return
+  run_remote "$name restore" 'sudo bash -se' "$program" \
+    -p "$ssh_port" -oForwardAgent=yes "$(ssh_target)"
 }
 
-# The probe's ssh reads its program from this pipe, never from the caller's
-# stdin: under `all` it would otherwise drain the remaining app list.
 health_entry() { # name entry
-  local name=$1 entry=$2
+  local name=$1 entry=$2 program
   green "[+] Asserting HTTP $(jq -r .health.expect <<<"$entry") on $name ($(jq -r .health.url <<<"$entry"))"
-  {
-    cat "$remote_script"
-    jq -r --arg app "$name" "$health_preamble_jq" <<<"$entry"
-  } | ssh -p "$ssh_port" "$(ssh_target)" 'bash -se'
+  program=$(
+    cat "$remote_script" &&
+      jq -r --arg app "$name" "$health_preamble_jq" <<<"$entry"
+  ) || return
+  run_remote "$name health probe" 'bash -se' "$program" -p "$ssh_port" "$(ssh_target)"
 }
 
-run_app() { # name [phase: both|restore|health]
-  local name=$1 phase=${2:-both} entry
-  entry=$(validate_entry "$name")
+restore_and_probe() { # name entry [phase: both|restore|health]
+  local name=$1 entry=$2 phase=${3:-both}
   if [ "$phase" != health ]; then
-    restore_entry "$name" "$entry"
+    restore_entry "$name" "$entry" || return
   fi
   if [ "$phase" != restore ] && [ "$(jq -r '.health != null' <<<"$entry")" = true ]; then
-    health_entry "$name" "$entry"
+    health_entry "$name" "$entry" || return
   fi
+}
+
+# `app` and `all` used to reach the restore templates through a nested
+# `task`, so any restore or probe failure surfaced as Task's 201; they keep
+# that status (`task --exit-code` shows it). The hidden templates ran the
+# restore directly and still return its own status (e.g. restic's 11).
+run_one() {
+  local entry
+  entry=$(validate_entry "$app") || exit
+  restore_and_probe "$app" "$entry" || exit 201
 }
 
 run_all() {
-  local name names=() list
+  local name names=() entries=() entry list i
   # NUL-terminated names in a file: no app name can be re-split, and a jq
   # failure stops the run instead of yielding an empty, "successful" loop.
   list=$(mktemp)
-  jq -j 'to_entries | sort_by(.value.order) | .[] | .key + "\u0000"' "$manifest_file" >"$list" ||
-    {
-      rm -f "$list"
-      exit 1
-    }
+  if ! jq -j 'to_entries | sort_by(.value.order) | .[] | .key + "\u0000"' "$manifest_file" >"$list"; then
+    rm -f "$list"
+    exit 5
+  fi
   while IFS= read -r -d '' name; do
     names+=("$name")
   done <"$list"
@@ -249,10 +310,11 @@ run_all() {
   [ "${#names[@]}" -gt 0 ] || return 0
   # Validate every entry before the first restore touches the target.
   for name in "${names[@]}"; do
-    validate_entry "$name" >/dev/null
+    entry=$(validate_entry "$name") || exit 201
+    entries+=("$entry")
   done
-  for name in "${names[@]}"; do
-    run_app "$name" </dev/null
+  for i in "${!names[@]}"; do
+    restore_and_probe "${names[$i]}" "${entries[$i]}" </dev/null || exit 201
   done
 }
 
@@ -272,20 +334,17 @@ template_jq='
     database: (if $kind == "postgres" then $db else null end),
     swaps: ($swaps | words | map(split(":") | {staged: .[0], live: .[1], owner: (.[2:] | join(":"))})),
     health: (if $kind == "health" then
-      {url: $url, expect: $expect, retries: ($retries | tonumber), sleep: ($sleep | tonumber)}
+      {url: $url, expect: $expect, retries: $retries, sleep: $sleep}
       else null end)
   }}
 '
 
 run_template() { # kind
-  local kind=$1 phase=restore
+  local kind=$1 phase=restore entry
   case "$kind" in
     volume | sqlite) ;;
     pg) kind=postgres ;;
-    health)
-      phase=health
-      [ -n "$url" ] || die "recovery.sh: --url is required"
-      ;;
+    health) phase=health ;;
     *) die "recovery.sh: unknown template $kind" ;;
   esac
   manifest_file=$(mktemp)
@@ -293,7 +352,8 @@ run_template() { # kind
   jq -n --arg app "$app" --arg kind "$kind" --arg units "$units" --arg paths "$paths" \
     --arg db "$db" --arg swaps "$swaps" --arg url "$url" --arg expect "${expect:-200}" \
     --arg retries "${retries:-30}" --arg sleep "${sleep_s:-2}" "$template_jq" >"$manifest_file"
-  run_app "$app" "$phase"
+  entry=$(validate_entry "$app") || exit
+  restore_and_probe "$app" "$entry" "$phase" || exit
 }
 
 [ "$#" -ge 1 ] || usage
@@ -303,7 +363,7 @@ case "$mode" in
   app)
     parse_args "$@"
     load_manifest
-    run_app "$app"
+    run_one
     ;;
   all)
     parse_args "$@"
