@@ -26,21 +26,24 @@ tasks:
   check:
     desc: Full pre-push gate via scripts/flake-checks.sh local (lock, sequential eval, lint, native checks)
     # The same driver the CI check.yml stages call (#1021), so local and CI
-    # validation share one implementation. `local` asserts flake.lock matches
-    # flake.nix (--no-update-lock-file, never re-locks), evaluates every
-    # nixos/darwin/home configuration and every system's checks/packages/
-    # devShells one at a time, builds checks.<this system>.pre-commit (the
+    # validation share one implementation; needs nix, bash and jq. `local`
+    # asserts flake.lock matches flake.nix (--no-update-lock-file, never
+    # re-locks), evaluates every nixos/darwin/home configuration and every
+    # top-level output with the `nix flake check` shape and derivation
+    # checks, one at a time, builds checks.<this system>.pre-commit (the
     # git-hooks.nix hooks: nixfmt/statix/deadnix, ruff, shellcheck/shfmt,
-    # secret/YAML/whitespace) and every other check for this machine's
-    # system. Checks of other systems are evaluated and listed as DEFERRED,
-    # never reported as passed; on a Mac that means the Linux checks, which
-    # `task check:linux` or CI builds. See docs/agents/testing-and-bootstrap.md.
+    # secret/YAML/whitespace) and every other check for this machine's system,
+    # all outputs (^*). Checks of other systems are listed as DEFERRED, never
+    # as passed: on a Mac, `task check:linux` builds the x86_64-linux ones and
+    # the aarch64-linux ones stay deferred. See
+    # docs/agents/testing-and-bootstrap.md.
     cmd: bash ./scripts/flake-checks.sh local
   check:linux:
-    desc: Build every x86_64-linux flake check (incl. pre-commit and VM tests) natively or on a configured remote builder
-    # --remote-builder only permits delegation once `nix config show builders`
-    # declares an x86_64-linux machine; it is refused otherwise. On an
-    # x86_64-linux machine the checks build natively.
+    desc: Build every x86_64-linux flake check (incl. pre-commit and VM tests) natively or via a declared remote builder
+    # --remote-builder only permits delegation once a successful
+    # `nix config show builders` declares an x86_64-linux machine with a build
+    # slot; it is refused otherwise. On an x86_64-linux machine the checks
+    # build natively.
     cmd: bash ./scripts/flake-checks.sh build-checks --system x86_64-linux --remote-builder
   hashes:
     desc: Regenerate the fetch hashes Renovate can't maintain (pass -- --check to only report)

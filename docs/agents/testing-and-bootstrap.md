@@ -30,38 +30,65 @@ assertion names the fix.
 `task check` runs its `local` preset; the CI `check.yml` stages call its
 individual modes. The workflow keeps scheduling, the fork guard, runner
 selection and the split between the public `lint` job and the deploy-key jobs;
-the driver only decides what to evaluate and build. Modes:
+the driver only decides what to evaluate and build. It needs `nix`, `bash` and
+`jq` on `PATH` (the NixOS runner and ubuntu-latest have all three; on a Mac
+`jq` comes from the home-manager profile or Homebrew). The Nix-language checks
+live beside it in `scripts/_flake-checks/`. Modes:
 
 | Mode | Does | CI job |
 | --- | --- | --- |
 | `lock` | `nix flake metadata --no-update-lock-file`; a stale lock fails, nothing re-locks | `flake-check` |
-| `eval-configs` | drvPath of every `nixosConfigurations`, `darwinConfigurations` and `homeConfigurations` entry, discovered and evaluated one at a time | `flake-check` |
-| `eval-outputs` | drvPath of every `checks`/`packages`/`devShells`/`formatter` entry for every system, plus overlay/module shape (what `nix flake check --all-systems` evaluated) | local only |
-| `lint --system S` | builds `checks.S.pre-commit`, the git-hooks.nix hooks | `lint` |
-| `build-checks --system S [--exclude N]` | builds every `checks.S.*`, one at a time | `checks` (`--exclude pre-commit`) |
+| `eval-configs` | every `nixosConfigurations`/`darwinConfigurations` toplevel and `homeConfigurations` activationPackage, discovered and evaluated one at a time, each checked to be a real derivation | `flake-check` |
+| `eval-outputs` | what `nix flake check --all-systems` evaluated: forces every top-level output and checks system keys (including `legacyPackages`), overlay signatures, modules and apps (`toplevel.nix`, on the locked source via `builtins.getFlake`); then derivation identity of every `checks`/`packages`/`devShells`/`formatter` entry for every system (`derivations.nix`) | local only |
+| `lint --system S` | builds `checks.S.pre-commit^*`, the git-hooks.nix hooks | `lint` |
+| `build-checks --system S [--exclude N]` | identity-checks, then builds every `checks.S.<name>^*`, one at a time | `checks` (`--exclude pre-commit`) |
+
+Rules the driver enforces:
+
+- **Derivation identity**: `type = "derivation"`, a `drvPath` that is a store
+  `.drv` path carrying derivation context (a literal string fails), and a
+  `system` equal to the per-system key it is published under.
+- **All outputs**: every build requests `^*`, as `nix flake check` did,
+  locally and in CI (a superset of CI's former default-output builds).
+- **Required sets**: each of the three configuration kinds must exist and be
+  non-empty, and a system selected for `build-checks` must have at least one
+  check left after `--exclude`. Empty per-system outputs (`apps`, `formatter`)
+  are allowed.
+- **Names**: attribute names outside `[A-Za-z0-9_][A-Za-z0-9_+.-]*` (empty,
+  spaces, quotes, newlines) fail, reported JSON-escaped; nothing is skipped.
+- **Exit status**: every nix call's own status decides the result; output is
+  never trusted on its own. A failed item fails the run (exit 1) but the rest
+  of its stage still runs, so one run reports every failure.
 
 Evaluation is sequential on purpose: parallel `nix flake check` evaluation
 raced on concurrent `addToStore` on the Linux runner (see `check.yml`). Every
-nix call passes `--no-update-lock-file`. A failed item fails the run (exit 1)
-but the rest of its stage still runs, so one run reports every failure.
+nix call passes `--no-update-lock-file`.
 
 **Platform policy.** `lint` and `build-checks` default to this machine's
 `nix config show system`; `extra-platforms` also count as native. Any other
-system is refused (exit 2) unless `--remote-builder` is given *and*
-`nix config show builders` declares a machine for that system. Nothing infers
-SSH capability beyond that.
+system is refused (exit 2) unless `--remote-builder` is given *and* a
+successful `nix config show builders` declares a machine for that system with
+at least one build slot (zero-slot and malformed entries are ignored). That
+is all it verifies: Nix chooses the machine per build, reachability is not
+probed, and an output already in the store or a substituter is not rebuilt,
+so a pass shows the check's output exists, not that the builder ran it.
 
 **On a Mac**, `task check` runs locally: the lock check, every configuration
 evaluation (including the Linux hosts, which evaluate fine on Darwin), every
 system's output evaluation, `checks.aarch64-darwin.pre-commit` and every other
-`aarch64-darwin` check. It builds no Linux derivation. The `x86_64-linux` and
-`aarch64-linux` checks (VM tests, Linux-only runtime suites) and the
-`x86_64-darwin` checks are evaluated and listed as `DEFERRED`, never as passed.
-Build the `x86_64-linux` set with `task check:linux`, which delegates to a
-configured remote builder (here `terra`, via `/etc/nix/machines`), or leave it
-to the CI `checks` job. A single check:
-`nix build .#checks.x86_64-linux.<name> --no-link`. Host toplevel builds stay
-out of `task check`; use `task build HOST=<host>`.
+`aarch64-darwin` check. It builds no Linux derivation:
+
+- the **x86_64-linux** checks (VM tests, Linux-only runtime suites) are
+  evaluated and listed as `DEFERRED`; build them with `task check:linux`
+  (delegated to the remote builder declared in `/etc/nix/machines`, here
+  `terra`) or leave them to the CI `checks` job. One check:
+  `nix build .#checks.x86_64-linux.<name> --no-link`;
+- the **aarch64-linux** and **x86_64-darwin** checks are evaluated and stay
+  `DEFERRED`: no local task or CI job builds them.
+
+A system whose evaluation failed is reported `NOT-RUN` (a failure), never
+`DEFERRED`. Host toplevel builds stay out of `task check`; use
+`task build HOST=<host>`.
 
 ## Local VM sandbox (`task vm:*`)
 
