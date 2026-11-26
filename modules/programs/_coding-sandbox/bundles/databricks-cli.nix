@@ -22,12 +22,12 @@ let
     aarch64-linux = release {
       arch = "arm64";
       # regen-hash: legacyPackages.x86_64-linux.coding-sandbox-bundle-sources.databricks-cli.aarch64-linux
-      hash = "sha256-4ckkqVgZ18eS9xpBwhbSqtlVAMrtqbhY3uZ2gwd6WgY=";
+      hash = "sha256-CEDQx0qYqMW/LEG0nFRXz5iC7xrDcJW8q6Q7lYX09lY=";
     };
     x86_64-linux = release {
       arch = "amd64";
       # regen-hash: legacyPackages.x86_64-linux.coding-sandbox-bundle-sources.databricks-cli.x86_64-linux
-      hash = "sha256-UiSIhClyoGk2IHpQNCatNk2AYdouMwY22mD0RKMoQPU=";
+      hash = "sha256-noD53mLDiynBKO9HpEodiQzTqQkUB/3FsQQGEz8PFcU=";
     };
   };
   databricks-cli = pkgsUnstable.stdenvNoCC.mkDerivation {
