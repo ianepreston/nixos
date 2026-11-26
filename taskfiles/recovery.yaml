@@ -14,15 +14,15 @@
 # Set MANIFEST_HOST when HOST/DEST is an IP address or another non-flake
 # target name; it selects the configuration whose enabled app metadata is used.
 #
-# `recovery:app` dispatches to one of three restore templates
-# (`_restore-volume`, `_restore-pg`, `_restore-sqlite`) and then runs
-# an HTTP health check via `_health` where applicable. `recovery:all`
-# runs every enabled app through it in manifest order — use it for
-# catastrophic rebuilds.
+# `recovery:app` restores one app in one of three shapes (volume,
+# postgres, sqlite) and then runs its HTTP health check where it has one.
+# `recovery:all` runs every enabled app through it in manifest order — use
+# it for catastrophic rebuilds.
 #
 # App modules own recovery metadata. The generated manifest drives both
-# `recovery:app` and `recovery:all`; this file only owns the reusable restore
-# mechanics.
+# `recovery:app` and `recovery:all`; the reusable restore mechanics live in
+# scripts/recovery.sh and scripts/_recovery/remote.sh, and this file only
+# keeps the Task entry points and the drill.
 #
 # ## Verification drill (recovery:test:full)
 #
@@ -40,265 +40,112 @@ set: [pipefail]
 shopt: [globstar]
 tasks:
   # ---------------------------------------------------------------------------
-  # Internal templates
+  # Restore mechanics: scripts/recovery.sh
   # ---------------------------------------------------------------------------
   #
-  # These do the actual restic + systemd + (postgres|sqlite) dance.
-  # `recovery:app` below picks one per manifest entry and populates
-  # UNITS / PATHS / DB / SWAPS. Carrying no `desc:` is what keeps them
-  # out of `task --list`; they deliberately do NOT set `internal: true`.
-  # The dispatcher chooses the template at runtime from the manifest's
-  # `kind`, which YAML `- task:` references can't express, so it shells
-  # out to `task recovery:_restore-*` — and Go Task refuses a CLI
-  # invocation of an internal task with exit 202.
+  # The restore programs live in tracked, linted source files (#1025):
+  # scripts/recovery.sh is the operator-side driver (bash + jq: manifest
+  # loading, validation, dispatch, ordering) and scripts/_recovery/remote.sh
+  # the target side (bash only — the servers ship no python3 or jq), sent on
+  # ssh's stdin to a fixed remote command that stages it in a temp file and
+  # runs it with stdin from /dev/null. ssh gets -T and `-o StdinNull=no`, and
+  # a per-run completion marker confirms the program really ran. That pair
+  # owns the stop/restore/start sequence,
+  # `restic unlock` + `--retry-lock 10m` (#676), `--delete` (#217), the
+  # pg_dumpall replay, the SQLite swaps and the health probe; read the
+  # comments there. The tasks below are thin entry points with unchanged
+  # names and variables. Every variable is passed with `shellQuote`, and an
+  # empty one means the driver's default (DEST and SOURCE_HOST: HOST,
+  # SSH_PORT: 22, TARGET_USER: ipreston, REPO_MOUNT: /mnt/backups;
+  # /mnt/<otherEnv>-backups for a cross-environment restore).
   #
-  # All three run `restic unlock` and then pass `--retry-lock 10m`.
-  # `restic restore` takes a read lock, and the nightly `forget --prune`
-  # holds an exclusive one for ~47s at ~03:2x; restic retries zero times
-  # by default, so a recovery that happened to overlap would abort with
-  # exit 11 partway through (#676). Waiting beats failing mid-restore.
+  # Manifest values travel as structured JSON from `nix eval` to the driver,
+  # which validates each entry and hands the target jq `@sh`-quoted bash
+  # arrays — never space-joined lists or colon-delimited triples. The restic
+  # password is read on the target from /run/secrets/restic/password.
   #
-  # The `unlock` is not redundant with the retry, it is what keeps the
-  # retry from making things worse. `checkForOtherLocks` (restic 0.18.1,
-  # internal/restic/lock.go:160) never consults `Stale()` — only the
-  # `unlock` command does — so a lock left behind by a dead process
-  # blocks acquisition just like a live one, and the retry burns the
-  # full 10m before failing anyway. A crash that leaves a stale lock on
-  # the repo is exactly the crash that leads to a recovery, and
-  # `recovery:all` chains every app in sequence. nixpkgs runs `restic
-  # unlock` before the nightly prune for this reason; these templates
-  # need their own.
-  # Shutdown is a hard boundary: every requested unit must stop successfully
-  # and report inactive before any restore work. Missing units are errors too;
-  # a recovery target must provide the services named by its manifest. A failed
-  # stop or restore must not trigger an automatic restart from an error trap.
+  # Shutdown is a hard boundary (#1017): every requested unit must stop
+  # successfully and report inactive before any restore work, and a failed
+  # stop or restore never restarts anything.
+  #
+  # Hidden historical templates. Carrying no `desc:` keeps them out of `task
+  # --list`; they keep their old space-joined UNITS/PATHS and `src:dst:owner`
+  # SWAPS variables (the driver converts them to a one-entry manifest) so a
+  # hand-run or documented invocation keeps working. They deliberately do not
+  # set `internal: true`, which would make a CLI call exit 202.
   _restore-volume:
     requires:
       vars: [HOST, APP, UNITS, PATHS]
-    vars:
-      DEST: '{{.DEST | default .HOST}}'
-      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
-      SSH_PORT: '{{.SSH_PORT | default "22"}}'
-      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
-      # Override for cross-environment restore (dev→prod or prod→dev).
-      # Defaults to /mnt/backups (same-environment); set to
-      # /mnt/<otherEnv>-backups when SOURCE_HOST lives in the other env.
-      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
       - |
-        set -euo pipefail
-        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (volume-only) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
-        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
-          'sudo bash -se' <<EOF
-        set -euo pipefail
-        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
-        PASS_FILE=/run/secrets/restic/password
-
-        for u in {{.UNITS}}; do
-          echo "[+] Stopping \$u"
-          if ! systemctl stop "\$u"; then
-            echo "[!] Failed to stop \$u; aborting restore" >&2
-            exit 1
-          fi
-          state=\$(systemctl show "\$u" --property=ActiveState --value)
-          if [ "\$state" != inactive ]; then
-            echo "[!] \$u is \$state after stop; aborting restore" >&2
-            exit 1
-          fi
-        done
-
-        includes=""
-        for p in {{.PATHS}}; do
-          includes="\$includes --include \$p"
-        done
-        echo "[+] Restoring paths: {{.PATHS}}"
-        # --delete: remove files at the destination within the included
-        # paths that aren't in the snapshot. Makes restore a clean
-        # operation rather than an overlay — see issue #217.
-        # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
-        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
-          restore latest --target / --delete \$includes
-
-        for u in {{.UNITS}}; do
-          echo "[+] Starting \$u"
-          systemctl start "\$u"
-        done
-        EOF
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" template volume \
+          --app {{.APP | shellQuote}} \
+          --units {{.UNITS | shellQuote}} \
+          --paths {{.PATHS | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --source-host {{.SOURCE_HOST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}} \
+          --repo-mount {{.REPO_MOUNT | default "" | shellQuote}}
   _restore-pg:
     requires:
       vars: [HOST, APP, UNITS, DB]
-    vars:
-      DEST: '{{.DEST | default .HOST}}'
-      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
-      SSH_PORT: '{{.SSH_PORT | default "22"}}'
-      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
-      # Extra non-postgres paths to restore alongside /var/backup/postgresql
-      # (e.g. /var/lib/<app> for native apps with on-disk state, or
-      # /var/lib/containers/<app> for containerized + pg shapes).
-      PATHS: '{{.PATHS | default ""}}'
-      # See _restore-volume for REPO_MOUNT semantics.
-      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
+      # PATHS: extra non-postgres paths restored alongside
+      # /var/backup/postgresql (on-disk state of native or containerized apps).
       - |
-        set -euo pipefail
-        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (postgres + paths) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
-        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
-          'sudo bash -se' <<EOF
-        set -euo pipefail
-        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
-        PASS_FILE=/run/secrets/restic/password
-        DB={{.DB}}
-
-        for u in {{.UNITS}}; do
-          echo "[+] Stopping \$u"
-          if ! systemctl stop "\$u"; then
-            echo "[!] Failed to stop \$u; aborting restore" >&2
-            exit 1
-          fi
-          state=\$(systemctl show "\$u" --property=ActiveState --value)
-          if [ "\$state" != inactive ]; then
-            echo "[!] \$u is \$state after stop; aborting restore" >&2
-            exit 1
-          fi
-        done
-
-        includes="--include /var/backup/postgresql"
-        for p in {{.PATHS}}; do
-          includes="\$includes --include \$p"
-        done
-        echo "[+] Restoring /var/backup/postgresql {{.PATHS}}"
-        # --delete: see comment in _restore-volume.
-        # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
-        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
-          restore latest --target / --delete \$includes
-
-        echo "[+] Replaying \$DB database from pg_dumpall"
-        sudo -u postgres dropdb --if-exists "\$DB"
-        sudo -u postgres createdb -O "\$DB" "\$DB"
-        # pg_dumpall layout: \connect <db> introduces a section, but
-        # CREATE DATABASE <next>; for the SUCCEEDING db appears between
-        # the current \connect block and the next \connect — so flip
-        # in_target off on both, or psql will try to recreate already-
-        # provisioned databases.
-        zcat /var/backup/postgresql/all.sql.gz | awk -v db="\$DB" '
-          /^\\\\connect / { name = \$2; gsub(/"/, "", name); in_target = (name == db); next }
-          /^CREATE DATABASE / { in_target = 0; next }
-          in_target { print }
-        ' | sudo -u postgres psql -v ON_ERROR_STOP=1 "\$DB"
-
-        for u in {{.UNITS}}; do
-          echo "[+] Starting \$u"
-          systemctl start "\$u"
-        done
-        EOF
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" template pg \
+          --app {{.APP | shellQuote}} \
+          --units {{.UNITS | shellQuote}} \
+          --paths {{.PATHS | default "" | shellQuote}} \
+          --db {{.DB | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --source-host {{.SOURCE_HOST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}} \
+          --repo-mount {{.REPO_MOUNT | default "" | shellQuote}}
   _restore-sqlite:
     requires:
       vars: [HOST, APP, UNITS, PATHS, SWAPS]
-    vars:
-      DEST: '{{.DEST | default .HOST}}'
-      SOURCE_HOST: '{{.SOURCE_HOST | default .HOST}}'
-      SSH_PORT: '{{.SSH_PORT | default "22"}}'
-      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
-      # SWAPS format: space-separated triples "src:dst:owner". The
-      # token "@env@" in `owner` is replaced with "server-<env>" where
-      # <env> is detected from /etc/passwd on the target — lets one
-      # SWAPS string apply on both server-dev and server-prod hosts.
-      # See _restore-volume for REPO_MOUNT semantics.
-      REPO_MOUNT: '{{.REPO_MOUNT | default "/mnt/backups"}}'
     cmds:
+      # SWAPS: space-separated "staged:live:owner" triples; `@env@` in owner
+      # becomes server-<env> as detected on the target.
       - |
-        set -euo pipefail
-        echo -e "\x1B[32m[+] Restoring {{.APP}} on {{.HOST}} (sqlite-quiesce) from {{.SOURCE_HOST}}'s restic repo\x1B[0m"
-        ssh -p {{.SSH_PORT}} -oForwardAgent=yes {{.TARGET_USER}}@{{.DEST}} \
-          'sudo bash -se' <<EOF
-        set -euo pipefail
-        REPO={{.REPO_MOUNT}}/restic/{{.SOURCE_HOST}}
-        PASS_FILE=/run/secrets/restic/password
-
-        SERVER_USER=\$(getent passwd server-prod >/dev/null && echo server-prod || echo server-dev)
-
-        for u in {{.UNITS}}; do
-          echo "[+] Stopping \$u"
-          if ! systemctl stop "\$u"; then
-            echo "[!] Failed to stop \$u; aborting restore" >&2
-            exit 1
-          fi
-          state=\$(systemctl show "\$u" --property=ActiveState --value)
-          if [ "\$state" != inactive ]; then
-            echo "[!] \$u is \$state after stop; aborting restore" >&2
-            exit 1
-          fi
-        done
-
-        includes=""
-        for p in {{.PATHS}}; do
-          includes="\$includes --include \$p"
-        done
-        echo "[+] Restoring paths: {{.PATHS}}"
-        # --delete: see comment in _restore-volume.
-        # shellcheck disable=SC2086
-        restic -r "\$REPO" --password-file "\$PASS_FILE" unlock
-        restic -r "\$REPO" --password-file "\$PASS_FILE" --retry-lock 10m \
-          restore latest --target / --delete \$includes
-
-        for triple in {{.SWAPS}}; do
-          IFS=":" read -r src dst owner <<<"\$triple"
-          owner=\${owner//@env@/\$SERVER_USER}
-          # A glob live path (mySqliteQuiesce) resolves against the files
-          # restic just restored; it must name exactly one.
-          shopt -s nullglob
-          # shellcheck disable=SC2206
-          live=( \$dst )
-          shopt -u nullglob
-          if [ "\${#live[@]}" -ne 1 ]; then
-            echo "[!] \$dst matched \${#live[@]} files, expected 1" >&2
-            exit 1
-          fi
-          dst=\${live[0]}
-          echo "[+] Swapping \$dst <- \$src (owner: \$owner)"
-          install -o "\$owner" -g servers -m 0640 "\$src" "\$dst"
-        done
-
-        for u in {{.UNITS}}; do
-          echo "[+] Starting \$u"
-          systemctl start "\$u"
-        done
-        EOF
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" template sqlite \
+          --app {{.APP | shellQuote}} \
+          --units {{.UNITS | shellQuote}} \
+          --paths {{.PATHS | shellQuote}} \
+          --swaps {{.SWAPS | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --source-host {{.SOURCE_HOST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}} \
+          --repo-mount {{.REPO_MOUNT | default "" | shellQuote}}
   _health:
     requires:
       vars: [HOST, APP, URL]
-    vars:
-      DEST: '{{.DEST | default .HOST}}'
-      SSH_PORT: '{{.SSH_PORT | default "22"}}'
-      TARGET_USER: '{{.TARGET_USER | default "ipreston"}}'
-      EXPECT: '{{.EXPECT | default "200"}}'
-      RETRIES: '{{.RETRIES | default "30"}}'
-      SLEEP: '{{.SLEEP | default "2"}}'
     cmds:
       - |
-        set -euo pipefail
-        echo -e "\x1B[32m[+] Asserting HTTP {{.EXPECT}} on {{.APP}} ({{.URL}})\x1B[0m"
-        # -n: this is the one template ssh with no heredoc on stdin. Under
-        # `recovery:all` it would otherwise inherit the caller's app-list
-        # pipe and swallow it — see the comment on that loop.
-        ssh -n -p {{.SSH_PORT}} {{.TARGET_USER}}@{{.DEST}} "
-          set -euo pipefail
-          for i in \$(seq 1 {{.RETRIES}}); do
-            code=\$(curl -s -o /dev/null -w '%{http_code}' '{{.URL}}' || true)
-            if [ \"\$code\" = '{{.EXPECT}}' ]; then echo '{{.APP}}: {{.EXPECT}} OK'; exit 0; fi
-            sleep {{.SLEEP}}
-          done
-          echo '{{.APP}}: did not return {{.EXPECT}} within {{.RETRIES}}x{{.SLEEP}}s (last code: '\$code')'
-          exit 1
-        "
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" template health \
+          --app {{.APP | shellQuote}} \
+          --url {{.URL | shellQuote}} \
+          --expect {{.EXPECT | default "" | shellQuote}} \
+          --retries {{.RETRIES | default "" | shellQuote}} \
+          --sleep {{.SLEEP | default "" | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}}
   # ---------------------------------------------------------------------------
   # Manifest-driven dispatch
   # ---------------------------------------------------------------------------
-  # App modules expose the facts each existing restore template needs through
+  # App modules expose the facts each restore shape needs through
   # `myRecovery.manifest`. There is deliberately no per-app Task registry:
   # invoke one app with `task recovery:app APP=<name> HOST=<host>`.
+  # MANIFEST_FILE (used by `all`) skips the per-app `nix eval`.
   app:
     desc: Restore APP on HOST using the Nix-generated recovery manifest
     requires: {vars: [HOST, APP]}
@@ -306,44 +153,27 @@ tasks:
       MANIFEST_HOST: "{{.MANIFEST_HOST | default .HOST}}"
     cmds:
       - |
-        set -euo pipefail
-        if [ -n "{{.MANIFEST_FILE}}" ]; then
-          manifest="$(cat "{{.MANIFEST_FILE}}")"
-        else
-          manifest="$(nix eval --json ".#nixosConfigurations.{{.MANIFEST_HOST}}.config.myRecovery.manifest")"
-        fi
-        app="$(printf "%s" "$manifest" | jq -ce --arg app "{{.APP}}" '.[$app] // error("unknown recovery app: \($app)")')"
-        kind="$(printf "%s" "$app" | jq -r .kind)"
-        units="$(printf "%s" "$app" | jq -r ".units | join(\" \")")"
-        paths="$(printf "%s" "$app" | jq -r ".paths | join(\" \")")"
-
-        case "$kind" in
-          volume)
-            task recovery:_restore-volume HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
-            ;;
-          postgres)
-            database="$(printf "%s" "$app" | jq -r .database)"
-            task recovery:_restore-pg HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" DB="$database" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
-            ;;
-          sqlite)
-            swaps="$(printf "%s" "$app" | jq -r ".swaps | map([.staged, .live, .owner] | join(\":\")) | join(\" \")")"
-            task recovery:_restore-sqlite HOST="{{.HOST}}" APP="{{.APP}}" UNITS="$units" PATHS="$paths" SWAPS="$swaps" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}"
-            ;;
-          *)
-            echo "unknown recovery kind: $kind" >&2
-            exit 1
-            ;;
-        esac
-
-        if [ "$(printf "%s" "$app" | jq -r ".health != null")" = true ]; then
-          health="$(printf "%s" "$app" | jq -c .health)"
-          task recovery:_health HOST="{{.HOST}}" APP="{{.APP}}" URL="$(printf "%s" "$health" | jq -r .url)" EXPECT="$(printf "%s" "$health" | jq -r .expect)" RETRIES="$(printf "%s" "$health" | jq -r .retries)" SLEEP="$(printf "%s" "$health" | jq -r .sleep)" DEST="{{.DEST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}"
-        fi
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" app \
+          --app {{.APP | shellQuote}} \
+          --manifest-file {{.MANIFEST_FILE | default "" | shellQuote}} \
+          --manifest-host {{.MANIFEST_HOST | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --source-host {{.SOURCE_HOST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}} \
+          --repo-mount {{.REPO_MOUNT | default "" | shellQuote}}
   # ---------------------------------------------------------------------------
   # Catastrophic restore - every enabled app on this flake host
   # ---------------------------------------------------------------------------
   # `order` is declared beside each app and preserves the prior sequence:
   # authentik first, followed by the independent apps in their existing order.
+  # The driver evaluates the manifest once, validates every entry, then
+  # restores each app in order and stops at the first failure (status 201,
+  # as when it ran a nested `task recovery:app`). Every ssh reads only the
+  # driver's program pipe and every app runs with stdin from /dev/null, so a
+  # probe cannot drain the remaining app list — the failure mode that once
+  # ended the chain early with exit 0.
   all:
     desc: Catastrophic restore - every enabled app on HOST from SOURCE_HOST (default same host)
     requires: {vars: [HOST]}
@@ -351,22 +181,14 @@ tasks:
       MANIFEST_HOST: "{{.MANIFEST_HOST | default .HOST}}"
     cmds:
       - |
-        set -euo pipefail
-        manifest_file="$(mktemp)"
-        trap "rm -f $manifest_file" EXIT
-        nix eval --json ".#nixosConfigurations.{{.MANIFEST_HOST}}.config.myRecovery.manifest" >"$manifest_file"
-        # `</dev/null` on the dispatcher is load-bearing, not tidiness. The
-        # loop reads its app list from the jq pipe, and every `ssh` under
-        # `recovery:app` that is not fed a heredoc (the `_health` probe)
-        # inherits that pipe as its own stdin and drains the remaining app
-        # names. Without this the chain restores up to the first app with a
-        # health probe, then the loop ends — and exits 0, reporting a
-        # catastrophic restore as successful. `_health` also passes `ssh -n`;
-        # both halves stay.
-        jq -r "to_entries | sort_by(.value.order) | .[].key" "$manifest_file" |
-          while IFS= read -r app; do
-            task recovery:app APP="$app" HOST="{{.HOST}}" MANIFEST_HOST="{{.MANIFEST_HOST}}" MANIFEST_FILE="$manifest_file" DEST="{{.DEST}}" SOURCE_HOST="{{.SOURCE_HOST}}" SSH_PORT="{{.SSH_PORT}}" TARGET_USER="{{.TARGET_USER}}" REPO_MOUNT="{{.REPO_MOUNT}}" </dev/null
-          done
+        "{{.TASKFILE_DIR}}/../scripts/recovery.sh" all \
+          --manifest-host {{.MANIFEST_HOST | shellQuote}} \
+          --host {{.HOST | shellQuote}} \
+          --dest {{.DEST | default "" | shellQuote}} \
+          --source-host {{.SOURCE_HOST | default "" | shellQuote}} \
+          --ssh-port {{.SSH_PORT | default "" | shellQuote}} \
+          --target-user {{.TARGET_USER | default "" | shellQuote}} \
+          --repo-mount {{.REPO_MOUNT | default "" | shellQuote}}
   # ---------------------------------------------------------------------------
   # End-to-end drill: VM up → install → restore four apps → teardown
   # ---------------------------------------------------------------------------

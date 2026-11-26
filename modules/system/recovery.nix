@@ -1,8 +1,9 @@
 # Recovery manifest - app-owned metadata for the operator recovery dispatcher.
 #
-# The taskfile still owns the restore mechanics: stopping units, restic,
-# postgres replay, SQLite replacement, and health polling.  App modules own
-# the facts those mechanics need.  Keeping this beside the service declaration
+# scripts/recovery.sh (behind `task recovery:*`) and its target side
+# scripts/_recovery/remote.sh own the restore mechanics: stopping units,
+# restic, postgres replay, SQLite replacement, and health polling.  App
+# modules own the facts those mechanics need.  Keeping this beside the service declaration
 # prevents a second, manually synchronized inventory from drifting.
 _: {
   flake.modules.nixos.recovery =
