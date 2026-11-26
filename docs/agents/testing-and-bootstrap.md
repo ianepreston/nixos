@@ -24,6 +24,45 @@ everything locally. Adding a new cache consumer means adding its
 `ssh/ed25519` public key to `consumerKeys` in the same file. The client's
 assertion names the fix.
 
+## Flake checks: `task check` and CI
+
+`scripts/flake-checks.sh` is the one implementation of flake validation (#1021).
+`task check` runs its `local` preset; the CI `check.yml` stages call its
+individual modes. The workflow keeps scheduling, the fork guard, runner
+selection and the split between the public `lint` job and the deploy-key jobs;
+the driver only decides what to evaluate and build. Modes:
+
+| Mode | Does | CI job |
+| --- | --- | --- |
+| `lock` | `nix flake metadata --no-update-lock-file`; a stale lock fails, nothing re-locks | `flake-check` |
+| `eval-configs` | drvPath of every `nixosConfigurations`, `darwinConfigurations` and `homeConfigurations` entry, discovered and evaluated one at a time | `flake-check` |
+| `eval-outputs` | drvPath of every `checks`/`packages`/`devShells`/`formatter` entry for every system, plus overlay/module shape (what `nix flake check --all-systems` evaluated) | local only |
+| `lint --system S` | builds `checks.S.pre-commit`, the git-hooks.nix hooks | `lint` |
+| `build-checks --system S [--exclude N]` | builds every `checks.S.*`, one at a time | `checks` (`--exclude pre-commit`) |
+
+Evaluation is sequential on purpose: parallel `nix flake check` evaluation
+raced on concurrent `addToStore` on the Linux runner (see `check.yml`). Every
+nix call passes `--no-update-lock-file`. A failed item fails the run (exit 1)
+but the rest of its stage still runs, so one run reports every failure.
+
+**Platform policy.** `lint` and `build-checks` default to this machine's
+`nix config show system`; `extra-platforms` also count as native. Any other
+system is refused (exit 2) unless `--remote-builder` is given *and*
+`nix config show builders` declares a machine for that system. Nothing infers
+SSH capability beyond that.
+
+**On a Mac**, `task check` runs locally: the lock check, every configuration
+evaluation (including the Linux hosts, which evaluate fine on Darwin), every
+system's output evaluation, `checks.aarch64-darwin.pre-commit` and every other
+`aarch64-darwin` check. It builds no Linux derivation. The `x86_64-linux` and
+`aarch64-linux` checks (VM tests, Linux-only runtime suites) and the
+`x86_64-darwin` checks are evaluated and listed as `DEFERRED`, never as passed.
+Build the `x86_64-linux` set with `task check:linux`, which delegates to a
+configured remote builder (here `terra`, via `/etc/nix/machines`), or leave it
+to the CI `checks` job. A single check:
+`nix build .#checks.x86_64-linux.<name> --no-link`. Host toplevel builds stay
+out of `task check`; use `task build HOST=<host>`.
+
 ## Local VM sandbox (`task vm:*`)
 
 `taskfiles/vm.yaml` drives one quickemu VM at a time under `~/vms/nixos-vm/`,

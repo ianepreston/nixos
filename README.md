@@ -241,7 +241,8 @@ via Task's `includes:`, so `task --list` shows the full prefixed surface
 | `task update`                                    | Update flake inputs                                                              |
 | `task update_dconf`                              | Capture host dconf config into the repo via `scripts/dconf.sh`                   |
 | `task fmt`                                       | Format all Nix files with nixfmt                                                 |
-| `task check`                                     | Nix/Python/shell lint + format, secret/YAML/whitespace hooks, flake checks       |
+| `task check`                                     | Lock check, sequential eval, lint hooks, native flake checks (shared with CI)     |
+| `task check:linux`                               | Build every x86_64-linux flake check natively or on a configured remote builder  |
 | `task iso`                                       | Build the installer/recovery ISO                                                 |
 | `task garbage_collect`                           | Collect unreachable store objects and delete generations older than 7 days       |
 | `task hashes [-- --check]`                       | Regenerate the fetch hashes Renovate can't maintain; `--check` only reports      |

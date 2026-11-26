@@ -82,8 +82,9 @@ wires the right flags. Use `task --list` when in doubt.
   `main` after a push.
 - `task rebuild` / `task rebuild:<host>` — local rebuild (refuses unless the
   machine's hostname is the configuration's host).
-- `task check` — full pre-push gate (nix fmt/lint, ruff, shellcheck, shfmt,
-  `nix flake check`).
+- `task check` — full pre-push gate (lock, sequential eval, pre-commit lint,
+  this system's flake checks) via `scripts/flake-checks.sh`, the driver CI
+  shares; on a Mac, Linux checks are reported DEFERRED (`task check:linux`).
 - `task bootstrap:new` / `task bootstrap:reinstall` — provision via
   nixos-anywhere.
 
