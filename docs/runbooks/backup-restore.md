@@ -157,8 +157,8 @@ filter below extracts a single database's section by tracking `\connect <name>`
 markers. It also stops at `CREATE DATABASE`, because `pg_dumpall` emits the
 next database's creation statement before its `\connect` marker; replaying
 that statement can fail on an already-provisioned database. This matches the
-filter in `taskfiles/recovery.yaml`. Roles are managed by NixOS `ensureUsers`
-and don't need to be replayed.
+filter in `scripts/_recovery/remote.sh`. Roles are managed by NixOS
+`ensureUsers` and don't need to be replayed.
 
 ### Containerized app with volume + postgres database (bookorbit)
 

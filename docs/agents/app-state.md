@@ -85,12 +85,13 @@ the host gate cases (both in `modules/flake/checks-state-directory-audit.nix`).
 
 ## Recovery metadata: declare it beside the app
 
-`taskfiles/recovery.yaml` holds the generic restore templates; app modules
-contribute `myRecovery.apps.<app>`. `task recovery:app APP=<app> HOST=<host>`
-evaluates the generated manifest, and `recovery:all` runs enabled entries
-sorted by their `order`. Don't add a Taskfile registry entry or an aggregate
-list. An app that is preserved and backed up but has no `myRecovery.apps`
-entry is restorable only by hand.
+`scripts/recovery.sh` and `scripts/_recovery/remote.sh` hold the generic
+restore mechanics behind the `task recovery:*` entry points in
+`taskfiles/recovery.yaml`; app modules contribute `myRecovery.apps.<app>`.
+`task recovery:app APP=<app> HOST=<host>` evaluates the generated manifest,
+and `recovery:all` runs enabled entries sorted by their `order`. Don't add a
+Taskfile registry entry or an aggregate list. An app that is preserved and
+backed up but has no `myRecovery.apps` entry is restorable only by hand.
 
 | Shape                                              | `kind`       | Metadata to declare                                                                                                                                                     |
 | -------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
