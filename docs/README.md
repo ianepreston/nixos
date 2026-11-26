@@ -50,7 +50,9 @@ restating it.
 
 ## Checks
 
-`task check` (via `nix flake check`) keeps this layout honest:
+`task check` (via `scripts/flake-checks.sh`; see
+[flake checks](agents/testing-and-bootstrap.md#flake-checks-task-check-and-ci))
+keeps this layout honest:
 
 - the `doc-links` pre-commit hook fails on a relative Markdown link whose file
   or `#heading` does not exist, so moving a section breaks the build until its

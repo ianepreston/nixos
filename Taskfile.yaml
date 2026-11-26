@@ -24,17 +24,27 @@ tasks:
     cmds:
       - find . -name '*.nix' -not -path './result/*' -exec nixfmt {} +
   check:
-    desc: Full pre-push check (nix + Python + shell lint/format + flake eval)
-    # `nix flake check` builds the `checks.<system>.pre-commit` derivation,
-    # which runs nixfmt/statix/deadnix, the Python (ruff + ruff-format +
-    # check-ast) and shell (shellcheck + shfmt) source checks, and the
-    # secret/YAML/whitespace hooks via git-hooks.nix — the single
-    # source of truth for lint config (incl. the hardware-file excludes).
-    # No separate fmt-check/lint tasks: those hand-rolled the same tooling
-    # and drifted out of sync (see #239 follow-up — the statix/deadnix CLI
-    # invocations didn't match the tools' actual flag semantics).
-    cmds:
-      - nix flake check --all-systems
+    desc: Full pre-push gate via scripts/flake-checks.sh local (lock, sequential eval, lint, native checks)
+    # The same driver the CI check.yml stages call (#1021), so local and CI
+    # validation share one implementation; needs nix, bash and jq. `local`
+    # asserts flake.lock matches flake.nix (--no-update-lock-file, never
+    # re-locks), evaluates every nixos/darwin/home configuration one at a
+    # time, runs `nix flake check --no-build --all-systems` (nix's own output
+    # checks, nothing built), builds checks.<this system>.pre-commit (the
+    # git-hooks.nix hooks: nixfmt/statix/deadnix, ruff, shellcheck/shfmt,
+    # secret/YAML/whitespace) and every other check for this machine's system,
+    # all outputs (^*). Checks of other systems are listed as DEFERRED, never
+    # as passed: on a Mac, `task check:linux` builds the x86_64-linux ones and
+    # the aarch64-linux ones stay deferred. See
+    # docs/agents/testing-and-bootstrap.md.
+    cmd: bash ./scripts/flake-checks.sh local
+  check:linux:
+    desc: Build every x86_64-linux flake check (incl. pre-commit and VM tests) natively or via a declared remote builder
+    # --remote-builder only permits delegation once a successful
+    # `nix config show builders` declares an x86_64-linux machine with a build
+    # slot; it is refused otherwise. On an x86_64-linux machine the checks
+    # build natively.
+    cmd: bash ./scripts/flake-checks.sh build-checks --system x86_64-linux --remote-builder
   hashes:
     desc: Regenerate the fetch hashes Renovate can't maintain (pass -- --check to only report)
     # Same script CI runs on every renovate/** and automated/flake-update
