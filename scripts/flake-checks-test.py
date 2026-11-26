@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """Offline tests for scripts/flake-checks.sh (#1021).
 
-`nix` is a logging stub on PATH that answers from a synthetic flake described
-in JSON (configurations, per-system checks, injected failures, a stale lock,
-the machine's system and remote builders, and per-call exit-status
-overrides). Nothing is evaluated, built or fetched and no builder is
-contacted. The Nix-language checks themselves (derivation identity, overlay
-shape, system keys) are unit-tested by scripts/_flake-checks/tests.nix; here
-the stub only reports what real nix would (a rejected value is a nonzero
-exit).
+Two layers:
 
-Covered: discovery (a new configuration or check needs no driver edit),
-lossless names (empty, newline and quote names fail, never vanish), required
-non-empty sets, exit-status propagation for every nix call (a stub printing
-the expected stdout but exiting 47 still fails), platform refusal, the
-remote-builder gate (zero-slot entries, failed queries), DEFERRED/NOT-RUN
-reporting, and that every nix call keeps --no-update-lock-file.
+- Stub tests: `nix` is a logging stub on PATH answering from a synthetic flake
+  described in JSON (configurations, checks, injected failures, a stale lock,
+  the machine's system and builders, per-call exit-status/stdout overrides).
+  Nothing is evaluated, built or fetched; no builder is contacted. They cover
+  discovery, the one name choke point, required non-empty sets, exit-status
+  and decode-failure propagation, the remote-builder gate and Nix's builders
+  syntax, DEFERRED/NOT-RUN reporting, flake-reference identity, and that every
+  nix call keeps --no-update-lock-file.
+- Real-nix tests (when FLAKE_CHECKS_REAL_NIX names a directory holding a real
+  `nix`): the driver's eval-outputs stage runs genuine
+  `nix flake check --no-build` against small synthetic flakes in a private
+  store, showing the gate keeps nix's own verdicts (derivation identity,
+  overlay and app shape) and evaluates the flake reference it was given
+  (`?dir=`, git metadata such as self.rev).
 
 usage: flake-checks-test.py REPO_ROOT
 """
@@ -35,11 +36,11 @@ REPO = (
     else Path(__file__).resolve().parent.parent
 )
 DRIVER = REPO / "scripts" / "flake-checks.sh"
-LIB = REPO / "scripts" / "_flake-checks"
 # The Nix build sandbox has no /usr/bin/env: run the driver with this bash.
 BASH = os.path.realpath(shutil.which("bash") or "/bin/bash")
 PYTHON = os.path.realpath(sys.executable)
 FLAKE = "/synthetic/flake"
+REAL_NIX = os.environ.get("FLAKE_CHECKS_REAL_NIX")
 
 NIX_STUB = r"""
 import json, os, sys
@@ -56,9 +57,16 @@ for ov in fx.get("overrides", []):
         sys.exit(ov["status"])
 
 
+def same_flake(flake):
+    want = os.environ["STUB_FLAKE"]
+    if ":" in want or "?" in want:
+        return flake == want
+    return os.path.realpath(flake) == os.path.realpath(want)
+
+
 def attr_path(installable):
     flake, _, path = installable.partition("#")
-    if os.path.realpath(flake) != os.path.realpath(os.environ["STUB_FLAKE"]):
+    if not same_flake(flake):
         sys.exit(f"stub nix: unexpected flake {flake!r}")
     parts, cur, quoted = [], "", False
     for ch in path:
@@ -90,60 +98,42 @@ def failing(key, parts):
             sys.exit(1)
 
 
-def drv(name):
-    return f"/nix/store/0000-{name or 'x'}.drv"
-
-
-def is_bogus(node):
-    return isinstance(node, dict) and node.get("bogus") is True
-
-
 if args[:2] == ["config", "show"]:
     value = fx["config"].get(args[2])
     if value is None:
         sys.exit(1)
     print(value)
 elif args[:2] == ["flake", "metadata"]:
+    if not same_flake(args[2]):
+        sys.exit(f"stub nix: unexpected flake {args[2]!r}")
     if fx.get("stale_lock"):
         print("error: cannot write modified lock file", file=sys.stderr)
         sys.exit(1)
-elif args[:2] == ["flake", "prefetch"]:
-    print(json.dumps({"storePath": "/nix/store/0000-source", "hash": "sha256-AAAA="}))
-elif args[0] == "eval" and "--expr" in args:
-    expr = args[args.index("--expr") + 1]
-    assert "flake-checks:toplevel" in expr, expr
-    assert 'getFlake "path:/nix/store/0000-source?narHash=sha256-AAAA="' in expr, expr
-    if fx.get("toplevel_fail"):
-        print("error: flake-checks: overlays.o must be a function", file=sys.stderr)
+elif args[:2] == ["flake", "check"]:
+    assert "--no-build" in args and "--all-systems" in args, args
+    if not same_flake(next(a for a in args[2:] if not a.startswith("--"))):
+        sys.exit("stub nix: unexpected flake")
+    if fx.get("flake_check_fail"):
+        print("error: flake attribute 'checks.x.y' is not a derivation", file=sys.stderr)
         sys.exit(1)
-    print(json.dumps(sorted(fx["flake"])))
 elif args[0] == "eval":
     if fx.get("stale_lock"):
         sys.exit(1)
     installable = next(a for a in args[1:] if "#" in a)
     parts = attr_path(installable)
     failing("fail_eval", parts)
-    apply = args[args.index("--apply") + 1]
     key = ".".join(parts)
-    if apply == "builtins.attrNames":
-        if key in fx.get("raw_names", {}):
+    if "--raw" in args:
+        assert parts[-1] == "drvPath", parts
+        lookup(parts[:2])
+        print(f"/nix/store/0000-{parts[1]}.drv", end="")
+    elif args[args.index("--apply") + 1] == "builtins.attrNames":
+        if key in fx.get("raw_json", {}):
+            sys.stdout.write(fx["raw_json"][key])
+        elif key in fx.get("raw_names", {}):
             print(json.dumps(fx["raw_names"][key]))
         else:
             print(json.dumps(sorted(lookup(parts))))
-    elif "flake-checks:derivations" in apply:
-        single = "single = true;" in apply
-        # a configuration toplevel: the fixture models only the name
-        node = lookup(parts[:2] if "Configurations" in parts[0] else parts)
-        if single:
-            if is_bogus(node):
-                sys.exit(1)
-            print(json.dumps({"": drv(parts[1])}))
-        else:
-            if any(is_bogus(v) for v in node.values()):
-                print("error: flake-checks: drvPath is not a store derivation path", file=sys.stderr)
-                sys.exit(1)
-            names = fx.get("raw_names", {}).get(key, list(node))
-            print(json.dumps({n: drv(n) for n in names}))
     else:
         sys.exit(f"stub nix: unexpected eval {args}")
 elif args[0] == "build":
@@ -173,14 +163,6 @@ def fixture(**over):
                 "aarch64-darwin": checks("pre-commit", "doc-links"),
                 "x86_64-linux": checks("pre-commit", "doc-links", "vm-test"),
             },
-            "packages": {
-                "aarch64-darwin": checks("tool"),
-                "x86_64-linux": checks("tool"),
-            },
-            "devShells": {"aarch64-darwin": checks("default")},
-            "formatter": {},
-            "overlays": {},
-            "nixosModules": {},
         },
     }
     for key, value in over.items():
@@ -197,6 +179,8 @@ LINUX = {"system": "x86_64-linux", "extra-platforms": ""}
 
 
 class Harness(unittest.TestCase):
+    flake = FLAKE
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -212,7 +196,7 @@ class Harness(unittest.TestCase):
             "PATH": f"{bindir}:{os.environ['PATH']}",
             "STUB_LOG": str(self.log),
             "STUB_FIXTURE": str(self.fixture_path),
-            "STUB_FLAKE": FLAKE,
+            "STUB_FLAKE": self.flake,
             "HOME": str(self.tmp),
             "TMPDIR": str(self.tmp),
         }
@@ -224,7 +208,7 @@ class Harness(unittest.TestCase):
     def drive(self, *argv, **env):
         self.log.write_text("")
         return subprocess.run(
-            [BASH, str(DRIVER), "--flake", FLAKE, *argv],
+            [BASH, str(DRIVER), "--flake", self.flake, *argv],
             check=False,
             env={**self.env, **env},
             capture_output=True,
@@ -244,13 +228,11 @@ class Harness(unittest.TestCase):
         ]
 
     def evaluated_configs(self):
-        out = []
-        for c in self.calls():
-            if c[0] == "eval" and "--apply" in c:
-                inst = next(a for a in c if "#" in a).split("#", 1)[1]
-                if "Configurations." in inst:
-                    out.append(inst)
-        return out
+        return [
+            next(a for a in c if "#" in a).split("#", 1)[1]
+            for c in self.calls()
+            if c[0] == "eval" and "--raw" in c
+        ]
 
     def assert_lock_preserved(self):
         for argv in self.calls():
@@ -267,24 +249,18 @@ class Harness(unittest.TestCase):
 
 
 class Discovery(Harness):
-    def test_every_configuration_kind_is_evaluated_as_a_derivation(self):
+    def test_every_configuration_kind_is_evaluated(self):
         r = self.drive("eval-configs")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(
             self.evaluated_configs(),
             [
-                'nixosConfigurations."hpp-1".config.system.build.toplevel',
-                'nixosConfigurations."terra".config.system.build.toplevel',
-                'darwinConfigurations."work".config.system.build.toplevel',
-                'homeConfigurations."penguin".activationPackage',
+                'nixosConfigurations."hpp-1".config.system.build.toplevel.drvPath',
+                'nixosConfigurations."terra".config.system.build.toplevel.drvPath',
+                'darwinConfigurations."work".config.system.build.toplevel.drvPath',
+                'homeConfigurations."penguin".activationPackage.drvPath',
             ],
         )
-        for c in self.calls():
-            if c[0] == "eval" and "Configurations." in " ".join(c):
-                apply = c[c.index("--apply") + 1]
-                if apply != "builtins.attrNames":
-                    self.assertIn("flake-checks:derivations", apply)
-                    self.assertIn("single = true;", apply)
         self.assertIn("/nix/store/0000-hpp-1.drv", r.stdout)
         self.assert_lock_preserved()
 
@@ -299,9 +275,10 @@ class Discovery(Harness):
         self.assertEqual(r.returncode, 0, r.stderr)
         configs = self.evaluated_configs()
         self.assertIn(
-            'nixosConfigurations."newhost".config.system.build.toplevel', configs
+            'nixosConfigurations."newhost".config.system.build.toplevel.drvPath',
+            configs,
         )
-        self.assertIn('homeConfigurations."other".activationPackage', configs)
+        self.assertIn('homeConfigurations."other".activationPackage.drvPath', configs)
         self.assertIn("PASS     eval nixosConfigurations.newhost", r.stdout)
 
     def test_new_check_is_built_with_all_outputs_and_exclusions_honoured(self):
@@ -322,35 +299,50 @@ class Discovery(Harness):
         )
         self.assert_lock_preserved()
 
-    def test_eval_outputs_forces_top_level_and_checks_every_system(self):
+    def test_eval_outputs_is_nix_flake_check_no_build_all_systems(self):
         r = self.drive("eval-outputs")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("PASS     eval top-level outputs", r.stdout)
-        for label in (
-            "eval checks.aarch64-darwin  (2 derivations)",
-            "eval checks.x86_64-linux  (3 derivations)",
-            "eval packages.x86_64-linux  (1 derivations)",
-            "eval devShells.aarch64-darwin  (1 derivations)",
-        ):
-            self.assertIn(f"PASS     {label}", r.stdout)
-        applies = [
-            c[c.index("--apply") + 1]
-            for c in self.calls()
-            if c[0] == "eval" and "--apply" in c
-        ]
-        self.assertTrue(
-            all(
-                "flake-checks:derivations" in a or a == "builtins.attrNames"
-                for a in applies
-            )
+        self.assertEqual(
+            self.calls(),
+            [
+                [
+                    "flake",
+                    "check",
+                    "--no-build",
+                    "--all-systems",
+                    FLAKE,
+                    "--no-update-lock-file",
+                ]
+            ],
         )
-        self.assertEqual(self.built(), [])
-        self.assert_lock_preserved()
+        self.assertIn("PASS     eval outputs", r.stdout)
 
     def test_lint_requests_all_outputs(self):
         r = self.drive("lint")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.built(), ["checks.aarch64-darwin.pre-commit^*"])
+
+
+class Identity(Harness):
+    """Every stage hands nix the exact reference it was given."""
+
+    flake = "git+file:///synthetic/repo?dir=sub&ref=main"
+
+    def test_every_nix_call_uses_the_given_reference_verbatim(self):
+        r = self.drive("local")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        refs = set()
+        for c in self.calls():
+            if c[:2] == ["config", "show"]:
+                continue
+            for a in c:
+                if a.startswith("git+file:"):
+                    refs.add(a.split("#", 1)[0])
+        self.assertEqual(refs, {self.flake})
+        kinds = {tuple(c[:2]) for c in self.calls()}
+        self.assertIn(("flake", "metadata"), kinds)
+        self.assertIn(("flake", "check"), kinds)
+        self.assertFalse(any("prefetch" in c or "--expr" in c for c in self.calls()))
 
 
 class Names(Harness):
@@ -362,33 +354,91 @@ class Names(Harness):
         )
         self.assertEqual(self.built(), [])
 
-    def test_newline_and_quote_names_fail_and_are_reported_escaped(self):
+    def test_trailing_newline_name_is_never_rewritten(self):
         self.set_fixture(
-            config=LINUX,
-            raw_names={"checks.x86_64-linux": ["a\nb", 'q"uote', "doc-links"]},
+            config=LINUX, raw_names={"checks.x86_64-linux": ["vm-test\n", "doc-links"]}
         )
         r = self.drive("build-checks")
+        self.assert_failed(r, 'unsupported attribute name "vm-test\\n"')
+        self.assertNotIn("PASS", r.stdout)
+        self.assertEqual(self.built(), [])
+
+    def test_newline_quote_space_and_unicode_names_fail_escaped(self):
+        self.set_fixture(
+            raw_names={
+                "nixosConfigurations": ["a\nb", 'q"uote', "sp ace", "café", "ok"]
+            },
+            flake={"nixosConfigurations": {"ok": {}}},
+        )
+        r = self.drive("eval-configs")
         self.assert_failed(
             r,
             'unsupported attribute name "a\\nb"',
             'unsupported attribute name "q\\"uote"',
-            "PASS     build checks.x86_64-linux.doc-links",
+            'unsupported attribute name "sp ace"',
+            'unsupported attribute name "café"',
+            "PASS     eval nixosConfigurations.ok",
         )
-        self.assertEqual(self.built(), ['checks.x86_64-linux."doc-links"^*'])
 
-    def test_unsupported_configuration_name_fails(self):
-        self.set_fixture(raw_names={"nixosConfigurations": ["hpp-1", "bad name"]})
+    def test_non_string_name_fails(self):
+        self.set_fixture(raw_json={"nixosConfigurations": "[1]\n"})
+        r = self.drive("eval-configs")
+        self.assert_failed(r, "unsupported attribute name 1")
+
+    def test_deferred_names_pass_the_same_choke_point(self):
+        for raw in ([""], ["a\nb"], ["vm-test\n"]):
+            with self.subTest(raw=raw):
+                self.set_fixture(raw_names={"checks.x86_64-linux": raw})
+                r = self.drive("local")
+                self.assert_failed(
+                    r,
+                    "unsupported attribute name",
+                    "NOT-RUN  build checks.x86_64-linux  (check names could not be enumerated and validated)",
+                )
+                self.assertNotIn("DEFERRED build checks.x86_64-linux", r.stdout)
+                self.assertNotIn("x86_64-linux checks were evaluated", r.stdout)
+
+    def test_invalid_system_name_fails(self):
+        self.set_fixture(raw_names={"checks": ["aarch64-darwin", "Bad-System"]})
+        r = self.drive("local")
+        self.assert_failed(r, "invalid system name Bad-System")
+
+
+class Decoding(Harness):
+    """A name list that cannot be decoded never yields PASS or DEFERRED."""
+
+    def test_unparseable_config_names_fail(self):
+        self.set_fixture(raw_json={"nixosConfigurations": "[\n"})
         r = self.drive("eval-configs")
         self.assert_failed(
-            r,
-            'FAIL     eval nixosConfigurations  (unsupported attribute name "bad name")',
-            "PASS     eval nixosConfigurations.hpp-1",
+            r, "FAIL     eval nixosConfigurations  (could not decode attribute names)"
         )
+        self.assertNotIn("PASS     eval nixosConfigurations", r.stdout)
 
-    def test_unsupported_system_name_fails(self):
-        self.set_fixture(raw_names={"packages": ["x86_64-linux", "Bad"]})
-        r = self.drive("eval-outputs")
-        self.assert_failed(r, "FAIL     eval packages  (invalid system name Bad)")
+    def test_unparseable_check_names_fail_build(self):
+        self.set_fixture(config=LINUX, raw_json={"checks.x86_64-linux": "{oops"})
+        r = self.drive("build-checks")
+        self.assert_failed(
+            r, "could not decode attribute names", "NOT-RUN  build checks.x86_64-linux"
+        )
+        self.assertEqual(self.built(), [])
+
+    def test_unparseable_deferred_names_are_not_deferred(self):
+        self.set_fixture(raw_json={"checks.x86_64-linux": "not json"})
+        r = self.drive("local")
+        self.assert_failed(r, "could not decode attribute names")
+        self.assertNotIn("DEFERRED build checks.x86_64-linux", r.stdout)
+
+    def test_unparseable_system_list_fails(self):
+        self.set_fixture(raw_json={"checks": "]"})
+        r = self.drive("local")
+        self.assert_failed(r, "FAIL     enumerate checks systems  (could not decode")
+        self.assertNotIn("DEFERRED", r.stdout)
+
+    def test_object_instead_of_list_fails(self):
+        self.set_fixture(raw_json={"homeConfigurations": '{"penguin": 1}'})
+        r = self.drive("eval-configs")
+        self.assert_failed(r, "FAIL     eval homeConfigurations  (could not decode")
 
 
 class RequiredSets(Harness):
@@ -403,8 +453,13 @@ class RequiredSets(Harness):
                 r = self.drive("eval-configs")
                 self.assert_failed(
                     r,
-                    f"FAIL     eval {kind}  (no configurations; every configuration kind must be non-empty)",
+                    f"FAIL     eval {kind}  (no usable configurations; every configuration kind must be non-empty)",
                 )
+
+    def test_kind_with_only_unsupported_names_fails_as_empty(self):
+        self.set_fixture(raw_names={"darwinConfigurations": [""]})
+        r = self.drive("eval-configs")
+        self.assert_failed(r, "FAIL     eval darwinConfigurations  (no usable")
 
     def test_missing_configuration_kind_fails(self):
         flake = fixture()["flake"]
@@ -439,24 +494,10 @@ class ExitStatus(Harness):
             overrides=[{"match": match, "stdout": stdout, "status": status}], **over
         )
 
-    def test_top_level_eval_exit_47_with_valid_output_fails(self):
-        self.override(["flake-checks:toplevel"], '["checks"]')
+    def test_flake_check_exit_47_fails(self):
+        self.override(["flake", "check"], "")
         r = self.drive("eval-outputs")
-        self.assert_failed(r, "FAIL     eval top-level outputs")
-
-    def test_top_level_rejection_fails(self):
-        self.set_fixture(toplevel_fail=True)
-        r = self.drive("eval-outputs")
-        self.assert_failed(r, "FAIL     eval top-level outputs")
-
-    def test_prefetch_failure_fails(self):
-        self.override(
-            ["flake", "prefetch"],
-            '{"storePath":"/nix/store/0000-source","hash":"sha256-AAAA="}',
-        )
-        r = self.drive("eval-outputs")
-        self.assert_failed(r, "FAIL     eval top-level outputs")
-        self.assertFalse(any("--expr" in c for c in self.calls()))
+        self.assert_failed(r, "FAIL     eval outputs")
 
     def test_attr_names_exit_47_fails(self):
         self.override(["nixosConfigurations", "builtins.attrNames"], '["hpp-1"]')
@@ -466,19 +507,15 @@ class ExitStatus(Harness):
         )
 
     def test_config_eval_exit_47_fails(self):
-        self.override(
-            ['"hpp-1"', "flake-checks:derivations"], '{"":"/nix/store/0000-x.drv"}'
-        )
+        self.override(['"hpp-1"', "--raw"], "/nix/store/0000-x.drv")
         r = self.drive("eval-configs")
         self.assert_failed(r, "FAIL     eval nixosConfigurations.hpp-1")
 
-    def test_derivation_eval_exit_47_fails(self):
-        self.override(
-            ["checks.x86_64-linux", "flake-checks:derivations"],
-            '{"a":"/nix/store/0000-a.drv"}',
-        )
-        r = self.drive("eval-outputs")
-        self.assert_failed(r, "FAIL     eval checks.x86_64-linux")
+    def test_check_names_exit_47_fails(self):
+        self.override(["checks.x86_64-linux", "attrNames"], '["a"]', config=LINUX)
+        r = self.drive("build-checks")
+        self.assert_failed(r, "NOT-RUN  build checks.x86_64-linux")
+        self.assertEqual(self.built(), [])
 
     def test_build_exit_47_fails(self):
         self.override(['"doc-links"^*'], "", config=LINUX)
@@ -524,19 +561,17 @@ class Failures(Harness):
             "PASS     eval homeConfigurations.penguin",
         )
 
-    def test_bogus_derivation_fails_and_is_neither_built_nor_deferred(self):
-        flake = fixture()["flake"]
-        flake["checks"]["x86_64-linux"]["fake"] = {"bogus": True}
-        self.set_fixture(flake=flake)
+    def test_failed_flake_check_makes_non_native_not_run_not_deferred(self):
+        self.set_fixture(flake_check_fail=True)
         r = self.drive("local")
         self.assert_failed(
             r,
-            "FAIL     eval checks.x86_64-linux",
-            "NOT-RUN  build checks.x86_64-linux  (evaluation failed, see above)",
+            "FAIL     eval outputs",
+            "NOT-RUN  build checks.x86_64-linux  (nix flake check --no-build failed, see above)",
             "x86_64-linux checks FAILED evaluation",
         )
-        self.assertNotIn("DEFERRED build checks.x86_64-linux", r.stdout)
-        self.assertNotIn("x86_64-linux checks were evaluated", r.stdout)
+        self.assertNotIn("DEFERRED", r.stdout)
+        self.assertNotIn("checks were evaluated", r.stdout)
 
     def test_failed_check_build_is_nonzero_and_the_rest_still_build(self):
         self.set_fixture(config=LINUX, fail_build=["checks.x86_64-linux.doc-links"])
@@ -547,16 +582,6 @@ class Failures(Harness):
             "PASS     build checks.x86_64-linux.vm-test",
         )
         self.assertIn("FAILED", r.stderr)
-
-    def test_failed_native_eval_skips_builds(self):
-        self.set_fixture(config=LINUX, fail_eval=["checks.x86_64-linux"])
-        r = self.drive("build-checks")
-        self.assert_failed(
-            r,
-            "FAIL     eval checks.x86_64-linux",
-            "NOT-RUN  build checks.x86_64-linux  (evaluation failed)",
-        )
-        self.assertEqual(self.built(), [])
 
     def test_failed_lint_is_nonzero(self):
         self.set_fixture(fail_build=["checks.aarch64-darwin.pre-commit"])
@@ -570,8 +595,8 @@ class Failures(Harness):
 
 
 class Platforms(Harness):
-    def machines(self, text):
-        path = self.tmp / "machines"
+    def machines(self, text, name="machines"):
+        path = self.tmp / name
         path.write_text(text)
         return f"@{path}"
 
@@ -598,11 +623,39 @@ class Platforms(Harness):
         self.assertIn(why, r.stderr)
         self.assertEqual(self.built(), [])
 
+    def test_comment_hides_everything_after_it_including_semicolons(self):
+        line = "ssh://arm aarch64-linux - 2 # spare; ssh://disabled x86_64-linux - 3"
+        for builders in (
+            line,
+            self.machines(line + "\n"),
+            "# ssh://off x86_64-linux - 4\nssh://arm aarch64-linux",
+        ):
+            with self.subTest(builders=builders):
+                self.refused(builders, "no configured builder declares x86_64-linux")
+
+    def test_semicolons_and_newlines_both_separate_entries(self):
+        nested = self.machines("ssh://b x86_64-linux - 3\n", "nested")
+        for builders in (
+            "ssh://arm aarch64-linux - 2; ssh://b x86_64-linux - 3 # note",
+            "ssh://arm aarch64-linux\n  ssh://b x86_64-linux - 3  ",
+            self.machines(nested + " ; ssh://arm aarch64-linux\n"),
+        ):
+            with self.subTest(builders=builders):
+                self.set_fixture(config={"builders": builders})
+                r = self.drive(
+                    "build-checks", "--system", "x86_64-linux", "--remote-builder"
+                )
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("declares it on: ssh://b (3 jobs)", r.stdout)
+
     def test_builder_must_declare_the_system(self):
         self.refused(
             self.machines("# comment\nssh://b aarch64-linux - 2 1 kvm\n"),
             "no configured builder declares x86_64-linux",
         )
+
+    def test_default_systems_field_is_the_local_system_only(self):
+        self.refused("ssh://b - - 4", "no configured builder declares x86_64-linux")
 
     def test_zero_slot_builder_is_unusable(self):
         self.refused(
@@ -615,6 +668,9 @@ class Platforms(Harness):
 
     def test_no_builders_configured_is_refused(self):
         self.refused("", "no configured builder declares x86_64-linux")
+
+    def test_missing_builders_file_is_skipped_like_nix(self):
+        self.refused(f"@{self.tmp}/missing", "no configured builder declares")
 
     def test_failed_builders_query_refuses_even_with_matching_output(self):
         self.set_fixture(
@@ -630,9 +686,6 @@ class Platforms(Harness):
         self.assertEqual(r.returncode, 2)
         self.assertIn("`nix config show builders` failed", r.stderr)
         self.assertEqual(self.built(), [])
-
-    def test_unreadable_builders_file_is_refused(self):
-        self.refused(f"@{self.tmp}/missing", "no configured builder declares")
 
     def test_declared_builder_allows_the_build_with_honest_wording(self):
         cases = (
@@ -669,7 +722,7 @@ class Platforms(Harness):
             ],
         )
         self.assertIn(
-            "DEFERRED build checks.x86_64-linux  (3 checks evaluated, not built on aarch64-darwin: doc-links pre-commit vm-test)",
+            "DEFERRED build checks.x86_64-linux  (3 checks evaluated by nix flake check --no-build, not built on aarch64-darwin: doc-links pre-commit vm-test)",
             r.stdout,
         )
         self.assertIn("DEFERRED build checks.aarch64-linux", r.stdout)
@@ -681,19 +734,9 @@ class Platforms(Harness):
         self.assertIn("aarch64-linux checks were evaluated but NOT built", r.stdout)
         self.assertIn("they remain deferred", r.stdout)
         self.assertIn("PASS     lock", r.stdout)
-        self.assertIn("PASS     eval top-level outputs", r.stdout)
+        self.assertIn("PASS     eval outputs", r.stdout)
         self.assertIn("PASS     eval homeConfigurations.penguin", r.stdout)
         self.assert_lock_preserved()
-
-    def test_local_reuses_native_evaluation(self):
-        r = self.drive("local")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        native_evals = [
-            c
-            for c in self.calls()
-            if c[0] == "eval" and any(a.endswith("#checks.aarch64-darwin") for a in c)
-        ]
-        self.assertEqual(len(native_evals), 1)
 
     def test_local_on_linux_builds_native_checks_and_defers_darwin(self):
         self.set_fixture(config=LINUX)
@@ -738,10 +781,6 @@ class Interface(Harness):
         self.assertIn("::endgroup::", r.stdout)
         self.assertIn("PASS     eval darwinConfigurations.work", summary.read_text())
 
-    def test_expressions_are_tracked_files_with_markers(self):
-        self.assertIn("flake-checks:derivations", (LIB / "derivations.nix").read_text())
-        self.assertIn("flake-checks:toplevel", (LIB / "toplevel.nix").read_text())
-
     def test_task_check_routes_through_the_driver(self):
         task = shutil.which("task")
         if task is None:
@@ -749,7 +788,6 @@ class Interface(Harness):
         repo = self.tmp / "repo"
         (repo / "scripts").mkdir(parents=True)
         shutil.copy(DRIVER, repo / "scripts" / DRIVER.name)
-        shutil.copytree(LIB, repo / "scripts" / LIB.name)
         text = (REPO / "Taskfile.yaml").read_text()
         # Only the root Taskfile's own tasks are needed; drop the includes.
         head, _, rest = text.partition("includes:")
@@ -775,13 +813,136 @@ class Interface(Harness):
         self.assertIn("DEFERRED build checks.x86_64-linux", r.stdout)
         meta = [a for a in self.calls() if a[:2] == ["flake", "metadata"]]
         self.assertEqual(len(meta), 1)
-        self.assertEqual(os.path.realpath(meta[0][-1]), os.path.realpath(repo))
+        self.assertEqual(os.path.realpath(meta[0][2]), os.path.realpath(repo))
         self.set_fixture(stale_lock=True)
         self.assertNotEqual(run("check").returncode, 0)
         self.set_fixture(config={"builders": "ssh://b x86_64-linux"})
         r = run("check:linux")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(len(self.built()), 3)
+
+
+LOCK = '{"nodes":{"root":{}},"root":"root","version":7}'
+
+
+@unittest.skipUnless(REAL_NIX, "FLAKE_CHECKS_REAL_NIX not set")
+class RealNix(unittest.TestCase):
+    """eval-outputs keeps genuine `nix flake check --no-build` verdicts."""
+
+    def setUp(self):
+        self.tmp = Path(os.path.realpath(tempfile.mkdtemp()))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "conf").mkdir()
+        self.env = {
+            "PATH": f"{REAL_NIX}:{os.environ['PATH']}",
+            "HOME": str(self.tmp),
+            "TMPDIR": str(self.tmp),
+            "XDG_CONFIG_HOME": str(self.tmp / "conf"),
+            "XDG_CACHE_HOME": str(self.tmp / "cache"),
+            "NIX_CONF_DIR": str(self.tmp / "conf"),
+            "NIX_CONFIG": "\n".join(
+                [
+                    f"store = {self.tmp / 'store'}",
+                    "experimental-features = nix-command flakes",
+                    "substituters =",
+                    "warn-dirty = false",
+                ]
+            ),
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        }
+        self.system = subprocess.run(
+            ["nix", "config", "show", "system"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def flake(self, name, outputs, subdir=None):
+        root = self.tmp / name
+        where = root / subdir if subdir else root
+        where.mkdir(parents=True)
+        drv = (
+            f'd = derivation {{ name = "x"; system = "{self.system}";'
+            ' builder = "/bin/sh"; };'
+        )
+        (where / "flake.nix").write_text(
+            "{ outputs = { self }: let " + drv + " in " + outputs + "; }\n"
+        )
+        (where / "flake.lock").write_text(LOCK)
+        return root
+
+    def eval_outputs(self, ref):
+        r = subprocess.run(
+            [BASH, str(DRIVER), "--flake", ref, "eval-outputs"],
+            check=False,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=300,
+        )
+        self.assertIn(r.returncode, (0, 1), r.stdout + r.stderr)
+        return r
+
+    def verdict(self, outputs, name="f"):
+        root = self.flake(name, outputs)
+        return self.eval_outputs(f"path:{root}").returncode
+
+    def test_well_formed_flake_passes(self):
+        s = self.system
+        r = self.verdict(
+            "{ checks." + s + ".a = d; overlays.o = final: prev: { };"
+            " apps." + s + '.a = { type = "app"; program = "${d}/bin/x";'
+            ' meta.description = "x"; }; }'
+        )
+        self.assertEqual(r, 0)
+
+    def test_not_a_store_path_drv_with_unrelated_context_fails(self):
+        r = self.verdict(
+            "{ checks." + self.system + '.a = { type = "derivation"; name = "x";'
+            ' outPath = d.outPath; drvPath = "/nix/store/not-a-store-path.drv"'
+            " + builtins.substring 0 0 d.outPath; }; }"
+        )
+        self.assertEqual(r, 1)
+
+    def test_overlay_named_ignored_fails(self):
+        self.assertEqual(self.verdict("{ overlays.o = ignored: prev: { }; }"), 1)
+
+    def test_overlay_needing_a_real_final_passes(self):
+        self.assertEqual(
+            self.verdict("{ overlays.o = final: assert final ? x; prev: { }; }"), 0
+        )
+
+    def test_malformed_apps_fail(self):
+        for i, app in enumerate(
+            (
+                'type = "app"; program = "${d}/bin/x"; extra = 1;',
+                'type = "app"; program = "${d}/bin/x"; meta = 3;',
+            )
+        ):
+            with self.subTest(app=app):
+                outputs = "{ apps." + self.system + ".a = { " + app + " }; }"
+                self.assertEqual(self.verdict(outputs, f"app{i}"), 1)
+
+    def test_dir_reference_is_evaluated_as_given(self):
+        root = self.flake("d", "{ checks." + self.system + ".a = d; }", subdir="sub")
+        self.assertEqual(self.eval_outputs(f"path:{root}?dir=sub").returncode, 0)
+        self.assertEqual(self.eval_outputs(f"path:{root}").returncode, 1)
+
+    def test_git_identity_reaches_the_evaluation(self):
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("git not available")
+        root = self.flake(
+            "g", "{ checks." + self.system + ".a = assert self ? rev; d; }"
+        )
+        g = [git, "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        for argv in (["init", "-q"], ["add", "-A"], ["commit", "-qm", "t"]):
+            subprocess.run([*g, *argv], cwd=root, env=self.env, check=True)
+        self.assertEqual(self.eval_outputs(f"git+file://{root}").returncode, 0)
+        self.assertEqual(self.eval_outputs(f"path:{root}").returncode, 1)
 
 
 if __name__ == "__main__":

@@ -28,9 +28,9 @@ tasks:
     # The same driver the CI check.yml stages call (#1021), so local and CI
     # validation share one implementation; needs nix, bash and jq. `local`
     # asserts flake.lock matches flake.nix (--no-update-lock-file, never
-    # re-locks), evaluates every nixos/darwin/home configuration and every
-    # top-level output with the `nix flake check` shape and derivation
-    # checks, one at a time, builds checks.<this system>.pre-commit (the
+    # re-locks), evaluates every nixos/darwin/home configuration one at a
+    # time, runs `nix flake check --no-build --all-systems` (nix's own output
+    # checks, nothing built), builds checks.<this system>.pre-commit (the
     # git-hooks.nix hooks: nixfmt/statix/deadnix, ruff, shellcheck/shfmt,
     # secret/YAML/whitespace) and every other check for this machine's system,
     # all outputs (^*). Checks of other systems are listed as DEFERRED, never
