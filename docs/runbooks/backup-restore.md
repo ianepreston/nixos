@@ -306,7 +306,7 @@ units (`paperless-{scheduler,task-queue,consumer,web}`), restores `/var/lib/pape
 (original and archived documents under `media/`, the Tantivy search index, the
 model cache) with `--delete`, and replays the `paperless_ngx` database from the
 same snapshot. Then it starts the units and waits for `/accounts/login/` on
-`127.0.0.1:8010` to return 200. Restore the files and the database together,
+`localhost:8010` to return 200. Restore the files and the database together,
 because document rows point at files in `media/`. NixOS provides the role, and
 sops provides the secret key and OIDC client credentials, so the restore doesn't
 touch either.
