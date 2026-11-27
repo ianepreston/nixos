@@ -59,8 +59,6 @@ let
       inputs = fixtureInputs;
     };
   };
-  serverOptions = fixture.options;
-
   # Stub home-manager user: `vibes` imports `pi`, so one module covers both.
   # No `osConfig`, so vibes takes its no-sops path and never reads nix-secrets.
   homeFixture = inputs.home-manager.lib.homeManagerConfiguration {
@@ -275,9 +273,9 @@ let
         g:
         removeAttrs g [ "onlyDeclaredIn" ]
         // {
-          options = lib.filter (o: g.onlyDeclaredIn or null == null || lib.elem g.onlyDeclaredIn o.declarations) (
-            map docOption (lib.filter public (lib.optionAttrSetToDocList (lib.getAttrs g.roots f.options)))
-          );
+          options = lib.filter (
+            o: g.onlyDeclaredIn or null == null || lib.elem g.onlyDeclaredIn o.declarations
+          ) (map docOption (lib.filter public (lib.optionAttrSetToDocList (lib.getAttrs g.roots f.options))));
         }
       ) f.groups
     ) fixtures;
