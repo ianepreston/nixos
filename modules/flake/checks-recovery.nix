@@ -3,8 +3,9 @@
 # Task entry points run with inert, recording stand-ins for ssh, systemctl,
 # restic, postgres and the rest; nothing connects to a host or restores app
 # data. The VM additionally checks real systemd refusal to stop a
-# still-running service.
-_: {
+# still-running service, and a model of a container's init (#1122).
+{ inputs, ... }:
+{
   perSystem =
     { pkgs, lib, ... }:
     let
@@ -25,6 +26,41 @@ _: {
         chmod -R u+w repo
         patchShebangs repo/scripts
       '';
+      # Model of podman-bookorbit's stop path (#1122), built from the
+      # drill VM's published `myContainerApp.bookorbit` contribution so it
+      # follows the app module. The image's root `tini -s --` forwards
+      # SIGTERM to the app, which runs as another uid, with only
+      # `capabilities` (podman adds them after `--cap-drop=ALL`). Here tini
+      # is the unit's main process (podman's conmon and catatonit only pass
+      # its status through), setpriv stands in for su-exec, and
+      # KillMode=mixed matches `podman stop` signalling only PID 1.
+      bookorbit = inputs.self.nixosConfigurations.tests-server.config.myContainerApp.bookorbit;
+      # Null would mean podman's default caps, which this bounding set
+      # would no longer model.
+      bookorbitCaps =
+        assert bookorbit.capabilities != null;
+        map (c: "CAP_${c}") bookorbit.capabilities;
+      containerInit =
+        {
+          caps,
+          successExitStatus,
+          app ? "${pkgs.coreutils}/bin/sleep infinity",
+        }:
+        {
+          serviceConfig = {
+            ExecStart = lib.concatStringsSep " " [
+              "${pkgs.tini}/bin/tini -s --"
+              "${pkgs.util-linux}/bin/setpriv --reuid=nobody --regid=nogroup --clear-groups"
+              app
+            ];
+            CapabilityBoundingSet = caps;
+            NoNewPrivileges = true;
+            KillMode = "mixed";
+            SuccessExitStatus = successExitStatus;
+            # Stands in for podman's stop timeout (SIGKILL, exit 137).
+            TimeoutStopSec = 2;
+          };
+        };
       packages = with pkgs; [
         bash
         coreutils
@@ -55,10 +91,30 @@ _: {
           name = "recovery-stop-systemd";
           nodes.machine = {
             environment.systemPackages = packages;
-            systemd.services = lib.genAttrs [ "recovery-writer" "recovery-other" "recovery-blocked" ] (name: {
-              unitConfig.RefuseManualStop = name == "recovery-blocked";
-              serviceConfig.ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
-            });
+            systemd.services =
+              lib.genAttrs [ "recovery-writer" "recovery-other" "recovery-blocked" ] (name: {
+                unitConfig.RefuseManualStop = name == "recovery-blocked";
+                serviceConfig.ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+              })
+              // {
+                # bookorbit as configured: stops cleanly.
+                recovery-init-app = containerInit {
+                  caps = bookorbitCaps;
+                  successExitStatus = bookorbit.cleanStopExitStatus;
+                };
+                # bookorbit before #1122: stop returns 0, unit ends failed.
+                recovery-init-nokill = containerInit {
+                  caps = lib.remove "CAP_KILL" bookorbitCaps;
+                  successExitStatus = [ ];
+                };
+                # bookorbit as configured, but the app ignores SIGTERM: the
+                # clean-stop status must not hide a stop that times out.
+                recovery-init-hung = containerInit {
+                  caps = bookorbitCaps;
+                  successExitStatus = bookorbit.cleanStopExitStatus;
+                  app = "${pkgs.bash}/bin/bash -c \"trap '' TERM; exec ${pkgs.coreutils}/bin/sleep infinity\"";
+                };
+              };
           };
           testScript = ''
             machine.wait_for_unit("multi-user.target")

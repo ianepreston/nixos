@@ -136,6 +136,29 @@ _: {
           "/var/lib/containers/bookorbit"
           "/var/lib/containers/bookorbit/data"
         ];
+        # Upstream compose's cap set: the entrypoint needs
+        # CHOWN/DAC_OVERRIDE/FOWNER/SET[UG]ID to fix /data perms and drop
+        # privileges. KILL goes beyond upstream (#1122): the image's
+        # entrypoint is `tini -s --`, running as root, and the app runs as
+        # PUID after su-exec. Without CAP_KILL root cannot signal another
+        # uid, so on `podman stop` tini fails to forward SIGTERM ("Operation
+        # not permitted"), exits 1, and node is SIGKILLed when the namespace
+        # is torn down — never shut down cleanly, and the unit ends failed.
+        capabilities = [
+          "CHOWN"
+          "DAC_OVERRIDE"
+          "FOWNER"
+          "KILL"
+          "SETGID"
+          "SETUID"
+        ];
+        # Once SIGTERM reaches node, NestJS (enableShutdownHooks) closes the
+        # app and then re-raises the signal, so tini exits 128+15. That is
+        # the clean-stop result; without it a successful `systemctl stop`
+        # still leaves the unit failed and trips the recovery stop guard
+        # (#1017). Anything else (tini's forwarding failure, a SIGKILL after
+        # podman's stop timeout) stays a failure.
+        cleanStopExitStatus = [ 143 ];
       };
 
       virtualisation.oci-containers.containers.bookorbit = {
@@ -168,19 +191,12 @@ _: {
         };
         environmentFiles = [ config.sops.templates."bookorbit.env".path ];
         # Mirror the upstream compose hardening: read-only rootfs with a
-        # tmpfs for /tmp and a minimal cap set (the entrypoint needs
-        # CHOWN/DAC_OVERRIDE/FOWNER/SET[UG]ID to fix /data perms and drop
-        # privileges).
+        # tmpfs for /tmp; the minimal cap set is myContainerApp's
+        # `capabilities` above.
         extraOptions = [
           "--init"
           "--read-only"
           "--tmpfs=/tmp"
-          "--cap-drop=ALL"
-          "--cap-add=CHOWN"
-          "--cap-add=DAC_OVERRIDE"
-          "--cap-add=FOWNER"
-          "--cap-add=SETGID"
-          "--cap-add=SETUID"
           "--security-opt=no-new-privileges"
         ];
       };

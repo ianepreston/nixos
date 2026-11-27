@@ -119,6 +119,34 @@ _: {
                     Only meaningful when `manageUser` is true.
                   '';
                 };
+                capabilities = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.listOf (lib.types.strMatching "[A-Z_]+"));
+                  default = null;
+                  example = [
+                    "CHOWN"
+                    "KILL"
+                  ];
+                  description = ''
+                    Capability names without `CAP_`. When set, the container
+                    runs with `--cap-drop=ALL` plus one `--cap-add` for each
+                    entry; null keeps podman's default set. An image whose
+                    root init signals an app running as another uid (e.g.
+                    tini forwarding SIGTERM after su-exec) needs `KILL`, or
+                    `podman stop` cannot reach the app.
+                  '';
+                };
+                cleanStopExitStatus = lib.mkOption {
+                  type = lib.types.listOf lib.types.ints.u8;
+                  default = [ ];
+                  example = [ 143 ];
+                  description = ''
+                    Exit statuses, besides 0, that the container's unit
+                    treats as a clean stop (`SuccessExitStatus`). Set 143
+                    when the app exits by re-raising the SIGTERM it was
+                    stopped with; otherwise a clean `systemctl stop` leaves
+                    the unit failed, which aborts a recovery restore.
+                  '';
+                };
               };
             }
           )
@@ -150,311 +178,326 @@ _: {
         '';
       };
 
-      config = {
-        # Guard the port-bind emitter above: it builds
-        # "127.0.0.1:${port}:${containerPort}" whenever `port` is set, so a
-        # null `containerPort` would emit a malformed bind ending in a bare
-        # colon. `containerPort` defaults to `config.port`, so nothing trips
-        # this today — it's a latent guard against a future app decoupling
-        # the two.
-        assertions = lib.mapAttrsToList (name: app: {
-          assertion = app.port == null || app.containerPort != null;
-          message = "myContainerApp.${name}: containerPort must not be null when port is set";
-        }) config.myContainerApp;
+      config = lib.mkMerge [
+        {
+          # Guard the port-bind emitter above: it builds
+          # "127.0.0.1:${port}:${containerPort}" whenever `port` is set, so a
+          # null `containerPort` would emit a malformed bind ending in a bare
+          # colon. `containerPort` defaults to `config.port`, so nothing trips
+          # this today — it's a latent guard against a future app decoupling
+          # the two.
+          assertions = lib.mapAttrsToList (name: app: {
+            assertion = app.port == null || app.containerPort != null;
+            message = "myContainerApp.${name}: containerPort must not be null when port is set";
+          }) config.myContainerApp;
 
-        virtualisation = {
-          podman = {
-            enable = true;
-            dockerCompat = true;
-            defaultNetwork.settings.dns_enabled = true;
+          virtualisation = {
+            podman = {
+              enable = true;
+              dockerCompat = true;
+              defaultNetwork.settings.dns_enabled = true;
+            };
+            oci-containers.backend = "podman";
+
+            # Per-app container fragments contributed via `myContainerApp.<name>`.
+            # Each entry merges with the app module's own container definition
+            # (image, volumes, extra env), which stays in the app module.
+            oci-containers.containers = lib.mapAttrs (
+              _: app:
+              lib.mkMerge [
+                (lib.optionalAttrs (app.port != null) {
+                  ports = [ "127.0.0.1:${toString app.port}:${toString app.containerPort}" ];
+                })
+                (lib.optionalAttrs (app.manageUser && app.linuxServer) {
+                  environment = {
+                    PUID = toString serverUid;
+                    PGID = toString serverGid;
+                  };
+                })
+                (lib.optionalAttrs (app.manageUser && !app.linuxServer) {
+                  user = "${toString serverUid}:${toString serverGid}";
+                })
+                (lib.optionalAttrs app.tzEnv {
+                  environment.TZ = config.time.timeZone;
+                })
+                (lib.optionalAttrs (app.capabilities != null) {
+                  extraOptions = [ "--cap-drop=ALL" ] ++ map (c: "--cap-add=${c}") app.capabilities;
+                })
+              ]
+            ) config.myContainerApp;
           };
-          oci-containers.backend = "podman";
 
-          # Per-app container fragments contributed via `myContainerApp.<name>`.
-          # Each entry merges with the app module's own container definition
-          # (image, volumes, extra env), which stays in the app module.
-          oci-containers.containers = lib.mapAttrs (
-            _: app:
-            lib.mkMerge [
-              (lib.optionalAttrs (app.port != null) {
-                ports = [ "127.0.0.1:${toString app.port}:${toString app.containerPort}" ];
-              })
-              (lib.optionalAttrs (app.manageUser && app.linuxServer) {
-                environment = {
-                  PUID = toString serverUid;
-                  PGID = toString serverGid;
-                };
-              })
-              (lib.optionalAttrs (app.manageUser && !app.linuxServer) {
-                user = "${toString serverUid}:${toString serverGid}";
-              })
-              (lib.optionalAttrs app.tzEnv {
-                environment.TZ = config.time.timeZone;
-              })
+          # Containers on the default podman bridge reach host services
+          # (postgres, etc.) via host.containers.internal -> 10.88.0.1.
+          # Trust the bridge so the firewall doesn't drop those packets.
+          networking.firewall.trustedInterfaces = [ "podman0" ];
+          # Podman isn't allowed to forward packets from podman0 to the actual NIC by default
+          boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
+          boot.kernel.sysctl."net.ipv6.conf.all.forwarding" = 1;
+
+          # Restic paths per container app, from the same `stateDirs`
+          # declaration that drives the tmpfiles rules below — the container
+          # analogue of what `myAppState` does for native apps
+          # (modules/system/app-state.nix).
+          #
+          # This deliberately replaces the old blanket `/var/lib/containers`
+          # backup path (#567). That path swept in podman's image store at
+          # /var/lib/containers/storage, which was 75 GB of amos1's 102 GB
+          # snapshot — layers a `podman pull` reproduces for free. Enumerating
+          # the app dirs instead keeps the intent legible at the declaration
+          # site: back up app state, not the image cache. Also dropped as a
+          # side effect, all reproducible: /var/lib/containers/cache (podman's
+          # blob-info sqlite), apprise's config dir (re-rendered from sops by
+          # each consumer's oneshot), and orphaned dirs left on disk by apps
+          # removed in #425.
+          #
+          # An app with nothing worth persisting sets `stateDirs = [ ]` and so
+          # contributes no path.
+          #
+          # Multi-subdir apps list the parent *and* its children so tmpfiles
+          # creates the whole tree (e.g. omada's data/ and logs/); as restic
+          # roots those children are redundant, so descendants of another
+          # declared dir are dropped. Restic groups snapshots by the paths
+          # set (see the `classify` comment in server-backups.nix), so
+          # keeping the root list minimal and stable also keeps the snapshot
+          # history from fragmenting.
+          services.restic.backups.server.paths =
+            let
+              dirs = lib.unique (
+                lib.concatLists (lib.mapAttrsToList (_: app: app.stateDirs) config.myContainerApp)
+              );
+            in
+            lib.filter (d: !(lib.any (other: other != d && lib.hasPrefix (other + "/") d) dirs)) dirs;
+
+          systemd = {
+            # Parent directory for all containerized app state. Apps create their
+            # own subdirs (/var/lib/containers/<app>) owned by the server user.
+            # Per-app subdirs come from `myContainerApp.<name>.stateDirs`, which
+            # is also what the restic paths above are derived from.
+            tmpfiles.rules = [
+              "d /var/lib/containers 0755 root root -"
             ]
-          ) config.myContainerApp;
-        };
-
-        # Containers on the default podman bridge reach host services
-        # (postgres, etc.) via host.containers.internal -> 10.88.0.1.
-        # Trust the bridge so the firewall doesn't drop those packets.
-        networking.firewall.trustedInterfaces = [ "podman0" ];
-        # Podman isn't allowed to forward packets from podman0 to the actual NIC by default
-        boot.kernel.sysctl."net.ipv4.ip_forward" = 1;
-        boot.kernel.sysctl."net.ipv6.conf.all.forwarding" = 1;
-
-        # Restic paths per container app, from the same `stateDirs`
-        # declaration that drives the tmpfiles rules below — the container
-        # analogue of what `myAppState` does for native apps
-        # (modules/system/app-state.nix).
-        #
-        # This deliberately replaces the old blanket `/var/lib/containers`
-        # backup path (#567). That path swept in podman's image store at
-        # /var/lib/containers/storage, which was 75 GB of amos1's 102 GB
-        # snapshot — layers a `podman pull` reproduces for free. Enumerating
-        # the app dirs instead keeps the intent legible at the declaration
-        # site: back up app state, not the image cache. Also dropped as a
-        # side effect, all reproducible: /var/lib/containers/cache (podman's
-        # blob-info sqlite), apprise's config dir (re-rendered from sops by
-        # each consumer's oneshot), and orphaned dirs left on disk by apps
-        # removed in #425.
-        #
-        # An app with nothing worth persisting sets `stateDirs = [ ]` and so
-        # contributes no path.
-        #
-        # Multi-subdir apps list the parent *and* its children so tmpfiles
-        # creates the whole tree (e.g. omada's data/ and logs/); as restic
-        # roots those children are redundant, so descendants of another
-        # declared dir are dropped. Restic groups snapshots by the paths
-        # set (see the `classify` comment in server-backups.nix), so
-        # keeping the root list minimal and stable also keeps the snapshot
-        # history from fragmenting.
-        services.restic.backups.server.paths =
-          let
-            dirs = lib.unique (
-              lib.concatLists (lib.mapAttrsToList (_: app: app.stateDirs) config.myContainerApp)
+            ++ lib.concatLists (
+              lib.mapAttrsToList (
+                _: app: map (dir: "d ${dir} 0750 ${app.stateDirOwner} ${app.stateDirGroup} -") app.stateDirs
+              ) config.myContainerApp
             );
-          in
-          lib.filter (d: !(lib.any (other: other != d && lib.hasPrefix (other + "/") d) dirs)) dirs;
 
-        systemd = {
-          # Parent directory for all containerized app state. Apps create their
-          # own subdirs (/var/lib/containers/<app>) owned by the server user.
-          # Per-app subdirs come from `myContainerApp.<name>.stateDirs`, which
-          # is also what the restic paths above are derived from.
-          tmpfiles.rules = [
-            "d /var/lib/containers 0755 root root -"
-          ]
-          ++ lib.concatLists (
-            lib.mapAttrsToList (
-              _: app: map (dir: "d ${dir} 0750 ${app.stateDirOwner} ${app.stateDirGroup} -") app.stateDirs
-            ) config.myContainerApp
-          );
+            # ---- Image store garbage collection ------------------------------
+            #
+            # Nothing reclaimed podman's image store before #570: renovate
+            # bumps image tags continuously and every superseded layer set
+            # stayed forever (92 GB of /var/lib/containers/storage on hpp-1,
+            # 88% of it unreferenced).
+            #
+            # Upstream's `virtualisation.podman.autoPrune` is deliberately not
+            # used. It runs `podman system prune`, which has two properties
+            # that are wrong here:
+            #
+            #   * "in use" means *a container object exists*. The
+            #     oci-containers units `podman rm -f` in both ExecStartPre and
+            #     ExecStopPost, so an app that is merely stopped protects
+            #     nothing — and spierscraper, a nightly `podman run --rm`
+            #     oneshot, has no container object 99% of the day. A windowed
+            #     `prune -a` would delete its image every morning and re-pull
+            #     it every night.
+            #   * `system prune` also removes unused *networks*. On hosts with
+            #     bambuddy's Virtual Printer enabled that includes `iot-static`
+            #     (modules/apps/bambuddy.nix), whose creator unit is
+            #     `RemainAfterExit=true` — so unlike an image it does not come
+            #     back on its own and bambuddy simply fails to start.
+            #
+            # So the keep-set is derived from the configuration instead of
+            # from runtime liveness, and only images are touched.
+            services.podman-image-prune = {
+              description = "Prune podman images this generation no longer references";
+              after = [ "podman.service" ];
+              serviceConfig = {
+                Type = "oneshot";
+                User = "root";
+                Environment = [
+                  "PATH=${
+                    lib.makeBinPath [
+                      pkgs.podman
+                      pkgs.coreutils
+                      pkgs.gnused
+                    ]
+                  }"
+                ];
+              };
+              script = ''
+                set -euo pipefail
 
-          # ---- Image store garbage collection ------------------------------
-          #
-          # Nothing reclaimed podman's image store before #570: renovate
-          # bumps image tags continuously and every superseded layer set
-          # stayed forever (92 GB of /var/lib/containers/storage on hpp-1,
-          # 88% of it unreferenced).
-          #
-          # Upstream's `virtualisation.podman.autoPrune` is deliberately not
-          # used. It runs `podman system prune`, which has two properties
-          # that are wrong here:
-          #
-          #   * "in use" means *a container object exists*. The
-          #     oci-containers units `podman rm -f` in both ExecStartPre and
-          #     ExecStopPost, so an app that is merely stopped protects
-          #     nothing — and spierscraper, a nightly `podman run --rm`
-          #     oneshot, has no container object 99% of the day. A windowed
-          #     `prune -a` would delete its image every morning and re-pull
-          #     it every night.
-          #   * `system prune` also removes unused *networks*. On hosts with
-          #     bambuddy's Virtual Printer enabled that includes `iot-static`
-          #     (modules/apps/bambuddy.nix), whose creator unit is
-          #     `RemainAfterExit=true` — so unlike an image it does not come
-          #     back on its own and bambuddy simply fails to start.
-          #
-          # So the keep-set is derived from the configuration instead of
-          # from runtime liveness, and only images are touched.
-          services.podman-image-prune = {
-            description = "Prune podman images this generation no longer references";
-            after = [ "podman.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              User = "root";
-              Environment = [
-                "PATH=${
-                  lib.makeBinPath [
-                    pkgs.podman
-                    pkgs.coreutils
-                    pkgs.gnused
-                  ]
-                }"
-              ];
-            };
-            script = ''
-              set -euo pipefail
+                work=$(mktemp -d)
+                trap 'rm -rf "$work"' EXIT
 
-              work=$(mktemp -d)
-              trap 'rm -rf "$work"' EXIT
+                # Removal candidates: images built more than the retention
+                # window ago. `until` filters on the build timestamp baked
+                # into the image manifest, not on when this host pulled it,
+                # so it is a "how much upstream release history to keep"
+                # knob and nothing more. It is emphatically not a safety
+                # net — when #570 was written, 8 of the 15 images backing
+                # hpp-1's running apps had been built more than 14 days ago.
+                podman images --filter "until=${toString retentionHours}h" --format '{{.ID}}' \
+                  | sed 's/^sha256://' | cut -c1-12 | sort -u >"$work/candidates"
 
-              # Removal candidates: images built more than the retention
-              # window ago. `until` filters on the build timestamp baked
-              # into the image manifest, not on when this host pulled it,
-              # so it is a "how much upstream release history to keep"
-              # knob and nothing more. It is emphatically not a safety
-              # net — when #570 was written, 8 of the 15 images backing
-              # hpp-1's running apps had been built more than 14 days ago.
-              podman images --filter "until=${toString retentionHours}h" --format '{{.ID}}' \
-                | sed 's/^sha256://' | cut -c1-12 | sort -u >"$work/candidates"
+                {
+                  # Every image the current generation declares. Refs are
+                  # resolved to IDs because one image can carry several tags
+                  # and a re-pull can move a tag off the image we still run
+                  # (digest-pinned apps show up as <none> in `podman
+                  # images`). A ref that was never pulled contributes
+                  # nothing, and says so on stderr.
+                  while read -r ref; do
+                    [ -n "$ref" ] || continue
+                    if ! podman image inspect --format '{{.Id}}' "$ref" 2>/dev/null; then
+                      # Not fatal — an app that has never started has never
+                      # pulled its image — but this is the one way the prune
+                      # could drop something it should have kept, so say so
+                      # rather than swallowing it.
+                      echo "podman-image-prune: declared image $ref is not in the local store" >&2
+                    fi
+                  done <${declaredImagesFile}
 
-              {
-                # Every image the current generation declares. Refs are
-                # resolved to IDs because one image can carry several tags
-                # and a re-pull can move a tag off the image we still run
-                # (digest-pinned apps show up as <none> in `podman
-                # images`). A ref that was never pulled contributes
-                # nothing, and says so on stderr.
-                while read -r ref; do
-                  [ -n "$ref" ] || continue
-                  if ! podman image inspect --format '{{.Id}}' "$ref" 2>/dev/null; then
-                    # Not fatal — an app that has never started has never
-                    # pulled its image — but this is the one way the prune
-                    # could drop something it should have kept, so say so
-                    # rather than swallowing it.
-                    echo "podman-image-prune: declared image $ref is not in the local store" >&2
+                  # Backstop, not the primary guard: anything with a
+                  # container object attached right now. Covers images pulled
+                  # by hand outside the configuration; contributes nothing
+                  # for a stopped app, per the note above.
+                  podman ps -a --no-trunc --format '{{.ImageID}}'
+                } | sed 's/^sha256://' | cut -c1-12 | sort -u >"$work/keep"
+
+                comm -23 "$work/candidates" "$work/keep" >"$work/remove"
+
+                removed=0
+                skipped=0
+                while read -r id; do
+                  [ -n "$id" ] || continue
+                  if podman rmi "$id" >/dev/null 2>&1; then
+                    removed=$((removed + 1))
+                  else
+                    # Unforced on purpose: `podman rmi` refuses an image a
+                    # container picked up between the snapshot above and
+                    # now. Log and carry on rather than failing the unit —
+                    # the next run retries, and PodmanImageStoreLarge
+                    # (modules/system/victoriametrics.nix) is the backstop if
+                    # removals stop working outright.
+                    echo "podman-image-prune: could not remove $id, leaving it in place" >&2
+                    skipped=$((skipped + 1))
                   fi
-                done <${declaredImagesFile}
+                done <"$work/remove"
 
-                # Backstop, not the primary guard: anything with a
-                # container object attached right now. Covers images pulled
-                # by hand outside the configuration; contributes nothing
-                # for a stopped app, per the note above.
-                podman ps -a --no-trunc --format '{{.ImageID}}'
-              } | sed 's/^sha256://' | cut -c1-12 | sort -u >"$work/keep"
+                echo "podman-image-prune: removed $removed image(s), skipped $skipped"
+              '';
+            };
 
-              comm -23 "$work/candidates" "$work/keep" >"$work/remove"
+            timers.podman-image-prune = {
+              wantedBy = [ "timers.target" ];
+              timerConfig = {
+                # Placed after the `nixos-upgrade` window closes (04:40 plus
+                # up to 1h of jitter, modules/system/auto-rebuild.nix) and
+                # after any reboot it triggered has brought the containers
+                # back up. That way last night's superseded tag is reclaimed
+                # the same morning, and the freshly started containers
+                # already hold their new images. Also clear of the 03:00
+                # restic run and spierscraper's 04:05 (+15m) oneshot.
+                #
+                # Not Persistent: a missed run on a host that was down just
+                # happens the next morning, which is better than pruning at
+                # boot while the container units are still coming up.
+                OnCalendar = "*-*-* 06:30:00";
+                RandomizedDelaySec = "10m";
+                Unit = "podman-image-prune.service";
+              };
+            };
 
-              removed=0
-              skipped=0
-              while read -r id; do
-                [ -n "$id" ] || continue
-                if podman rmi "$id" >/dev/null 2>&1; then
-                  removed=$((removed + 1))
-                else
-                  # Unforced on purpose: `podman rmi` refuses an image a
-                  # container picked up between the snapshot above and
-                  # now. Log and carry on rather than failing the unit —
-                  # the next run retries, and PodmanImageStoreLarge
-                  # (modules/system/victoriametrics.nix) is the backstop if
-                  # removals stop working outright.
-                  echo "podman-image-prune: could not remove $id, leaving it in place" >&2
-                  skipped=$((skipped + 1))
+            # Publish image store size as a node_exporter textfile metric.
+            # The root filesystem is already covered by FilesystemAlmostFull,
+            # but that fires late and does not say *why* — this attributes
+            # the growth, and PodmanImageStoreLarge catches a prune that has
+            # silently stopped reclaiming long before the disk rule would.
+            services.podman-image-metrics = {
+              description = "publish podman image store size to node_exporter textfile collector";
+              after = [ "podman.service" ];
+              serviceConfig = {
+                Type = "oneshot";
+                User = "root";
+                Environment = [
+                  "PATH=${
+                    lib.makeBinPath [
+                      pkgs.podman
+                      pkgs.jq
+                      pkgs.coreutils
+                    ]
+                  }"
+                ];
+              };
+              script = ''
+                set -eu
+                out=${textfileDir}/podman-images.prom
+                mkdir -p "$(dirname "$out")"
+
+                # `podman system df` reports sizes podman already tracks
+                # (~0.4s on a 125-image store); `du` over the overlay tree
+                # takes ~13s and is not worth putting on a timer. It is
+                # podman's own accounting, not a byte count of the
+                # directory — RawSize sums per-image sizes (a shared layer
+                # counted once per image) while the tree also holds
+                # container rw layers and metadata it does not report.
+                # Post-prune on hpp-1: RawSize 15 GB against 26 GB of
+                # /var/lib/containers/storage. Good for attribution and
+                # trend, not for exact space.
+                stats=$(podman system df --format json \
+                  | jq -r '.[] | select(.Type == "Images") | "\(.Total) \(.Active) \(.RawSize) \(.RawReclaimable)"')
+                if [ -z "$stats" ]; then
+                  echo "podman-image-metrics: podman system df reported no Images row" >&2
+                  exit 1
                 fi
-              done <"$work/remove"
+                # shellcheck disable=SC2086
+                set -- $stats
 
-              echo "podman-image-prune: removed $removed image(s), skipped $skipped"
-            '';
-          };
+                tmp=$(mktemp -p "$(dirname "$out")" .podman-images.prom.XXXXXX)
+                {
+                  echo "# HELP podman_images_total Images present in the local podman store."
+                  echo "# TYPE podman_images_total gauge"
+                  echo "podman_images_total $1"
+                  echo "# HELP podman_images_active Images currently attached to a container."
+                  echo "# TYPE podman_images_active gauge"
+                  echo "podman_images_active $2"
+                  echo "# HELP podman_image_store_bytes Summed size of images in the local podman store (shared layers counted per image)."
+                  echo "# TYPE podman_image_store_bytes gauge"
+                  echo "podman_image_store_bytes $3"
+                  echo "# HELP podman_image_store_reclaimable_bytes Portion of podman_image_store_bytes podman considers unused."
+                  echo "# TYPE podman_image_store_reclaimable_bytes gauge"
+                  echo "podman_image_store_reclaimable_bytes $4"
+                } > "$tmp"
+                chmod 0644 "$tmp"
+                mv "$tmp" "$out"
+              '';
+            };
 
-          timers.podman-image-prune = {
-            wantedBy = [ "timers.target" ];
-            timerConfig = {
-              # Placed after the `nixos-upgrade` window closes (04:40 plus
-              # up to 1h of jitter, modules/system/auto-rebuild.nix) and
-              # after any reboot it triggered has brought the containers
-              # back up. That way last night's superseded tag is reclaimed
-              # the same morning, and the freshly started containers
-              # already hold their new images. Also clear of the 03:00
-              # restic run and spierscraper's 04:05 (+15m) oneshot.
-              #
-              # Not Persistent: a missed run on a host that was down just
-              # happens the next morning, which is better than pruning at
-              # boot while the container units are still coming up.
-              OnCalendar = "*-*-* 06:30:00";
-              RandomizedDelaySec = "10m";
-              Unit = "podman-image-prune.service";
+            timers.podman-image-metrics = {
+              wantedBy = [ "timers.target" ];
+              timerConfig = {
+                # The store only moves on a pull or a prune, so 15m is plenty
+                # of resolution. PodmanImageMetricsStale allows an hour, i.e.
+                # roughly four missed runs.
+                OnBootSec = "5m";
+                OnUnitActiveSec = "15m";
+                Unit = "podman-image-metrics.service";
+              };
             };
           };
+        }
 
-          # Publish image store size as a node_exporter textfile metric.
-          # The root filesystem is already covered by FilesystemAlmostFull,
-          # but that fires late and does not say *why* — this attributes
-          # the growth, and PodmanImageStoreLarge catches a prune that has
-          # silently stopped reclaiming long before the disk rule would.
-          services.podman-image-metrics = {
-            description = "publish podman image store size to node_exporter textfile collector";
-            after = [ "podman.service" ];
-            serviceConfig = {
-              Type = "oneshot";
-              User = "root";
-              Environment = [
-                "PATH=${
-                  lib.makeBinPath [
-                    pkgs.podman
-                    pkgs.jq
-                    pkgs.coreutils
-                  ]
-                }"
-              ];
-            };
-            script = ''
-              set -eu
-              out=${textfileDir}/podman-images.prom
-              mkdir -p "$(dirname "$out")"
-
-              # `podman system df` reports sizes podman already tracks
-              # (~0.4s on a 125-image store); `du` over the overlay tree
-              # takes ~13s and is not worth putting on a timer. It is
-              # podman's own accounting, not a byte count of the
-              # directory — RawSize sums per-image sizes (a shared layer
-              # counted once per image) while the tree also holds
-              # container rw layers and metadata it does not report.
-              # Post-prune on hpp-1: RawSize 15 GB against 26 GB of
-              # /var/lib/containers/storage. Good for attribution and
-              # trend, not for exact space.
-              stats=$(podman system df --format json \
-                | jq -r '.[] | select(.Type == "Images") | "\(.Total) \(.Active) \(.RawSize) \(.RawReclaimable)"')
-              if [ -z "$stats" ]; then
-                echo "podman-image-metrics: podman system df reported no Images row" >&2
-                exit 1
-              fi
-              # shellcheck disable=SC2086
-              set -- $stats
-
-              tmp=$(mktemp -p "$(dirname "$out")" .podman-images.prom.XXXXXX)
-              {
-                echo "# HELP podman_images_total Images present in the local podman store."
-                echo "# TYPE podman_images_total gauge"
-                echo "podman_images_total $1"
-                echo "# HELP podman_images_active Images currently attached to a container."
-                echo "# TYPE podman_images_active gauge"
-                echo "podman_images_active $2"
-                echo "# HELP podman_image_store_bytes Summed size of images in the local podman store (shared layers counted per image)."
-                echo "# TYPE podman_image_store_bytes gauge"
-                echo "podman_image_store_bytes $3"
-                echo "# HELP podman_image_store_reclaimable_bytes Portion of podman_image_store_bytes podman considers unused."
-                echo "# TYPE podman_image_store_reclaimable_bytes gauge"
-                echo "podman_image_store_reclaimable_bytes $4"
-              } > "$tmp"
-              chmod 0644 "$tmp"
-              mv "$tmp" "$out"
-            '';
-          };
-
-          timers.podman-image-metrics = {
-            wantedBy = [ "timers.target" ];
-            timerConfig = {
-              # The store only moves on a pull or a prune, so 15m is plenty
-              # of resolution. PodmanImageMetricsStale allows an hour, i.e.
-              # roughly four missed runs.
-              OnBootSec = "5m";
-              OnUnitActiveSec = "15m";
-              Unit = "podman-image-metrics.service";
-            };
-          };
-        };
-      };
+        # `cleanStopExitStatus`, on the unit oci-containers generates.
+        {
+          systemd.services = lib.mapAttrs' (
+            name: app:
+            lib.nameValuePair config.virtualisation.oci-containers.containers.${name}.serviceName {
+              serviceConfig.SuccessExitStatus = app.cleanStopExitStatus;
+            }
+          ) (lib.filterAttrs (_: app: app.cleanStopExitStatus != [ ]) config.myContainerApp);
+        }
+      ];
     };
 }

@@ -45,6 +45,46 @@ Containerized apps' shared plumbing: per-app state dirs, the
 - **Default:** `{ }`
 - **Declared in:** [`modules/system/oci-containers.nix`](../../modules/system/oci-containers.nix)
 
+### `myContainerApp.<name>.capabilities`
+
+Capability names without `CAP_`. When set, the container
+runs with `--cap-drop=ALL` plus one `--cap-add` for each
+entry; null keeps podman's default set. An image whose
+root init signals an app running as another uid (e.g.
+tini forwarding SIGTERM after su-exec) needs `KILL`, or
+`podman stop` cannot reach the app.
+
+- **Type:** `null or (list of string matching the pattern [A-Z_]+)`
+- **Default:** `null`
+- **Example:**
+
+  ```nix
+  [
+    "CHOWN"
+    "KILL"
+  ]
+  ```
+- **Declared in:** [`modules/system/oci-containers.nix`](../../modules/system/oci-containers.nix)
+
+### `myContainerApp.<name>.cleanStopExitStatus`
+
+Exit statuses, besides 0, that the container's unit
+treats as a clean stop (`SuccessExitStatus`). Set 143
+when the app exits by re-raising the SIGTERM it was
+stopped with; otherwise a clean `systemctl stop` leaves
+the unit failed, which aborts a recovery restore.
+
+- **Type:** `list of 8 bit unsigned integer; between 0 and 255 (both inclusive)`
+- **Default:** `[ ]`
+- **Example:**
+
+  ```nix
+  [
+    143
+  ]
+  ```
+- **Declared in:** [`modules/system/oci-containers.nix`](../../modules/system/oci-containers.nix)
+
 ### `myContainerApp.<name>.containerPort`
 
 Port the app listens on inside the container. Defaults to `port`.
