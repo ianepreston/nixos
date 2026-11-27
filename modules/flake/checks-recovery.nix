@@ -27,34 +27,38 @@
         patchShebangs repo/scripts
       '';
       # Model of podman-bookorbit's stop path (#1122), built from the
-      # drill VM's real rendered config so it follows the app module. The
-      # image's root `tini -s --` forwards SIGTERM to the app, which runs as
-      # another uid; `--cap-drop=ALL` leaves only the `--cap-add`s. Here
-      # tini is the unit's main process (podman's conmon and catatonit only
-      # pass its status through), setpriv stands in for su-exec, and
+      # drill VM's published `myContainerApp.bookorbit` contribution so it
+      # follows the app module. The image's root `tini -s --` forwards
+      # SIGTERM to the app, which runs as another uid, with only
+      # `capabilities` (podman adds them after `--cap-drop=ALL`). Here tini
+      # is the unit's main process (podman's conmon and catatonit only pass
+      # its status through), setpriv stands in for su-exec, and
       # KillMode=mixed matches `podman stop` signalling only PID 1.
-      drill = inputs.self.nixosConfigurations.tests-server.config;
-      bookorbitOptions = drill.virtualisation.oci-containers.containers.bookorbit.extraOptions;
-      # Without --cap-drop=ALL the container keeps podman's default caps and
-      # this bounding set would no longer model it.
+      bookorbit = inputs.self.nixosConfigurations.tests-server.config.myContainerApp.bookorbit;
+      # Null would mean podman's default caps, which this bounding set
+      # would no longer model.
       bookorbitCaps =
-        assert lib.elem "--cap-drop=ALL" bookorbitOptions;
-        map (o: "CAP_${lib.removePrefix "--cap-add=" o}") (
-          lib.filter (lib.hasPrefix "--cap-add=") bookorbitOptions
-        );
+        assert bookorbit.capabilities != null;
+        map (c: "CAP_${c}") bookorbit.capabilities;
       containerInit =
-        { caps, successExitStatus }:
+        {
+          caps,
+          successExitStatus,
+          app ? "${pkgs.coreutils}/bin/sleep infinity",
+        }:
         {
           serviceConfig = {
             ExecStart = lib.concatStringsSep " " [
               "${pkgs.tini}/bin/tini -s --"
               "${pkgs.util-linux}/bin/setpriv --reuid=nobody --regid=nogroup --clear-groups"
-              "${pkgs.coreutils}/bin/sleep infinity"
+              app
             ];
             CapabilityBoundingSet = caps;
             NoNewPrivileges = true;
             KillMode = "mixed";
             SuccessExitStatus = successExitStatus;
+            # Stands in for podman's stop timeout (SIGKILL, exit 137).
+            TimeoutStopSec = 2;
           };
         };
       packages = with pkgs; [
@@ -96,12 +100,19 @@
                 # bookorbit as configured: stops cleanly.
                 recovery-init-app = containerInit {
                   caps = bookorbitCaps;
-                  successExitStatus = drill.systemd.services.podman-bookorbit.serviceConfig.SuccessExitStatus or [ ];
+                  successExitStatus = bookorbit.cleanStopExitStatus;
                 };
                 # bookorbit before #1122: stop returns 0, unit ends failed.
                 recovery-init-nokill = containerInit {
                   caps = lib.remove "CAP_KILL" bookorbitCaps;
                   successExitStatus = [ ];
+                };
+                # bookorbit as configured, but the app ignores SIGTERM: the
+                # clean-stop status must not hide a stop that times out.
+                recovery-init-hung = containerInit {
+                  caps = bookorbitCaps;
+                  successExitStatus = bookorbit.cleanStopExitStatus;
+                  app = "${pkgs.bash}/bin/bash -c \"trap '' TERM; exec ${pkgs.coreutils}/bin/sleep infinity\"";
                 };
               };
           };

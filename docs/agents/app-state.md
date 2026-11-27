@@ -109,8 +109,9 @@ botched restore. Override the default 200 / 30 retries / 2 s only when needed
 Every listed unit must reach `inactive` after `systemctl stop`; anything else,
 `failed` included, aborts the restore (#1017). If a clean stop leaves the
 unit `failed`, fix it in the app module: let the stop signal reach the app,
-and declare its clean-stop exit code in `SuccessExitStatus`. bookorbit
-(#1122) needs `--cap-add=KILL` for its root tini and accepts 143.
+and declare its clean-stop exit code. For a container that is
+`myContainerApp.<app>.capabilities` and `.cleanStopExitStatus`; bookorbit
+(#1122) needs `KILL` for its root tini and accepts 143.
 
 ## `restartUnits` goes on the template, not the secret
 

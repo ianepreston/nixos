@@ -27,9 +27,11 @@ OTHER = "recovery-other.service"
 BLOCKED = "recovery-blocked.service"
 MISSING = "recovery-missing.service"
 # Models of podman-bookorbit's init (#1122): root tini forwarding SIGTERM to
-# an app running as another uid, with and without CAP_KILL.
+# an app running as another uid, with and without CAP_KILL, and with an app
+# that ignores SIGTERM until the stop timeout kills it.
 INIT_APP = "recovery-init-app.service"
 INIT_NOKILL = "recovery-init-nokill.service"
+INIT_HUNG = "recovery-init-hung.service"
 SHAPES = ("volume", "pg", "sqlite")
 
 
@@ -267,6 +269,22 @@ esac
                         "show", INIT_NOKILL, "--property=ExecMainStatus", "--value"
                     ),
                     "1",
+                )
+            with self.subTest(shape=shape, unit=INIT_HUNG):
+                # SIGTERM is forwarded but ignored; the stop timeout kills
+                # the unit. Accepting 143 must not turn that into success.
+                self.start_init_model(INIT_HUNG)
+                self.assertNotEqual(self.restore(shape, (INIT_HUNG,)), 0)
+                self.assertIn(
+                    f"{INIT_HUNG} is failed after stop; aborting restore",
+                    self.output,
+                )
+                self.assert_no_restore_or_start()
+                self.assertEqual(
+                    self.real_systemctl(
+                        "show", INIT_HUNG, "--property=Result", "--value"
+                    ),
+                    "timeout",
                 )
 
     @unittest.skipIf(args.systemd, "Fault injection uses the simulated systemctl")
