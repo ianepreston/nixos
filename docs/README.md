@@ -8,7 +8,7 @@ restating it.
 | ---- | ---- | ----- |
 | Onboarding | [`README.md`](../README.md) | what this repo is, hosts, layout, the module and server-app patterns, the Task entry points, links onward |
 | Extension guidance | [`docs/server-apps.md`](server-apps.md) | conventions an app module follows (runtime, networking, NFS UIDs, volumes, secrets) |
-| Option contracts | [`docs/reference/options.md`](reference/options.md) | **generated** reference for the `my*` options the server configuration declares: type, default, description, declaring file (not yet `myLlamaCpp`, `myLlmMetrics`, `myBambuddy`, or the home-manager `myPi`/`myVibes`) |
+| Option contracts | [`docs/reference/options.md`](reference/options.md) | **generated** reference for the `my*` options the server configuration declares: type, default, description, declaring file. Covers the server configuration plus `myLlamaCpp` (NixOS side) and `myLlmMetrics`; not yet the Darwin-only `myLlamaCpp` options, `myBambuddy`, or the home-manager `myPi`/`myVibes` (see [Option reference scope](#option-reference-scope)) |
 | Operations | [`docs/runbooks/`](runbooks/) | operator procedures: restore, upgrades, bootstrap, activation, per-subsystem setup and their rationale |
 | Agent constraints | [`docs/agents/`](agents/), indexed from [`AGENTS.md`](../AGENTS.md) | rules agents must follow; short, imperative, linking to runbooks for procedure |
 | Agent workflows | [`skills/`](../skills/) | canonical multi-step workflows (`add-app`, `resolve-issue`, …); adapters under `.claude/` and `.agents/` only point at them |
@@ -60,3 +60,15 @@ keeps this layout honest:
 - the `options-reference` flake check fails when
   `docs/reference/options.md` differs from what the declarations generate.
   Regenerate with `task docs:options` and commit the result.
+
+## Option reference scope
+
+`docs/reference/options.md` is generated from the declarations of one fixture
+(the `tests-server` module set plus the `llama-cpp` and `llm-metrics` modules
+the server profiles do not import), so it never needs a secret, a live host or
+a heavy package. Out of scope for now, because each needs its own fixture
+context rather than an extra module in the server one: the Darwin-only
+`myLlamaCpp` options (`dataDirectory`, `piProvider`, `operator.prunePackage`),
+`myBambuddy`, and the home-manager `myPi` and `myVibes`. Read those
+declarations in their modules until the follow-up
+(#1130) lands.

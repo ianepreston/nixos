@@ -453,6 +453,48 @@ world-readable. It lives in `llm.yaml` rather than a per-host file because
 terra and both servers need it, and `llm.yaml` lists exactly the hosts that read
 a llama key.
 
+## Evaluating a model
+
+Model selection is decided per alias on one host. The published contract eval
+tooling reads (`myLlamaCpp.evalTargets`), the private fixtures layout and the
+design rationale are in the
+[`_llama-cpp` README](../../modules/system/_llama-cpp/README.md#evaluation-555);
+the end-to-end candidate workflow, including the privacy rule for fixture
+material, is the [`llm-eval` skill](../../skills/llm-eval/SKILL.md). The tasks
+it drives, each taking one host and one router name:
+
+- **`task llm:gate HOST=<host> ALIAS=<alias> [MODEL=<router name>]`**
+  is tier 0. It runs pass/fail probes of `MODEL` (default: the alias's
+  incumbent) against what `ALIAS` needs on that host:
+  - `tool-call`: a synthetic tool call comes back parseable and honours
+    the schema's enum.
+  - `tool-round-trip`: once the tool result is sent back, the model
+    answers with it.
+  - `image-input`: only checked for aliases that need images.
+  - `context`: the alias's full `contextTokens`, less room for the
+    answer, is filled and a needle placed early is recalled.
+  - `modalities`: what the server reports against the target.
+  - `vram`: the model's own llama-server child, measured with
+    `nvidia-smi` after the long request, against `residentBudgetMiB`.
+    It fails if the model is served at a smaller context than the
+    target, because the KV cache it would need wasn't allocated.
+
+  Every probe is synthetic, so the table it prints can go straight
+  into an issue. It needs no fixtures and exits non-zero on any failure.
+- **`task llm:eval HOST=<host> MODEL=<router name> TRIALS=3 [ALIAS=…] [FEATURE=…]`**
+  is tier 1. It replays the private fixtures and writes scored results
+  into the fixtures repo's `results/`. `ALIAS` limits the run to cases
+  whose `meta.toml` targets that alias. Per-case spread is about ±3
+  checks out of 40, so `TRIALS=3` is the minimum for a comparison.
+- **`task llm:eval:compare RUNS="<run dir> …" [PUBLIC=true]`** renders
+  runs side by side. Without `PUBLIC=true` the output is private: its
+  failed-check labels (`tags:must:<name>`) carry expected values.
+  `PUBLIC=true` reduces them to field and rule kind.
+- **`task llm:eval:audit FILE=<draft>`** fails if a draft comment or PR
+  body names any expected value. Run it before anything eval-derived
+  goes on GitHub, since hand-written prose is the one path `PUBLIC=true`
+  doesn't cover.
+
 ## Driving it from a coding agent
 
 ### Coding sandboxes

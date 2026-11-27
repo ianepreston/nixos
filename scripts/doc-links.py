@@ -28,7 +28,9 @@ from urllib.parse import unquote
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 HEADING = re.compile(r"^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
 SETEXT = re.compile(r"^ {0,3}(=+|-+)\s*$")
-INLINE_CODE = re.compile(r"(`+)(.+?)\1", re.S)
+# A code span cannot cross a blank line (paragraph boundary), so a stray
+# backtick must not blank the prose up to a later one and hide real links.
+INLINE_CODE = re.compile(r"(`+)((?:(?!\n[ \t]*\n).)+?)\1", re.S)
 # [text](target) and ![alt](target), possibly spanning lines. The text may
 # hold one level of brackets, e.g. an image inside a link; it is scanned too.
 INLINE_LINK = re.compile(

@@ -27,6 +27,7 @@ it is in [server app conventions](../server-apps.md) and the
 - [Single sign-on](#single-sign-on): `myAuthentik`
 - [Routing and dashboard](#routing-and-dashboard): `myCaddy`, `myHomepage`
 - [Observability](#observability): `myObservability`
+- [Local LLM inference](#local-llm-inference): `myLlamaCpp`, `myLlmMetrics`
 - [Messaging](#messaging): `myMosquitto`
 - [App-owned options](#app-owned-options): `myOmnigent`, `myValheim`
 
@@ -905,7 +906,8 @@ a bypassed path lands on authentik instead of
 reaching the upstream at all.
 
 The app module is responsible for stacking the
-env file onto caddy — see modules/apps/llm-terra.nix.
+env file onto caddy, as the app module that front-ends the
+upstream does.
 
 - **Type:** `null or string`
 - **Default:** `null`
@@ -917,7 +919,8 @@ env file onto caddy — see modules/apps/llm-terra.nix.
 Host Caddy proxies to. Defaults to localhost — nearly
 every app runs on the same box as caddy. Set it to
 front a service on *another* machine that has no
-caddy/authentik of its own (terra's llama-server),
+caddy/authentik of its own (for example a workstation's
+llama-server),
 so that machine gets TLS + SSO without replicating
 the whole server stack. The hop is plaintext HTTP
 over the LAN, so only point this at a backend with
@@ -1330,6 +1333,403 @@ literals. Read-only: this is a shared contract, not a per-host knob.
 - **Default:** `"/var/lib/node-exporter-textfile-collector"`
 - **Read-only:** set by the declaring module
 - **Declared in:** [`modules/system/observability-options.nix`](../../modules/system/observability-options.nix)
+
+## Local LLM inference
+
+The llama.cpp router a host serves and the metrics endpoints a host publishes for routers; procedures are in the [local LLM runbook](../runbooks/local-llm.md).
+
+### `myLlamaCpp.allowedClients`
+
+Source addresses (iptables `-s` syntax — a bare IPv4 address
+or a CIDR) allowed to reach `port`. Empty (the default) opens
+nothing, which is correct for a loopback-only bind. Prefer
+listing the single reverse-proxy host over a whole subnet: the
+hop is plaintext HTTP and llama-server's own `--api-key` is
+the only thing in front of it.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Example:**
+
+  ```nix
+  [
+    "192.0.2.11"
+  ]
+  ```
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.cudaCapabilities`
+
+CUDA compute capabilities to compile kernels for — exactly the
+host's GPU, nothing else. RTX 5080 (Blackwell) is "12.0",
+RTX 3070 (Ampere) is "8.6". Getting this wrong doesn't fail
+the build; it fails at runtime with no usable kernels.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Example:**
+
+  ```nix
+  [
+    "12.0"
+  ]
+  ```
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.enable`
+
+Whether to enable llama.cpp's on-demand model router.
+
+- **Type:** `boolean`
+- **Default:** `false`
+- **Example:** `true`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.evalTargets`
+
+Read-only evaluation-facing export for local tooling. Combines the
+declared role/budget with the active model's sizing assumptions.
+
+- **Type:** `attribute set`
+- **Default:** _computed from other options; see the declaration_
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.evaluation.residentBudgetMiB`
+
+GPU memory available to a candidate after this host's desktop
+or NVENC workload has taken its share. This is an evaluation
+budget, not nominal card capacity.
+
+- **Type:** `positive integer, meaning >0`
+- **Default:** none (required)
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.evaluation.targets`
+
+Alias-level evaluation roles. The radar derives active context,
+KV types and offload settings, then consumes only evalTargets.
+
+- **Type:** `attribute set of (submodule)`
+- **Default:** `{ }`
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.evaluation.targets.<name>.modalities`
+
+Input modalities a candidate must support for this alias.
+
+- **Type:** `list of (one of "text", "image")`
+- **Default:**
+
+  ```nix
+  [
+    "text"
+  ]
+  ```
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.evaluation.targets.<name>.role`
+
+The job this alias is evaluated to replace.
+
+- **Type:** `one of "generalist", "coding", "vision"`
+- **Default:** none (required)
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.extraFlags`
+
+Additional llama-server flags appended after the ones this
+module builds.
+
+Service-wide only. llama.cpp merges the router's argv into
+every child at the *highest* precedence, above both the
+per-model preset section and the preset's global section — so
+a model-shaped flag here (`-c`, `-ngl`, `-ctk`) silently wins
+over every `models.<name>` entry. Put those in `models`.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Example:**
+
+  ```nix
+  [
+    "--flash-attn"
+    "on"
+  ]
+  ```
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.listenAddress`
+
+Bind address. Leave at loopback when a reverse proxy on the
+same host fronts the service. NixOS may widen it in combination
+with `allowedClients`, which decides who can reach the port.
+Darwin requires 127.0.0.1.
+
+- **Type:** `string`
+- **Default:** `"127.0.0.1"`
+- **Example:** `"0.0.0.0"`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models`
+
+The models this host's router serves, keyed by the
+`<hf-repo>:<quant-tag>` string llama-server uses as both the
+`-hf` argument and the model's routing name.
+
+The key has to be exactly that string. The router derives the
+same name independently when it scans `LLAMA_CACHE`, and the
+two are merged by name — a key in any other shape produces a
+*second*, unconfigured entry alongside the cached one, and a
+client can reach it with llama.cpp's defaults instead of the
+sizing below.
+
+- **Type:** `attribute set of (submodule)`
+- **Default:** none (required)
+- **Example:**
+
+  ```nix
+  {
+    "Qwen/Qwen3-VL-8B-Instruct-GGUF:Q4_K_M" = {
+      aliases = [ "vision" ];
+      ctxSize = 98304;
+    };
+  }
+  ```
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.aliases`
+
+Extra names this model answers to, in addition to its
+`<repo>:<tag>` key. Point clients at a role name here
+rather than the GGUF's name, so swapping the model
+underneath is a change to this file and not to every
+client. Must not collide with another model's key or
+aliases; llama-server refuses to start if they do.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Example:**
+
+  ```nix
+  [
+    "vision"
+  ]
+  ```
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.cacheTypeK`
+
+KV cache data type for keys (`-ctk`). Quantizing the
+cache is what buys context on a card the model has
+already mostly filled: `q8_0` halves the per-token KV
+cost for a few percent of generation throughput and a
+quality hit far smaller than quantizing weights
+further. Set both this and `cacheTypeV` — llama.cpp
+takes them separately and there is no reason to split
+them here.
+
+- **Type:** `one of "f32", "f16", "bf16", "q8_0", "q5_0", "q5_1", "q4_0", "q4_1", "iq4_nl"`
+- **Default:** `"f16"`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.cacheTypeV`
+
+KV cache data type for values (`-ctv`). See `cacheTypeK`.
+
+- **Type:** `one of "f32", "f16", "bf16", "q8_0", "q5_0", "q5_1", "q4_0", "q4_1", "iq4_nl"`
+- **Default:** `"f16"`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.ctxSize`
+
+Context window in tokens (`-c`). Sized per model *and*
+per host: the KV cache for this context has to fit in
+whatever VRAM the model weights leave behind. Only one
+model is resident at a time (`--models-max 1`), so
+each is budgeted against the whole card, not a share.
+
+- **Type:** `positive integer, meaning >0`
+- **Default:** none (required)
+- **Example:** `32768`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.nCpuMoeLayers`
+
+For a mixture-of-experts model, how many of its layers
+keep their *expert* weights in system RAM (`-ncmoe`).
+Zero (the default) is "none", which is the only
+correct value for a dense model — it has no experts to
+move.
+
+This is a different lever from `nGpuLayers` and they
+compose: `-ngl 99 -ncmoe N` keeps attention and the KV
+cache for every layer on the GPU while the first N
+layers' expert FFN weights live in host RAM. That
+split is what makes a model whose weights exceed the
+card usable at all — an MoE activates a small
+fraction of its parameters per token, so the traffic
+over PCIe is far smaller than the resident size
+suggests, whereas moving whole layers with `-ngl`
+would drag the KV cache off the card with them.
+
+Cost is paid twice: throughput drops monotonically as
+N rises, and the offloaded weights occupy host RAM for
+as long as the model is loaded (~14 GB for
+Qwen3-Coder-30B at N=40; the local LLM runbook has the
+sizing numbers). That second cost is gentler than it looks — the
+experts are an mmap of the GGUF, so almost all of it
+is reclaimable page cache rather than committed
+memory — but the throughput above assumes it stays
+resident, and `sleepIdleSeconds` hands back VRAM, not
+this.
+
+- **Type:** `unsigned integer, meaning >=0`
+- **Default:** `0`
+- **Example:** `40`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.models.<name>.nGpuLayers`
+
+Layers offloaded to the GPU (`-ngl`). The default is
+the "everything" idiom — any value at or above the
+model's layer count offloads the whole model. Lower it
+only to deliberately keep layers on the CPU because
+the model doesn't fit.
+
+- **Type:** `unsigned integer, meaning >=0`
+- **Default:** `99`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.operator.apiKeyFile`
+
+Runtime credential file on the serving host; never its contents.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.apiKeyFormat`
+
+Credential file encoding.
+
+- **Type:** `one of "env", "raw"`
+- **Default:** none (required)
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.baseUrl`
+
+OpenAI API base URL on the serving host.
+
+- **Type:** `string`
+- **Default:** `"http://127.0.0.1:8080/v1"`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.cacheDirectory`
+
+Persistent GGUF cache directory on the serving host.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.models`
+
+Configured routing names, including idle models.
+
+- **Type:** `list of string`
+- **Default:** `[ ]`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.platform`
+
+Where operator commands run.
+
+- **Type:** `one of "linux", "darwin"`
+- **Default:** none (required)
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.operator.port`
+
+Loopback API port on the serving host.
+
+- **Type:** `16 bit unsigned integer; between 0 and 65535 (both inclusive)`
+- **Default:** `8080`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/_llama-cpp/operator.nix`](../../modules/system/_llama-cpp/operator.nix)
+
+### `myLlamaCpp.port`
+
+TCP port llama-server listens on. Also the port a Caddy route
+(local or cross-host) reverse-proxies to.
+
+Only the router binds this. Each loaded model gets its own
+child process on an ephemeral loopback port, which the router
+proxies to — those are not reachable from off-host, and they
+inherit `LLAMA_API_KEY` from the router's environment, so they
+are not an unauthenticated side door either.
+
+- **Type:** `16 bit unsigned integer; between 0 and 65535 (both inclusive)`
+- **Default:** `8080`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlamaCpp.sleepIdleSeconds`
+
+Idle seconds after which a loaded model sleeps and hands its
+VRAM back (`--sleep-idle-seconds`). The point on a machine
+that is also used for something else (a workstation that
+games, a server that transcodes); the next request pays a
+reload.
+
+Passed to the router, which is inherited by every child, so it
+is uniform across a host's models by construction. It is a
+separate mechanism from `--models-max` eviction and both
+apply: a sleeping model still counts as loaded, so asking for
+a different model unloads the sleeper outright rather than
+waiting for it to wake.
+
+- **Type:** `positive integer, meaning >0`
+- **Default:** none (required)
+- **Example:** `600`
+- **Declared in:** [`modules/system/_llama-cpp/common.nix`](../../modules/system/_llama-cpp/common.nix)
+
+### `myLlmMetrics.endpoints`
+
+llama-server routers this host should publish metrics for,
+keyed by the name that lands in the `llama_server` label.
+Contributed by the route modules that already know an
+endpoint exists — `llm.nix` for this host's own router,
+the route module for a remote router.
+
+Reachability is the only requirement: nothing here has to
+run locally, and an endpoint that is down publishes
+`llama_server_up 0` rather than failing the run.
+
+- **Type:** `attribute set of (submodule)`
+- **Default:** `{ }`
+- **Declared in:** [`modules/apps/llm-metrics.nix`](../../modules/apps/llm-metrics.nix)
+
+### `myLlmMetrics.endpoints.<name>.host`
+
+Host the llama-server router listens on, as this host reaches it.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Declared in:** [`modules/apps/llm-metrics.nix`](../../modules/apps/llm-metrics.nix)
+
+### `myLlmMetrics.endpoints.<name>.port`
+
+Port the llama-server router listens on.
+
+- **Type:** `16 bit unsigned integer; between 0 and 65535 (both inclusive)`
+- **Default:** none (required)
+- **Declared in:** [`modules/apps/llm-metrics.nix`](../../modules/apps/llm-metrics.nix)
 
 ## Messaging
 

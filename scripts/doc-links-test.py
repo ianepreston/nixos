@@ -82,6 +82,16 @@ class LinkTest(unittest.TestCase):
             ["a.md:8: #not-a-heading: no heading `#not-a-heading` in a.md"],
         )
 
+    def test_stray_backticks_in_separate_paragraphs(self):
+        # A lone backtick in one paragraph and another in a later one are not
+        # a code span, so the link between them is still checked.
+        self.write("a.md", "a stray ` here\n\n[x](gone.md)\n\nand another ` there\n")
+        self.assertEqual(self.problems(), ["a.md:3: gone.md: no such file"])
+
+    def test_multiline_code_span_within_a_paragraph(self):
+        self.write("a.md", "`span that\n[x](gone.md) wraps` done\n")
+        self.assertEqual(self.problems(), [])
+
     def test_outside_repository(self):
         self.write("a.md", "[x](../../etc/passwd)\n")
         self.assertEqual(
