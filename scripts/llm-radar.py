@@ -8,22 +8,30 @@ only a primary Hugging Face config and an exact GGUF artifact can reach a draft.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import html.parser
+import http.client
+import io
 import json
+import math
 import re
 import subprocess
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+# The SWE-bench leaderboard includes per-instance data and is already several
+# MiB; cap all source and evidence responses while allowing it room to grow.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
 SOURCES = {
-    "livebench": "https://livebench.ai",
+    "livebench": "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/src/App.js",
     "aider-polyglot": "https://aider.chat/docs/leaderboards/",
-    "swe-bench-verified": "https://www.swebench.com/",
+    "swe-bench-verified": "https://raw.githubusercontent.com/SWE-bench/swe-bench.github.io/master/data/leaderboards.json",
     "bfcl": "https://gorilla.cs.berkeley.edu/leaderboard.html",
-    "ocrbench-v2": "https://ocrbench.github.io/",
-    "olmocr-bench": "https://olmocr.ai/",
+    "ocrbench-v2": "https://huggingface.co/spaces/ling99/OCRBench-v2-leaderboard/raw/main/OCRBench_en.csv",
+    "olmocr-bench": "https://raw.githubusercontent.com/allenai/olmocr/main/README.md",
 }
 SOURCE_POLICIES = {
     "livebench": {"role": "generalist", "limit": 5, "scoreFloor": 50.0},
@@ -93,12 +101,18 @@ class TableText(html.parser.HTMLParser):
 
 def fetch(url: str) -> Any:
     request = urllib.request.Request(url, headers={"User-Agent": "nixos-llm-radar/1"})
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 -- fixed HTTPS sources
-        return (
-            json.load(response)
-            if "json" in response.headers.get("Content-Type", "")
-            else response.read().decode()
-        )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 -- fixed HTTPS sources
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise OSError(f"response exceeds {MAX_RESPONSE_BYTES}-byte limit")
+            return (
+                json.loads(body)
+                if "json" in response.headers.get("Content-Type", "")
+                else body.decode()
+            )
+    except (OSError, http.client.HTTPException) as exc:
+        raise OSError(f"{url}: {exc}") from exc
 
 
 def fetch_json(url: str) -> Any:
@@ -108,7 +122,12 @@ def fetch_json(url: str) -> Any:
 
 def canonical_family(name: str) -> str:
     """Collapse provider/template variants without guessing an HF repository."""
-    name = re.sub(r"\([^)]*\)", "", name.lower())
+    name = name.lower()
+    name = re.sub(
+        r"\((?:fc(?: thinking)?|prompt|chat|reasoner|diff|thinking|no think|api)\)",
+        "",
+        name,
+    )
     name = re.sub(r"\b(chat|reasoner|diff|no think|thinking|api)\b", "", name)
     return " ".join(re.findall(r"[a-z0-9]+", name))
 
@@ -123,6 +142,244 @@ def percent(value: str) -> float | None:
     return float(match.group(1)) if match else None
 
 
+def number(value: Any) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) and 0 <= score <= 100 else None
+
+
+def lead(
+    source: str, url: str, name: str, label: str, score: float, **evidence: Any
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "sourceUrl": url,
+        "family": name,
+        "canonicalFamily": canonical_family(name),
+        "role": SOURCE_POLICIES[source]["role"],
+        "publishedScores": {label: score},
+        **evidence,
+    }
+
+
+def csv_rows(data: Any, required: set[str]) -> list[dict[str, str]]:
+    if not isinstance(data, str):
+        raise ValueError("expected CSV text")
+    reader = csv.DictReader(io.StringIO(data))
+    if not reader.fieldnames or not required.issubset(reader.fieldnames):
+        raise ValueError(f"CSV missing columns: {', '.join(sorted(required))}")
+    return list(reader)
+
+
+def livebench_leads(data: Any, categories: Any, url: str) -> list[dict[str, Any]]:
+    if (
+        not isinstance(categories, dict)
+        or not categories
+        or not all(
+            isinstance(cols, list) and cols and all(isinstance(c, str) for c in cols)
+            for cols in categories.values()
+        )
+    ):
+        raise ValueError("invalid LiveBench category definitions")
+    columns = {c for cols in categories.values() for c in cols}
+    rows = csv_rows(data, {"model"} | columns)
+    leads = []
+    for row in rows:
+        averages = []
+        for cols in categories.values():
+            values = [v for c in cols if (v := number(row.get(c))) is not None]
+            if not values:
+                break
+            averages.append(sum(values) / len(values))
+        if row.get("model") and len(averages) == len(categories):
+            # The website averages category means, not the individual tasks.
+            score = round(sum(averages) / len(averages), 2)
+            leads.append(
+                lead("livebench", url, row["model"], "LiveBench global average", score)
+            )
+    if not leads:
+        raise ValueError("no model has a scored value in every LiveBench category")
+    return leads
+
+
+def swe_leads(data: Any, url: str) -> list[dict[str, Any]]:
+    if not isinstance(data, dict) or not isinstance(data.get("leaderboards"), list):
+        raise ValueError("missing leaderboards array")
+    boards = [
+        b
+        for b in data["leaderboards"]
+        if isinstance(b, dict) and b.get("name") == "Verified"
+    ]
+    if len(boards) != 1 or not isinstance(boards[0].get("results"), list):
+        raise ValueError("missing unique Verified results")
+    leads = []
+    valid = 0
+    for row in boards[0]["results"]:
+        if not isinstance(row, dict) or not isinstance(row.get("model_display"), str):
+            continue
+        score = number(row.get("resolved"))
+        if score is None or not isinstance(row.get("os_model"), bool):
+            continue
+        valid += 1
+        tags = row.get("tags", [])
+        model_tags = (
+            [t[7:] for t in tags if isinstance(t, str) and t.startswith("Model: ")]
+            if isinstance(tags, list)
+            else []
+        )
+        if not row["os_model"] or len(model_tags) > 1:
+            continue
+        name = (
+            model_tags[0].rstrip("/").rsplit("/", 1)[-1]
+            if model_tags
+            else row["model_display"]
+        )
+        if name and "+" not in name:
+            leads.append(
+                lead(
+                    "swe-bench-verified",
+                    url,
+                    name,
+                    "SWE-bench Verified resolved",
+                    score,
+                    agent=row.get("agent"),
+                    submission=row.get("name"),
+                )
+            )
+    if not valid:
+        raise ValueError(
+            "no Verified rows with model, resolved score and open-model flag"
+        )
+    return leads
+
+
+def bfcl_leads(data: Any, url: str) -> list[dict[str, Any]]:
+    rows = csv_rows(data, {"Model", "Overall Acc"})
+    leads = []
+    for row in rows:
+        score = percent(row.get("Overall Acc", ""))
+        if row.get("Model") and score is not None and number(score) is not None:
+            leads.append(
+                lead("bfcl", url, row["Model"], "BFCL v4 overall accuracy", score)
+            )
+    if not leads:
+        raise ValueError("no BFCL rows with model and overall accuracy")
+    return leads
+
+
+def ocrbench_leads(data: Any, url: str) -> list[dict[str, Any]]:
+    rows = csv_rows(data, {"Model", "Open Source", "Average Score"})
+    leads = []
+    valid = 0
+    for row in rows:
+        score = number(row.get("Average Score"))
+        if (
+            row.get("Model")
+            and score is not None
+            and row.get("Open Source") in {"Yes", "No"}
+        ):
+            valid += 1
+            if row["Open Source"] == "Yes":
+                leads.append(
+                    lead(
+                        "ocrbench-v2",
+                        url,
+                        row["Model"],
+                        "OCRBench v2 English average",
+                        score,
+                    )
+                )
+    if not valid:
+        raise ValueError(
+            "no OCRBench English rows with model, score and open-source flag"
+        )
+    return leads
+
+
+def olmocr_leads(data: Any, url: str) -> list[dict[str, Any]]:
+    if (
+        not isinstance(data, str)
+        or "### Benchmark" not in data
+        or "### Installation" not in data
+    ):
+        raise ValueError("olmOCR benchmark section missing")
+    section = data.split("### Benchmark", 1)[1].split("### Installation", 1)[0]
+    parser = TableText()
+    parser.feed(section)
+    headers = [
+        row
+        for row in parser.rows
+        if len(row) == 10 and row[0] == "" and row[-1] == "Overall"
+    ]
+    if len(headers) != 1:
+        raise ValueError("olmOCR benchmark table headers changed")
+    leads = []
+    for row in parser.rows:
+        if len(row) != 10 or not row[0]:
+            continue
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)±(?:\d+(?:\.\d+)?|\?)", row[-1])
+        score = number(match.group(1)) if match else None
+        if score is not None and not re.search(r"\bAPI\b", row[0], re.IGNORECASE):
+            leads.append(
+                lead(
+                    "olmocr-bench",
+                    url,
+                    row[0].rstrip("*"),
+                    "olmOCR-Bench overall",
+                    score,
+                )
+            )
+    if not leads:
+        raise ValueError("no olmOCR overall scored rows")
+    return leads
+
+
+def source_leads(name: str, url: str) -> list[dict[str, Any]]:
+    data = fetch(url)
+    if name == "livebench":
+        if not isinstance(data, str):
+            raise ValueError("LiveBench site configuration is not text")
+        match = re.search(r"useState\(['\"](\d{4}-\d{2}-\d{2})['\"]\)", data)
+        if not match:
+            raise ValueError("LiveBench default release date missing")
+        date = match.group(1).replace("-", "_")
+        base = "https://raw.githubusercontent.com/LiveBench/livebench.github.io/main/public"
+        scores_url = f"{base}/table_{date}.csv"
+        return livebench_leads(
+            fetch(scores_url), fetch_json(f"{base}/categories_{date}.json"), scores_url
+        )
+    if name == "swe-bench-verified":
+        return swe_leads(json.loads(data) if isinstance(data, str) else data, url)
+    if name == "bfcl":
+        if not isinstance(data, str) or not re.search(
+            r"Berkeley Function Calling Leaderboard \(BFCL\) V4\b", data
+        ):
+            raise ValueError("BFCL v4 leaderboard identity missing or changed")
+        scores_url = "https://gorilla.cs.berkeley.edu/data_overall.csv"
+        return bfcl_leads(fetch(scores_url), scores_url)
+    if name == "ocrbench-v2":
+        return ocrbench_leads(data, url)
+    if name == "olmocr-bench":
+        return olmocr_leads(data, url)
+    if name == "aider-polyglot":
+        if not isinstance(data, str):
+            raise ValueError("Aider page is not HTML")
+        parser = TableText()
+        parser.feed(data)
+        if not any(
+            len(row) >= 3 and row[1:3] == ["Model", "Percent correct"]
+            for row in parser.rows
+        ):
+            raise ValueError("Aider model and percent-correct headers missing")
+        leads = aider_leads(parser.rows, name, url)
+        if not leads:
+            raise ValueError("no Aider rows with model and percent-correct score")
+        return leads
+    raise ValueError("no adapter for source")
+
+
 def aider_leads(rows: list[list[str]], source: str, url: str) -> list[dict[str, Any]]:
     """Aider's model and score are its second and third table columns."""
     leads = []
@@ -130,14 +387,15 @@ def aider_leads(rows: list[list[str]], source: str, url: str) -> list[dict[str, 
         if len(row) < 3 or row[1] == "Model":
             continue
         score = percent(row[2])
-        if score is None or not likely_open_weight(row[1]):
+        if score is None or number(score) is None or not row[1]:
             continue
         leads.append(
             {
                 "source": source,
                 "sourceUrl": url,
                 "family": row[1],
-                "canonicalFamily": canonical_family(row[1]),
+                # Keep Aider's pre-existing family keys and shortlist dedupe.
+                "canonicalFamily": canonical_family(re.sub(r"\([^)]*\)", "", row[1])),
                 "role": SOURCE_POLICIES[source]["role"],
                 "publishedScores": {"Aider Polyglot": score},
                 "evidence": row,
@@ -152,7 +410,7 @@ def shortlist(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for lead in leads:
         policy = SOURCE_POLICIES[lead["source"]]
         score = next(iter(lead["publishedScores"].values()))
-        if score < policy["scoreFloor"]:
+        if score < policy["scoreFloor"] or not likely_open_weight(lead["family"]):
             continue
         family = lead["canonicalFamily"]
         current = by_source.setdefault(lead["source"], {}).get(family)
@@ -176,8 +434,18 @@ def collect() -> list[dict[str, Any]]:
     raw_leads = []
     for name, url in SOURCES.items():
         try:
-            page = fetch(url)
-        except Exception as exc:  # source breakage is an expected non-fatal outcome
+            adapter_leads = source_leads(name, url)
+        except (ValueError, TypeError, KeyError, csv.Error) as exc:
+            report.append(
+                {
+                    "source": name,
+                    "url": url,
+                    "status": "unsupported",
+                    "detail": str(exc),
+                }
+            )
+            continue
+        except OSError as exc:
             report.append(
                 {
                     "source": name,
@@ -187,19 +455,14 @@ def collect() -> list[dict[str, Any]]:
                 }
             )
             continue
-        parser = TableText()
-        parser.feed(page if isinstance(page, str) else json.dumps(page))
-        adapter_leads = (
-            aider_leads(parser.rows, name, url) if name == "aider-polyglot" else []
-        )
         raw_leads.extend(adapter_leads)
-        if not adapter_leads:
+        if not shortlist(adapter_leads):
             report.append(
                 {
                     "source": name,
                     "url": url,
                     "status": "no-shortlist",
-                    "detail": "no supported scored rows from this source adapter",
+                    "detail": "source parsed but no rows passed the open-weight and score filters",
                 }
             )
     return report + shortlist(raw_leads)
@@ -403,6 +666,8 @@ def radar(
                 {
                     "source": candidate.get("source", "unknown"),
                     "reason": candidate["status"],
+                    "detail": candidate.get("detail", ""),
+                    "url": candidate.get("url", ""),
                 }
             )
             continue

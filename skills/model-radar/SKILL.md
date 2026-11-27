@@ -21,11 +21,29 @@ until it has all of:
 - the source URL and published score that make it worth considering; and
 - `config.json` content sufficient for the radar's KV calculation.
 
-The collector admits only likely open-weight, standalone families above each
-source's role-specific score floor, deduplicates family/template variants, and
-keeps the top five per source and role. A source whose page no longer exposes a
-supported scored table is reported as `no-shortlist`, never silently treated as
-an empty leaderboard.
+The collector uses these publisher sources and scores:
+
+- LiveBench: the site's default release CSV and category definitions, with the
+  site's category-weighted global average (`generalist`).
+- Aider Polyglot: the published percent-correct table (`coding`).
+- SWE-bench Verified: the official leaderboard JSON, resolved percentage for
+  open-model submissions (`coding`). The score includes the named agent and
+  its harness; multi-model submissions are excluded.
+- BFCL v4: the leaderboard's overall accuracy CSV (`generalist`); prompting and
+  function-calling variants may differ.
+- OCRBench v2: the publisher's English-subset average CSV (`vision`); this is
+  not the Chinese-subset score.
+- olmOCR-Bench: AllenAI's benchmark table and overall score (`vision`). These
+  are document-processing system results; the olmOCR row identifies a pipeline
+  release, not necessarily a unique model revision.
+
+The collector applies the existing likely-open-weight name heuristic and score
+floors, deduplicates family/template variants, and keeps the top five per
+source and role. These are leads, not proof that a model is open or runnable:
+verify the exact weights, revision, availability, and benchmark setup before
+promotion. `unavailable` means a fetch failed; `unsupported` means the source
+format or scored rows changed; `no-shortlist` means it parsed but no row passed
+the existing filters. These states and reasons appear in both local reports.
 
 Place the reviewed records in a local, disposable JSON file. Its top level is
 an array; each record uses this shape:
