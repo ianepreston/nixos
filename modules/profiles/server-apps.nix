@@ -49,7 +49,6 @@
         matter-server
         manyfold
         miniflux
-        minuspod
         mylar3
         # Imported everywhere but off until a host sets `myOmnigent.enable`
         # (hpp-1 as dev, amos1 as prod); see modules/apps/omnigent.nix.
@@ -79,7 +78,9 @@
       # Apps that ship only on dev-environment servers. Promoting one to
       # prod is a move into `commonApps` (kapowarr, readeck and
       # ytdlp-web-player were removed from here in #700).
-      devOnlyApps = with inputs.self.modules.nixos; [ ];
+      devOnlyApps = with inputs.self.modules.nixos; [
+        minuspod-cleanup
+      ];
 
       # Apps that ship only on prod-environment servers — the mirror of
       # `devOnlyApps`, for things whose subject only exists on prod.
@@ -114,6 +115,7 @@
       # above, gated on `myValheim.enable`, with the backend and port
       # per-host settings.
       prodOnlyApps = with inputs.self.modules.nixos; [
+        minuspod
         omada
         omada-metrics
       ];

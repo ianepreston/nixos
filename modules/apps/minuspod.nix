@@ -285,4 +285,10 @@
 
       mySqliteQuiesce.apps.minuspod.databases = [ "${stateDir}/podcast.db" ];
     };
+
+  flake.modules.nixos.minuspod-cleanup = {
+    # The dev profile retired MinusPod. Apply the cleanup only there because
+    # the production forward-auth blueprint still manages these objects.
+    myAuthentik.extraBlueprints = [ ./_minuspod/cleanup-blueprints ];
+  };
 }

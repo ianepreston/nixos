@@ -1,0 +1,13 @@
+---
+version: 1
+metadata:
+  name: minuspod-cleanup
+entries:
+  - model: authentik_core.application
+    state: absent
+    identifiers:
+      slug: minuspod
+  - model: authentik_providers_proxy.proxyprovider
+    state: absent
+    identifiers:
+      name: minuspod
