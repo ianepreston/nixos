@@ -145,7 +145,8 @@
         # the data-dir ownership check (see myAppState below) keeping the web
         # unit down. /api/status/ would also cover redis and celery, but it
         # needs a token.
-        health.url = "http://127.0.0.1:${toString port}/accounts/login/";
+        # Paperless accepts localhost in Django’s allowed hosts.
+        health.url = "http://localhost:${toString port}/accounts/login/";
       };
 
       # The 3.x package needs the 3.x module (see the header comment).
