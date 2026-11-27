@@ -21,24 +21,18 @@ one model without a config edit and a rebuild — which matters because
 there is no single best model per host (see #517/#518/#524: vision and
 generalist capability do not fit in one GGUF that fits these cards).
 
-Three things follow from the mechanism and are worth knowing before
-editing this file:
-
-**The `model` field is mandatory and exact.** A request with no `model`
-gets `400 model name is missing from the request`; an unrecognised name
-gets `400 model 'x' not found`. Single-model mode ignored the field
-entirely, so any client that sent a placeholder ("gpt-3.5-turbo") stops
-working. `aliases` exists for this: it registers extra router-level
-names for a model, so a client can be pointed at a stable role name
-("vision") that survives swapping the GGUF underneath it.
+The operator-facing contract (the mandatory, exact `model` field, `aliases` as
+the stable name to point clients at, swap-on-demand and its measured cost)
+is owned by the runbook's
+[Router mode](../../../docs/runbooks/local-llm.md#router-mode-one-model-at-a-time) section. What follows is
+the mechanism behind it that explains odd wiring in this module.
 
 **The cache is a model source, not just storage.** The router always
 enumerates `LLAMA_CACHE` in addition to the preset, deriving a name of
-`<repo>:<TAG>` per cached GGUF. So a leftover model from a previous
-config still shows up in `/v1/models` and is still routable — with only
-llama.cpp defaults applied, since no preset section names it. Keeping
-the cache pruned (`task llm:models:prune`) is therefore a correctness
-concern here, not just a disk one.
+`<repo>:<TAG>` per cached GGUF, so keeping the cache pruned is a
+correctness concern (the
+[runbook](../../../docs/runbooks/local-llm.md#model-files-are-not-nixs-problem) owns the prune
+procedure).
 
 A pruned cache is not sufficient, though, because that `<TAG>` is
 derived from the *filename* rather than from whatever `-hf` asked for:
@@ -62,52 +56,27 @@ the router would silently override every model's `ctxSize`. Anything
 model-shaped must live in `models.<name>`; only genuinely service-wide
 flags belong in `extraFlags`.
 
-`--models-max` is pinned to 1 below rather than exposed as an option:
-on the Linux hosts that run this, no two configured models fit in VRAM at
-once (terra ~56 GB of models against a 16.3 GB card, amos1 12.4 GB
-against 8.0 GB — see #524). This is deliberately swap-on-demand, not
-concurrent serving. Measured swap cost on terra's NVMe is 3-4 s, cold
-page cache included, so the trade is cheap.
+`--models-max` is pinned to 1 rather than exposed as an option: on the
+Linux hosts that run this, no two configured models fit in VRAM at once
+(see #524), so this is deliberately swap-on-demand, not concurrent serving.
+The measured costs are in the runbook. Swapping is not uniformly cheap,
+though: a model with `nCpuMoeLayers` set also has to stream its offloaded
+expert weights back into host RAM, so terra's `code` is the slow one to
+bring up.
 
-Swapping is not uniformly cheap across the set, though: a model with
-`nCpuMoeLayers` set also has to stream its offloaded expert weights
-back into host RAM, so terra's `code` is the slow one to bring up.
+## Model files and the CUDA build
 
-## Model files
-
-GGUFs are gigabytes and are not nix-store material, so they are *not*
-fetched by nix. Each `models.<name>` attribute name is the `<repo>:<tag>`
-llama-server resolves as `-hf`, and it downloads the weights itself into
-`LLAMA_CACHE`. That directory is overridden below from the upstream
-module's `/var/cache/llama-cpp` to the state directory, so
-`systemctl clean --what=cache llama-cpp` (or anything else that treats
-/var/cache as disposable) doesn't silently trigger a multi-GB re-download.
-
-Nothing loads at service start: a model is downloaded and loaded by the
-first request that names it. So the first request for an uncached model
-blocks for the whole download and will almost certainly time out at the
-client, though the download itself continues and a later retry is a
-cache hit. `task llm:models:fetch HOST=<host>` does that warm-up
-deliberately, with a timeout that expects it.
-
-A vision model's mmproj (the projector) needs no declaration: `-hf`
-resolves and downloads it per model, and it does not leak across models
-in the same router — verified at b9190, where a text-only model in the
-same preset reports `input_modalities: ["text"]` while the vision model
-reports `["text","image"]`.
-
-## CUDA build
-
-`pkgs.llama-cpp` in this flake is a CPU build (nothing sets
-`config.cudaSupport`), so a separate nixpkgs instance is imported with
-CUDA on and `cudaCapabilities` pinned to the *one* architecture the host
-actually has. That pin matters: the nixpkgs default builds nine
-architectures (7.5 through 12.1), and the CUDA kernels dominate the
-build. Scoping to one cuts the compile by roughly that factor.
-
-CUDA is unfree and no binary cache serves it, so this always builds
-locally the first time. Budget for it — it is not a `nixos-rebuild`
-you want to start five minutes before you need the machine.
+Both are operator procedures and live in the runbook: how GGUFs are fetched
+into `LLAMA_CACHE` and pruned
+([Model files](../../../docs/runbooks/local-llm.md#model-files-are-not-nixs-problem)), why
+the cache sits in the state directory rather than `/var/cache`, and why the
+CUDA build is local and pinned to one architecture
+([The CUDA build](../../../docs/runbooks/local-llm.md#the-cuda-build-is-local-and-unavoidable)).
+One fact belongs here because it was verified against the pinned build: a
+vision model's mmproj needs no declaration and does not leak across models in
+the same router (at b9190 a text-only model in the same preset reported
+`input_modalities: ["text"]` while the vision model reported
+`["text","image"]`).
 
 ## Evaluation (#555)
 
@@ -133,12 +102,11 @@ at runtime, so adding a fixture needs no `flake.lock` bump or rebuild,
 and the harness skips the fixture tiers when the checkout is absent.
 Its README is authoritative for layout, `meta.toml`, and capture.
 
-The privacy rule is stricter than this repo's PII rule, because a
-published fixture also stops working as an eval once it's in a training
-corpus. Nothing from a fixture goes in this repo, its issues or its PRs:
-not source documents, captured request bodies, prompts, expected values,
-or raw responses. Fixture IDs, hashes, schemas, aggregate and per-field
-scores, and the adoption verdict are fine.
+The privacy rule for fixture material is stricter than this repo's PII rule,
+because a published fixture also stops working as an eval once it is in a
+training corpus. The
+[`llm-eval` skill](../../../skills/llm-eval/SKILL.md#the-privacy-rule-in-one-place)
+owns that rule and its two mechanical guards.
 
 Fixtures are organised per *app feature*, one directory per LLM call
 an app actually makes (`tandoor-image-import`, `paperless-classify`,
@@ -152,60 +120,9 @@ like paperless, straight to terra.
 
 ### Running it
 
-Every task takes one host and one router name:
-
-- **`task llm:gate HOST=<host> ALIAS=<alias> [MODEL=<router name>]`**
-  is tier 0. It runs pass/fail probes of `MODEL` (default: the alias's
-  incumbent) against what `ALIAS` needs on that host:
-  - `tool-call`: a synthetic tool call comes back parseable and honours
-    the schema's enum.
-  - `tool-round-trip`: once the tool result is sent back, the model
-    answers with it.
-  - `image-input`: only checked for aliases that need images.
-  - `context`: the alias's full `contextTokens`, less room for the
-    answer, is filled and a needle placed early is recalled.
-  - `modalities`: what the server reports against the target.
-  - `vram`: the model's own llama-server child, measured with
-    `nvidia-smi` after the long request, against `residentBudgetMiB`.
-    It fails if the model is served at a smaller context than the
-    target, because the KV cache it would need wasn't allocated.
-
-  Every probe is synthetic, so the table it prints can go straight
-  into an issue. It needs no fixtures and exits non-zero on any failure.
-- **`task llm:eval HOST=<host> MODEL=<router name> TRIALS=3 [ALIAS=…] [FEATURE=…]`**
-  is tier 1. It replays the private fixtures and writes scored results
-  into the fixtures repo's `results/`. `ALIAS` limits the run to cases
-  whose `meta.toml` targets that alias. Per-case spread is about ±3
-  checks out of 40, so `TRIALS=3` is the minimum for a comparison.
-- **`task llm:eval:compare RUNS="<run dir> …" [PUBLIC=true]`** renders
-  runs side by side. Without `PUBLIC=true` the output is private: its
-  failed-check labels (`tags:must:<name>`) carry expected values.
-  `PUBLIC=true` reduces them to field and rule kind.
-- **`task llm:eval:audit FILE=<draft>`** fails if a draft comment or PR
-  body names any expected value. Run it before anything eval-derived
-  goes on GitHub, since hand-written prose is the one path `PUBLIC=true`
-  doesn't cover.
-
-### Evaluating a candidate
-
-The `llm-eval` skill (`skills/llm-eval/SKILL.md`) runs this procedure
-from an `llm-candidate` issue through to a sanitized verdict comment and
-the adopt/drop PR. The steps:
-
-1. **Serve it as a temporary peer.** Add a `models."<repo>:<tag>"`
-   entry with its own alias (`aliases = [ "text-next" ]`) and the
-   context, KV types and offload the target needs, then deploy. Don't
-   point the alias at it yet: the incumbent stays routable for the
-   comparison. And don't rely on a GGUF that's only in the cache, since
-   that runs with llama.cpp defaults (see the cache section above).
-2. **`task llm:models:fetch HOST=<host>`** downloads it ahead of the
-   first request.
-3. **`task llm:gate HOST=<host> ALIAS=text MODEL=text-next`** must pass.
-   A model that can't hold the alias's context fails `context` and
-   `vram` here.
-4. **`task llm:eval ALIAS=<alias>`** runs the candidate and the
-   incumbent with `TRIALS=3` each. Then run `task llm:eval:compare`, and
-   `PUBLIC=true` for anything headed to the issue.
-5. **Adopt or drop it.** To adopt, move the alias onto the candidate's
-   entry, and remove the old entry or keep it as a named peer. To drop,
-   delete the entry. Either way, run `task llm:models:prune` afterwards.
+The task reference (`task llm:gate`, `llm:eval`, `llm:eval:compare`,
+`llm:eval:audit`) is in the runbook's
+[Evaluating a model](../../../docs/runbooks/local-llm.md#evaluating-a-model) section, and the
+end-to-end candidate procedure (serve a temporary peer, gate, replay,
+verdict, adopt or drop) is the
+[`llm-eval` skill](../../../skills/llm-eval/SKILL.md).

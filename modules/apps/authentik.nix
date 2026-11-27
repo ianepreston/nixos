@@ -370,7 +370,8 @@
                       Host Caddy proxies to. Defaults to localhost — nearly
                       every app runs on the same box as caddy. Set it to
                       front a service on *another* machine that has no
-                      caddy/authentik of its own (terra's llama-server),
+                      caddy/authentik of its own (for example a workstation's
+                      llama-server),
                       so that machine gets TLS + SSO without replicating
                       the whole server stack. The hop is plaintext HTTP
                       over the LAN, so only point this at a backend with
@@ -462,7 +463,8 @@
                       reaching the upstream at all.
 
                       The app module is responsible for stacking the
-                      env file onto caddy — see modules/apps/llm-terra.nix.
+                      env file onto caddy, as the app module that front-ends the
+                      upstream does.
                     '';
                   };
                   homepage = lib.mkOption {

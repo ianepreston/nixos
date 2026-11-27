@@ -156,7 +156,7 @@
               keyed by the name that lands in the `llama_server` label.
               Contributed by the route modules that already know an
               endpoint exists — `llm.nix` for this host's own router,
-              `llm-terra.nix` for terra's.
+              the route module for a remote router.
 
               Reachability is the only requirement: nothing here has to
               run locally, and an endpoint that is down publishes

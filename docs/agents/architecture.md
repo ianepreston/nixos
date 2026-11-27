@@ -67,20 +67,12 @@ Before introducing or changing a cross-cutting feature, be able to name:
 ## Cross-cutting option surfaces
 
 Declared inline next to the service that consumes them (no separate platform
-directory). This table is a map of owners; each option's type, default and
-description are in the generated [option reference](../reference/options.md)
-(`task docs:options`), which covers every top-level `my*` surface on
-tests-server — classify a new one in `modules/flake/options-reference.nix`:
-
-| Option                   | File                                   | Purpose                                 |
-| ------------------------ | -------------------------------------- | --------------------------------------- |
-| `myCaddy.apps`           | `modules/system/caddy.nix`             | reverse-proxy routes                    |
-| `myPostgresApp`          | `modules/system/postgresql.nix`        | role + DB + sops password               |
-| `myHomepage.tiles`       | `modules/system/homepage.nix`          | dashboard tiles                         |
-| `mySqliteQuiesce.apps`   | `modules/system/sqlite-quiesce.nix`    | consistent sqlite snapshots for backup  |
-| `myRuntimeCredentials`   | `modules/system/runtime-credentials.nix` | app-generated API keys at runtime     |
-| `myAuthentik.*`          | `modules/apps/authentik.nix`           | OIDC / forward-auth                     |
-| `myAppState`, `myRecovery.apps` | see [app-state.md](app-state.md) | state, backup, recovery            |
+directory). Each option's owning file, type, default and description are in the
+generated [option reference](../reference/options.md) (`task docs:options`),
+grouped by surface; don't restate them here. A new top-level `my*` option must
+be classified into a group in `modules/flake/options-reference.nix`, or
+evaluation fails. For `myAppState` and `myRecovery.apps` see
+[app-state.md](app-state.md).
 
 `myRuntimeCredentials` differs in shape: an app that generates its own API key
 (the *arrs, sabnzbd, jellyfin) declares `myRuntimeCredentials.readers.<VAR>`

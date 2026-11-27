@@ -17,7 +17,7 @@ task, so anything needed only for specific work goes in a topic guide below.
 | VM sandbox, bootstrap/reinstall, `LOCAL_SECRETS`, disko changes         | [docs/agents/testing-and-bootstrap.md](docs/agents/testing-and-bootstrap.md) |
 | Cross-cutting features, option surfaces, refactors                      | [docs/agents/architecture.md](docs/agents/architecture.md)                   |
 | Operator procedures; where docs go; `my*` option types/defaults        | [docs/README.md](docs/README.md) (runbooks, generated option reference)      |
-| LLM model selection, evals, `../nix-eval-fixtures`                      | [modules/system/_llama-cpp/README.md](modules/system/_llama-cpp/README.md)   |
+| LLM model selection, evals, `../nix-eval-fixtures`                      | [local-llm runbook](docs/runbooks/local-llm.md#evaluating-a-model) (tasks), [_llama-cpp README](modules/system/_llama-cpp/README.md) (contract, history) |
 | Evaluating an `llm-candidate` issue end to end                          | the `llm-eval` skill ([skills/llm-eval/SKILL.md](skills/llm-eval/SKILL.md))  |
 | Supervising a bounded issue queue with child agents                     | the `software-factory` skill ([skills/software-factory/SKILL.md](skills/software-factory/SKILL.md)) |
 

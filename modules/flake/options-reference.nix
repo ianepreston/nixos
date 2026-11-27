@@ -3,7 +3,7 @@
 # `packages.<system>.options-reference` renders docs/reference/options.md from
 # the option *declarations* (`options`, never `config`) of a fixture: the
 # tests-server module set (the server configuration that imports every shared
-# surface) re-evaluated with a placeholder hostSpec and a stub `nix-secrets`
+# surface, plus the llama-cpp and llm-metrics modules the server profiles omit) re-evaluated with a placeholder hostSpec and a stub `nix-secrets`
 # input, so no private value can reach a default and generation needs no
 # access to the private secrets flake. Only declarations, descriptions and
 # declared defaults are read. Nothing is built for a host, no secret is
@@ -40,6 +40,12 @@ let
     nix-secrets.outPath = "/nix-secrets-fixture";
   };
   fixture = inputs.self.nixosConfigurations.${fixtureName}.extendModules {
+    # Surfaces the server profiles do not import: only their declarations are
+    # read, and both modules are inert until enabled, so no package is forced.
+    modules = [
+      inputs.self.modules.nixos.llama-cpp
+      inputs.self.modules.nixos.llm-metrics
+    ];
     specialArgs = {
       hostSpec = fixtureSpec;
       inputs = fixtureInputs;
@@ -98,6 +104,14 @@ let
       title = "Observability";
       roots = [ "myObservability" ];
       intro = "Alert rules, monitored units and exporter drop directories that apps contribute to the platform.";
+    }
+    {
+      title = "Local LLM inference";
+      roots = [
+        "myLlamaCpp"
+        "myLlmMetrics"
+      ];
+      intro = "The llama.cpp router a host serves and the metrics endpoints a host publishes for routers; procedures are in the [local LLM runbook](../runbooks/local-llm.md).";
     }
     {
       title = "Messaging";

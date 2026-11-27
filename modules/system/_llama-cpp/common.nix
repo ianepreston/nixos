@@ -155,8 +155,8 @@ in
                 Cost is paid twice: throughput drops monotonically as
                 N rises, and the offloaded weights occupy host RAM for
                 as long as the model is loaded (~14 GB for
-                Qwen3-Coder-30B at N=40 — see modules/hosts/terra.nix).
-                That second cost is gentler than it looks — the
+                Qwen3-Coder-30B at N=40; the local LLM runbook has the
+                sizing numbers). That second cost is gentler than it looks — the
                 experts are an mmap of the GGUF, so almost all of it
                 is reclaimable page cache rather than committed
                 memory — but the throughput above assumes it stays

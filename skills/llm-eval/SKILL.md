@@ -18,9 +18,10 @@ Before starting, read:
 
 - `skills/_shared/host-access.md`: bounded SSH preflight, operator handoff,
   and the deploy recipe. `AGENTS.md` **Authorization** says what needs approval.
-- The *Evaluation* section of `modules/system/_llama-cpp/README.md`: the
-  privacy rule, the task reference and the candidate procedure this skill
-  automates.
+- The *Evaluation* section of `modules/system/_llama-cpp/README.md` (the
+  contract and fixtures design) and the runbook's
+  [Evaluating a model](../../docs/runbooks/local-llm.md#evaluating-a-model)
+  section (the task reference).
 - The private fixtures checkout's `README.md` (see its location below):
   which features target which alias.
 
@@ -118,8 +119,7 @@ measurements. Report the unmet prerequisite and the commands still needed
 for the affected stages. Skipped or deferred stages supply no evidence for
 a verdict.
 
-**Serve the candidate as a temporary peer**, following the README's
-*Evaluating a candidate* procedure. Work on a branch in a throwaway worktree
+**Serve the candidate as a temporary peer**, as this section describes. Work on a branch in a throwaway worktree
 (the `resolve-issue` worktree rules apply). Add a `models."<repo>:<tag>"`
 entry with its own alias, `<alias>-next`, and the context, KV types and
 offload the *target* needs, not the candidate's maximum. Leave the

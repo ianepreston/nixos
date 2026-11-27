@@ -79,7 +79,7 @@ in
     allowedClients = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
-      example = [ "192.168.10.11" ];
+      example = [ "192.0.2.11" ];
       description = ''
         Source addresses (iptables `-s` syntax — a bare IPv4 address
         or a CIDR) allowed to reach `port`. Empty (the default) opens
