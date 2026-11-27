@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -25,6 +26,10 @@ WRITER = "recovery-writer.service"
 OTHER = "recovery-other.service"
 BLOCKED = "recovery-blocked.service"
 MISSING = "recovery-missing.service"
+# Models of podman-bookorbit's init (#1122): root tini forwarding SIGTERM to
+# an app running as another uid, with and without CAP_KILL.
+INIT_APP = "recovery-init-app.service"
+INIT_NOKILL = "recovery-init-nokill.service"
 SHAPES = ("volume", "pg", "sqlite")
 
 
@@ -84,6 +89,29 @@ esac
 
     def real_systemctl(self, *arguments):
         return subprocess.check_output([args.systemd, *arguments], text=True).strip()
+
+    def start_init_model(self, unit):
+        """Start unit and wait until tini's child runs as nobody.
+
+        A SIGTERM that arrives before setpriv drops the uid would be
+        forwarded root to root and hide the missing capability.
+        """
+        # Clears a previous subtest's failed state; errors on a unit that
+        # was never loaded.
+        subprocess.run([args.systemd, "reset-failed", unit], capture_output=True)
+        self.real_systemctl("start", unit)
+        for _ in range(100):
+            main = self.real_systemctl("show", unit, "--property=MainPID", "--value")
+            children = Path(f"/proc/{main}/task/{main}/children")
+            try:
+                for child in children.read_text().split():
+                    status = Path(f"/proc/{child}/status").read_text()
+                    if "\nUid:\t65534\t" in status:
+                        return
+            except FileNotFoundError:
+                pass
+            time.sleep(0.1)
+        self.fail(f"{unit}: tini's child never ran as nobody")
 
     def write_command(self, name, body):
         path = self.bin / name
@@ -199,6 +227,47 @@ esac
                                 ),
                                 "inactive",
                             )
+
+    @unittest.skipUnless(args.systemd, "Needs real systemd and capabilities")
+    def test_container_init_stop_all_shapes(self):
+        for shape in SHAPES:
+            with self.subTest(shape=shape, unit=INIT_APP):
+                # Forwarded SIGTERM: exit 143 is the clean result, so the
+                # unit stops inactive and the restore proceeds.
+                self.start_init_model(INIT_APP)
+                self.assertEqual(self.restore(shape, (INIT_APP,)), 0, self.output)
+                self.assertIn(" restore latest --target / --delete ", self.calls[3])
+                self.assertEqual(self.calls[-1], f"systemctl start {INIT_APP}")
+                self.real_systemctl("stop", INIT_APP)
+                self.assertEqual(
+                    self.real_systemctl(
+                        "show", INIT_APP, "--property=Result", "--value"
+                    ),
+                    "success",
+                )
+            with self.subTest(shape=shape, unit=INIT_NOKILL):
+                # `systemctl stop` returns 0 but tini dies with status 1 on
+                # EPERM: the unit is failed, and that must still abort.
+                self.start_init_model(INIT_NOKILL)
+                self.assertNotEqual(self.restore(shape, (INIT_NOKILL,)), 0)
+                self.assertIn(
+                    f"{INIT_NOKILL} is failed after stop; aborting restore",
+                    self.output,
+                )
+                self.assertEqual(
+                    self.calls[-2:],
+                    [
+                        f"systemctl stop {INIT_NOKILL}",
+                        f"systemctl show {INIT_NOKILL} --property=ActiveState --value",
+                    ],
+                )
+                self.assert_no_restore_or_start()
+                self.assertEqual(
+                    self.real_systemctl(
+                        "show", INIT_NOKILL, "--property=ExecMainStatus", "--value"
+                    ),
+                    "1",
+                )
 
     @unittest.skipIf(args.systemd, "Fault injection uses the simulated systemctl")
     def test_unexpected_or_unreadable_state_aborts_all_shapes(self):

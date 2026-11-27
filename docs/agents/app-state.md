@@ -106,6 +106,12 @@ For apps with an HTTP endpoint, set `health.url` so the dispatcher fails a
 botched restore. Override the default 200 / 30 retries / 2 s only when needed
 (jellyfin uses 60 retries for its longer warm-up).
 
+Every listed unit must reach `inactive` after `systemctl stop`; anything else,
+`failed` included, aborts the restore (#1017). If a clean stop leaves the
+unit `failed`, fix it in the app module: let the stop signal reach the app,
+and declare its clean-stop exit code in `SuccessExitStatus`. bookorbit
+(#1122) needs `--cap-add=KILL` for its root tini and accepts 143.
+
 ## `restartUnits` goes on the template, not the secret
 
 When an app declares its own `sops.templates."<app>.env"` (not threaded

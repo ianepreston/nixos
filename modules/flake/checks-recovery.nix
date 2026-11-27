@@ -3,8 +3,9 @@
 # Task entry points run with inert, recording stand-ins for ssh, systemctl,
 # restic, postgres and the rest; nothing connects to a host or restores app
 # data. The VM additionally checks real systemd refusal to stop a
-# still-running service.
-_: {
+# still-running service, and a model of a container's init (#1122).
+{ inputs, ... }:
+{
   perSystem =
     { pkgs, lib, ... }:
     let
@@ -25,6 +26,37 @@ _: {
         chmod -R u+w repo
         patchShebangs repo/scripts
       '';
+      # Model of podman-bookorbit's stop path (#1122), built from the
+      # drill VM's real rendered config so it follows the app module. The
+      # image's root `tini -s --` forwards SIGTERM to the app, which runs as
+      # another uid; `--cap-drop=ALL` leaves only the `--cap-add`s. Here
+      # tini is the unit's main process (podman's conmon and catatonit only
+      # pass its status through), setpriv stands in for su-exec, and
+      # KillMode=mixed matches `podman stop` signalling only PID 1.
+      drill = inputs.self.nixosConfigurations.tests-server.config;
+      bookorbitOptions = drill.virtualisation.oci-containers.containers.bookorbit.extraOptions;
+      # Without --cap-drop=ALL the container keeps podman's default caps and
+      # this bounding set would no longer model it.
+      bookorbitCaps =
+        assert lib.elem "--cap-drop=ALL" bookorbitOptions;
+        map (o: "CAP_${lib.removePrefix "--cap-add=" o}") (
+          lib.filter (lib.hasPrefix "--cap-add=") bookorbitOptions
+        );
+      containerInit =
+        { caps, successExitStatus }:
+        {
+          serviceConfig = {
+            ExecStart = lib.concatStringsSep " " [
+              "${pkgs.tini}/bin/tini -s --"
+              "${pkgs.util-linux}/bin/setpriv --reuid=nobody --regid=nogroup --clear-groups"
+              "${pkgs.coreutils}/bin/sleep infinity"
+            ];
+            CapabilityBoundingSet = caps;
+            NoNewPrivileges = true;
+            KillMode = "mixed";
+            SuccessExitStatus = successExitStatus;
+          };
+        };
       packages = with pkgs; [
         bash
         coreutils
@@ -55,10 +87,23 @@ _: {
           name = "recovery-stop-systemd";
           nodes.machine = {
             environment.systemPackages = packages;
-            systemd.services = lib.genAttrs [ "recovery-writer" "recovery-other" "recovery-blocked" ] (name: {
-              unitConfig.RefuseManualStop = name == "recovery-blocked";
-              serviceConfig.ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
-            });
+            systemd.services =
+              lib.genAttrs [ "recovery-writer" "recovery-other" "recovery-blocked" ] (name: {
+                unitConfig.RefuseManualStop = name == "recovery-blocked";
+                serviceConfig.ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+              })
+              // {
+                # bookorbit as configured: stops cleanly.
+                recovery-init-app = containerInit {
+                  caps = bookorbitCaps;
+                  successExitStatus = drill.systemd.services.podman-bookorbit.serviceConfig.SuccessExitStatus or [ ];
+                };
+                # bookorbit before #1122: stop returns 0, unit ends failed.
+                recovery-init-nokill = containerInit {
+                  caps = lib.remove "CAP_KILL" bookorbitCaps;
+                  successExitStatus = [ ];
+                };
+              };
           };
           testScript = ''
             machine.wait_for_unit("multi-user.target")
