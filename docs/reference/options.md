@@ -12,7 +12,9 @@ the `options-reference` flake check fails when it is stale.
 Defaults are shown as declared (`defaultText`) where the declaration gives
 one, otherwise as evaluated against the option declarations of the
 `tests-server` module set with a placeholder host (`fixture.example`), so no
-host's own settings appear. `<name>` in an option path and `‹name›` in a
+host's own settings appear. Groups for home-manager and nix-darwin options
+say so in their introduction and are evaluated in a minimal stub of that
+context instead. `<name>` in an option path and `‹name›` in a
 default stand for the attribute name of an entry in an attribute set of
 submodules. Option descriptions say what an option does; when and why to use
 it is in [server app conventions](../server-apps.md) and the
@@ -29,7 +31,9 @@ it is in [server app conventions](../server-apps.md) and the
 - [Observability](#observability): `myObservability`
 - [Local LLM inference](#local-llm-inference): `myLlamaCpp`, `myLlmMetrics`
 - [Messaging](#messaging): `myMosquitto`
-- [App-owned options](#app-owned-options): `myOmnigent`, `myValheim`
+- [App-owned options](#app-owned-options): `myBambuddy`, `myOmnigent`, `myValheim`
+- [Coding agents (home-manager)](#coding-agents-home-manager): `myPi`, `myVibes`
+- [Local LLM inference (nix-darwin)](#local-llm-inference-nix-darwin): `myLlamaCpp`
 
 ## Container plumbing
 
@@ -1783,6 +1787,52 @@ MQTT username. Defaults to the attribute name.
 
 Options an individual app exposes for host wiring.
 
+### `myBambuddy.virtualPrinter.address`
+
+The DHCP-reserved vlan30 address the VP binds (reserved against
+`mac` on the router). bambuddy requires a dedicated, stable IP
+per VP for all services (MQTT/FTP/SSDP/Bind); this is the single
+source for it — set the VP Bind IP and the slicer's printer IP
+to this. Required when `enable` is set.
+
+- **Type:** `null or string`
+- **Default:** `null`
+- **Declared in:** [`modules/apps/bambuddy.nix`](../../modules/apps/bambuddy.nix)
+
+### `myBambuddy.virtualPrinter.enable`
+
+Whether to enable bambuddy's Virtual Printer macvlan on vlan30.
+
+The VP (Proxy Mode) relays a slicer's print to a real Bambu
+printer and needs a dedicated, STATIC vlan30 address for all its
+services (MQTT/FTP/SSDP/Bind). Enabling this creates the
+`iot-static` macvlan on the host's vlan30 parent and attaches the
+bambuddy container to it at `address`, with `mac` pinned. Set it
+from the host module (the address/MAC are a per-host DHCP
+reservation), not from hostSpec — the VLAN parent stays generic
+infrastructure (hostSpec.iotTrunkInterface), the VP identity is
+this app's. Requires hostSpec.iotTrunkInterface to be set
+.
+
+- **Type:** `boolean`
+- **Default:** `false`
+- **Example:** `true`
+- **Declared in:** [`modules/apps/bambuddy.nix`](../../modules/apps/bambuddy.nix)
+
+### `myBambuddy.virtualPrinter.mac`
+
+Pinned MAC for the VP's macvlan leg on vlan30. podman assigns a
+fresh random MAC on every container re-creation, which re-rolls
+the DHCP lease and drifts the VP's IP — breaking the proxy's
+bind and the slicer's by-IP device entry. Pinning the MAC
+(paired with a DHCP reservation matching `address`) keeps the
+dedicated address stable, which bambuddy requires. Required when
+`enable` is set.
+
+- **Type:** `null or string`
+- **Default:** `null`
+- **Declared in:** [`modules/apps/bambuddy.nix`](../../modules/apps/bambuddy.nix)
+
 ### `myOmnigent.enable`
 
 Whether to enable the Omnigent server. Off by default; see the header of
@@ -2122,3 +2172,111 @@ unset that too.
   ]
   ```
 - **Declared in:** [`modules/apps/valheim.nix`](../../modules/apps/valheim.nix)
+
+## Coding agents (home-manager)
+
+Home-manager options, set under a user's `home-manager.users.<name>` (or a standalone home configuration); evaluated here in a stub home-manager configuration with only the `vibes` module (`modules/programs/pi.nix`, `modules/programs/vibes.nix`).
+
+### `myPi.enable`
+
+Whether to enable the pi coding agent.
+
+- **Type:** `boolean`
+- **Default:** `false`
+- **Example:** `true`
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.package`
+
+pi package, shared by Linux and Darwin configurations.
+
+- **Type:** `package`
+- **Default:** _computed from other options; see the declaration_
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers`
+
+Additive provider declarations rendered into one models.json. Work-only providers belong in the private work module.
+
+- **Type:** `attribute set of (open submodule of (JSON value))`
+- **Default:** `{ }`
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers.<name>.api`
+
+pi API dialect, such as openai-responses or anthropic-messages.
+
+- **Type:** `string`
+- **Default:** `"openai-completions"`
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers.<name>.apiKey`
+
+Runtime credential reference, for example !command or $ENV_VAR; never a secret value.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers.<name>.baseUrl`
+
+API base URL, before pi adds its API-specific path.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers.<name>.models`
+
+Models advertised by this provider, with optional pi metadata.
+
+- **Type:** `list of (open submodule of (JSON value))`
+- **Default:** none (required)
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myPi.providers.<name>.models.*.id`
+
+Model identifier sent to this provider.
+
+- **Type:** `string`
+- **Default:** none (required)
+- **Declared in:** [`modules/programs/pi.nix`](../../modules/programs/pi.nix)
+
+### `myVibes.agentPackages`
+
+The coding-agent CLIs this aspect installs, keyed by name.
+
+- **Type:** `attribute set of package`
+- **Default:** `{ }`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/programs/vibes.nix`](../../modules/programs/vibes.nix)
+
+## Local LLM inference (nix-darwin)
+
+Options the nix-darwin side of `myLlamaCpp` adds to the shared ones above (`modules/system/_llama-cpp/darwin.nix`, registered by `modules/system/llama-cpp.nix`); evaluated here in a stub `aarch64-darwin` system with only that module.
+
+### `myLlamaCpp.dataDirectory`
+
+User-owned persistent model data and local API credential; outside the Nix store.
+
+- **Type:** `string`
+- **Default:** `"/Users/fixture/Library/Application Support/llama-cpp"`
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.operator.prunePackage`
+
+Darwin prune executable with the same algorithm and GNU runtime as Linux.
+
+- **Type:** `package`
+- **Default:** none (required)
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)
+
+### `myLlamaCpp.piProvider`
+
+Published pi provider metadata for the local router; contains a runtime key-file reference.
+
+- **Type:** `attribute set of (JSON value)`
+- **Default:** `{ }`
+- **Read-only:** set by the declaring module
+- **Declared in:** [`modules/system/llama-cpp.nix`](../../modules/system/llama-cpp.nix)

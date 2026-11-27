@@ -44,7 +44,9 @@ the `options-reference` flake check fails when it is stale.
 Defaults are shown as declared (`defaultText`) where the declaration gives
 one, otherwise as evaluated against the option declarations of the
 `{fixture}` module set with a placeholder host (`fixture.example`), so no
-host's own settings appear. `<name>` in an option path and `‹name›` in a
+host's own settings appear. Groups for home-manager and nix-darwin options
+say so in their introduction and are evaluated in a minimal stub of that
+context instead. `<name>` in an option path and `‹name›` in a
 default stand for the attribute name of an entry in an attribute set of
 submodules. Option descriptions say what an option does; when and why to use
 it is in [server app conventions](../server-apps.md) and the
