@@ -167,12 +167,10 @@ configuration imports (container plumbing, service endpoints, state and
 recovery, runtime credentials, observability, MQTT, and the Omnigent and
 Valheim app options), is listed with its type, default and declaring file in
 the generated [option reference](docs/reference/options.md), which also covers
-the NixOS-side `myLlamaCpp` options and `myLlmMetrics`. It does not yet cover
-the Darwin-only `myLlamaCpp` options, `myBambuddy` or the home-manager options
-`myPi` and `myVibes` (tracked in #1130); read those declarations in their
-modules. The
-module conventions an app must follow (registration, container runtime, NFS
-UID alignment, networking, image pins, volumes, Postgres, secrets) are in
+the NixOS-side `myLlamaCpp` options and `myLlmMetrics`, `myBambuddy`, the
+home-manager options `myPi` and `myVibes`, and the Darwin-only `myLlamaCpp`
+options. The module conventions an app must follow (registration, container
+runtime, NFS UID alignment, networking, image pins, volumes, Postgres, secrets) are in
 [server app conventions](docs/server-apps.md); adding an app end to end is the
 [`add-app` workflow](skills/add-app/SKILL.md).
 

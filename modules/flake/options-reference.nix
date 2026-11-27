@@ -1,12 +1,19 @@
 # Generated reference for the public `my*` option surfaces (#1026).
 #
 # `packages.<system>.options-reference` renders docs/reference/options.md from
-# the option *declarations* (`options`, never `config`) of a fixture: the
-# tests-server module set (the server configuration that imports every shared
-# surface, plus the llama-cpp and llm-metrics modules the server profiles omit) re-evaluated with a placeholder hostSpec and a stub `nix-secrets`
-# input, so no private value can reach a default and generation needs no
-# access to the private secrets flake. Only declarations, descriptions and
-# declared defaults are read. Nothing is built for a host, no secret is
+# the option *declarations* (`options`, never `config`) of three fixtures, each
+# classified by its own guard:
+#   - tests-server: the server configuration that imports every shared
+#     surface, plus the modules the server profiles omit (llama-cpp,
+#     llm-metrics, bambuddy), re-evaluated with a placeholder hostSpec and a
+#     stub `nix-secrets` input, so no private value can reach a default and
+#     generation needs no access to the private secrets flake;
+#   - home-manager: a stub user with only the `vibes` module (which imports
+#     `pi`), for `myPi` and `myVibes`;
+#   - nix-darwin: a stub aarch64-darwin system with only the Darwin
+#     `llama-cpp` module, for the Darwin-only `myLlamaCpp` options. Reading
+#     options needs no Darwin build or host, so it evaluates on Linux CI.
+# Only declarations, descriptions and declared defaults are read. Nothing is built for a host, no secret is
 # decrypted and no host is contacted: an options walk forces no service
 # package, and a default that depends on host settings is rendered from its
 # `defaultText`. The renderer refuses input or output containing an email
@@ -41,21 +48,60 @@ let
   };
   fixture = inputs.self.nixosConfigurations.${fixtureName}.extendModules {
     # Surfaces the server profiles do not import: only their declarations are
-    # read, and both modules are inert until enabled, so no package is forced.
+    # read, and each module is inert until enabled, so no package is forced.
     modules = [
       inputs.self.modules.nixos.llama-cpp
       inputs.self.modules.nixos.llm-metrics
+      inputs.self.modules.nixos.bambuddy
     ];
     specialArgs = {
       hostSpec = fixtureSpec;
       inputs = fixtureInputs;
     };
   };
-  inherit (fixture) options;
+  serverOptions = fixture.options;
 
-  # Every top-level `my*` option the fixture declares must be in exactly one
-  # group, so a new surface cannot silently miss the reference.
-  groups = [
+  # Stub home-manager user: `vibes` imports `pi`, so one module covers both.
+  # No `osConfig`, so vibes takes its no-sops path and never reads nix-secrets.
+  homeFixture = inputs.home-manager.lib.homeManagerConfiguration {
+    pkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
+    extraSpecialArgs = {
+      hostSpec = fixtureSpec // {
+        isDarwin = false;
+      };
+      inputs = fixtureInputs;
+    };
+    modules = [
+      inputs.self.modules.homeManager.vibes
+      {
+        home = {
+          username = "fixture";
+          homeDirectory = "/home/fixture";
+          stateVersion = "23.05";
+        };
+      }
+    ];
+  };
+
+  # Stub nix-darwin system. The placeholder primary user gives the data
+  # directory default (derived from the user's home) a path to render.
+  darwinFixture = inputs.nix-darwin.lib.darwinSystem {
+    modules = [
+      inputs.self.modules.darwin.llama-cpp
+      {
+        nixpkgs.hostPlatform = "aarch64-darwin";
+        system = {
+          stateVersion = 6;
+          primaryUser = "fixture";
+        };
+        users.users.fixture.home = "/Users/fixture";
+      }
+    ];
+  };
+
+  # Every top-level `my*` option a fixture declares must be in exactly one of
+  # that fixture's groups, so a new surface cannot silently miss the reference.
+  serverGroups = [
     {
       title = "Container plumbing";
       roots = [
@@ -121,6 +167,7 @@ let
     {
       title = "App-owned options";
       roots = [
+        "myBambuddy"
         "myOmnigent"
         "myValheim"
       ];
@@ -128,11 +175,61 @@ let
     }
   ];
 
-  declared = lib.filter (lib.hasPrefix "my") (lib.attrNames options);
-  grouped = lib.concatMap (g: g.roots) groups;
-  ungrouped = lib.subtractLists grouped declared;
-  missing = lib.subtractLists declared grouped;
-  duplicated = lib.unique (lib.filter (r: lib.count (x: x == r) grouped > 1) grouped);
+  homeGroups = [
+    {
+      title = "Coding agents (home-manager)";
+      roots = [
+        "myPi"
+        "myVibes"
+      ];
+      intro = "Home-manager options, set under a user's `home-manager.users.<name>` (or a standalone home configuration); evaluated here in a stub home-manager configuration with only the `vibes` module (`modules/programs/pi.nix`, `modules/programs/vibes.nix`).";
+    }
+  ];
+
+  darwinGroups = [
+    {
+      title = "Local LLM inference (nix-darwin)";
+      roots = [ "myLlamaCpp" ];
+      # The shared `myLlamaCpp` options are already listed under "Local LLM
+      # inference"; only what the Darwin module itself declares is added. It is
+      # attributed to the file that registers the module, which imports
+      # `_llama-cpp/darwin.nix`, so that is the declaring file to match.
+      onlyDeclaredIn = "modules/system/llama-cpp.nix";
+      intro = "Options the nix-darwin side of `myLlamaCpp` adds to the shared ones above (`modules/system/_llama-cpp/darwin.nix`, registered by `modules/system/llama-cpp.nix`); evaluated here in a stub `aarch64-darwin` system with only that module.";
+    }
+  ];
+
+  fixtures = [
+    {
+      name = fixtureName;
+      inherit (fixture) options;
+      groups = serverGroups;
+    }
+    {
+      name = "home-manager";
+      inherit (homeFixture) options;
+      groups = homeGroups;
+    }
+    {
+      name = "nix-darwin";
+      inherit (darwinFixture) options;
+      groups = darwinGroups;
+    }
+  ];
+
+  # Fail closed per fixture: unclassified, vanished or doubly classified roots.
+  problems = lib.concatMap (
+    f:
+    let
+      declared = lib.filter (lib.hasPrefix "my") (lib.attrNames f.options);
+      grouped = lib.concatMap (g: g.roots) f.groups;
+      ungrouped = lib.subtractLists grouped declared;
+      missing = lib.subtractLists declared grouped;
+      duplicated = lib.unique (lib.filter (r: lib.count (x: x == r) grouped > 1) grouped);
+    in
+    lib.optional (ungrouped != [ ] || missing != [ ] || duplicated != [ ])
+      "${f.name} (ungrouped: ${toString ungrouped}; no longer declared: ${toString missing}; in more than one group: ${toString duplicated})"
+  ) fixtures;
 
   selfPrefix = "${toString inputs.self}/";
   declaration =
@@ -142,12 +239,15 @@ let
     );
 
   # A default that cannot be evaluated without a host is marked, not guessed.
+  # So is a package, whose rendering (`<derivation name-version>`, or a store
+  # path once serialised) would churn with every version bump.
   renderable =
     v:
     let
       r = builtins.tryEval (builtins.deepSeq v v);
+      isPackage = x: lib.isDerivation x || lib.hasPrefix "<derivation" (x.text or "");
     in
-    if r.success then r.value else { _type = "unrenderable"; };
+    if r.success && !(isPackage r.value) then r.value else { _type = "unrenderable"; };
 
   docOption = d: {
     inherit (d) name type readOnly;
@@ -169,15 +269,18 @@ let
 
   spec = {
     fixture = fixtureName;
-    groups = map (
-      g:
-      g
-      // {
-        options = map docOption (
-          lib.filter public (lib.optionAttrSetToDocList (lib.getAttrs g.roots options))
-        );
-      }
-    ) groups;
+    groups = lib.concatMap (
+      f:
+      map (
+        g:
+        removeAttrs g [ "onlyDeclaredIn" ]
+        // {
+          options = lib.filter (o: g.onlyDeclaredIn or null == null || lib.elem g.onlyDeclaredIn o.declarations) (
+            map docOption (lib.filter public (lib.optionAttrSetToDocList (lib.getAttrs g.roots f.options)))
+          );
+        }
+      ) f.groups
+    ) fixtures;
     # Names under these domains must not appear; checked by the renderer.
     forbiddenDomains = realDomains;
   };
@@ -187,8 +290,8 @@ in
     { pkgs, ... }:
     let
       json =
-        if ungrouped != [ ] || missing != [ ] || duplicated != [ ] then
-          throw "options-reference: classify every top-level my* option of ${fixtureName} in exactly one group in modules/flake/options-reference.nix (ungrouped: ${toString ungrouped}; no longer declared: ${toString missing}; in more than one group: ${toString duplicated})"
+        if problems != [ ] then
+          throw "options-reference: classify every top-level my* option of each fixture in exactly one of its groups in modules/flake/options-reference.nix: ${lib.concatStringsSep "; " problems}"
         else
           pkgs.writeText "options-reference.json" (builtins.toJSON spec);
       reference = pkgs.runCommand "options-reference.md" {

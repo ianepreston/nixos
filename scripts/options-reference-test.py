@@ -87,6 +87,23 @@ class RenderTest(unittest.TestCase):
         self.assertNotEqual(a, b)
         self.assertIn("Turn the thing off.", b)
 
+    def test_groups_from_several_fixtures_render_in_order(self):
+        d = doc(opt())
+        d["groups"].append(
+            {
+                "title": "Home things (home-manager)",
+                "roots": ["myHome"],
+                "intro": "Home-manager options.",
+                "options": [opt("myHome.enable")],
+            }
+        )
+        rc, out, _ = run(d)
+        self.assertEqual(rc, 0)
+        self.assertIn("- [Home things (home-manager)](#home-things-home-manager)", out)
+        self.assertLess(out.index("## Things & stuff"), out.index("## Home things"))
+        self.assertIn("### `myHome.enable`", out)
+        self.assertIn("stub of that\ncontext", out)
+
     def test_deterministic(self):
         self.assertEqual(run(doc(opt()))[1], run(doc(opt()))[1])
 
