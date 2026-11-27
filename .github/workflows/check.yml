@@ -72,50 +72,13 @@ jobs:
       # job here goes green on a flake main can't evaluate — how #865
       # merged and froze auto-upgrade on both servers (#866).
       - name: Check flake.lock matches flake.nix
-        run: nix flake metadata --no-update-lock-file . >/dev/null
-      # `nix flake check --all-systems` evaluates every config in
-      # parallel and on Determinate Nix's Linux runner consistently
-      # hits "path '...-source' is not valid" on filtered sub-paths
-      # of transitive flake inputs (e.g. napalm's
-      # `lib.cleanSource ./napalm-registry`) — concurrent addToStore
-      # for sub-paths from git-cache-backed flake inputs races and
-      # leaves the path registered-but-empty. Walking every NixOS
-      # config sequentially via drvPath avoids the race and is the
-      # coverage that matters. The darwin/home configs are evaluated in
-      # the same sequential-drvPath style below (see #349) — they pull
-      # the private nix-secrets input too, so they belong on this
-      # deploy-key-authorized, fork-guarded job rather than the public
-      # cloud-runner lint job.
-      - name: Eval each NixOS config
-        run: |
-          set -euo pipefail
-          for host in $(nix eval --json '.#nixosConfigurations' \
-              --apply 'cfgs: builtins.attrNames cfgs' | jq -r '.[]'); do
-            echo "::group::nixosConfigurations.$host"
-            nix eval --raw \
-              ".#nixosConfigurations.$host.config.system.build.toplevel.drvPath"
-            echo
-            echo "::endgroup::"
-          done
-      # darwin/home configs only *build* on macOS, but they *evaluate*
-      # fine on Linux — so eval their drvPaths here to catch a Renovate
-      # input bump that breaks them (closes #349). They're not in
-      # nixosConfigurations, so they need their own eval calls (darwin
-      # via config.system.build.toplevel, home-manager via
-      # activationPackage).
-      - name: Eval darwin and home configs
-        run: |
-          set -euo pipefail
-          echo "::group::darwinConfigurations.work"
-          nix eval --raw \
-            ".#darwinConfigurations.work.config.system.build.toplevel.drvPath"
-          echo
-          echo "::endgroup::"
-          echo "::group::homeConfigurations.penguin"
-          nix eval --raw \
-            ".#homeConfigurations.penguin.activationPackage.drvPath"
-          echo
-          echo "::endgroup::"
+        run: bash ./scripts/flake-checks.sh lock
+      # Evaluate NixOS, Darwin, and Home Manager configurations sequentially.
+      # Parallel evaluation in `nix flake check --all-systems` raced on
+      # addToStore for filtered input subpaths on this runner. Darwin and
+      # Home Manager evaluation also use the private input (see #349).
+      - name: Eval each configuration
+        run: bash ./scripts/flake-checks.sh eval-configs
   build:
     name: build ${{ matrix.host }}
     # Self-hosted runner on hpp-1 shares its warm /nix/store with CI,
@@ -188,11 +151,8 @@ jobs:
     # systems expose checks too, but there are no runners for them.
     #
     # We build the check derivation directly rather than via
-    # `nix flake check` on purpose: `nix flake check --all-systems`
-    # races on concurrent addToStore for filtered sub-paths of
-    # transitive flake inputs on this runner (see the long comment on
-    # flake-check above). A targeted `nix build` sidesteps that race
-    # while still exercising every x86_64-linux check.
+    # `nix flake check` to avoid the parallel evaluation race described
+    # in flake-check above.
     #
     # Same fork-PR guard as build: the workflow YAML can be edited by
     # fork PRs, which would otherwise run arbitrary code on our host.
@@ -217,17 +177,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.NIX_SECRETS_DEPLOY_KEY }}
       - name: Build flake checks
-        run: |
-          set -euo pipefail
-          for attr in $(nix eval --json '.#checks.x86_64-linux' \
-            --apply 'builtins.attrNames' | jq -r '.[]'); do
-            if [ "$attr" = pre-commit ]; then
-              continue
-            fi
-            echo "::group::checks.x86_64-linux.$attr"
-            nix build --print-build-logs ".#checks.x86_64-linux.$attr"
-            echo "::endgroup::"
-          done
+        run: bash ./scripts/flake-checks.sh build-checks --system x86_64-linux --exclude pre-commit
   lint:
     name: pre-commit hooks
     # Builds checks.x86_64-linux.pre-commit — the check the
@@ -237,8 +187,7 @@ jobs:
     # see modules/flake/git-hooks.nix). Building the check derivation runs
     # every hook against the tree and fails on any lint/format
     # violation, so this is the CI gate that keeps regressions off main
-    # (closes #349). The bespoke drvPath loop in flake-check never ran
-    # the hooks.
+    # (closes #349).
     #
     # Runs on ubuntu-latest with NO fork guard and NO nix-secrets deploy
     # key: the pre-commit check doesn't touch the private nix-secrets
@@ -258,8 +207,4 @@ jobs:
             lazy-trees = false
             always-allow-substitutes = false
       - name: Run pre-commit hooks
-        run: |
-          nix build \
-            --no-update-lock-file \
-            --print-build-logs \
-            ".#checks.x86_64-linux.pre-commit"
+        run: bash ./scripts/flake-checks.sh lint --system x86_64-linux
