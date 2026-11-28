@@ -113,12 +113,12 @@
       # this moves in lockstep with the component below, not independently.
       blueair-api = hapy.buildPythonPackage {
         pname = "blueair-api";
-        version = "1.56.10";
+        version = "2.0.0";
         pyproject = true;
         src = pkgsUnstable.fetchPypi {
           pname = "blueair_api";
-          version = "1.56.10";
-          hash = "sha256-uneFyrDnkjwyn29dUVH16Tdk7RV+a2/1tiK28CgVoX4=";
+          version = "2.0.0";
+          hash = "sha256-6BZDAxxq080WrmJaxk01BtH2nzYkSOT2LLC+HIRESs8=";
         };
         build-system = [ hapy.setuptools ];
         dependencies = with hapy; [
@@ -180,12 +180,12 @@
         # sync. The hash is regenerated in CI
         # (scripts/regen-fetch-hashes.sh, #625).
         # renovate: datasource=github-tags depName=dahlb/ha_blueair
-        version = "1.57.9";
+        version = "1.62.0";
         src = pkgsUnstable.fetchFromGitHub {
           owner = "dahlb";
           repo = "ha_blueair";
-          rev = "4ac238bd7d57d9892c9718b4afbd48df9658ba53";
-          hash = "sha256-bFrXn2+cd/SZMkF0vtfpJl+r9ebn4msP0kI+VG+z+f4=";
+          rev = "e770989157f68183f0f68d479936fcbe0d7d6ffa";
+          hash = "sha256-vFYsnJtREjAflI9HLrTYC5RvE+NGBSmp9bCzO6r9vFo=";
         };
         dependencies = [ blueair-api ];
       };
